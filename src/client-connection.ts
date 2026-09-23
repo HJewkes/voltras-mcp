@@ -46,6 +46,7 @@ import { registerProgressionTools } from './tools/progression-tools.js';
 import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerPlanTools } from './tools/plan-tools.js';
 import { registerWarmupRampTools } from './tools/warmup-ramp-tools.js';
+import { registerPlanScheduleTools } from './tools/plan-schedule-tools.js';
 import { registerBaselineTools } from './tools/baseline-tools.js';
 import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
 import { registerMrvGuardTools } from './tools/mrv-guard-tools.js';
@@ -202,6 +203,7 @@ function registerRealTools(
   registerProgressionTools(server, state, placeholders);
   registerIsometricTools(server, state, placeholders);
   registerPlanTools(server, state, placeholders);
+  registerPlanScheduleTools(server, state, placeholders);
   registerWarmupRampTools(server, state, placeholders);
   registerProfileTools(server, state, placeholders);
   registerBaselineTools(server, state, placeholders);

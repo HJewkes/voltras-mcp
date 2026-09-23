@@ -32,6 +32,7 @@ import type {
   NextWorkoutExercise,
   NextWorkoutRead,
   PlannedSlot,
+  PlanningDueRead,
 } from './types.js';
 
 export type {
@@ -41,6 +42,7 @@ export type {
   NextWorkoutExercise,
   NextWorkoutRead,
   PlannedSlot,
+  PlanningDueRead,
 } from './types.js';
 
 /**
@@ -69,7 +71,7 @@ export interface SundayAnchorInput {
   lifterName: string;
   /** `null` when no template was assigned in the range, which is not a shortfall. */
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   nextWorkout: NextWorkoutRead | null;
   slots: PlannedSlot[];
   /** Last week's if-then in the lifter's words, shown back before this week's is asked for. */
@@ -77,6 +79,8 @@ export interface SundayAnchorInput {
   commitmentLanguage?: string;
   /** Once a month, at a temporal landmark (LIT §1.2, §1.5). */
   monthlyCommitmentReoffer: boolean;
+  /** Present when the next block is due to be planned (VW-476); the sitting is only offered. */
+  planning?: PlanningDueRead | null;
 }
 
 export interface MissRecoveryInput {
@@ -98,7 +102,7 @@ export interface GhostNudgeInput {
 export interface RealignOpenerInput {
   lifterName: string;
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   slots: PlannedSlot[];
 }
 
@@ -145,8 +149,8 @@ function adherenceLine(adherence: AdherenceRead | null): string {
 }
 
 /** Copy rule 7: a rolling window has no zero state, which is the point of it. */
-function rollingLine(sessions: number): string {
-  return `Rolling 28-day session count: ${sessions}.`;
+function rollingLine(trainingDays: number): string {
+  return `Rolling 28-day training days: ${trainingDays}.`;
 }
 
 function nextUpLine(nextWorkout: NextWorkoutRead | null): string {
@@ -154,6 +158,15 @@ function nextUpLine(nextWorkout: NextWorkoutRead | null): string {
     return 'Nothing is queued on the plan right now, which is ten minutes of programming whenever you want it.';
   }
   return `Next on the plan: ${nextWorkout.templateName}, with ${joinNames(nextWorkout.exercises.map((exercise) => exercise.name))}.`;
+}
+
+/** Offers the planning sitting, never starts it: the lifter picks when (VW-476). */
+function planningLine(planning: PlanningDueRead | null): string {
+  if (planning === null) return '';
+  return (
+    `The next block is due to be planned: ${planning.reason} Pick a time this week to plan it ` +
+    'with me, because a block dated before it starts is one the week can be built around.'
+  );
 }
 
 function slotsLine(slots: readonly PlannedSlot[]): string {
@@ -253,8 +266,9 @@ export function composeSundayAnchor(input: SundayAnchorInput): ComposedMessage {
     text: render(SUNDAY_ANCHOR, {
       lifterName: input.lifterName,
       adherenceLine: adherenceLine(input.adherence),
-      rollingLine: rollingLine(input.rolling28DayCompletedSessions),
+      rollingLine: rollingLine(input.rolling28DayTrainingDays),
       nextUpLine: nextUpLine(input.nextWorkout),
+      planningLine: planningLine(input.planning ?? null),
       slotsLine: slotsLine(input.slots),
       ifThenLine: ifThenLine(input.ifThenPlan),
       commitmentLine: commitmentLine(input),
@@ -329,7 +343,7 @@ export function composeRealignOpener(input: RealignOpenerInput): ComposedMessage
       nonJudgmentLine: NON_JUDGMENT_LINE,
       operationalHonestyLine: OPERATIONAL_HONESTY_LINE,
       adherenceLine: adherenceLine(input.adherence),
-      rollingLine: rollingLine(input.rolling28DayCompletedSessions),
+      rollingLine: rollingLine(input.rolling28DayTrainingDays),
       reArchitectLine: reArchitectLine(input.slots),
       askLine: askLine(input.slots),
     }),

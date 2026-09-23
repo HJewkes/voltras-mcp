@@ -3,13 +3,19 @@
 // file, a line or a tool that exists on `main`, and no page may carry an
 // encoded device value.
 //
-// Four checks, over `site/**/*.md`, `docs/**/*.md`, `README.md`, `CLAUDE.md`
-// and `CHANGELOG.md` (which `site/changelog.md` now renders):
+// Four checks, over `site/**/*.md`, `docs/**/*.md`, the pt-session skill under
+// `plugins/`, `README.md`, `CLAUDE.md` and `CHANGELOG.md` (which
+// `site/changelog.md` now renders):
 //
 //   1. path      a cited repo path resolves                      FAILS
 //   2. line      a cited `file.ts:NNN` is within the file        FAILS
 //   3. tool      a cited `namespace.tool` is registered          FAILS
 //   4. protocol  an encoded device value reached a page          FAILS
+//
+// Check 3 runs in both directions over the pt-session skill, which ships in
+// this repo so it cannot be older than the server (VW-503): a name the skill
+// uses must be registered, AND a registered tool must be named somewhere in
+// the skill or listed in `SKILL_IGNORED_TOOLS` with its reason.
 //
 // Check 2 has a second, weaker half: a citation whose target line has CHANGED
 // since the citation was written is stale even though the line still exists.
@@ -31,6 +37,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   checkPathCitations,
   checkProtocolLeakage,
+  checkToolCoverage,
   checkToolNames,
   extractPathCitations,
 } from './lib/docs-checks.mjs';
@@ -39,7 +46,8 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUARD_SOURCE = join(REPO_ROOT, 'src/docs/protocol-guard.ts');
 const GUARD_BUILT = join(REPO_ROOT, 'dist/docs/protocol-guard.js');
 const ROOT_PAGES = ['README.md', 'CLAUDE.md', 'CHANGELOG.md'];
-const DOC_TREES = ['site', 'docs'];
+const SKILL_TREE = 'plugins/voltras-channel/skills';
+const DOC_TREES = ['site', 'docs', SKILL_TREE];
 /** VitePress internals: theme sources and build output, not pages. */
 const SKIPPED_DIRS = new Set(['.vitepress', 'node_modules']);
 
@@ -192,6 +200,30 @@ function report(label, byFile) {
   return total;
 }
 
+/**
+ * Every registered tool the coach skill never names. The skill is the coach's
+ * whole map of the surface, so a tool missing from it is unreachable even
+ * though it is registered.
+ */
+function findUncoveredTools(registry) {
+  const pages = collectMarkdown(join(REPO_ROOT, SKILL_TREE));
+  const ignored = new Set(
+    readNameArray('src/docs/skill-inventory-notes.ts', 'SKILL_IGNORED_TOOLS'),
+  );
+  return checkToolCoverage(
+    pages.map((page) => readFileSync(page, 'utf8')),
+    registry,
+    ignored,
+  );
+}
+
+function reportCoverage(findings) {
+  if (findings.length === 0) return 0;
+  console.error(`\nFINDINGS — tools the coach skill does not name (${findings.length}):`);
+  for (const finding of findings) console.error(`    [${finding.check}] ${finding.message}`);
+  return findings.length;
+}
+
 /** A shallow clone has no history to walk, so silence there means nothing. */
 function warnIfShallow() {
   const [shallow] = gitLines(['rev-parse', '--is-shallow-repository']);
@@ -228,12 +260,15 @@ async function main() {
   }
 
   const warned = report('WARNINGS — citations whose target line moved', warnings);
-  const failed = report('FINDINGS', failures);
-  if (failed === 0) {
+  const onPages = report('FINDINGS', failures);
+  const uncovered = reportCoverage(findUncoveredTools(registry));
+  if (onPages + uncovered === 0) {
     console.warn(`docs: OK (${documentedFiles().length} pages, ${warned} warning(s))`);
     return;
   }
-  console.error(`\n${failed} finding(s) across ${failures.size} file(s).`);
+  console.error(
+    `\n${onPages} finding(s) across ${failures.size} file(s), ${uncovered} uncovered tool(s).`,
+  );
   process.exitCode = 1;
 }
 

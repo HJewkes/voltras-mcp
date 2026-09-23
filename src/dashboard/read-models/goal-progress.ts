@@ -59,23 +59,32 @@ import {
   SMALL_DEVIATION_PCT,
   dietPhaseTolerance,
   toleranceEffect,
-  weeksInPhaseAt,
   type DietPhaseState,
   type ToleranceVerdict,
   type TrendSlope,
 } from '../../analytics/diet-phase-tolerance.js';
+import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
+import { shortDate } from '../../plan/schedule-history.js';
 import {
   GOAL_BAND_CONSTANTS,
+  calibrationGapOf,
+  isStartingRamp,
+  type CalibrationBlocker,
+  type CalibrationGap,
   type GoalBand,
   type GoalBandExpectation,
   type GoalBandWeek,
+  type GoalDietPhase,
   type GoalDietState,
 } from '../../analytics/goal-band.js';
+import type { RecompMode } from '../../store/diet-phase.js';
 import {
   aheadOfEdge,
   behindEdge,
+  corridorSideOf,
   blockReadingsOf,
   expectationAt,
+  isCorridor,
   goalReachOf,
   mesoMilestoneOf,
   weekOutcomesOf,
@@ -85,6 +94,9 @@ import {
   type GoalWeekOutcomeEntry,
 } from './goal-milestone.js';
 import type {
+  BaselineState,
+  StoredGoalBandBasis,
+  StoredGoalInfoLevel,
   StoredGoalTarget,
   StoredPriority,
   StoredPriorityKind,
@@ -108,10 +120,8 @@ export const GOAL_PROGRESS_CONSTANTS = {
   /**
    * Percent per matched reading below which a trend is called flat.
    *
-   * ENGINEERING DEFAULT. It is what the ramp's own smallest step
-   * (`rampIncrementFloorLbs`, 2.5 lb) is worth on a 250 lb working load — the
-   * smallest move the programmed progression can even produce, so anything
-   * under it is rounding rather than trend.
+   * ENGINEERING DEFAULT. It is what a 2.5 lb plate step is worth on a 250 lb
+   * working load: a move that small is rounding rather than trend.
    */
   flatSlopePctPerStep: 1,
   /**
@@ -200,11 +210,89 @@ export interface GoalE1RMContextView {
   priorBest: number | null;
 }
 
+/** The evidence the band's calibration gates read, as `deriveTarget` measured it. */
+export interface GoalCalibrationEvidence {
+  matchedSessionCount: number;
+  baselineState: BaselineState;
+}
+
+/**
+ * Why a `calibrating` target is still calibrating, structured so the page never
+ * parses `statusBasis` (VW-444). `targetBasis` / `targetInfoLevel` are the
+ * ACCEPTED target's own, which say whether its number is the generic starting ramp.
+ */
+export interface GoalCalibrationView {
+  /** Matched sessions still to come. `0` when only the baseline blocks. */
+  sessionsNeeded: number;
+  blockedBy: CalibrationBlocker;
+  baselineState: BaselineState;
+  targetBasis: StoredGoalBandBasis;
+  targetInfoLevel: StoredGoalInfoLevel;
+}
+
+/**
+ * An accepted starting ramp whose lift has since calibrated (VW-444 part 2).
+ * `offered` while a data-based target is on offer, `kept_starting_ramp` once the
+ * lifter declined it for this block. The accepted number is never edited.
+ */
+export interface GoalRecalibrationView {
+  state: 'offered' | 'kept_starting_ramp';
+}
+
+/** Which way "better" points, taken from the band: a hold is a corridor, never a gain. */
+export type GoalProgressDirection = GoalBand['direction'];
+
+/** The declared diet phase NOW, not the phase the target was derived under. */
+export interface GoalDietPhaseView {
+  phase: GoalDietPhase;
+  weeksInPhase: number | null;
+  recompMode: RecompMode | null;
+}
+
+/**
+ * The bodyweight rate against the phase's rate, from the same
+ * `computeBodyweightRateAdvisory` call `goal.weekly_review` makes.
+ */
+export interface GoalBodyweightRateView {
+  observedPctPerWeek: number | null;
+  bandLowPctPerWeek: number | null;
+  bandHighPctPerWeek: number | null;
+  weeksOutsideBand: number;
+  /** A veto held the week back: settling, the noise floor, a spike or creep. */
+  vetoed: boolean;
+}
+
+/** What a bodyweight target carries beyond the band. `rate` is `null` without a declared phase. */
+export interface GoalBodyweightView {
+  dietPhase: GoalDietPhaseView;
+  rate: GoalBodyweightRateView | null;
+}
+
+/** The training days a `sessions_28d` read counted, gathered by the caller (rule: `training-days.ts`). */
+export interface GoalSessionWindowInput {
+  /** ISO dates, one per training day in the window ending at `now`, oldest first. */
+  days: readonly string[];
+  /** Training days that leave the window in the next 7 days unless replaced. */
+  agingOutNext7d: number;
+}
+
+/** The rolling session window, read from the view's `now`. */
+export interface GoalSessionsView {
+  /** The committed count pro-rated by how much of the first window has run. */
+  dueByNow: number;
+  sessionDays: string[];
+  agingOutNext7d: number;
+}
+
 export interface GoalProgressInput {
   priority: StoredPriority;
   target: StoredGoalTarget;
   /** Recomputed by `deriveGoalBand` or rebuilt from the stored row; must cover every week. */
   band: GoalBand;
+  /** What the band was derived from; the source of a calibrating view's shortfall. */
+  calibrationEvidence: GoalCalibrationEvidence;
+  /** The lifter declined this target's recalibration offer (an `advisory_decisions` answer). */
+  recalibrationDeclined?: boolean;
   actuals: readonly GoalActual[];
   weeks: readonly GoalBandWeek[];
   /** ISO instant the view is being built for. The model never reads the clock itself. */
@@ -216,6 +304,17 @@ export interface GoalProgressInput {
   /** `history.trend`'s plateau read. When present it decides `stalled`; absent falls back. */
   plateauVerdict?: GoalPlateauVerdict;
   e1rm?: GoalE1RMInput;
+  /** Read only for a `bodyweight` target. */
+  bodyweight?: GoalBodyweightView;
+  /** Read only for a `sessions_28d` target. */
+  sessionWindow?: GoalSessionWindowInput;
+  /**
+   * Where week 1 starts (VW-477): a block-bound target's block start, as the local midnight of
+   * its Monday. Absent, the grid starts at the target's own `startMeasuredAt`.
+   */
+  weekOneAt?: string;
+  /** The block's local start date while it has not started: no verdict until then. */
+  startsOn?: string;
 }
 
 export interface GoalMesoWeek {
@@ -267,11 +366,24 @@ export interface GoalProgressView {
   /** The target's own fixed numbers, never the band's recomputed edges. */
   committed: number;
   stretch: number;
+  direction: GoalProgressDirection;
   actuals: GoalActualView[];
+  /** Present only for a `bodyweight` target. */
+  bodyweight?: GoalBodyweightView;
+  /** Present only for a `sessions_28d` target. */
+  sessions?: GoalSessionsView;
   e1rmContext?: GoalE1RMContextView;
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
   statusBasis: string;
+  /** The target's block start while that block has not started; `null` otherwise (VW-477). */
+  startsOn: string | null;
+  /** Which side of a maintenance corridor a `behind` reading left by; absent for every other read (VW-457). */
+  corridorSide?: 'above' | 'below';
+  /** Present only while `status` is `calibrating` for a lift; absent for every other status. */
+  calibration?: GoalCalibrationView;
+  /** Present only for an accepted starting ramp whose lift has calibrated since. */
+  recalibration?: GoalRecalibrationView;
   /**
    * Present and `null` for a muscle priority, absent for a lift: corroboration
    * is a claim across a priority's lifts, so `buildPriorityRollup` decides it.
@@ -289,6 +401,9 @@ export interface GoalProgressView {
 
 const C = GOAL_PROGRESS_CONSTANTS;
 
+/** What a reading outside a two-sided corridor reads as; the side is in `statusBasis`. */
+const CORRIDOR_EXIT_STATUS: GoalProgressStatus = 'behind';
+
 /** Everything the status chain and the advisory rules read, computed once. */
 interface Reading {
   input: GoalProgressInput;
@@ -303,6 +418,8 @@ interface Reading {
   effect: 'softened' | 'hardened' | 'none';
   belowCommitted: boolean;
   beyondStretch: boolean;
+  /** Which side of a two-sided corridor the latest matched reading sits on; `null` inside or for any other band. */
+  corridorSide: 'above' | 'below' | null;
   /** Matched readings inside the block, each with its week. */
   inBlock: BlockReading[];
   reach: GoalReachRead | null;
@@ -311,15 +428,18 @@ interface Reading {
 interface StatusRead {
   status: GoalProgressStatus;
   statusBasis: string;
+  gap?: CalibrationGap;
 }
 
-export function buildGoalProgressView(input: GoalProgressInput): GoalProgressView {
-  assertUsableInput(input);
+export function buildGoalProgressView(given: GoalProgressInput): GoalProgressView {
+  assertUsableInput(given);
+  const input = withWeekOneOpened(given);
   const reading = read(input);
-  const { status, statusBasis } = resolveStatus(reading);
+  const { status, statusBasis, gap } = resolveStatus(reading);
   const advisory = advisoryFor(status, reading);
   const confounder = confounderFor(status, input.fatigue);
   const praise = praiseFor(status, reading);
+  const recalibration = recalibrationOf(input);
   return {
     priority: input.priority,
     target: input.target,
@@ -327,13 +447,20 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     expected: [...input.band.expected],
     committed: input.target.committedValue,
     stretch: input.target.stretchValue,
+    direction: input.band.direction,
     actuals: input.actuals.map((entry) => placeOnWeekAxis(entry, input)),
+    ...wholeBodyViewOf(reading),
     status,
     statusBasis,
+    startsOn: input.startsOn ?? null,
+    ...corridorSideView(status, reading),
+    ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
+    ...(recalibration === undefined ? {} : { recalibration }),
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
     nextMilestone: nextMilestoneOf(reading),
     mesoMilestone: mesoMilestoneOf({
       target: input.target,
+      weekOneAt: weekOneOf(input),
       band: input.band,
       weeks: input.weeks,
       readings: reading.inBlock,
@@ -348,6 +475,54 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
   };
 }
 
+/**
+ * WEEK 1 OF A BODYWEIGHT RATE BAND OPENS AT THE START WEIGHT. A band row is the
+ * line at the start of its week, so week 1 is the start weight alone, and a
+ * first weigh-in a few tenths off it reads outside a zero-width band. Week 1
+ * instead keeps the start weight on the committed edge and runs the stretch
+ * edge to the end of the week's step, the ground a cut or a gain may cover in
+ * its first week.
+ * Every later week, the stored numbers and every other metric are unchanged.
+ */
+function withWeekOneOpened(input: GoalProgressInput): GoalProgressInput {
+  const { band, target } = input;
+  const [first, next, ...rest] = band.expected;
+  if (target.metric !== 'bodyweight' || band.direction === 'hold' || first === undefined) {
+    return input;
+  }
+  // Week 2's row opens where week 1's stretch step ends; a lone week has no step to show.
+  const opened = { ...first, high: next?.high ?? first.high };
+  const expected = next === undefined ? [opened] : [opened, next, ...rest];
+  return { ...input, band: { ...band, expected } };
+}
+
+/** The side only rides along when the corridor rule is what decided the status. */
+function corridorSideView(
+  status: GoalProgressStatus,
+  reading: Reading,
+): Pick<GoalProgressView, 'corridorSide'> {
+  const side = reading.corridorSide;
+  return side !== null && status === CORRIDOR_EXIT_STATUS ? { corridorSide: side } : {};
+}
+
+/** The metric-specific block a whole-body target carries, and nothing for any other metric. */
+function wholeBodyViewOf(reading: Reading): Pick<GoalProgressView, 'bodyweight' | 'sessions'> {
+  const { input } = reading;
+  if (input.target.metric === 'bodyweight' && input.bodyweight !== undefined) {
+    return { bodyweight: input.bodyweight };
+  }
+  if (input.target.metric === 'sessions_28d' && input.sessionWindow !== undefined) {
+    return {
+      sessions: {
+        dueByNow: round(dueByNowOf(reading)),
+        sessionDays: [...input.sessionWindow.days],
+        agingOutNext7d: input.sessionWindow.agingOutNext7d,
+      },
+    };
+  }
+  return {};
+}
+
 function assertUsableInput(input: GoalProgressInput): void {
   if (input.weeks.length === 0) {
     throw new Error('buildGoalProgressView: weeks must not be empty');
@@ -358,7 +533,7 @@ function assertUsableInput(input: GoalProgressInput): void {
 }
 
 function read(input: GoalProgressInput): Reading {
-  const weekPosition = positionAt(input.target.startMeasuredAt, input.now, input.weeks.length);
+  const weekPosition = positionAt(weekOneOf(input), input.now, input.weeks.length);
   const expected = expectationAt(input.band, input.weeks, weekPosition);
   const matched = input.actuals.filter((actual) => actual.matched);
   const latest = matched[matched.length - 1];
@@ -366,7 +541,7 @@ function read(input: GoalProgressInput): Reading {
   const slope = slopeOf(matched, input.band.direction, mid);
   const deviationPct = latest === undefined ? 0 : deviationOf(expected, latest.value, input.band);
   const verdict = dietPhaseTolerance(dietPhaseStateOf(input.dietState), deviationPct, slope);
-  const inBlock = blockReadingsOf(input.target, input.weeks, matched);
+  const inBlock = blockReadingsOf(weekOneOf(input), input.weeks, matched);
   return {
     input,
     weekPosition,
@@ -380,19 +555,37 @@ function read(input: GoalProgressInput): Reading {
     effect: toleranceEffect(verdict),
     belowCommitted: latest !== undefined && behindEdge(expected.low, latest.value, input.band),
     beyondStretch: latest !== undefined && aheadOfEdge(expected.high, latest.value, input.band),
+    corridorSide:
+      latest !== undefined && isCorridor(input.band)
+        ? corridorSideOf(expected, latest.value)
+        : null,
     inBlock,
-    reach: goalReachOf(input.target, input.band.direction, inBlock),
+    reach: goalReachOf(input.target, input.band, inBlock, input.weeks.length),
   };
 }
 
+/** The instant week 1 of this target's grid starts from (VW-477). */
+function weekOneOf(input: GoalProgressInput): string {
+  return input.weekOneAt ?? input.target.startMeasuredAt;
+}
+
 /**
- * Which week of the horizon `now` falls in, clamped to the horizon's ends.
- * `weeksInPhaseAt` is the repo's one 1-based weeks-elapsed helper; a second
- * spelling of the same arithmetic here would be a bug waiting to happen.
+ * A target whose block has not started has no verdict yet (VW-477). `calibrating` is the
+ * status the goal card already draws without a verdict; `startsOn` carries the date.
  */
-function positionAt(fromIso: string, nowIso: string, weekCount: number): number {
-  const elapsed = weeksInPhaseAt(fromIso, nowIso);
-  return Math.min(elapsed, weekCount) - 1;
+function notStartedRead(reading: Reading): StatusRead | undefined {
+  const startsOn = reading.input.startsOn;
+  if (startsOn === undefined) return undefined;
+  return {
+    status: 'calibrating',
+    statusBasis: `Starts ${shortDate(startsOn)}. No verdict before the block begins.`,
+  };
+}
+
+/** Which week of the horizon `atIso` falls in, 0-based and clamped to the horizon's ends. */
+function positionAt(fromIso: string, atIso: string, weekCount: number): number {
+  const week = blockWeekAt(fromIso, atIso);
+  return Number.isNaN(week) ? 0 : Math.min(Math.max(week, 1), weekCount) - 1;
 }
 
 /**
@@ -402,10 +595,7 @@ function positionAt(fromIso: string, nowIso: string, weekCount: number): number 
  * into week 1 would draw it on a week it was not measured in.
  */
 function placeOnWeekAxis(entry: GoalActual, input: GoalProgressInput): GoalActualView {
-  const startedMs = Date.parse(input.target.startMeasuredAt);
-  const takenMs = Date.parse(entry.ts);
-  if (Number.isNaN(startedMs) || Number.isNaN(takenMs) || takenMs < startedMs) return { ...entry };
-  const week = input.weeks[weeksInPhaseAt(input.target.startMeasuredAt, entry.ts) - 1];
+  const week = input.weeks[blockWeekAt(weekOneOf(input), entry.ts) - 1];
   return week === undefined ? { ...entry } : { ...entry, weekIndex: week.index };
 }
 
@@ -457,7 +647,7 @@ function slopeOf(
   const last = matched[matched.length - 1];
   const [from, to] =
     direction === 'hold'
-      ? [Math.abs(first.value - mid), -Math.abs(last.value - mid)]
+      ? [-Math.abs(first.value - mid), -Math.abs(last.value - mid)]
       : [first.value * signOf(direction), last.value * signOf(direction)];
   const scale = Math.abs(first.value);
   if (scale === 0) return 'flat';
@@ -476,10 +666,12 @@ function mesoWeekOf(weeks: readonly GoalBandWeek[], position: number): GoalMesoW
 /** First rule that fires wins; the chain is the precedence, top to bottom. */
 function resolveStatus(reading: Reading): StatusRead {
   return (
+    notStartedRead(reading) ??
     reachRead(reading) ??
     deloadRead(reading) ??
     sessionCountRead(reading) ??
     calibratingRead(reading) ??
+    corridorRead(reading) ??
     aheadRead(reading) ??
     toleratedRead(reading) ??
     stalledRead(reading) ??
@@ -500,6 +692,12 @@ function reachRead(reading: Reading): StatusRead | undefined {
   const rule =
     'It holds for the rest of the block, and what the block does next is decided at its ' +
     'boundary (rp:rp-s10-underpromise-overdeliver-goal-setting).';
+  if (isCorridor(reading.input.band)) {
+    return {
+      status: 'goal_met',
+      statusBasis: `Goal met: the final week's reading, ${reach.best}, held inside the corridor. ${rule}`,
+    };
+  }
   if (reach.reach === 'beyond') {
     return {
       status: 'beyond_goal',
@@ -534,18 +732,23 @@ function sessionCountRead(reading: Reading): StatusRead | undefined {
   if (reading.input.target.metric !== 'sessions_28d') return undefined;
   const counted = reading.latest?.value;
   const committed = reading.input.target.committedValue;
-  const dueByNow = committed * windowFractionElapsed(reading);
+  const dueByNow = dueByNowOf(reading);
   const commitment =
     'A 28-day session count is a commitment, not a progression (goal / plan / commitment, ' +
     'rp:rp-s10-three-month-planning-horizon): the count holds and the rolling window moves.';
   if (counted === undefined) {
-    return { status: 'calibrating', statusBasis: `No sessions counted yet. ${commitment}` };
+    return { status: 'calibrating', statusBasis: `No training days counted yet. ${commitment}` };
   }
   const pace = `${counted} of the ${round(dueByNow)} due by now against a committed ${committed}`;
   if (counted >= dueByNow) {
     return { status: 'on_track', statusBasis: `On pace: ${pace}. ${commitment}` };
   }
   return { status: 'behind', statusBasis: `Under pace: ${pace}. ${commitment}` };
+}
+
+/** The committed count pro-rated by the elapsed share of the first window. */
+function dueByNowOf(reading: Reading): number {
+  return reading.input.target.committedValue * windowFractionElapsed(reading);
 }
 
 /** How much of the rolling window has run, 0 to 1. A full window is the whole commitment. */
@@ -558,21 +761,63 @@ function windowFractionElapsed(reading: Reading): number {
 }
 
 function calibratingRead(reading: Reading): StatusRead | undefined {
-  const needed = GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp;
+  const evidence = reading.input.calibrationEvidence;
   if (reading.input.band.infoLevel === 'cold') {
+    const gap = calibrationGapOf(evidence.matchedSessionCount, evidence.baselineState);
     return {
       status: 'calibrating',
       statusBasis:
         'Calibrating: the band is the programmed execution ramp, which is a claim about ' +
         'completing the work rather than about strength gained (rp:rp-s5-load-increment-by-exercise-type).',
+      ...(gap === null ? {} : { gap }),
     };
   }
-  if (reading.matched.length >= needed) return undefined;
+  const gap = calibrationGapOf(reading.matched.length, null);
+  if (gap === null) return undefined;
   return {
     status: 'calibrating',
     statusBasis:
-      `Calibrating: ${needed - reading.matched.length} more matched session(s) before a reading ` +
+      `Calibrating: ${gap.sessionsNeeded} more matched session(s) before a reading ` +
       'is judged against the band (rp:rp-s7-like-vs-like-progress-comparison-rule).',
+    gap,
+  };
+}
+
+/** Evidence going backwards closes a gate again, and with it the offer: no state is latched. */
+function recalibrationOf(input: GoalProgressInput): GoalRecalibrationView | undefined {
+  const { target, calibrationEvidence: evidence } = input;
+  if (target.acceptedBy === undefined || !isStartingRamp(target.metric, target.infoLevel)) {
+    return undefined;
+  }
+  if (calibrationGapOf(evidence.matchedSessionCount, evidence.baselineState) !== null) {
+    return undefined;
+  }
+  return { state: input.recalibrationDeclined === true ? 'kept_starting_ramp' : 'offered' };
+}
+
+function calibrationViewOf(gap: CalibrationGap, input: GoalProgressInput): GoalCalibrationView {
+  return {
+    ...gap,
+    baselineState: input.calibrationEvidence.baselineState,
+    targetBasis: input.target.basis,
+    targetInfoLevel: input.target.infoLevel,
+  };
+}
+
+/**
+ * Outside a two-sided corridor, on either side, judged slope-first like every
+ * other pace rule: a reading already converging back needs no response (VW-457).
+ */
+function corridorRead(reading: Reading): StatusRead | undefined {
+  const side = reading.corridorSide;
+  if (side === null || reading.verdict.magnitude === 'none') return undefined;
+  const { low, high } = reading.expected;
+  return {
+    status: CORRIDOR_EXIT_STATUS,
+    statusBasis:
+      `${side === 'above' ? 'Above' : 'Below'} the maintenance corridor: ${reading.latest?.value} ` +
+      `against ${low} to ${high}. ${reading.verdict.rationale}, judged slope-first ` +
+      '(rp:rp-s12-maintenance-buffer-2pct, rp:rp-s12-trend-slope-overrides-raw-deviation).',
   };
 }
 
@@ -637,11 +882,7 @@ function detectedStall(detected: GoalPlateauVerdict): StatusRead | undefined {
 }
 
 function belowEdgeAt(actual: GoalActual, reading: Reading): boolean {
-  const position = positionAt(
-    reading.input.target.startMeasuredAt,
-    actual.ts,
-    reading.input.weeks.length,
-  );
+  const position = positionAt(weekOneOf(reading.input), actual.ts, reading.input.weeks.length);
   const expected = expectationAt(reading.input.band, reading.input.weeks, position);
   return behindEdge(expected.low, actual.value, reading.input.band);
 }
@@ -685,6 +926,16 @@ function programmingAdvisory(reading: Reading): GoalAdvisory {
         'Under the count you committed to: the lever is the schedule, not the training. Put the ' +
         'missed sessions back in the week. The committed count itself does not move.',
       source: 'commitment',
+    };
+  }
+  if (reading.input.target.metric === 'bodyweight') {
+    return {
+      kind: 'programming',
+      prompt:
+        'Off the committed line. The two levers are intake and activity. Which one to move is ' +
+        'yours to pick, and this server does not size either ' +
+        '(rp:rp-s12-activity-vs-food-adjustment-choice). The target itself does not move.',
+      source: 'bodyweight',
     };
   }
   const verdict = reading.input.mrvVerdict;
@@ -749,6 +1000,9 @@ function mesoPraiseText(reading: Reading): string {
   const achieved = reading.latest?.value;
   const { startValue, committedValue } = reading.input.target;
   const span = committedValue - startValue;
+  if (isCorridor(reading.input.band)) {
+    return 'Mesocycle done, and it finished inside the corridor you committed to hold.';
+  }
   if (achieved === undefined || span === 0) {
     return 'Mesocycle done, and it landed on the target you committed to.';
   }
@@ -798,7 +1052,7 @@ function milestoneLabel(target: StoredGoalTarget, rounded: number, dueWeek: numb
     case 'bodyweight':
       return `bodyweight ${rounded} ${week}`;
     case 'sessions_28d':
-      return `${rounded} sessions in the rolling 28-day window`;
+      return `${rounded} training days in the rolling 28-day window`;
     case 'e1rm_trend':
       return `e1RM ${rounded} ${week}`;
     case 'composite_strength':

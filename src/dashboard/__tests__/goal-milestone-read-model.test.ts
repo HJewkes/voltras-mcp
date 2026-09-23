@@ -88,6 +88,7 @@ function input(overrides: Partial<GoalProgressInput> = {}): GoalProgressInput {
     priority: PRIORITY,
     target: TARGET,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals: [],
     weeks: WEEKS,
     now: tsInWeek(3),
@@ -101,7 +102,7 @@ describe('mesoMilestone', () => {
     const view = buildGoalProgressView(input({ actuals: [actual(1, 170), actual(3, 176)] }));
 
     expect(view.mesoMilestone).toEqual({
-      target: { metric: 'top_load_at_reps', reps: 8, load: 182.5, unit: 'lb' },
+      target: { metric: 'top_load_at_reps', reps: 8, load: 183, unit: 'lb' },
       goalWeek: 6,
       currentWeek: 3,
       weekCount: 6,
@@ -177,22 +178,30 @@ describe('goal_met and beyond_goal', () => {
     expect(view.mesoMilestone.state).toBe('hit');
   });
 
-  it('compares at the metric precision, so a reading that rounds onto the number meets it', () => {
-    const view = buildGoalProgressView(input({ actuals: [actual(3, 182.46)] }));
+  it('compares a load at the device step, so a reading that rounds onto the number meets it', () => {
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 182.6)] }));
 
     expect(view.status).toBe('goal_met');
   });
 
+  it('prints and scores an exact class-ramp commitment at the load the lifter can set (VW-482)', () => {
+    const target = { ...TARGET, committedValue: 182.2 };
+    const view = buildGoalProgressView(input({ target, actuals: [actual(3, 182)] }));
+
+    expect(view.mesoMilestone.target).toMatchObject({ reps: 8, load: 182 });
+    expect(view.status).toBe('goal_met');
+  });
+
   it('reads beyond_goal when the best matched reading is strictly past it', () => {
-    const view = buildGoalProgressView(input({ actuals: [actual(3, 183)] }));
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 184)] }));
 
     expect(view.status).toBe('beyond_goal');
-    expect(view.statusBasis).toContain('183');
+    expect(view.statusBasis).toContain('184');
   });
 
   it('never regresses to a pace status after a later dip', () => {
     const view = buildGoalProgressView(
-      input({ actuals: [actual(2, 183), actual(3, 171)], now: tsInWeek(4) }),
+      input({ actuals: [actual(2, 184), actual(3, 171)], now: tsInWeek(4) }),
     );
 
     expect(view.status).toBe('beyond_goal');
@@ -386,7 +395,7 @@ describe('the calibrating capture', () => {
 
     expect(view.status).toBe('calibrating');
     expect(view.mesoMilestone).toMatchObject({
-      target: { reps: 8, load: 127.5 },
+      target: { reps: 8, load: 128 },
       goalWeek: 12,
       currentWeek: 1,
       latest: { reps: 8, load: 110 },
@@ -400,5 +409,76 @@ describe('the calibrating capture', () => {
     const view = calView([...CAL_ACTUALS, { ...actual(1, 127.5, CAL_START) }]);
 
     expect(view.status).toBe('goal_met');
+  });
+});
+
+// VW-421: a lift target starts at its top set, mid-week, while `history.trend`
+// stamps each weekly reading at that week's Monday. Both must land on one grid.
+describe('the calendar-week block grid', () => {
+  const THURSDAY_TARGET: StoredGoalTarget = {
+    ...TARGET,
+    startMeasuredAt: '2026-08-06T18:05:00.000Z',
+    derivedAt: '2026-08-06T18:05:00.000Z',
+  };
+
+  function mondayBucket(weekIndex: number, value: number): GoalActual {
+    const ts = new Date(Date.parse(START) + (weekIndex - 1) * 7 * DAY_MS).toISOString();
+    return { ts, value, matched: true, isPR: false };
+  }
+
+  function thursdayInput(overrides: Partial<GoalProgressInput>): GoalProgressInput {
+    return input({ target: THURSDAY_TARGET, ...overrides });
+  }
+
+  it('plots a Thursday-measured target and its Monday-stamped bucket from that week on week 1', () => {
+    const view = buildGoalProgressView(
+      thursdayInput({ actuals: [mondayBucket(1, 170), mondayBucket(2, 173)], now: tsInWeek(2) }),
+    );
+
+    expect(view.actuals.map((entry) => entry.weekIndex)).toEqual([1, 2]);
+    expect(view.weekOutcomes[0]).toMatchObject({ weekIndex: 1, reading: { reps: 8, load: 170 } });
+    expect(view.weekOutcomes[1]).toMatchObject({ weekIndex: 2, reading: { reps: 8, load: 173 } });
+  });
+
+  it('does not count a reading from the calendar week after the block toward goal_met', () => {
+    const view = buildGoalProgressView(
+      thursdayInput({ actuals: [mondayBucket(6, 181), mondayBucket(7, 190)], now: tsInWeek(7) }),
+    );
+
+    expect(view.actuals.map((entry) => entry.weekIndex)).toEqual([6, undefined]);
+    expect(view.mesoMilestone.latest).toEqual({ reps: 8, load: 181 });
+    expect(view.mesoMilestone.state).toBe('missed');
+    expect(view.status).not.toBe('goal_met');
+    expect(view.status).not.toBe('beyond_goal');
+  });
+
+  it('counts the last Sunday of the block toward goal_met', () => {
+    const lastSunday = { ts: '2026-09-13T21:00:00.000Z', value: 182.5, matched: true, isPR: false };
+    const view = buildGoalProgressView(thursdayInput({ actuals: [lastSunday], now: tsInWeek(7) }));
+
+    expect(view.actuals[0]?.weekIndex).toBe(6);
+    expect(view.status).toBe('goal_met');
+  });
+
+  it('never has the current week trail the newest reading, on any day of that week', () => {
+    for (let day = 0; day < 7; day += 1) {
+      const now = new Date(Date.parse(START) + (14 + day) * DAY_MS + 12 * 60 * 60 * 1000);
+      const view = buildGoalProgressView(
+        thursdayInput({
+          actuals: [mondayBucket(2, 173), mondayBucket(3, 176)],
+          now: now.toISOString(),
+        }),
+      );
+
+      expect(view.mesoMilestone.currentWeek).toBe(3);
+      expect(view.actuals[view.actuals.length - 1]?.weekIndex).toBe(3);
+    }
+  });
+
+  it('places an exact-instant reading late on Sunday in that week, not the next', () => {
+    const lateSunday = { ts: '2026-08-16T23:30:00.000Z', value: 172, matched: true, isPR: false };
+    const view = buildGoalProgressView(thursdayInput({ actuals: [lateSunday], now: tsInWeek(3) }));
+
+    expect(view.actuals[0]?.weekIndex).toBe(2);
   });
 });

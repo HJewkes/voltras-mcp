@@ -125,7 +125,11 @@ describe('SqliteSessionStore idle reps', () => {
   });
 
   it('filters by session, excluding reps from other sessions', async () => {
-    await store.putSession({ id: 'sess-2', startedAt: '2025-01-02T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-2',
+      startedAt: '2025-01-02T00:00:00.000Z',
+    });
     await store.putIdleRep(makeIdleRep({ id: 'a', sessionId: 'sess-1' }));
     await store.putIdleRep(makeIdleRep({ id: 'b', sessionId: 'sess-2' }));
     await store.putIdleRep(makeIdleRep({ id: 'c', sessionId: 'sess-1' }));

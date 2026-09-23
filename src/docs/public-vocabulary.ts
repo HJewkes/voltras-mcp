@@ -101,6 +101,15 @@ function addToolVocabulary(tool: ToolLike, into: Set<string>): void {
  */
 export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'active_mode',
+  // VW-489: the lists `session.mark_kind` returns, and the count a real range must
+  // declare. Separating what was newly classified from what was FLIPPED is the whole
+  // safety of a bulk day or range mark.
+  'alreadyThisKind',
+  'newlyClassified',
+  'reclassified',
+  'skippedAlreadyMarked',
+  'rederiveFailed',
+  'expectSessions',
   'adoptedReps',
   'analytics_count',
   'anchorSelection',
@@ -124,6 +133,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'dashboardAvailable',
   'dashboardDisabledReason',
   'dashboardUrl',
+  // VW-505: when the lifter declared the commitment `accountability.state` reports.
+  'declaredAt',
   'disconnect_notice',
   'diveBomb',
   'diveBombCount',
@@ -134,6 +145,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'echoedAfterMs',
   // VW-294: the warm-up ramp's own field, on `isometric.measure_max`'s `warmup`.
   'effortLevel',
+  // VW-544: `server.health` reports which rule decides the mid-set ending cue.
+  'effortCue',
   'event_type',
   // VW-296: the joint-angle gate on `isometric.measure_hold`'s `jointAngleGate`.
   'jointAngleGate',
@@ -222,6 +235,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // is that the upstream field is left alone.
   'isPlateau',
   'plateau.isPlateau',
+  // VW-452: the flatline run behind a load metric's plateau verdict.
+  'plateau.flatline',
+  'slopeLbsPerWeek',
+  'flatBelowLbsPerWeek',
   'readiness.zone',
   // VW-286: `accountability.state`'s result — the persisted protocol row plus
   // the dry-run decision. `action` is `send` or `silent`; `kind` names an
@@ -392,6 +409,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-297: `timer.start`'s rest-duration basis, when no explicit `durationMs`
   // was given.
   'restBasis',
+  // VW-441: a coach-set plan rest, taken as-is.
+  'explicit_plan',
   'intent_default',
   'intent_default_extended',
   'prevRepsToThreshold',
@@ -460,6 +479,25 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-399: the anchor load a `reps_at_load` target is counted at, and its refusal code.
   'reps_at_load',
   'GOAL_ANCHOR_LOAD_NOT_APPLICABLE',
+  // VW-444: the starting-ramp notice on a cold lift target in
+  // `goal.propose_targets` and `goal.accept_target`.
+  'startingRamp',
+  'sessionsNeeded',
+  'blockedBy',
+  'baselineState',
+  'reProposeAfterCalibration',
+  // VW-444 part 2: the recalibration offer on `goal.propose_targets`,
+  // `goal.weekly_review`, `goal.accept_target` and `goal.retire`.
+  'recalibrationOffers',
+  'offerTargetId',
+  'acceptedCommittedValue',
+  'recalibration',
+  'supersededTargetId',
+  'decisionId',
+  'declinedOffer',
+  'GOAL_RECALIBRATION_WITHDRAWN',
+  // VW-459: `goal.declare_priorities` refuses a second whole-body priority for one ref.
+  'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',
@@ -480,14 +518,58 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // null whenever `silentReason` says why nothing was offered.
   'recompReAsk',
   'silentReason',
+  // VW-462: session counts read in training days, one per local day trained.
+  'rolling28DayTrainingDays',
+  'trainingDaysCompleted',
+  'trainingDaysLogged',
+  // VW-462 returner path: which gate raised the tier ceiling, and the evidence behind it.
+  'ceilingBasis',
+  'logged_history',
+  'returner',
+  'loggedHistoryMet',
+  'longestLoggedGapDays',
+  'lastBreakQuestion',
+  // VW-474: dated blocks. `plan.block.calendar`'s per-week template count and
+  // local training days, and the schedule-row kind a missed week records.
+  'sessionDays',
+  'templateCount',
+  'week_skipped',
+  // VW-475: `plan.current_block`'s states and planning read, and the blocks
+  // `plan.next_workout` names when nothing is planned today.
+  'undated_only',
+  'windowOpensOn',
+  'nextBlock',
+  'endedBlock',
+  // VW-476: the planning sitting. The brief's suggested range end, and the
+  // planning read's due flag and prompt as the descriptions cite them.
+  'endsOn',
+  'planning.due',
+  'planning.prompt',
+  // VW-477: the goal targets whose block dates a schedule write moved.
+  'targetsAffected',
+  // VW-478: report.weekly's adherence over the dated weeks, and what changed
+  // about a block's dates inside the range.
+  'adherence.weeks',
+  'touched_weeks',
+  'scheduleChanges',
+  // VW-479: the two refusals a dated TrueCoach import can return.
+  'BLOCK_STARTED',
+  'SCHEDULE_OVERLAP',
+  // VW-503: result fields the coach skill's generated inventory cites. The
+  // dotted three are members whose owner is already listed, and a dotted name
+  // is not derivable from its owner — normalization collapses the whole token.
+  'dbPath',
+  'blockBoundary.realignment',
+  'history.fact',
+  'recompReAsk.proposal',
 ];
 
 /**
  * The `pipeline` selector on `metrics.compute`. Its schema declares a bare
- * string — the seventeen accepted literals exist only in the description — so
+ * string — the eighteen accepted literals exist only in the description — so
  * these cannot be harvested and are listed instead.
  *
- * All seventeen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
+ * All eighteen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
  * `src/__tests__/docs/check-docs.test.ts`. Nine were missing, which mattered
  * once `scripts/check-docs.mjs` started reading this list: seven of the
  * sixteen open with a tool namespace (`session.`), so a partial list makes a
@@ -508,6 +590,7 @@ export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
   'session.readiness',
   'session.strength',
   'session.volume',
+  'strength.e1rm',
   'vbt.profile',
   'vbt.rir',
   'vbt.set',

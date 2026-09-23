@@ -6,14 +6,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { type Rep } from '@voltras/workout-analytics';
-import {
-  bestE1RMAcrossSets,
-  estimateSetRpe,
-  getSetTempoSeconds,
-} from '@voltras/workout-analytics/view';
+import { bestE1RMAcrossSets, getSetTempoSeconds } from '@voltras/workout-analytics/view';
 
 import {
-  toAutoRegStatus,
   toExerciseIsPR,
   toExerciseSummary,
   toLiveTempoSeconds,
@@ -84,7 +79,7 @@ function completedView(reps: Rep[], over: Partial<HeroSetView> = {}): HeroSetVie
 }
 
 describe('toSetRowProps', () => {
-  it('maps a completed set to a `done` row with EXACT weight, velocity, and RPE', () => {
+  it('maps a completed set to a `done` row with EXACT weight and velocity, and no RPE', () => {
     const reps = [repWithMean(1, 800, 800), repWithMean(2, 600, 600)];
     const view = completedView(reps, { setNumber: 2, weightLbs: 100.4 });
     const props = toSetRowProps(view);
@@ -96,9 +91,8 @@ describe('toSetRowProps', () => {
     expect(props.reps).toBe(2);
     expect(props.weight).toBe(100.4); // exact — SetRow rounds for display
     expect(props.velocities).toEqual([0.8, 0.6]); // m/s, unrounded
-    // RPE is exactly WA's value — not rounded to 0.5 at this layer.
-    expect(props.rpe).toBe(estimateSetRpe({ reps }));
-    expect(props.rpe).not.toBeNull();
+    // VW-485: withheld until a trusted fitted profile reaches the wall.
+    expect(props.rpe).toBeUndefined();
   });
 
   it('maps an active set to a `live` row: reps-so-far + exact target', () => {
@@ -118,6 +112,21 @@ describe('toSetRowProps', () => {
     expect(props.weight).toBe(135);
     expect(props.target).toEqual({ reps: 8, weight: 134.5 }); // exact
     expect(props.velocities).toEqual([]);
+  });
+
+  it('states no RPE on a live row with reps in it (VW-485)', () => {
+    const view: WorkoutSetView = {
+      setNumber: 1,
+      kind: 'active',
+      reps: [repWithMean(1, 800, 800), repWithMean(2, 600, 600)],
+      weightLbs: 135,
+      targetReps: 8,
+      targetWeightLbs: 135,
+      previous: null,
+    };
+    const props = toSetRowProps(view);
+
+    expect(props.rpe).toBeUndefined();
   });
 
   it('falls a `live` row target back to reps-done + working weight when unplanned', () => {
@@ -258,32 +267,6 @@ describe('toLiveTempoSeconds', () => {
     expect(tempo).toEqual([2.5, 0.5, 1.5, 0]);
     // Wiring contract: identical to WA's own derivation (no app-side reshaping).
     expect(tempo).toEqual(getSetTempoSeconds({ reps: view.reps }));
-  });
-});
-
-describe('toAutoRegStatus', () => {
-  // The coaching auto-reg boundaries shared by StatusPill + LiveAuraFrame +
-  // FatigueMeter, on the canonical VL20/VL30 bands: <20 productive, 20–30
-  // threshold, 30+ stop. These MUST match `verdictFromLoss` (live-page/model.ts)
-  // so the live pill and the rest-view aura never disagree. Lock the edges.
-  it('is null when loss is not yet derivable', () => {
-    expect(toAutoRegStatus(null)).toBeNull();
-  });
-
-  it('is productive below VL20', () => {
-    expect(toAutoRegStatus(0)).toBe('productive');
-    expect(toAutoRegStatus(19.9)).toBe('productive');
-  });
-
-  it('is threshold from VL20 up to (not including) VL30', () => {
-    expect(toAutoRegStatus(20)).toBe('threshold');
-    expect(toAutoRegStatus(28)).toBe('threshold');
-    expect(toAutoRegStatus(29.9)).toBe('threshold');
-  });
-
-  it('is stop at VL30 and above', () => {
-    expect(toAutoRegStatus(30)).toBe('stop');
-    expect(toAutoRegStatus(45)).toBe('stop');
   });
 });
 

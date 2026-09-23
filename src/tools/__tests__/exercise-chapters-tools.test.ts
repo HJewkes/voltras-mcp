@@ -83,7 +83,13 @@ async function seedSession(
   weightLbs: number,
 ): Promise<void> {
   const at = daysAgo(daysBack);
-  await store.putSession({ id, startedAt: at, endedAt: at, exerciseId: EXERCISE_ID });
+  await store.putSession({
+    kind: 'training',
+    id,
+    startedAt: at,
+    endedAt: at,
+    exerciseId: EXERCISE_ID,
+  });
   for (const suffix of ['a', 'b']) {
     const setId = `${id}-${suffix}`;
     const set: StoredSet = {

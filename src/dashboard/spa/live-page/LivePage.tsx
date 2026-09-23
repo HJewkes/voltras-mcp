@@ -10,11 +10,12 @@ import {
   getSemanticColors,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
-import { ExerciseHeader } from './LiveView';
+import { ExerciseHeader } from './ExerciseHeader';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
 import { EmptyLiveView, SessionEndedView } from './EmptyLiveView';
+import { setFatigueState } from './fatigue-state';
 import { IsometricWalkthrough } from './IsometricWalkthrough';
 import { IsometricVerdictCard } from './IsometricVerdictCard';
 import { deriveIsometricVerdictCard } from './isometric-verdict-model';
@@ -151,12 +152,18 @@ function SingleFatigueStage({
     >
       <LiveFatiguePanel
         model={fatigue}
+        aura={setFatigueState({
+          lossPct: live.velocityLossPct,
+          stop: live.fatigueStop,
+          verdict: fatigue.verdict,
+        })}
         // The hero's own source — per-rep MEAN concentric velocity, not on the fatigue
         // model. `liveRepIndex` marks the rep in progress as the last one streamed.
         velocity={{
           velocities: live.repVelocities,
           targetReps: session.targetReps ?? undefined,
           liveRepIndex: live.repVelocities.length - 1,
+          lossThresholds: live.fatigueStop.bands,
         }}
         bodyHeight={bodyHeight}
       />
@@ -203,8 +210,8 @@ export interface LivePageProps {
  *     otherwise it falls back to the honest count-up, never the lab's hardcoded 120s.
  *   - `live-dual` renders the DIVERGING hero ({@link DivergingLiveStage}, VMCP-04.05) off
  *     real per-slot telemetry (VW-71). An unbound slot shows an honest awaiting wing, never
- *     a fabricated or mirrored limb. It replaced a stacked two-`LiveView` stage that
- *     duplicated every shared read-out and scrolled on a short wall.
+ *     a fabricated or mirrored limb. It replaced a stacked two-voltra stage (each in its
+ *     own full live view) that duplicated every shared read-out and scrolled on a short wall.
  *
  * The rail footer pace read-out IS now wired (VW-290): the snapshot carries a
  * plan-derived `sessionPace`, so the rail shows sets left, a projected finish, and
@@ -306,6 +313,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
               hero={hero}
               asymmetry={asymmetry ?? null}
               asymmetrySetup={fatigue?.asymmetrySetup ?? null}
+              fatigueVerdict={fatigue?.verdict ?? null}
             />
           ) : model.live !== null && fatigue ? (
             // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.

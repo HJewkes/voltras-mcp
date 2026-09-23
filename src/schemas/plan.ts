@@ -15,6 +15,10 @@ import { z } from 'zod';
 import { IdSchema, SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
 import { TrainingIntent } from './set.js';
+import { PLAN_GOAL_KINDS } from '../store/types.js';
+
+/** A local calendar date, 'YYYY-MM-DD'. The Monday rule is checked by the handler, which can name the Monday meant. */
+const LocalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a date as YYYY-MM-DD');
 
 // --- programs ---
 
@@ -55,6 +59,45 @@ export const PlanBlockCreateInput = z
     focus: z.string().optional(),
     weeksCount: z.number().int().min(1),
     notes: z.string().optional(),
+    // VW-474: dates the block from a local Monday, appending its first schedule row.
+    startsOn: LocalDate.optional(),
+    // 1-based plan weeks to flag as deload; only with `scaffoldWeeks`.
+    deloadWeeks: z.array(z.number().int().min(1)).optional(),
+    scaffoldWeeks: z.boolean().optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const PlanBlockUpdateInput = z
+  .object({
+    blockId: IdSchema,
+    name: z.string().min(1).optional(),
+    focus: z.string().optional(),
+    notes: z.string().optional(),
+    weeksCount: z.number().int().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const PlanBlockScheduleInput = z
+  .object({
+    blockId: IdSchema,
+    // `null` un-dates an upcoming block and keeps the dates it had in its history.
+    startsOn: LocalDate.nullable(),
+    reason: z.string().min(1).optional(),
+    cascade: z.enum(['none', 'later_blocks']).optional(),
+  })
+  .strict();
+
+export const PlanBlockScheduleHistoryInput = z
+  .object({
+    blockId: IdSchema,
+  })
+  .strict();
+
+export const PlanBlockCalendarInput = z
+  .object({
+    blockId: IdSchema,
   })
   .strict();
 
@@ -78,6 +121,26 @@ export const PlanWeekCreateInput = z
     isDeload: z.boolean().optional(),
     // Mesocycle week index, distinct from `orderIndex` (position within the block).
     weekIndex: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const PlanWeekUpdateInput = z
+  .object({
+    weekId: IdSchema,
+    isDeload: z.boolean().optional(),
+    name: z.string().min(1).optional(),
+    phaseType: z.string().optional(),
+  })
+  .strict();
+
+export const PlanWeekSkipInput = z
+  .object({
+    blockId: IdSchema,
+    // The calendar week as `plan.block.calendar` numbers it, counting from 1.
+    week: z.number().int().min(1),
+    reason: z.string().min(1).optional(),
+    // Omitted means the lifter did not choose: the calendar holds, recorded as the coach's default.
+    mode: z.enum(['hold', 'extend']).optional(),
   })
   .strict();
 
@@ -152,6 +215,19 @@ export const PlanExerciseCreateInput = z
      * from rep range or load — a guess here becomes a stop cue at the wrong rep.
      */
     trainingIntent: TrainingIntent.optional(),
+    /**
+     * What the row states as its goal (VW-448 amendment). Omit it to take the default: a
+     * loss target gives `velocity_loss`, else a rep range gives `rep_range` (an RPE on the
+     * same row is its effort cap), else an RPE gives `target_rpe`, else no goal.
+     */
+    goalKind: z.enum(PLAN_GOAL_KINDS).optional(),
+    /** The velocity-loss goal, percent. Only with `goalKind: 'velocity_loss'`. */
+    targetVelocityLossPct: z.number().min(1).max(95).optional(),
+    /**
+     * Whether the system learns this row's rest (VW-445). Default on. Off makes `restSec`
+     * a fixed rest, so off without a `restSec` is refused.
+     */
+    restLearning: z.boolean().optional(),
   })
   .strict();
 
@@ -172,6 +248,15 @@ export const PlanExerciseListForTemplateInput = z
  * goal on file, and an advisory realignment prompt — the goal is never
  * written by this tool.
  */
+export const PlanCurrentBlockInput = z.object({}).strict();
+
+export const PlanBlockPlanningBriefInput = z
+  .object({
+    // The block the sitting plans; defaults to the next one after the plan in force.
+    forBlockId: IdSchema.optional(),
+  })
+  .strict();
+
 export const PlanNextWorkoutInput = z
   .object({
     programId: IdSchema.optional(),

@@ -151,6 +151,8 @@ const PLAN_TOOLS = [
   'plan.template.list_for_week',
   'plan.exercise.create',
   'plan.exercise.list_for_template',
+  'plan.current_block',
+  'plan.block.planning_brief',
   'plan.next_workout',
   'plan.complete_workout',
   'plan.attach_to_session',
@@ -230,6 +232,7 @@ describe('plan.suggest_progression — e1RM jump, end to end (VW-267)', () => {
 
   async function seedSession(sessionId: string, weightLbs: number): Promise<void> {
     await store.putSession({
+      kind: 'training',
       id: sessionId,
       startedAt: '2026-08-01T00:00:00.000Z',
       endedAt: '2026-08-01T01:00:00.000Z',

@@ -69,6 +69,8 @@ const TOOL_NAMES = [
   'plan.template.list_for_week',
   'plan.exercise.create',
   'plan.exercise.list_for_template',
+  'plan.current_block',
+  'plan.block.planning_brief',
   'plan.next_workout',
   'plan.complete_workout',
   'plan.attach_to_session',
@@ -139,6 +141,8 @@ function makeStore(): SessionStore & {
     getTrainingBlocksForProgram: vi.fn(async () => []),
     putTrainingWeek: vi.fn(async () => {}),
     getTrainingWeeksForBlock: vi.fn(async () => []),
+    // Read by `plan.block.create` for the block's calendar (VW-474); every block here is undated.
+    getLiveBlockSchedule: vi.fn(async () => undefined),
     putWorkoutTemplate: vi.fn(async () => {}),
     getWorkoutTemplate: vi.fn(async () => undefined),
     getWorkoutTemplatesForWeek: vi.fn(async () => []),
@@ -151,7 +155,8 @@ function makeStore(): SessionStore & {
     // volume ceilings. Stubbed so the lint pass genuinely runs here rather than
     // falling into its own "warnings are never worth a failed write" catch.
     getTrainingProfile: vi.fn(async () => undefined),
-    countSessions: vi.fn(async () => 0),
+    listTrainingDayInstants: vi.fn(async () => []),
+    listSessionReviewRows: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     close: vi.fn(async () => {}),
   };
@@ -567,6 +572,64 @@ describe('plan.exercise.create', () => {
     expect(body.plannedExercise.notes).toBeUndefined();
     expect(body.plannedExercise.targetTempo).toBeUndefined();
   });
+
+  // VW-537: the goal and the rest pair, through the shared validator.
+  const base = { workoutTemplateId: 't1', exerciseId: 'squat', orderIndex: 0, targetSets: 3 };
+
+  it('takes the default goal kind when none is given, and states learning on', async () => {
+    const r = await h.invoke('plan.exercise.create', { ...base, targetRepsLow: 8, targetRpe: 9 });
+    const body = parseResult(r) as { plannedExercise: StoredPlannedExercise };
+    expect(body.plannedExercise).toMatchObject({ goalKind: 'rep_range', restLearning: true });
+    expect(h.store.putPlannedExercise).toHaveBeenCalledWith(
+      expect.objectContaining({ goalKind: 'rep_range', restLearning: true }),
+    );
+  });
+
+  it('leaves the goal absent on a row with no goal fields', async () => {
+    const r = await h.invoke('plan.exercise.create', base);
+    const body = parseResult(r) as { plannedExercise: StoredPlannedExercise };
+    expect(body.plannedExercise.goalKind).toBeUndefined();
+  });
+
+  it('stores a velocity_loss goal with its percent and a fixed rest', async () => {
+    const r = await h.invoke('plan.exercise.create', {
+      ...base,
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 180,
+      restLearning: false,
+    });
+    expect(r.isError).toBeUndefined();
+    expect(
+      (parseResult(r) as { plannedExercise: StoredPlannedExercise }).plannedExercise,
+    ).toMatchObject({
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 180,
+      restLearning: false,
+    });
+  });
+
+  it.each([
+    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }, 'targetRepsLow'],
+    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }, 'targetRpe'],
+    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }, 'targetVelocityLossPct'],
+    [
+      'a loss percent on a rep range',
+      { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
+      'targetVelocityLossPct',
+    ],
+    ['learning off with no rest', { restLearning: false }, 'restSec'],
+    ['an inverted rep range', { targetRepsLow: 12, targetRepsHigh: 8 }, 'targetRepsHigh'],
+  ])(
+    'refuses %s with INVALID_INPUT, names the field, and writes nothing',
+    async (_label, fields, field) => {
+      const r = await h.invoke('plan.exercise.create', { ...base, ...fields });
+      expect(r.isError).toBe(true);
+      expect(parseResult(r)).toMatchObject({ code: 'INVALID_INPUT', field });
+      expect(h.store.putPlannedExercise).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects a targetTempo with an unknown key', async () => {
     const r = await h.invoke('plan.exercise.create', {

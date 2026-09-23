@@ -25,6 +25,7 @@ import {
   type CompletedSet,
   type SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 /** One rep of real WA samples so the fatigue/verdict calls don't throw. */
 function buildReps(repCount: number): Rep[] {
@@ -101,6 +102,8 @@ function fixture(): StoredSet[] {
 
 function asCompletedSets(sets: StoredSet[]): CompletedSet[] {
   return sets.map((set) => ({
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName: 'Cable Row',
     weightLbs: set.weightLbs ?? null,
     mode: 'weight',
@@ -138,6 +141,7 @@ describe('working-set count parity across the wall, the summary page and progres
       getPlannedExercise: async () => undefined,
       getAssignmentsForTemplate: async () => [],
       getAssignmentsForSession: async () => [],
+      getLiveBlockSchedule: async () => undefined,
       putTrainingProgram: async () => undefined,
       putTrainingBlock: async () => undefined,
       putTrainingWeek: async () => undefined,
@@ -159,6 +163,7 @@ describe('working-set count parity across the wall, the summary page and progres
       completedSets: asCompletedSets(sets),
       plannedExercises: [],
       restSec: null,
+      restBasis: null,
       plannedSets: null,
       targetReps: null,
       expectedSetupCard: null,

@@ -35,10 +35,210 @@ workflow: this file is the record a reader trusts, so a human writes it.
 An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
 entry is written from the user's point of view is a review question, not a check.
 
+### Fixed
+
+- The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
+  16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
+  top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
+  (0 px tall, now 16). Cause: titan's published build dropped every size, weight and leading
+  override a component passed to its text; fixed upstream in `@titan-design/react-ui` 0.18.1
+  and picked up here. Nothing was redesigned, the intended styles now apply (VW-420).
+
 ## [Unreleased]
 
 ### Added
 
+- An opt-in effort cue, off by default: `VOLTRAS_EFFORT_CUE=on` hands the mid-set ending cue to
+  the effort rule. A set then gets **at most one** ending event (`set_target_reached`,
+  `velocity_loss_exceeded` or the new `effort_target_reached`), each saying which goal the set
+  had (`goal_kind`) and what ended it (`cue_reason`). A caller who types both a rep count and a
+  loss percent now gets one event, not two: whichever is met first, with a tie going to the
+  rep count. The set also stores what the cue decided. `server.health` reports the setting as
+  `effortCue`. With it off, nothing changes (VW-544).
+
+### Fixed
+
+- Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
+  of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
+  priority of their own, and the goals page then drew one goal twice. The second now folds
+  into the first, and a clashing whole-body declaration is refused as it is for one caller
+  (VW-536).
+- Relabelling a set with `set.update` can no longer undo reps. The relabel used to write
+  the whole set back as it had read it, reps included, so a set whose reps were saved by
+  another session in that moment lost them. It now changes the lifter label and nothing
+  else (VW-536).
+- A block's dates now keep every change made to them from two sessions at once. A missed
+  week recorded while another session skipped a different week, resized the block or
+  re-imported it from TrueCoach could vanish from the calendar, while the schedule history
+  still listed it. Two blocks dated onto the same weeks at the same moment could also both
+  be accepted; the second is now refused as an overlap (VW-536).
+- Naming who is lifting (`session.set_lifter`) and recording carbs in a check-in no longer
+  undo each other when two sessions do them at once. Each used to write back the whole
+  session as it had read it, so one could drop the other's change: a guest's session could
+  reappear in the owner's history, or the carb context could vanish. Each now changes only
+  its own field (VW-536).
+- Sets done with chains or eccentric overload no longer bend your fitted RIR-velocity
+  curve. Those settings change what a rep in reserve costs, so the curve is now fitted on
+  plain weight sets only, and `rir_velocity.fit` counts only those sets. Damper,
+  isokinetic, band, rowing and custom-curve sets are left out too, as are sets with no
+  recorded mode. Curves fitted before this change are refitted once when the server
+  starts, and until then they are not trusted to state reps in reserve (VW-538).
+- `metrics.compute` no longer under-counts its own pipelines: the description said it took
+  one of seventeen literals while the dispatcher accepted eighteen, and `strength.e1rm` was
+  the one it left out (VW-513, #482).
+- The published push-events table no longer lists `set_ended_by_device`, an event nothing
+  has emitted since device stops were unified into `set_ended`. A coach waiting for it
+  waited forever. The generator now refuses to publish a row for an event no publish site
+  emits (VW-513, #482).
+- The dashboard's six plan-write routes are no longer open to any page in the browser.
+  Until now the sidecar's only protection was its loopback bind, which stops another
+  device on the network and stops nothing running in a browser on this machine: any
+  page could create a program, add or reorder exercises, or unplan one, without ever
+  being able to read the reply. A write now has to come from the dashboard's own page,
+  send a JSON body, and carry a token minted fresh each time the server starts. Reads
+  are unchanged, so the wall's 2 s refresh is untouched, and a wall tab left open
+  across a restart picks the new token up by itself on its next edit rather than
+  needing a reload. The plan builder behaves exactly as before (VW-500).
+
+### Changed
+
+- A fitted RIR-velocity curve now has to be tighter before its readings are called
+  high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
+  enough before. A curve with an error between 1.5 and 2 now reads medium, and its note
+  says to read the estimate as a range. `rir_velocity.fit` also reports a held-out
+  figure, `heldOutErrorReps`: how far a curve fitted without your newest set misses
+  that set's last rep (VW-538).
+- The unrecorded-week banner now carries the owner's wording instead of its placeholder
+  copy. One missed week reads "Week of Mon 31 Aug: nothing recorded" with no subtitle;
+  several read "3 planned weeks: nothing recorded", with the most recent named in the
+  subtitle below (VW-527).
+
+### Added
+
+- A planned exercise can now state its goal and whether its rest is learned.
+  `plan.exercise.create` and the dashboard's plan routes take `goalKind` (`rep_range`,
+  `target_rpe` or `velocity_loss`), `targetVelocityLossPct` and `restLearning`; the plan
+  tree and the live prescription return them. Leave `goalKind` out and the row's own numbers
+  choose it: a rep range with an RPE is a rep range whose RPE is the effort cap. All three
+  write paths, the TrueCoach import included, now refuse a row that does not hold together
+  (a goal missing its number, a loss percent on a goal that is not velocity loss, learning
+  off with no rest) and say how to fix it. A TrueCoach row with a written rest keeps that
+  rest fixed; a row without one learns it. **Nothing reads the goal or the learning flag
+  during a set yet**, so no cue, rest or gate behaves differently (VW-537).
+- Groundwork for more than one wall display: an action submitted from the dashboard can now
+  name the display it came from, and the record of that action keeps the name, so two walls
+  in one house are tellable apart in the audit trail instead of both reading "wall".
+  **Nothing sends a name yet** — the field is optional, no page fills it in, and an action
+  without one behaves exactly as before (VW-521).
+- `npm run store` backs the training record up and proves the backup: `export` writes the
+  whole store to one plain-text file per table plus a manifest of counts and hashes,
+  `import` rebuilds a store from those files, and `verify` says whether the two match and
+  which table does not. Two exports of an unchanged store are byte-identical, `export`
+  opens the store read-only and `import` refuses to overwrite a file, so a rehearsal on a
+  copy cannot touch the real one. README has the exact commands (VW-534).
+- `npm run sim:rest` runs the adaptive-rest simulation: it fits a model of a lifter to three
+  published rest studies, then runs the real learning rules over simulated lifters and writes
+  a table of what they do — how many sessions until the rest settles, how far off it lands,
+  and whether it ever shortens a rest that was already too short. It is how a rest number gets
+  argued with before it reaches anyone's workout (VW-445, VW-516, #485).
+- Groundwork for a rest timer that learns your rest for each exercise instead of reading a
+  population table: the rules that decide which two sets are comparable evidence, how
+  recovered the second one was, and whether the rest should step 15 s shorter or longer.
+  **Nothing counts down differently yet** — no caller reads any of it, and the countdown is
+  unchanged until the resolver is wired (VW-445, VW-515, #484).
+- The coach skill now ships with the server, as `pt-session` inside the `voltras-channel`
+  plugin, so the instructions the coach follows can no longer be older than the tools it
+  is calling. Its tool inventory is generated from the registry by `npm run docs:reference`
+  and CI fails when the committed page and a fresh render disagree, so a tool added without
+  a note in the skill turns the build red rather than going unmentioned (VW-503, #482).
+- Every write the dashboard makes is now recorded, and a retry can no longer write
+  twice. Each edit carries an id; if the same edit arrives again — a flaky connection,
+  a page that reconnected mid-save — the server returns what it did the first time
+  instead of doing it again, and refuses outright if the id comes back attached to
+  different content. The record says what was done, from which screen, and what came
+  back. If the server dies in the middle of an edit, the next attempt says the outcome
+  is unknown and asks you to check rather than guessing, and that unresolved edit stays
+  visible instead of being quietly marked failed. The plan builder behaves exactly as
+  before (VW-502).
+
+### Added
+
+- Recorded work can now be marked **test or training**, and only training counts. Mark one
+  session, a whole local day or a range of days with `session.mark_kind`; `dryRun: true`
+  rehearses it and writes nothing. `session.review_list` shows the past days nobody has
+  classified, newest first, with the exercises, set and working-set counts, top load per
+  exercise, the span, whether every session was ended, whether a plan was attached, and the
+  current kind — feed a row's date straight back to `session.mark_kind`. Marking is
+  idempotent and reversible, and re-derives the affected exercises' baselines and
+  RIR-velocity fits. A day or range call classifies only the sessions nobody has marked; one
+  already marked the other kind is reported and left alone unless you pass `reclassify: true`.
+  A real date-range call must also pass `expectSessions` matching the count its dry run
+  reported, so a mistyped year cannot mark a whole history in one call. An exercise whose
+  baseline or RIR fit could not be re-derived is named under `rederiveFailed` rather than
+  reported as re-derived (VW-489, #479).
+- Every surface that shows a training-derived number now reports how many past days are
+  unreviewed, so a count of zero is never read as "no training" when it means "history
+  withheld pending review": `report.weekly`'s header, the tier signal's evidence,
+  `goal.propose_targets`, `plan.block.planning_brief`, `accountability.state`,
+  `accountability.preview` and the `/api/goals` payload (VW-489, #479).
+- The lifter's own commitment for a week is stored rather than lost.
+  `accountability.declare_commitment` records which days, the fallback day named for each, the
+  if-then sentence and the commitment in the lifter's own words, and the Sunday message now reads
+  those words back instead of a placeholder, names the committed days with their fallbacks, and
+  shows last week's if-then before asking for this week's. The realign conversation re-architects
+  within the days actually committed to rather than within none. Declaring again for the same week
+  is a correction that keeps what it corrects: the superseded wording stays readable and an
+  identical retry changes nothing. The words are never rewritten, tightened or paraphrased. How
+  many sessions a week is still the attendance goal target's to say (VW-505).
+- The goals page's data now says which mesocycle it is in: the program and block, what the block
+  is for, its dates, which week of it this is and whether that week is a deload, every week of the
+  block with the ones held or added marked, and the next block when one is dated. It is empty
+  while no block has dates. Nothing on the page draws it yet (VW-480, #475).
+- The coach can run a planning sitting for the next block. `plan.block.planning_brief` shows
+  how the finishing block went (workouts done, days trained), which block comes next, a
+  suggested start and length, the priorities re-ask, the declared diet phase or its absence,
+  and any dated block the suggested dates would run into. The suggested start is the Monday
+  after the current block ends, else today when it is a Monday, else the next Monday. It
+  plans nothing by itself. Each block's history reads as one sentence, for example "This
+  block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep (travel)." (VW-476, #469).
+- `plan.current_block` says which block and program are in force today: a dated block that
+  has started, the first dated block still to come, a gap after a block ended, or no dated
+  block at all. It also says whether the next block is due to be planned, from the Monday of
+  the current block's final week, in a gap, or while nothing is dated (VW-475, #467).
+- Training blocks can carry real dates. `plan.block.create` takes a Monday `startsOn`, and can
+  build the block's empty weeks and flag its deloads in the same call. `plan.block.schedule`
+  dates, moves or un-dates a block that has not started, and with `cascade` moves the blocks
+  after it by the same number of weeks. `plan.block.update` renames or resizes a block,
+  `plan.week.update` flags a week as a deload, and `plan.week.skip` records a missed week: the
+  calendar holds unless the lifter chooses to push the block a week later, and the coach asks
+  each time. `plan.block.calendar` shows each dated week with its planned workouts and the days
+  trained, and `plan.block.schedule_history` lists every change with who made it and why.
+  Blocks never overlap, run in program order, and cannot move once they have started (VW-474,
+  #465).
+- A set in progress or a rest countdown now stays in view on every dashboard page, not just
+  the live one. A one-row strip above the page shows the exercise, set n of m, the rep count,
+  the last rep's velocity with one bar per rep, and the rest seconds left; pressing it returns
+  to the live page. It appears only for a planned exercise. Its rest counts down the same length
+  as the live page (the plan's, else the goal default), and it turns red at the same stop
+  (VW-429, #448; VW-440, VW-441).
+- Once a goal accepted as the starting ramp has calibrated, the coach offers a target based on
+  the lifter's own lifts, once. `goal.propose_targets` and `goal.weekly_review` return it in
+  `recalibrationOffers`. It keeps the ramp's block (same start, end and weeks), and only the
+  numbers change. Accepting it (`goal.accept_target` on the offer) retires the ramp and never
+  edits it. Declining it (`goal.retire` on the offer) keeps the ramp and is not asked again
+  that block. An offer whose lift stops being calibrated, or whose ramp is retired, is
+  withdrawn. Under the card, the goals page reads "Calibrated. Your goal is still the starting
+  ramp; a target based on your lifts is ready." while the offer stands, and nothing after a
+  decline (VW-444).
+- A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
+  the goals page reads "Starting ramp, not yet based on your lifts." followed by what
+  calibration still waits on: "1 more comparable session to calibrate.", or a set taken near
+  failure, or more working sets of the lift, with no invented count when the baseline is what
+  blocks. `/api/goal-progress` carries the same facts as a structured `calibration` field
+  (sessions still needed, which gate blocks, the baseline state, and the accepted target's
+  basis). `goal.propose_targets` and `goal.accept_target` add a `startingRamp` notice to a
+  cold lift target telling the coach to re-propose a data-based target once calibration ends.
+  Nothing stored changes, and nothing is refused (VW-444).
 - The goal coach now says when a goal is met. A target reads `goal_met` once a matched set
   lifts the committed number and `beyond_goal` once one passes it, and keeps that verdict for
   the rest of the block rather than slipping back to a pace word after a lighter week. Each
@@ -73,6 +273,164 @@ entry is written from the user's point of view is a review question, not a check
   its four-card grid and 1200px-wide trajectory chart into a viewport neither fits (VW-356).
 
 ### Changed
+
+- **Training days, tier evidence, attendance goals, reports, trends, baselines and the
+  RIR-velocity fit now count only sessions marked `training`.** Nothing is back-filled: every
+  session recorded before this change is unreviewed and is left out until it is marked, which
+  is what the owner asked for — most of that history is bench testing, not workouts. Expect
+  those numbers to read zero until the review list is worked through. New sessions are
+  training by default (`session.start` takes `kind`), and sessions started under
+  `VOLTRA_ADAPTER=mock` are always test (VW-489, #479).
+- A session that was never ended now counts as a training day, dated by the end of its last
+  working set, once it is marked training. A session holding no working set never counts,
+  ended or not (VW-489, #479).
+- The weekly report counts adherence over the weeks the block calendar says were planned, so a
+  week nobody trained now reads "planned 4 / done 0" instead of disappearing from the count, and
+  a week the lifter held or extended is marked as such. Its header names the block and which
+  week of it the range ended in, and any change to a block's dates made during the week gets its
+  own line. A store with no dated block keeps the old count, over the weeks a session touched.
+  The Sunday review now says when the next block is due to be planned; its rate advisory is
+  unchanged (VW-478, #476).
+- A TrueCoach import now dates the block it writes into: it starts on the earliest imported
+  Monday and runs to the latest week, and an ISO week the coach assigned nothing in gets an
+  empty week row, so week 3 of the block is the third calendar week. Re-importing the same
+  range changes no dates. An import that reaches back before a block that has already started,
+  or that would land on another dated block, is refused and says which (VW-479, #477).
+- A goal is now kept on its block's calendar. A target accepted for a dated block takes that
+  block's weeks, deload weeks and end date, so moving a block that has not started moves its
+  goals with it and leaves the committed and stretch numbers alone. Until the block starts,
+  the goals page reads "Starts Mon 21 Sep. No verdict before the block begins." A week the
+  lifter added by extending a missed week reads as an off week: flat band, no verdict. The
+  schedule tools list the goals a date change moved (VW-477, #473).
+- Goal weeks are local calendar weeks, Monday to Sunday, for every goal. `history.trend` also
+  groups lifts into local weeks now. A Sunday-evening session six hours west of UTC used to
+  count in the following week; it now counts in the week it was trained. Nothing moves for a
+  server running in UTC (VW-477, #473).
+- When the next block is due to be planned, the coach is told to ask about it. The prompt
+  appears from the Monday of the current block's final week, in a gap, and while nothing is
+  dated, on `plan.next_workout`, `plan.complete_workout`, `plan.current_block` and the Sunday
+  check-in message. The Sunday message offers the sitting and asks the lifter to pick a time;
+  nothing is created until they answer. `goal.declare_priorities` now stamps the upcoming
+  dated block, else the current one, when no block is named. The session summary's plan
+  lookup follows the same current-block rule as everything else (VW-476, #469).
+- A new lift goal now ramps at a weekly percent that depends on the kind of exercise and your
+  declared tier, with no 2.5 lb minimum step. For an intermediate lifter that is 1.5% a week
+  for isolation work, 2% for upper-body compounds and 3% for squats and hinges, capped at
+  10 lb a week. A 40 lb cable overhead tricep extension used to get a block goal of 57.5 lb
+  over 8 weeks (+44%). It now gets about 44 lb. The goal card shows and scores a lift's
+  target at the 1 lb step the device can set. Targets you already accepted keep their numbers
+  (VW-482).
+- The wall no longer states an RPE or reps in reserve it cannot back. The live fatigue card,
+  the hero set rows and the session summary used to read effort off velocity loss through a
+  fixed table, which the evidence does not support. They now show a dash, and the summary
+  drops its RIR line. The live alert reads `VL18% · stop at VL30%` instead of claiming "1–2
+  productive reps left". A stated effort returns once a lifter has a fitted RIR-velocity
+  curve that is trusted: one whose error is under 2 reps in reserve (VW-485, #471).
+- `metrics.compute`'s `vbt.rir` no longer reports `high` confidence it has not earned. The
+  general-model fallback always reads `low`; a fitted curve reads `high` only when its own
+  error is under 2 reps in reserve, and `medium` otherwise. Each rep also reports
+  `inputDomain`, whether it sits inside the range the model was fitted over (VW-485, #471).
+- The coach, `plan.next_workout`, the weekly report's progression lines and the dashboard's
+  plan page now agree on one current plan. The block whose dates contain today wins. When no
+  block is dated, the newest program that still has workouts left wins, so a finished test
+  program no longer hides the real one (VW-469). `plan.next_workout` only offers workouts
+  from the current block. After a block ends with none current, it returns `unplanned: true`
+  instead of a workout: training continues unplanned and the coach offers to plan the next
+  block. `plan.complete_workout` now also returns the current-block reading (VW-475, #467).
+- The experience tier counts training days and has a path for a returning lifter (VW-462, #460).
+  - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
+    `evidence.trainingDaysLogged`: a visit logged as one session per exercise is one day.
+  - `confidence` is `confident` once 24 training days span 12 weeks, whatever the tier.
+  - The derived ceiling reaches intermediate on a reported plateau plus either that logged
+    history or the returner path: at least a year of declared training, a last break under
+    12 months, and no logged gap of a year or more. A returner keeps the declared tier with
+    `confidence: provisional`. The new `ceilingBasis` says which path applied
+    (`logged_history`, `returner` or null).
+  - `profile.set_training_background` takes `lastBreakMonths`, the length of the most recent
+    break from consistent training. `profile.get_onboarding_gaps` asks for it, with
+    `lastBreakQuestion`, when a lifter declared above beginner and their logged history is
+    still short.
+- A slow-loss recomposition's bodyweight goal is now a band instead of one line: holding
+  the start weight is the committed edge and -0.5 %/wk is the stretch (VW-468). The Sunday
+  `goal.weekly_review` judges against the same band the goals page draws; before, it used
+  the cut's -0.5 to -1 %/wk band. A flat week reads on track rather than as noise to wait
+  out, a gaining week reads behind, and a loss inside the band draws no correction. The
+  hold is judged in the block's last week, so an early flat weigh-in no longer marks the
+  goal met for the whole block. Accepted targets keep the numbers they were derived with
+  until the next block re-derives them (#458).
+- Every other session count now counts training days too, by the same rule as the
+  sessions goal: a day with a dozen exercises logged as separate sessions counts once
+  (VW-462, #457).
+  - `report.weekly` reads "Training days: N" and "Last 28 days: N training days". JSON
+    fields renamed: `header.sessionsCompleted` to `header.trainingDaysCompleted`, and
+    `header.rolling28DayCompletedSessions` to `header.rolling28DayTrainingDays`.
+  - The coach's Sunday and realign messages read "Rolling 28-day training days: N."
+    `accountability.preview` renames `inputsUsed.rolling28DayCompletedSessions` to
+    `inputsUsed.rolling28DayTrainingDays`, and a preview with `at` now counts as of `at`
+    instead of the current time.
+  - `session.checkin` withholds soreness, joint and motivation until the lifter has
+    trained on an earlier day, so every session of a first training day withholds them.
+    Before, the second exercise of that first day already asked.
+  - A lifter back from a 3+ month gap stays in the return mesocycle for 12 training days,
+    not 12 sessions, so one long first day back no longer ends it.
+- The goals page's whole-body goals now carry what the page needs to explain them. Each
+  goal says which way better points (`up`, `down` or `hold`), so a maintenance corridor no
+  longer draws as a gain and a slow-loss recomposition draws as a loss. A bodyweight goal
+  carries the diet phase in force now and its weekly rate against the phase's rate. The rate
+  is computed by the same code `goal.weekly_review` runs, so the two cannot disagree. A
+  sessions goal carries the count due by now, the days trained in the window, and how many of
+  them leave the window in the next week. Week 1 of a cut or gain band now runs from the start
+  weight to the end of the first week's stretch step, so a first weigh-in at the start weight
+  reads inside it (VW-459, #456).
+- An accepted bodyweight goal with no recent weigh-in stays on the goals page instead of
+  disappearing, and a goal the page cannot draw is logged as a warning (VW-459, #456).
+- `goal.declare_priorities` refuses a second whole-body priority for the same ref (for example
+  `bodyweight` and `Bodyweight`) with `GOAL_WHOLE_BODY_PRIORITY_EXISTS`, instead of storing two
+  goals that track one number (VW-459, #456).
+- A sessions-per-28-days goal now counts training days, not recorded sessions: a day with
+  several exercises logged as separate sessions counts once. The count is taken from the
+  lifter's local calendar day. Any accepted session-count goal made under the old count is
+  retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
+  one in days (VW-460, #455).
+- A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
+  session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
+  no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no
+  such note, keeps the sentence (VW-444).
+- The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
+  colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
+  thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and
+  10 / 20 / 30% for hypertrophy or no goal. The hero's amber and red lines move with them, so
+  bars, lines and the red background agree. During a rest the strip keeps the finished set's
+  own bands (VW-448).
+- The dashboard picks up `@titan-design/react-ui` 0.20.0, which changes three things you can
+  see. A goal still calibrating draws its readings as plain dots, the next target as a hollow
+  dot, the starting ramp as a dashed line, and the weeks ahead hatched. A goal card on a
+  narrow screen moves its marks under the name and wraps a long name rather than cutting it
+  off. The pinned strip colours its bars by loss from the set's best rep, the same as the live
+  page, with taller bars and one label row (VW-432, VW-433, VW-429).
+
+- The live page's rest timer now counts down after every set, not only when the plan set a
+  rest. Without a planned rest it counts down the training-goal default `timer.start` uses
+  (150 s strength, 105 s hypertrophy, 120 s otherwise, and up to 60 s more when the last set
+  reached its stop in fewer reps than the one before). A caption under the ring says "Default
+  rest" so a derived length never reads as the coach's. Before, an unplanned session got a
+  count-up with no target (VW-441).
+- The live page's red "stop" now comes from the exercise's training goal, the same threshold
+  the server's `velocity_loss_exceeded` fires at: 20% velocity loss for strength, 30% for
+  hypertrophy, 10% for power, and 30% when the plan names no goal. A set started with its own
+  threshold is judged by that number. Before, the single-Voltra stage never went red on
+  velocity loss at all (only on a form breakdown), and the dual stage and rest recap went red at
+  30% for every goal. A form breakdown (a range-of-motion or dropped-negative alarm) still stops
+  the set. From two thirds of the stop (13.3% strength, 20% hypertrophy, 6.7% power) the
+  stage reads amber, so every goal gets a warning before the red; a range-of-motion or tempo
+  warning also reads amber. The rest recap's Fatigue tile uses
+  the same rule and now also reflects range-of-motion and tempo breakdown (VW-440).
+- `timer.start` with no `durationMs` now uses the plan's rest for the current exercise when
+  the coach set one. It used to ignore it and take the training-goal default (150 s strength,
+  105 s hypertrophy, 120 s otherwise), so a 90 s planned rest ran as 105 s or longer. The
+  coach's number is never auto-extended; `restBasis.source` reads `explicit_plan` for it. The
+  dashboard's rest countdown uses the same rule, so the tool and the wall give one number
+  (VW-441).
 
 - The `#/goals` page leads with one goal card instead of a header block over a chart (VW-385).
   The title row carries the lift, its priority mark, a PR star and the verdict, with the reason
@@ -121,6 +479,75 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Reps in reserve read off a lifter's own fitted RIR-velocity curve no longer read high. The
+  curve is fitted on each rep's mean concentric velocity, but `metrics.compute`'s `vbt.rir`
+  pipeline and the weekly report's RIR line read it with the rep's peak, which is always
+  faster, so they told a lifter they had more reps left than they did. Both now read the mean.
+  The general-model fallback is unchanged, and stored curves need no refit (VW-483, #468).
+- A lifter back from a 3+ month break is recognised however long their history is. The
+  goal derivation's layoff read looked only at the oldest 500 sessions, so past that it
+  never saw the newest break (VW-472, #464).
+- `goal.weekly_review` for a past week, and the goals page's bodyweight rate, judged the
+  scale on every stored weigh-in, including ones logged after the week under review, so a
+  back-dated review saw the future. They now use only readings taken by the instant being
+  judged (VW-463, #461).
+- `accountability.state` with an `at` on a Thursday read the adherence trend over the seven
+  days before the real clock, not before `at`, so sessions logged after `at` counted. It
+  now reads the week ending at `at`, as `accountability.preview` already did (VW-472, #461).
+- A maintenance bodyweight goal now reads `behind` when the weight leaves its ±2% corridor,
+  on either side. Before, it read `on_track` however far outside the weight drifted.
+  `/api/goal-progress` says which side in a new `corridorSide` field (`above` or `below`),
+  and the status basis names the corridor. A weight already heading back toward the middle
+  still reads on track. The corridor edge is exact, with no extra noise allowance. The
+  advice for any bodyweight goal behind its line now names intake and activity, not load
+  and reps. A maintenance block is met when the latest weigh-in of its final week sits
+  inside the corridor. It is never `beyond_goal` (VW-457, #463).
+- The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
+  one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
+  backwards. It now shows and judges the newest reading (VW-451).
+- A bodyweight goal's band now starts at the goal's own start weight on week 1 of its block,
+  instead of re-centring on the last 30 days' mean on every read. A cut's loss line and a
+  maintenance corridor now stay where the goal set them. A 28-day session commitment's band
+  holds flat at the count committed to, not today's count. The page draws no bodyweight
+  chart yet, so this shows only in the goal-progress data and its status (VW-451).
+- A lifter climbing on the programmed ramp no longer reads `stalled`. The plateau check
+  called any two weeks within 5% of their middle value a plateau, and the ramp itself only
+  moves about 5% in two weeks, so the ideal lifter was told they had stalled. A lift now
+  counts as a plateau only when its recent climb is also under a quarter of the programmed
+  weekly step: a flatline, not a slowdown. On the goals page a climbing lifter now reads
+  `on_track`, or `behind` when they climb slower than the band. Three weeks at the same top
+  load, or a noisy run around one load, still read `stalled`. `history.trend` reports the
+  run behind the call as `plateau.flatline`, and its `plateau.verdict` moves from `plateau`
+  to `none` for a climbing lift. Its `isPlateau` still reports the detector's own answer
+  unchanged. The `volume` metric is NOT covered: it keeps the old rule, because the
+  programmed step is a load and has no volume equivalent (VW-452, #452).
+- A slow climber whose top load wobbles from week to week reads `stalled` far less often.
+  Three or four noisy weekly points cannot tell a small climb from none, so a lifter on the
+  committed half-ramp pace with ±3 lb of wobble read `stalled` on about one weekly read in
+  four; it is now about one in ten, and a lifter on the full ramp drops from 3% to 0.3%. The
+  plateau check now reads each week as the top load of the last two weeks, and a run that is
+  still wobbling must last 21 days, not 14, before it can read flat. THE COST: a wobbling
+  lift that genuinely stops is called `stalled` about one week later (three weeks after the
+  last step, not two). A lift that stops dead, repeating one load, is still called at two
+  weeks. `history.trend` reports the same fields; `plateau.flatline.slopeLbsPerWeek` is now
+  the slope of the two-week top load. `isPlateau` and the `volume` metric are unchanged.
+  `scripts/flatline-sim.mjs` reproduces every number (VW-458, #466).
+- A lift goal's band now starts where the goal did. The goals page drew each band from the
+  lifter's latest top load, so the line restarted wherever they were now and moved with them
+  on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged
+  against it. The band is now anchored at the goal's own start value on week 1 of its block.
+  Today's history still decides whether it is the programmed ramp or the lifter's own
+  fitted slope. Pace verdicts change with it: a lifter well above where the goal began now
+  reads `ahead` instead of `on_track`, and one well below it reads `behind` (VW-449).
+- The goal trajectory now starts where the band starts, and the current week has its reading
+  (VW-421). A goal's weeks are calendar weeks (Monday to Sunday, UTC): week 1 is the week the
+  starting set was lifted in. Before, weeks were counted in seven-day steps from that set, so
+  the first week's lift fell off the chart and every later lift was drawn one week early. The
+  week a reading is drawn on, the current week, the band row it is judged against, which
+  readings count toward `goal_met` / `beyond_goal`, and a new target's `endsAt` all use that
+  one calendar. Existing targets are not rewritten; their `endsAt` keeps the date it was
+  stored with. `dashboard:preview -- goals` also dates its target on its first session, where
+  it was a day later (VW-422).
 - `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415, #441). It
   used to report success while the device stayed loaded. `device.unload` remains the stop
   the device confirms.

@@ -31,6 +31,7 @@ import {
 } from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
 import { mmsToMps } from '../../state/live-signal.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
@@ -44,6 +45,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: null,
     targetReps: null,
     expectedSetupCard: null,
@@ -60,6 +62,8 @@ function railModel(session: SessionModel): DashboardModel {
 /** A completed set tagged with the exercise that owned it (VW-50). */
 function completed(exerciseName: string, repCount: number, weightLbs = 100): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName,
     weightLbs,
     mode: 'weight',
@@ -201,20 +205,37 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
-  describe('session.restSec (VW-51)', () => {
-    it('carries the prescribed inter-set rest onto the session model', () => {
-      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, restSec: 120 } }));
-      expect(model?.session.restSec).toBe(120);
+  describe('session.restSec (VW-441)', () => {
+    const rest = {
+      seconds: 135,
+      source: 'intent_default_extended' as const,
+      intent: 'hypertrophy' as const,
+      prevRepsToThreshold: 6,
+      currRepsToThreshold: 5,
+      extensionSeconds: 30,
+    };
+
+    it("carries the snapshot's resolved rest and its provenance onto the session model", () => {
+      const model = mapStoreToDashboardModel(sources({ snapshot: { ...snapshot(), rest } }));
+      expect(model?.session.restSec).toBe(135);
+      expect(model?.session.restBasis).toEqual({
+        source: 'intent_default_extended',
+        intent: 'hypertrophy',
+        extensionSeconds: 30,
+      });
     });
 
-    it('leaves rest null when the prescription carries none', () => {
-      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
-      expect(model?.session.restSec).toBeNull();
+    it("takes the snapshot's rest over the slower plan fetch's", () => {
+      const model = mapStoreToDashboardModel(
+        sources({ snapshot: { ...snapshot(), rest }, prescription: { sets: 4, restSec: 90 } }),
+      );
+      expect(model?.session.restSec).toBe(135);
     });
 
-    it('leaves rest null when the session carries no plan', () => {
-      const model = mapStoreToDashboardModel(sources());
+    it('leaves rest null when the snapshot resolved none (no session open)', () => {
+      const model = mapStoreToDashboardModel(sources({ snapshot: { ...snapshot(), rest: null } }));
       expect(model?.session.restSec).toBeNull();
+      expect(model?.session.restBasis).toBeNull();
     });
   });
 
@@ -706,6 +727,7 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
   function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
     return {
       live: {
+        fatigueStop: exerciseFatigueStop(undefined),
         phase: 'concentric',
         phaseElapsedMs: 0,
         velocity: 0.5,
@@ -759,6 +781,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -782,6 +806,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -791,6 +817,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             setPurpose: 'working',
           },
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -813,6 +841,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',

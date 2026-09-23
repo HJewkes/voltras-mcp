@@ -13,17 +13,22 @@
 // working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
 // not read as a light top set.
 
+import { resolveCurrentBlock } from '../plan/current-block.js';
+import { datedWeeksOverlapping, scheduleChangeLines } from './report-calendar.js';
 import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
-import type { RirVelocityModel } from '../analytics/rir-velocity.js';
+import { rirModelVelocity, type RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
+import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
 import type { ServerState } from '../state/server-state.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
+import { DEFAULT_STOP_INTENT, VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
 import { checkFeatureGate } from '../store/baseline-gate.js';
 import { scopeSetsToLifter } from '../store/set-scope.js';
 import {
@@ -283,18 +288,6 @@ function pluralSets(count: number): string {
   return count === 1 ? 'set' : 'sets';
 }
 
-/**
- * The calendar date the lifter would call this workout, not the UTC one. A
- * 9pm session ends after midnight UTC, and logging it against the next day
- * puts it on the wrong row of the coach's week.
- */
-function localDate(iso: string): string {
-  const d = new Date(iso);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
-}
-
 // ---------------------------------------------------------------------------
 // `report.weekly` — coach-readable weekly summary (w3-91).
 //
@@ -306,9 +299,16 @@ function localDate(iso: string): string {
 export const REPORT_WEEKLY_DESCRIPTION =
   'Coach-readable weekly summary over a date range (default: the last 7 days), in markdown ' +
   '(default) or JSON — both render from the same data tree, so the numbers always agree. ' +
-  'Sections, each omitted when empty: a header (lifter, range, sessions completed, a rolling ' +
-  '28-day completed-session count — never a streak — and adherence `planned N / done M` against ' +
-  "the active program's touched week(s), plus a coarse trend vs the previous equal-length range); " +
+  'Sections, each omitted when empty: a header (lifter, range, `trainingDaysCompleted` in the ' +
+  'range and `rolling28DayTrainingDays` — both count training days, the distinct local dates ' +
+  'trained however many sessions one day holds, never a streak — and adherence `planned N / done M` against ' +
+  'the dated weeks the range overlaps, plus a coarse trend vs the previous equal-length range. ' +
+  'A DATED WEEK COUNTS AS PLANNED WHETHER OR NOT IT WAS TRAINED (VW-478), so a week nobody ' +
+  'trained reads planned N, done 0 instead of vanishing; `adherence.weeks` carries each dated ' +
+  'week, and a week the lifter held or extended is marked. With no dated block the older rule ' +
+  'stands: only the weeks a session touched, reported as `basis: touched_weeks`. The header ' +
+  'also names the dated block and the week of it the range ends in, and `scheduleChanges` ' +
+  'carries one line per schedule change made inside the range); ' +
   'one block per session (date, template name, the self-reported `preSessionCarbs` line when the ' +
   'session has one, then the same `report.session_results` strings verbatim, ' +
   'plus an RIR line only when the rir-estimate baseline gate allows it — labelled `fitted` when ' +
@@ -324,35 +324,53 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'Read-only and local: no network call, and it writes nothing.';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ROLLING_WINDOW_DAYS = 28;
 const DEFAULT_RANGE_DAYS = 7;
 /** Generous ceiling for one report's worth of sessions; `listSessions` defaults to 50. */
 const MAX_SESSIONS_IN_RANGE = 500;
 /** `self_reports.question_code` for "this muscle felt off" (extension 3). */
 const OFF_QUESTION_CODE = 'off';
-/**
- * VL30 — the autoregulation "stop" band, identical to the 20/30 split used
- * throughout this codebase (`toAutoRegStatus` in the dashboard SPA, the
- * `velocity_loss_exceeded` trigger docs). `@voltras/workout-analytics` now
- * publishes an equivalent `velocityLossVerdict`, but adopting it in place of
- * this hand-rolled threshold is an open wiring decision (VW-64) elsewhere in
- * the codebase, not something this report should preempt.
- */
-const VELOCITY_LOSS_STOP_PCT = 30;
+/** The no-intent stop threshold the dashboard and rest timer also fall back to; this report does not key it per intent. */
+const VELOCITY_LOSS_STOP_PCT = VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT];
 
 export interface WeeklyAdherence {
   planned: number;
   done: number;
   trend: 'improving' | 'declining' | 'steady' | 'no-prior-data';
+  /**
+   * How `planned` was counted (VW-478). `dated_weeks`: every dated week the range overlaps,
+   * so a week nobody trained still counts. `touched_weeks`: the older rule, for a store with
+   * no dated block — only the weeks a session reached.
+   */
+  basis: 'dated_weeks' | 'touched_weeks';
+  /** One entry per dated week the range overlapped; empty under `touched_weeks`. */
+  weeks: WeeklyAdherenceWeek[];
+}
+
+/** One dated week's own planned-and-done count, and whether the lifter held it. */
+export interface WeeklyAdherenceWeek {
+  startsOn: string;
+  planned: number;
+  done: number;
+  skipped: 'hold' | 'extend' | null;
 }
 
 export interface WeeklyReportHeader {
   lifter: string | null;
   from: string;
   to: string;
-  sessionsCompleted: number;
-  rolling28DayCompletedSessions: number;
+  /** Distinct training days among the ended sessions started in the range (VW-462). */
+  trainingDaysCompleted: number;
+  /** Training days in the 28 days ending at `to`, by the shared rule in `training-days.ts`. */
+  rolling28DayTrainingDays: number;
+  /**
+   * Past local days holding a session nobody has marked training or test (VW-489).
+   * Those days are excluded from both counts above, so a low number with a
+   * non-zero `unreviewedDays` means history is withheld, not absent.
+   */
+  unreviewedDays: number;
   adherence: WeeklyAdherence | null;
+  /** The dated block the range ends in, and which week of it that was (VW-478). */
+  block: { name: string; week: number; weeks: number } | null;
 }
 
 export interface WeeklySessionExercise {
@@ -428,6 +446,8 @@ export interface WeeklyCheckIn {
 
 export interface WeeklyReport {
   header: WeeklyReportHeader;
+  /** One line per schedule row declared inside the range (VW-478). */
+  scheduleChanges: string[];
   sessions: WeeklySessionEntry[];
   progression: WeeklyProgressionLine[];
   flags: WeeklyFlags;
@@ -463,10 +483,17 @@ export async function buildWeeklyReport(
       lifter: input.lifter ?? null,
       from,
       to,
-      sessionsCompleted: endedSessions.length,
-      rolling28DayCompletedSessions: await countCompletedSessionsInWindow(state, input.lifter, to),
+      trainingDaysCompleted: trainingDaysOf(endedSessions.map((s) => s.endedAt)).length,
+      rolling28DayTrainingDays: (
+        await readTrainingDays(state.store, to, {
+          ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+        })
+      ).length,
+      unreviewedDays: (await readUnreviewed(state.store)).unreviewedDays,
       adherence: await computeAdherenceWithTrend(state, input.lifter, from, to, sessions),
+      block: await blockLine(state, to),
     },
+    scheduleChanges: await scheduleChangeLines(state.store, from, to),
     sessions: sessionEntries,
     progression: await buildProgressionLines(state, endedSessions),
     flags: await buildFlags(state, endedSessions),
@@ -554,11 +581,13 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
   const eligible = selectEligibleReps(reps);
   const baselineMax = Math.max(...eligible.map((rep) => getRepPeakVelocity(rep)));
   if (!(baselineMax > 0)) return null;
-  const finalPeak = getRepPeakVelocity(reps[reps.length - 1]!);
+  const finalRep = reps[reps.length - 1]!;
+  const finalPeak = getRepPeakVelocity(finalRep);
   const velLossPct = Math.max(0, ((baselineMax - finalPeak) / baselineMax) * 100);
   const stored = await state.store.getRirVelocityModel(LOCAL_USER_ID, set.exerciseId);
   const model = stored === undefined ? undefined : (stored.model as unknown as RirVelocityModel);
   const estimateInput = {
+    meanVelocity: rirModelVelocity(finalRep),
     peakVelocity: finalPeak,
     baselineMaxVelocity: baselineMax,
     velLossPct,
@@ -758,20 +787,6 @@ function repeatedOffCodeMuscleGroups(rows: StoredSelfReport[]): string[] {
   return [...counts.entries()].filter(([, count]) => count > 1).map(([group]) => group);
 }
 
-async function countCompletedSessionsInWindow(
-  state: ServerState,
-  lifter: string | undefined,
-  to: string,
-): Promise<number> {
-  const from = new Date(new Date(to).getTime() - ROLLING_WINDOW_DAYS * DAY_MS).toISOString();
-  return state.store.countSessions({
-    from,
-    to,
-    endedOnly: true,
-    ...(lifter !== undefined ? { lifter } : {}),
-  });
-}
-
 interface AdherenceCount {
   planned: number;
   done: number;
@@ -784,7 +799,7 @@ async function computeAdherenceWithTrend(
   to: string,
   sessions: StoredSession[],
 ): Promise<WeeklyAdherence | null> {
-  const current = await computeAdherenceCount(state, sessions);
+  const current = await adherenceOver(state, sessions, from, to);
   if (current === null) return null;
 
   const rangeMs = new Date(to).getTime() - new Date(from).getTime();
@@ -796,9 +811,69 @@ async function computeAdherenceWithTrend(
     limit: MAX_SESSIONS_IN_RANGE,
     ...(lifter !== undefined ? { lifter } : {}),
   });
-  const previous = await computeAdherenceCount(state, previousSessions);
+  const previous = await adherenceOver(state, previousSessions, previousFrom, from);
 
   return { ...current, trend: adherenceTrend(current, previous) };
+}
+
+/**
+ * The dated weeks the range overlaps, else the weeks a session touched (VW-478). A dated week
+ * counts as planned whether or not anything was trained in it, so a week the lifter held reads
+ * planned N, done 0 rather than disappearing from the count.
+ */
+async function adherenceOver(
+  state: ServerState,
+  sessions: StoredSession[],
+  from: string,
+  to: string,
+): Promise<(AdherenceCount & Pick<WeeklyAdherence, 'basis' | 'weeks'>) | null> {
+  const dated = await datedWeeksOverlapping(state.store, from, to);
+  if (dated.length === 0) {
+    const touched = await computeAdherenceCount(state, sessions);
+    return touched === null ? null : { ...touched, basis: 'touched_weeks', weeks: [] };
+  }
+  const doneTemplates = await completedTemplateIds(state, sessions);
+  const weeks: WeeklyAdherenceWeek[] = [];
+  for (const week of dated) {
+    const templates =
+      week.weekRow === undefined
+        ? []
+        : await state.store.getWorkoutTemplatesForWeek(week.weekRow.id);
+    weeks.push({
+      startsOn: week.startsOn,
+      planned: templates.length,
+      done: templates.filter((template) => doneTemplates.has(template.id)).length,
+      skipped: week.skipped,
+    });
+  }
+  return {
+    planned: weeks.reduce((sum, week) => sum + week.planned, 0),
+    done: weeks.reduce((sum, week) => sum + week.done, 0),
+    basis: 'dated_weeks',
+    weeks,
+  };
+}
+
+/** Templates an ENDED session in the range was assigned to. */
+async function completedTemplateIds(
+  state: ServerState,
+  sessions: readonly StoredSession[],
+): Promise<Set<string>> {
+  const done = new Set<string>();
+  for (const session of sessions) {
+    if (session.endedAt === undefined) continue;
+    for (const assignment of await state.store.getAssignmentsForSession(session.id)) {
+      if (assignment.workoutTemplateId !== undefined) done.add(assignment.workoutTemplateId);
+    }
+  }
+  return done;
+}
+
+/** The dated block the range ends in, and which week of it that was. */
+async function blockLine(state: ServerState, to: string): Promise<WeeklyReportHeader['block']> {
+  const read = await resolveCurrentBlock(state.store, localDate(to));
+  if (read.block === null || read.week === null) return null;
+  return { name: read.block.name, week: read.week.n, weeks: read.week.of };
 }
 
 /**
@@ -872,11 +947,24 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
   lines.push(`# Weekly Report${report.header.lifter !== null ? ` - ${report.header.lifter}` : ''}`);
   lines.push(`Range: ${report.header.from} to ${report.header.to}`);
   lines.push('');
-  lines.push(`Sessions completed: ${report.header.sessionsCompleted}`);
-  lines.push(`Last 28 days: ${report.header.rolling28DayCompletedSessions} sessions completed`);
+  lines.push(`Training days: ${report.header.trainingDaysCompleted}`);
+  lines.push(`Last 28 days: ${report.header.rolling28DayTrainingDays} training days`);
+  if (report.header.block !== null) {
+    const block = report.header.block;
+    lines.push(`Block: ${block.name}, week ${block.week} of ${block.weeks}`);
+  }
   if (report.header.adherence !== null) {
     const a = report.header.adherence;
     lines.push(`Adherence: planned ${a.planned} / done ${a.done} (trend: ${a.trend})`);
+    for (const week of a.weeks.filter((entry) => entry.skipped !== null)) {
+      lines.push(
+        `- Week of ${week.startsOn}: planned ${week.planned} / done ${week.done} (${week.skipped})`,
+      );
+    }
+  }
+  if (report.scheduleChanges.length > 0) {
+    lines.push('', '## Schedule changes');
+    for (const change of report.scheduleChanges) lines.push(`- ${change}`);
   }
 
   if (report.sessions.length > 0) {

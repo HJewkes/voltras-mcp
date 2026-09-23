@@ -9,12 +9,15 @@
 export const GOAL_DECLARE_PRIORITIES_DESCRIPTION =
   'Record what the lifter wants to emphasise this block: `items` of ' +
   '`{kind: muscle|lift, ref, level: specialize|maintain|deprioritize}`, plus an optional ' +
-  '`horizonWeeks` and `blockId`. NO TARGET VALUE IS TAKEN HERE — the human states priorities and ' +
+  '`horizonWeeks` and `blockId`. `blockId` defaults to the upcoming dated block, else the ' +
+  'current one (plan.current_block), so a planning sitting declares for the block it just ' +
+  'planned; `block` in the result names the block used and whether it was that default. ' +
+  'NO TARGET VALUE IS TAKEN HERE — the human states priorities and ' +
   'the coach derives the numbers (`goal.propose_targets`). `ref` is a catalog muscle string or a ' +
   'spoken synonym ("arms", "legs") for a muscle, and an exerciseId for a lift; anything not listed ' +
   'stays `maintain` by default. Re-declaring a priority keeps its row, so `mesosHeld` keeps ' +
   'counting across blocks. Returns `priorities` (the stored rows), `warnings`, `proposals`, ' +
-  '`dietPhase`, `tierUsed` and `thresholds`. EVERY GUARDRAIL IS ADVISORY AND NOTHING IS BLOCKED: ' +
+  '`dietPhase`, `tierUsed`, `thresholds` and `block`. EVERY GUARDRAIL IS ADVISORY AND NOTHING IS BLOCKED: ' +
   'the declaration is stored exactly as made. `warnings` may carry `specialize_cap_exceeded` (more ' +
   'than 2 specialized items — a reading of the corpus, not a stated rule), ' +
   '`priority_changed_mid_block` (rp:rp-s6-priority-muscle-held-constant-per-block), ' +
@@ -23,13 +26,17 @@ export const GOAL_DECLARE_PRIORITIES_DESCRIPTION =
   '`proposals` carries the fat-loss downgrade OFFER (`specialize` to `maintain`, ' +
   'rp:rp-s5-fatloss-priority-training-rule): relay it, never apply it. Accept it by declaring the ' +
   'item again at `maintain`; decline it by declaring again with `declineFatLossDowngrade: true`, ' +
-  'which is recorded and never re-offered for that ref.';
+  'which is recorded and never re-offered for that ref. ONE REFUSAL, WHICH IS NOT A GUARDRAIL: ' +
+  'a whole-body ref (`bodyweight`, `sessions`, `strength`) names one goal, so a second priority ' +
+  'for the same ref, or the same ref twice in one call, is refused with ' +
+  '`GOAL_WHOLE_BODY_PRIORITY_EXISTS` and nothing is written. Re-declare the same kind and ref to ' +
+  'change its level.';
 
 export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'Derive the coach’s expected band for every metric one priority is tracked by, and store ' +
   'each as a PROPOSAL (`acceptedBy` absent) for the lifter to accept. Takes only `priorityId`: ' +
   'EVERY INPUT IS READ, NONE IS TYPED — the start value comes from history (top load at matched ' +
-  'reps for a lift, the recent bodyweight mean, the rolling 28-day session count), the tier from ' +
+  'reps for a lift, the recent bodyweight mean, the rolling 28-day count of training days, one per day trained), the tier from ' +
   'the tier signal, the phase from the declared diet phase, the weeks from the plan tree. Returns ' +
   '`targets` (each with `targetId`, `metric`, `exerciseId`, `anchorReps`, `startValue`, ' +
   '`startMeasuredAt`, `matchedSessionCount`, `bandLowPctPerWeek`, `bandHighPctPerWeek`, ' +
@@ -42,7 +49,21 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'show both, and never present the committed value alone as the forecast — the displayed ' +
   'projection is never shaded (B55). `infoLevel` says how much the evidence earned: `cold` is an ' +
   'execution ramp with no gain claim, `ramp` is the programmed increment, `own` is this lifter’s ' +
-  'own fitted slope. A metric whose proposal was declined is never re-offered.';
+  'own fitted slope. A cold lift target also carries `startingRamp` (`sessionsNeeded`, ' +
+  '`blockedBy`, `baselineState`, `reProposeAfterCalibration`, `note`): its number is the generic ' +
+  'starting ramp, so tell the lifter so, and re-propose a data-based target once calibration ' +
+  'ends. A metric whose proposal was declined is never re-offered. ' +
+  'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
+  'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
+  '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
+  'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
+  'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
+  'calibrated is withdrawn. DATED BLOCKS (VW-477): each target is set for a block, `blockId` on ' +
+  'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
+  'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
+  'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
+  'stretch numbers never move. Until the block starts the goals page names that start date and ' +
+  'draws no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'Fix one proposed target’s numbers. Omit `committedValue` and `stretchValue` to take the ' +
@@ -57,7 +78,13 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'NEVER MOVED to make it look supported (B55). For a `reps_at_load` target pass `anchorLoad`, ' +
   'the load its reps are counted at, so the target reads as a whole set; it is fixed with the ' +
   'rest, and any other metric refuses it (`GOAL_ANCHOR_LOAD_NOT_APPLICABLE`). Returns `target`, `acceptedBy`, ' +
-  '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`.';
+  '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`, plus `startingRamp` when the ' +
+  'target is a cold lift target: accepted as the generic starting ramp, to be re-proposed as a ' +
+  'new chapter once calibrated, never edited in place. Accepting a recalibration offer ' +
+  '(`offerTargetId`) retires the starting ramp it replaces and returns `recalibration` ' +
+  '(`decisionId`, `supersededTargetId`); an offer whose lift is no longer calibrated is refused ' +
+  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays. A proposal written before targets ' +
+  'carried a block is set for one here, the way a new proposal would be (VW-477).';
 
 export const GOAL_LIST_DESCRIPTION =
   'READ-ONLY. Every declared priority with the targets derived under it, newest declaration ' +
@@ -73,8 +100,11 @@ export const GOAL_RETIRE_DESCRIPTION =
   'band the lifter worked toward is a fact about what was attempted. A cascade defaults its ' +
   'targets to `abandoned` — the honest outcome for a target whose priority went away — and an ' +
   'explicit `met` or `missed` restamps them. This is also the decline path for a proposal: ' +
-  'retiring an unaccepted target as `abandoned` means it is never re-proposed. Returns ' +
-  '`priority`, `targets` and `cascaded`.';
+  'retiring an unaccepted target as `abandoned` means it is never re-proposed. Retiring a ' +
+  'recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns ' +
+  '`declinedOffer: true`; the starting ramp stays accepted. Retiring the starting ramp itself ' +
+  'withdraws its open offer. Returns `priority`, `targets` and ' +
+  '`cascaded`.';
 
 export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'The Sunday sitting’s bodyweight-rate review: what the scale did this week against the ' +
@@ -99,7 +129,18 @@ export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'beside the committed line, not an edit of it (B55). ' +
   'Answer the proposal by calling again with `response`: `accepted`, `declined` or `ignored`. ' +
   'A DECLINED PROPOSAL IS NEVER RAISED AGAIN for the same observation, defined as the same week ' +
-  'anchor at the same urgency; it can return next week, or sooner if the signal widens.';
+  'anchor at the same urgency; it can return next week, or sooner if the signal widens. ' +
+  'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
+  'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
+  '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
+  'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
+  'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
+  'calibrated is withdrawn. DATED BLOCKS (VW-477): each target is set for a block, `blockId` on ' +
+  'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
+  'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
+  'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
+  'stretch numbers never move. Until the block starts the goals page names that start date and ' +
+  'draws no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_NEW_CHAPTER_DESCRIPTION =
   'Stamp `newChapterAt` on a target whose movement itself changed — a technique reform (squat ' +

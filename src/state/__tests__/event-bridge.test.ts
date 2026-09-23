@@ -29,7 +29,7 @@
 // the bridge layer by the active-set check before the hint is sent.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import type { Mock } from 'vitest';
+import type { Mock, MockInstance } from 'vitest';
 // `@voltras/workout-analytics` is NOT mocked — the golden VBT compare in the
 // PR2 firmware-enrichment test replays the same sample slice through the real
 // analytics pipeline the bridge uses.
@@ -44,6 +44,8 @@ import type { Rep } from '@voltras/workout-analytics';
 // static import is safe ahead of the SDK mock below.
 import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../live-signal.js';
 import type { MovementClass } from '../../exercises/movement-class.js';
+import { log } from '../../logger.js';
+import { buildEffortContext } from '../effort-context.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -393,6 +395,7 @@ function makeBareState(opts: {
   channels: FakeChannels;
   server: FakeServer;
   restTimers: RestTimerRegistryT;
+  setStartDeviceSnapshots: Map<string, unknown>;
   config: { restTimer: 'on' };
 } {
   const slots = new Map<string, unknown>();
@@ -408,6 +411,7 @@ function makeBareState(opts: {
     channels: opts.channels,
     server: opts.server,
     restTimers: new RestTimerRegistry(),
+    setStartDeviceSnapshots: new Map(),
     // VMCP-04.08: finalizeSet resolves the persisted `side` through the
     // bindings store. Nothing here binds a device, so an empty store is
     // enough and every set is written side-unknown; the real-store
@@ -2034,6 +2038,292 @@ describe('wireEventBridge', () => {
     // m/s — past the same 20% threshold, and differ only in whether the device
     // was carrying an eccentric overload. Without one, rep 2's 22% drop is read
     // as fatigue and the set is cut there.
+    // VW-540: nothing reads the pinned context yet, so a context that names a different
+    // goal and no guard must leave the old gate firing on the watch exactly as before.
+    it('fires the velocity-loss cue from the watch whatever the pinned context says', async () => {
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      live.attachEffortContext('set-trig', {
+        goal: { kind: 'velocity_loss', lossPct: 90, source: 'plan' },
+        guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+      });
+      driveRep(1, 1.0);
+      startNextRep(2, 0.5);
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(0.5),
+        force: 50,
+      });
+      startNextRep(3, 0.5);
+      await flushMicrotasks();
+
+      const fired = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'velocity_loss_exceeded');
+      expect(fired).toHaveLength(1);
+      expect(fired[0].meta.threshold_pct).toBe('30');
+    });
+
+    // VW-543: a debug line measures how often the resolver and the old gate disagree.
+    function driveLossToFiftyPct(): void {
+      driveRep(1, 1.0);
+      startNextRep(2, 0.5);
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(0.5),
+        force: 50,
+      });
+      startNextRep(3, 0.5);
+    }
+
+    function disagreements(debug: MockInstance): unknown[] {
+      return debug.mock.calls.filter((call) => String(call[0]).includes('disagree'));
+    }
+
+    it('logs a rep where the old gate fires and the resolver has no loss condition', async () => {
+      const debug = vi.spyOn(log, 'debug');
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      live.attachEffortContext('set-trig', {
+        ...buildEffortContext({
+          set: {},
+          device: { connected: true },
+          planned: undefined,
+          profile: 'no_model',
+        }),
+        goal: { kind: 'rep_range', repsLow: 8, repsHigh: 10, source: 'plan' },
+      });
+
+      driveLossToFiftyPct();
+      await flushMicrotasks();
+
+      expect(disagreements(debug)).toHaveLength(1);
+      expect(disagreements(debug)[0]).toEqual([
+        expect.any(String),
+        expect.objectContaining({ repNumber: 2, oldGate: true, resolver: false }),
+      ]);
+      debug.mockRestore();
+    });
+
+    it('logs nothing when the resolver reads the same loss condition from the watch', async () => {
+      const debug = vi.spyOn(log, 'debug');
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      // The SDK's mode name: the harness's legacy spelling maps to no resistance family.
+      live.applySettings({ trainingMode: 'Weight Training' });
+
+      driveLossToFiftyPct();
+      await flushMicrotasks();
+
+      expect(disagreements(debug)).toEqual([]);
+      debug.mockRestore();
+    });
+
+    it('marks the first rep performed under changed settings, once', async () => {
+      startWatchedSet();
+      driveRep(1, 1.0);
+      startNextRep(2, 1.0);
+      live.applySettings({ chainSettingLbs: 20 });
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(1.0),
+        force: 50,
+      });
+      startNextRep(3, 1.0);
+      client.fire.frame({
+        sequence: 35,
+        timestamp: 1500,
+        phase: 3,
+        position: 0.4,
+        velocity: frameVelocity(1.0),
+        force: 50,
+      });
+      startNextRep(4, 1.0);
+      await flushMicrotasks();
+
+      expect(live.snapshotSet()?.settingChangedAtRep).toBe(2);
+    });
+
+    it('re-pins the context from the snapshot retaken before rep 1', async () => {
+      startWatchedSet();
+      live.applySettings({ chainSettingLbs: 20, trainingMode: 'Weight Training' });
+
+      client.fire.settingsUpdate({ weight: 120 });
+
+      await vi.waitFor(() => expect(live.snapshotSet()?.effortContext).toBeDefined());
+      expect(live.snapshotSet()?.effortContext).toMatchObject({
+        resistance: { family: 'chains' },
+      });
+    });
+
+    it('marks no rep while the settings match the start snapshot', async () => {
+      startWatchedSet();
+      driveRep(1, 1.0);
+      startNextRep(2, 1.0);
+      await flushMicrotasks();
+
+      expect(live.snapshotSet()).not.toHaveProperty('settingChangedAtRep');
+    });
+
+    // VW-544: with VOLTRAS_EFFORT_CUE on, the resolver decides the one ending cue.
+    describe('the effort cue', () => {
+      const ENDING = ['set_target_reached', 'velocity_loss_exceeded', 'effort_target_reached'];
+
+      function endingEvents(): { meta: Record<string, string>; content: string }[] {
+        return channels.publish.mock.calls
+          .map((c) => c[0])
+          .filter((e) => ENDING.includes(e.meta.event_type));
+      }
+
+      /** Rep n finalizes when rep n+1 begins; each rep carries `velocities[n-1]`. */
+      function driveReps(velocities: readonly number[]): void {
+        velocities.forEach((v, i) => {
+          const seq = i + 1;
+          startNextRep(seq, v);
+          client.fire.frame({
+            sequence: seq * 10 + 5,
+            timestamp: 1000 + seq * 100 + 50,
+            phase: 3,
+            position: seq * 0.1 + 0.1,
+            velocity: frameVelocity(v),
+            force: 50,
+          });
+        });
+        startNextRep(velocities.length + 1, velocities.at(-1) ?? 0);
+      }
+
+      function startCueSet(watch?: WatchSpec): void {
+        Object.assign(fakeState, { config: { restTimer: 'on', effortCue: 'on' } });
+        startWatchedSet(watch);
+        live.applySettings({ trainingMode: 'Weight Training' });
+      }
+
+      it('cues a typed loss guard once, before the rep goal, and never a second time', async () => {
+        startCueSet({
+          notifyOn: [
+            { type: 'rep_count_reached', value: 3 },
+            { type: 'velocity_loss_exceeded', pct: 30 },
+          ],
+        });
+
+        driveReps([1.0, 0.5, 0.5, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'velocity_loss_exceeded',
+          goal_kind: 'rep_range',
+          cue_reason: 'velocity_loss',
+          rep_count_at_threshold: '2',
+          threshold_pct: '30',
+        });
+      });
+
+      it('gives a tie on one rep to the goal', async () => {
+        startCueSet({
+          notifyOn: [
+            { type: 'rep_count_reached', value: 2 },
+            { type: 'velocity_loss_exceeded', pct: 30 },
+          ],
+        });
+
+        driveReps([1.0, 0.5, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'set_target_reached',
+          goal_kind: 'rep_range',
+          cue_reason: 'reps',
+          actual_rep_count: '2',
+        });
+      });
+
+      it('cues a loss goal once, on the loss', async () => {
+        startCueSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+
+        driveReps([1.0, 0.9, 0.6, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'velocity_loss_exceeded',
+          goal_kind: 'velocity_loss',
+          cue_reason: 'velocity_loss',
+          rep_count_at_threshold: '3',
+        });
+      });
+
+      it('cues an RPE goal on a trusted curve as effort_target_reached, typed fields only', async () => {
+        startCueSet();
+        live.attachEffortContext('set-trig', {
+          ...buildEffortContext({
+            set: {},
+            device: { connected: true, trainingMode: 'Weight Training' },
+            planned: undefined,
+            profile: {
+              profile: {
+                interceptMps: 0.2,
+                slopeMpsPerRir: 0.05,
+                rirErrorReps: 1,
+                rirRange: [0, 6],
+                intensityRange: [0.6, 0.85],
+                resistanceFamily: 'constant',
+                modelVersion: 'rir-velocity@1.2.0',
+              },
+              relativeIntensity: 0.7,
+            },
+          }),
+          goal: { kind: 'target_rpe', targetRpe: 8, repsLow: null, repsHigh: null, source: 'plan' },
+        });
+
+        driveReps([0.5, 0.4, 0.28, 0.25]);
+        await flushMicrotasks();
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'effort_target_reached',
+          goal_kind: 'target_rpe',
+          cue_reason: 'effort',
+          rep_count_at_target: '3',
+          target_rpe: '8',
+        });
+        expect(JSON.parse(events[0]!.content)).not.toHaveProperty('summary');
+      });
+
+      it('never closes or persists the set it cues', async () => {
+        startCueSet({ notifyOn: [{ type: 'rep_count_reached', value: 2 }] });
+
+        driveReps([1.0, 1.0, 1.0]);
+        await flushMicrotasks();
+
+        expect(endingEvents()).toHaveLength(1);
+        expect(live.snapshotSet()?.status).toBe('active');
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      });
+
+      it('leaves the watch triggers to fire exactly as before with the flag off', async () => {
+        startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+
+        driveLossToFiftyPct();
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).not.toHaveProperty('cue_reason');
+        expect(events[0]?.meta).not.toHaveProperty('goal_kind');
+      });
+    });
+
     describe('eccentric-overload exclusion on velocity_loss_exceeded', () => {
       function driveAelSet(opts: { eccentricPercentTenths?: number }): void {
         startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 20 }] }, opts);
@@ -3234,6 +3524,19 @@ describe('wireEventBridge — guided-load auto-create', () => {
     // Single-shot: the next guided-load set on this slot brings its own.
     expect(slot.pendingGuidedLoadIsWarmup).toBeUndefined();
     expect(slot.pendingGuidedLoadWatch).toBeUndefined();
+  });
+
+  // VW-540: the third of the three places that open a set pins its context too.
+  it('pins the effort context on the set the guided load opens, from its stashed watch', async () => {
+    const slot = state.slots.get('primary') as unknown as { pendingGuidedLoadWatch?: unknown };
+    slot.pendingGuidedLoadWatch = { notifyOn: [{ type: 'rep_count_reached', value: 5 }] };
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: null });
+
+    await vi.waitFor(() => expect(live.snapshotSet()?.effortContext).toBeDefined());
+    expect(live.snapshotSet()?.effortContext).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 5, repsHigh: 5, source: 'explicit' },
+    });
   });
 
   it('VW-168a: an ordinary guided load still records a working set with no watch', () => {

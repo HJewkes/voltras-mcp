@@ -24,6 +24,7 @@ import { getRepPeakVelocity, type Rep } from '@voltras/workout-analytics';
 
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import type { TrainingIntent } from '../schemas/set.js';
+import { DEFAULT_STOP_INTENT, VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
 
 /** >=120s floor; sits comfortably inside Grgic 2018's "over 2 minutes" trained-lifter finding. */
 export const STRENGTH_REST_SECONDS = 150;
@@ -97,4 +98,80 @@ export function repsToVelocityLossThreshold(
     if (lossPct >= thresholdPct) return rep.repNumber;
   }
   return null;
+}
+
+/** Where a resolved rest length came from; `explicit_plan` is the coach's number, the other two are derived. */
+export type RestSource = 'explicit_plan' | 'intent_default' | 'intent_default_extended';
+
+/** A rest length with its provenance, shared by `timer.start` and the dashboard snapshot. */
+export interface ResolvedRest {
+  readonly seconds: number;
+  readonly source: RestSource;
+  readonly intent: TrainingIntent | null;
+  readonly prevRepsToThreshold: number | null;
+  readonly currRepsToThreshold: number | null;
+  readonly extensionSeconds: number;
+}
+
+/** What {@link resolveRestLength} reads: the plan row (if any) and the exercise's completed sets. */
+export interface RestLengthInput {
+  readonly planned?: { restSec?: number; trainingIntent?: TrainingIntent } | undefined;
+  /** Completed sets of the active exercise, oldest first; only the last two are compared. */
+  readonly exerciseSets: readonly { readonly reps: readonly Rep[] }[];
+}
+
+/**
+ * The rest to count down after a set: the plan's `restSec` when the coach set one, else
+ * the intent default plus the reps-to-threshold extension. A coach-set rest is never extended.
+ *
+ * The extension's threshold is the goal-keyed stop default for this exercise, falling to
+ * `DEFAULT_STOP_INTENT` with no intent — the same fallback the session summary uses.
+ */
+export function resolveRestLength(input: RestLengthInput): ResolvedRest {
+  const intent = input.planned?.trainingIntent;
+  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[intent ?? DEFAULT_STOP_INTENT];
+  const sets = input.exerciseSets;
+  const currSet = sets[sets.length - 1];
+  const prevSet = sets[sets.length - 2];
+  const currRepsToThreshold = currSet
+    ? repsToVelocityLossThreshold(currSet.reps, thresholdPct)
+    : null;
+  const prevRepsToThreshold = prevSet
+    ? repsToVelocityLossThreshold(prevSet.reps, thresholdPct)
+    : null;
+  const common = { intent: intent ?? null, prevRepsToThreshold, currRepsToThreshold };
+  const plannedRest = input.planned?.restSec;
+  if (plannedRest !== undefined) {
+    return { ...common, seconds: plannedRest, source: 'explicit_plan', extensionSeconds: 0 };
+  }
+  const extensionSeconds = restExtensionSeconds(prevRepsToThreshold, currRepsToThreshold);
+  return {
+    ...common,
+    seconds: defaultRestSeconds(intent) + extensionSeconds,
+    source: extensionSeconds > 0 ? 'intent_default_extended' : 'intent_default',
+    extensionSeconds,
+  };
+}
+
+/**
+ * The completed, non-empty sets of `exerciseId`, oldest first. A set with no exercise of
+ * its own inherits the session's (matches `report-tools.ts`'s `groupByExercise`).
+ */
+export function completedSetsForExercise<T extends CompletedSetShape>(
+  sets: readonly T[],
+  sessionExerciseId: string | undefined,
+  exerciseId: string,
+): T[] {
+  return sets.filter(
+    (set) =>
+      set.endedAt !== undefined &&
+      set.reps.length > 0 &&
+      (set.exerciseId ?? sessionExerciseId) === exerciseId,
+  );
+}
+
+interface CompletedSetShape {
+  readonly exerciseId?: string | undefined;
+  readonly endedAt?: string | undefined;
+  readonly reps: readonly Rep[];
 }

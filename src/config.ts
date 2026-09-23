@@ -13,6 +13,7 @@
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
+//   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
 //   - VMCP_TRUECOACH_SUBMIT_ON_END     — 'on' | 'off', default 'off'.
@@ -23,7 +24,7 @@
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
 // VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE,
-// VMCP_AUTO_ARM or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
+// VMCP_AUTO_ARM, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
 // failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
 // on the same terms.
 
@@ -148,6 +149,15 @@ export type CuesMidSetMode = 'off' | 'on';
 export type AutoArmMode = 'off' | 'on';
 
 /**
+ * Which rule decides the mid-set ending cue (VW-448 slice 7).
+ *   - `'off'` (DEFAULT) — the watch's own triggers, evaluated exactly as before.
+ *   - `'on'` — the effort resolver: at most one of `set_target_reached`,
+ *     `velocity_loss_exceeded` or `effort_target_reached` per set, and a cue record
+ *     stored with the set. Turned on by default only after the bench (slice 8).
+ */
+export type EffortCueMode = 'off' | 'on';
+
+/**
  * Whether `session.end` drops the session's rendered coach results into the
  * local outbox directory (`src/integrations/truecoach/outbox.ts`).
  *   - `'off'` (DEFAULT) — nothing is written. `report.session_results` still
@@ -209,6 +219,7 @@ export interface Config {
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
   readonly autoArm: AutoArmMode;
+  readonly effortCue: EffortCueMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
   readonly trueCoachOutboxDir: string;
   readonly trueCoachSubmitOnEnd: TrueCoachSubmitOnEndMode;
@@ -285,6 +296,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `Invalid VMCP_TRUECOACH_SUBMIT_ON_END="${trueCoachSubmitOnEnd}". Must be "off" or "on".`,
     );
   }
+  const effortCue = onOffFlag(env.VOLTRAS_EFFORT_CUE, 'VOLTRAS_EFFORT_CUE', 'off');
   const mountRatingLbs = parseMountRatingLbs(env.VMCP_MOUNT_RATING_LBS);
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
@@ -301,6 +313,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cues,
     cuesMidSet,
     autoArm,
+    effortCue,
     trueCoachOutbox,
     trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
     trueCoachSubmitOnEnd,

@@ -9,13 +9,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { ExerciseHeader } from '../spa/live-page/LiveView.js';
+import { ExerciseHeader } from '../spa/live-page/ExerciseHeader.js';
 import {
   autoArmedBadge,
   type DashboardModel,
   type LiveModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -28,6 +29,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: null,
     targetReps: null,
     expectedSetupCard: null,
@@ -38,6 +40,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
 
 function liveModel(over: Partial<LiveModel> = {}): LiveModel {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
     velocity: 0.4,
     force: 100,
     phase: 'concentric',

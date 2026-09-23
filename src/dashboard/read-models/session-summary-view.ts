@@ -9,7 +9,7 @@
 //
 // Confidentiality: fitness units and plan metadata only — no protocol data (NF-07).
 
-import type { FatigueSummary, FatigueVerdict } from '@voltras/workout-analytics';
+import type { FatigueVerdict } from '@voltras/workout-analytics';
 import type { LoadDriftFlag } from '../../analytics/load-drift.js';
 // Type-only: erased at build, so this stays free of a runtime store dependency
 // (see the file banner) — mirrors the store's four-value set-purpose enum, the
@@ -78,15 +78,13 @@ export interface SessionSummaryExercise {
   bestRepVelocity: number | null;
   /**
    * Worst within-set velocity loss across the exercise's WORKING sets, %.
-   * The verdict/fatigue below read the same set this number comes from — see
+   * The verdict below reads the same set this number comes from — see
    * `scoreVerdictSet` in `session-summary.ts` for why one basis, not two.
    */
   maxVelocityLossPct: number | null;
   /** Fatigue verdict of the exercise's WORST working set (by velocity loss). */
   verdict: FatigueVerdict | null;
-  /** Fatigue summary (RIR/RPE/consistency) of that same worst set. */
-  fatigue: FatigueSummary | null;
-  /** 1-based session ordinal of the set `verdict`/`fatigue`/`maxVelocityLossPct` read. */
+  /** 1-based session ordinal of the set `verdict`/`maxVelocityLossPct` read. */
   verdictSetIndex: number | null;
   sets: SessionSummarySet[];
   /** Null when the exercise isn't prescribed in the current program. */

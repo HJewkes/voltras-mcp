@@ -14,6 +14,7 @@ import {
   STRENGTH_REST_SECONDS,
   defaultRestSeconds,
   repsToVelocityLossThreshold,
+  resolveRestLength,
   restExtensionSeconds,
 } from '../rest-defaults.js';
 
@@ -135,5 +136,46 @@ describe('repsToVelocityLossThreshold', () => {
     expect(prev).toBe(6);
     expect(curr).toBe(5);
     expect(curr).toBeLessThan(prev!);
+  });
+});
+
+describe('resolveRestLength (VW-441)', () => {
+  // Hypertrophy (VL30): the first set crosses at rep 6, the second at rep 5, a one-rep drop.
+  const dropping = [
+    { reps: repsOf([1.0, 0.95, 0.9, 0.85, 0.8, 0.68, 0.6]) },
+    { reps: repsOf([1.0, 0.92, 0.85, 0.78, 0.68]) },
+  ];
+
+  it('takes a coach-set rest as-is and never extends it', () => {
+    const rest = resolveRestLength({
+      planned: { restSec: 90, trainingIntent: 'hypertrophy' },
+      exerciseSets: dropping,
+    });
+    expect(rest).toMatchObject({ seconds: 90, source: 'explicit_plan', extensionSeconds: 0 });
+  });
+
+  it('uses the intent default when the plan names no rest', () => {
+    const rest = resolveRestLength({ planned: { trainingIntent: 'strength' }, exerciseSets: [] });
+    expect(rest).toMatchObject({ seconds: STRENGTH_REST_SECONDS, source: 'intent_default' });
+  });
+
+  it('extends the intent default when reps to threshold dropped', () => {
+    const rest = resolveRestLength({
+      planned: { trainingIntent: 'hypertrophy' },
+      exerciseSets: dropping,
+    });
+    expect(rest).toEqual({
+      seconds: HYPERTROPHY_REST_SECONDS + REST_EXTENSION_STEP_SECONDS,
+      source: 'intent_default_extended',
+      intent: 'hypertrophy',
+      prevRepsToThreshold: 6,
+      currRepsToThreshold: 5,
+      extensionSeconds: REST_EXTENSION_STEP_SECONDS,
+    });
+  });
+
+  it('gives an unplanned exercise the 120 s default with no intent', () => {
+    const rest = resolveRestLength({ planned: undefined, exerciseSets: [] });
+    expect(rest).toMatchObject({ seconds: 120, source: 'intent_default', intent: null });
   });
 });

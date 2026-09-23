@@ -20,7 +20,11 @@ export function textResult(data: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
-export function errorResult(payload: { code: string; message: string }): ToolResult {
+export function errorResult(payload: {
+  code: string;
+  message: string;
+  field?: string;
+}): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
     isError: true,

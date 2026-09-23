@@ -8,8 +8,10 @@
 // ── Where the numbers come from ───────────────────────────────────────────
 //
 //   * VBT: `@voltras/workout-analytics`'s `getSetVelocitySummary` /
-//     `getSetFatigueSummary` / `getSetFatigueVerdict`, adapted from `StoredSet`
-//     exactly the way `tools/metrics-tools.ts` does (`{ reps }`, no rep math here).
+//     `getSetFatigueVerdict`, adapted from `StoredSet` exactly the way
+//     `tools/metrics-tools.ts` does (`{ reps }`, no rep math here). No RIR or RPE:
+//     WA's set summary reads them off velocity loss through a fixed table, the
+//     conversion VW-302 forbids, so the card states none (VW-485).
 //   * Progression: `computeProgressionDelta`, imported from `tools/plan-tools.ts`
 //     — the SAME function `plan.suggest_progression` runs. The heuristic is not
 //     re-implemented; this module only resolves its three inputs (the planned
@@ -25,8 +27,9 @@
 //
 // Confidentiality: fitness units and plan metadata only — no protocol data (NF-07).
 
+import { todayLocal } from '../../analytics/training-days.js';
+import { resolveCurrentBlock } from '../../plan/current-block.js';
 import {
-  getSetFatigueSummary,
   getSetFatigueVerdict,
   getSetVelocitySummary,
   type Set as AnalyticsSet,
@@ -154,7 +157,7 @@ export async function buildSessionSummary(
   if (session === undefined) return undefined;
 
   const allSets = await store.getSetsForSession(sessionId);
-  const program = (await store.listTrainingPrograms({ includeArchived: false }))[0];
+  const { program } = await resolveCurrentBlock(store, todayLocal());
 
   const exercises: SessionSummaryExercise[] = [];
   for (const exerciseId of groupExerciseIds(allSets, session.exerciseId)) {
@@ -245,7 +248,6 @@ async function buildExerciseSummary(
     bestRepVelocity: bestVelocities.length > 0 ? Math.max(...bestVelocities) : null,
     maxVelocityLossPct: scored.maxVelocityLossPct,
     verdict: scored.set === undefined ? null : getSetFatigueVerdict(toAnalyticsSet(scored.set)),
-    fatigue: scored.set === undefined ? null : getSetFatigueSummary(toAnalyticsSet(scored.set)),
     verdictSetIndex: scored.setIndex,
     sets: setViews,
     progression,

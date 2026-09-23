@@ -39,7 +39,7 @@ import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
 import { setPurposeFields } from '../store/set-purpose.js';
-import type { SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
+import type { JsonObject, SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
@@ -347,6 +347,21 @@ export interface ActiveSet {
    * Undefined for sets started without a `watch` arg.
    */
   watch?: ResolvedWatchConfig;
+  /** The effort context pinned at set start (VW-540); see `effort-context.ts`. Nothing reads it yet. */
+  effortContext?: JsonObject;
+  /**
+   * The first finalized rep whose device settings differ from the set's start snapshot
+   * (VW-540). Written once and never cleared: every later rep is also not like-for-like.
+   */
+  settingChangedAtRep?: number;
+  /**
+   * The rep the effort cue fired on (VW-544). Its own latch rather than a key in
+   * {@link firedTriggers}, which exists only on a set with a watch: a set whose goal
+   * comes from its plan cues too.
+   */
+  effortCueFiredAtRep?: number;
+  /** What the effort cue decided, written at set end. Nothing sets it yet. */
+  cueRecord?: JsonObject;
   /**
    * Dedupe ledger for trigger firings. Keys take the form
    * `${type}:${value or pct}` so identical specs collapse to one event,
@@ -846,6 +861,25 @@ export class LiveState {
     return this.snapshotSet();
   }
 
+  /** Attach the pinned effort context to the active set, when it is still `setId`. */
+  attachEffortContext(setId: string, context: JsonObject): void {
+    if (this.set?.setId !== setId) return;
+    this.set = { ...this.set, effortContext: context };
+  }
+
+  /** Latch the active set's one effort cue on `repNumber`. True only the first time. */
+  latchEffortCue(repNumber: number): boolean {
+    if (this.set === undefined || this.set.effortCueFiredAtRep !== undefined) return false;
+    this.set = { ...this.set, effortCueFiredAtRep: repNumber };
+    return true;
+  }
+
+  /** Record the first rep performed under changed settings. Later calls are no-ops. */
+  markSettingChanged(repNumber: number): void {
+    if (this.set === undefined || this.set.settingChangedAtRep !== undefined) return;
+    this.set = { ...this.set, settingChangedAtRep: repNumber };
+  }
+
   /**
    * Close out the active set. `reason` distinguishes graceful close
    * (`undefined`), explicit `session.end` cascade (`'session_end'`),
@@ -1261,6 +1295,12 @@ export class LiveState {
       ...this.set,
       reps: [...this.set.reps],
       ...(this.set.firmwareReps !== undefined ? { firmwareReps: [...this.set.firmwareReps] } : {}),
+      ...(this.set.effortContext !== undefined
+        ? { effortContext: structuredClone(this.set.effortContext) }
+        : {}),
+      ...(this.set.cueRecord !== undefined
+        ? { cueRecord: structuredClone(this.set.cueRecord) }
+        : {}),
     };
   }
 

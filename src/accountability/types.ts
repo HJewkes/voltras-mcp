@@ -131,6 +131,11 @@ export interface NextWorkoutRead {
   exercises: NextWorkoutExercise[];
 }
 
+/** `plan.current_block`'s planning read when the next block is due to be planned (VW-476). */
+export interface PlanningDueRead {
+  reason: string;
+}
+
 /** One planned day and the fallback day that also counts as done (LIT §3.5). */
 export interface PlannedSlot {
   day: string;

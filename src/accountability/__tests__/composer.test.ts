@@ -41,7 +41,7 @@ const NEXT_WORKOUT: NextWorkoutRead = {
 const SUNDAY_INPUT: SundayAnchorInput = {
   lifterName: 'Harrison',
   adherence: { planned: 4, done: 3, trend: 'steady' },
-  rolling28DayCompletedSessions: 13,
+  rolling28DayTrainingDays: 13,
   nextWorkout: NEXT_WORKOUT,
   slots: SLOTS,
   ifThenPlan: 'if work runs past 18:00 on Monday, then Monday moves to Wednesday',
@@ -63,7 +63,7 @@ const MISS_INPUT: MissRecoveryInput = {
 const REALIGN_INPUT: RealignOpenerInput = {
   lifterName: 'Harrison',
   adherence: { planned: 4, done: 1, trend: 'declining' },
-  rolling28DayCompletedSessions: 6,
+  rolling28DayTrainingDays: 6,
   slots: SLOTS,
 };
 
@@ -73,6 +73,13 @@ function everyMessage(): { label: string; text: string }[] {
     {
       label: 'sunday anchor with the monthly commitment re-offer',
       text: composeSundayAnchor({ ...SUNDAY_INPUT, monthlyCommitmentReoffer: true }).text,
+    },
+    {
+      label: 'sunday anchor offering the planning sitting',
+      text: composeSundayAnchor({
+        ...SUNDAY_INPUT,
+        planning: { reason: 'Block 1 ends on 2026-10-04 and nothing is planned after it.' },
+      }).text,
     },
     { label: 'miss recovery', text: composeMissRecovery(MISS_INPUT).text },
     {
@@ -142,6 +149,17 @@ describe('the §2 copy rules, over every template', () => {
 });
 
 describe('composeSundayAnchor', () => {
+  it('offers the planning sitting only when planning is due (VW-476)', () => {
+    const due = composeSundayAnchor({
+      ...SUNDAY_INPUT,
+      planning: { reason: 'No block has dates yet.' },
+    });
+    const notDue = composeSundayAnchor({ ...SUNDAY_INPUT, planning: null });
+
+    expect(due.text).toContain('The next block is due to be planned: No block has dates yet.');
+    expect(notDue.text).not.toContain('due to be planned');
+  });
+
   it("shows last week's numbers back instead of asking how it went", () => {
     const { text } = composeSundayAnchor(SUNDAY_INPUT);
     expect(text).toContain('Planned 4, recorded 3');
@@ -155,7 +173,7 @@ describe('composeSundayAnchor', () => {
 
   it('reports progress as a rolling 28-day count, not a streak (rule 7)', () => {
     const { text } = composeSundayAnchor(SUNDAY_INPUT);
-    expect(text).toContain('Rolling 28-day session count: 13');
+    expect(text).toContain('Rolling 28-day training days: 13');
   });
 
   it('names every slot with its fallback day and says a fallback counts', () => {

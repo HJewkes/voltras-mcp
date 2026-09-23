@@ -104,6 +104,7 @@ describe('v26 -> v27 migration', () => {
           'exercise_id',
           'anchor_reps',
           'anchor_load',
+          'block_id',
           'start_value',
           'start_measured_at',
           'band_low_pct_per_week',
@@ -200,7 +201,7 @@ describe('v26 -> v27 migration', () => {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(31);
+        expect(version.user_version).toBe(41);
       } finally {
         db.close();
       }

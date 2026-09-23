@@ -110,8 +110,8 @@ function parseResult(r: ToolResult): unknown {
 
 async function seedSessions(store: SqliteSessionStore, baselineRom: number, currentRom: number) {
   const now = new Date().toISOString();
-  await store.putSession({ id: 'sess-1', startedAt: now });
-  await store.putSession({ id: 'sess-2', startedAt: now });
+  await store.putSession({ kind: 'training', id: 'sess-1', startedAt: now });
+  await store.putSession({ kind: 'training', id: 'sess-2', startedAt: now });
   await store.putSet(makeSet('a', 'sess-1', baselineRom));
   await store.putSet(makeSet('b', 'sess-2', currentRom));
 }

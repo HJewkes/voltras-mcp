@@ -15,7 +15,7 @@
 // A fake that answered `getBaseline: () => undefined` would pass this file while
 // the command previewed one status for all six names.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,9 @@ import {
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
+
+/** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
+const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
 
 const scratchDirs: string[] = [];
 afterEach(() => {
@@ -69,8 +72,8 @@ describe('dashboard:preview goal states', () => {
       const view = await viewFor(state);
 
       expect(view.status).toBe(state.expectedStatus);
-      expect(view.committed).toBe(state.committedLbs);
-      expect(view.stretch).toBe(state.stretchLbs);
+      expect(view.committed).toBe(view.target.committedValue);
+      expect(view.stretch).toBe(view.target.stretchValue);
     });
   }
 
@@ -90,6 +93,25 @@ describe('dashboard:preview goal states', () => {
     expect(latestReading(view)).toBeGreaterThan(view.committed);
   });
 
+  it('states what the calibrating seed still waits on, off a target stored cold (VW-444)', async () => {
+    const view = await viewFor(goalPreviewState('calibrating'));
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      targetBasis: 'execution_ramp',
+      targetInfoLevel: 'cold',
+    });
+  });
+
+  it('lands the two recalibration states on their page lines (VW-444 part 2)', async () => {
+    const offered = await viewFor(goalPreviewState('recalibration_offered'));
+    const declined = await viewFor(goalPreviewState('recalibration_declined'));
+
+    expect(offered.recalibration).toEqual({ state: 'offered' });
+    expect(declined.recalibration).toEqual({ state: 'kept_starting_ramp' });
+  });
+
   it('keeps the ahead reading short of the committed target, so pace is what it shows', async () => {
     const view = await viewFor(goalPreviewState('ahead'));
 
@@ -101,6 +123,54 @@ describe('dashboard:preview goal states', () => {
 
     expect(latestReading(view)).toBeLessThan(view.committed);
   });
+
+  // VW-421: the target used to start a day AFTER the oldest seeded session, so
+  // the first lift fell outside the block and the line began a week late.
+  const blockLongStates = GOAL_PREVIEW_STATES.filter(
+    (state) => state.weeklyLoadsLbs.length === state.targetStartWeeksAgo + 1,
+  );
+  for (const state of blockLongStates) {
+    it(`draws the first lift of ${state.name} on week 1, where the band starts`, async () => {
+      const view = await viewFor(state);
+
+      const firstMatched = view.actuals.find((actual) => actual.matched);
+      expect(firstMatched?.value).toBe(state.weeklyLoadsLbs[0]);
+      expect(firstMatched?.weekIndex).toBe(1);
+    });
+  }
+
+  // VW-422: the newest session is the current week's reading, never a week behind it.
+  for (const state of GOAL_PREVIEW_STATES) {
+    it(`gives the current week of ${state.name} a reading`, async () => {
+      const view = await viewFor(state);
+
+      const matched = view.actuals.filter((actual) => actual.matched);
+      expect(matched[matched.length - 1]?.weekIndex).toBe(view.mesoMilestone.currentWeek);
+    });
+  }
+
+  // The newest session has to share `now`'s calendar week, even seconds after it turned.
+  it(
+    'keeps every state on its status and its current-week reading just past Monday midnight UTC',
+    async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
+      try {
+        for (const state of GOAL_PREVIEW_STATES) {
+          const view = await viewFor(state);
+
+          const matched = view.actuals.filter((actual) => actual.matched);
+          expect(view.status, state.name).toBe(state.expectedStatus);
+          expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
+            view.mesoMilestone.currentWeek,
+          );
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    SEED_ALL_STATES_TIMEOUT_MS,
+  );
 
   it('rejects a state nobody defined, naming the ones that exist', () => {
     expect(() => goalPreviewState('nearly')).toThrow(/unknown --state nearly; known: calibrating/);

@@ -5,12 +5,16 @@
 // them. `at` pins the dry-run instant, which is the only way to exercise the
 // Sunday and Thursday branches without waiting for a Sunday.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { AccountabilityState } from '../../accountability/types.js';
-import { describeAccountabilityState } from '../accountability-tools.js';
+import {
+  describeAccountabilityPreview,
+  describeAccountabilityState,
+} from '../accountability-tools.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 /** Local-time noon on days that are unambiguously that weekday in any timezone. */
 const SUNDAY_NOON = '2026-09-13T12:00:00';
@@ -47,9 +51,35 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
+  vi.useRealTimers();
 });
 
+/** One unreviewed local day: a session nobody has marked, holding a working set. */
+async function seedUnreviewedDay(): Promise<void> {
+  const at = '2026-09-10T15:00:00.000Z';
+  await store.putSession({ id: 'unreviewed', startedAt: at, endedAt: at });
+  await store.putSet({
+    id: 'unreviewed-set',
+    sessionId: 'unreviewed',
+    startedAt: at,
+    endedAt: at,
+    partial: false,
+    reps: [],
+  });
+}
+
 describe('accountability.state', () => {
+  // VW-489: the message's counts exclude unreviewed history, so the read has to
+  // say how much is being withheld or a zero reads as "he did not train".
+  it('says how many past days are waiting on a review', async () => {
+    await seedUnreviewedDay();
+
+    const result = await describeAccountabilityState(makeState(), { at: WEDNESDAY_NOON });
+
+    expect(result.unreviewedDays).toBe(1);
+    expect(result.unreviewedDayList).toEqual(['2026-09-10']);
+  });
+
   it('reports defaults and says they are not persisted when no row exists', async () => {
     const result = await describeAccountabilityState(makeState(), { at: WEDNESDAY_NOON });
     expect(result.persisted).toBe(false);
@@ -104,6 +134,30 @@ describe('accountability.state', () => {
     expect(result.decision.action).toBe('silent');
   });
 
+  it('reads the Thursday trend as of `at`, not the wall clock (VW-472)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-19T12:00:00'));
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+    await seedTrainingDay(store, {
+      kind: 'training',
+      id: 'after-at',
+      startedAt: '2026-09-18T12:00:00',
+      endedAt: '2026-09-18T12:30:00',
+    });
+    await store.putProgramAssignment({
+      id: 'after-at-assignment',
+      sessionId: 'after-at',
+      workoutTemplateId: 'tpl',
+      assignedAt: '2026-09-18T12:00:00',
+    });
+
+    const result = await describeAccountabilityState(makeState(), { at: THURSDAY_NOON });
+
+    expect(result.tick).toBe('thursday');
+    expect(result.adherenceTrend).toBeNull();
+  });
+
   it('reads a miss entered on a Monday as the early-week trigger', async () => {
     await store.putAccountabilityState(
       storedState({ state: 'missed', consecutiveMisses: 1, enteredAt: '2026-09-14T12:00:00' }),
@@ -112,5 +166,71 @@ describe('accountability.state', () => {
     const result = await describeAccountabilityState(makeState(), { at: THURSDAY_NOON });
     expect(result.decision).toMatchObject({ action: 'send', kind: 'miss_recovery' });
     expect(result.decision.reason).toContain('early_week_miss');
+  });
+});
+
+/** `count` ended sessions minutes apart on one local day: one visit logged per exercise. */
+async function rowsOnOneDay(day: Date, count: number, prefix: string): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, i * 4);
+    await seedTrainingDay(store, {
+      kind: 'training',
+      id: `${prefix}-${i}`,
+      startedAt: start.toISOString(),
+      endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),
+    });
+  }
+}
+
+/** The smallest plan tree `plan.next_workout` resolves, so the preview has something to render. */
+async function seedOneTemplatePlan(): Promise<void> {
+  await store.putTrainingProgram({
+    id: 'prog',
+    name: 'Base',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  await store.putTrainingBlock({
+    id: 'blk',
+    programId: 'prog',
+    orderIndex: 0,
+    name: 'B1',
+    weeksCount: 1,
+  });
+  await store.putTrainingWeek({ id: 'wk', blockId: 'blk', orderIndex: 0 });
+  await store.putWorkoutTemplate({ id: 'tpl', weekId: 'wk', name: 'Full A', orderIndex: 0 });
+}
+
+describe('accountability.preview', () => {
+  it('carries the unreviewed-day count even when it decides to stay silent', async () => {
+    await seedUnreviewedDay();
+
+    const result = await describeAccountabilityPreview(makeState(), { at: WEDNESDAY_NOON });
+
+    expect(result.decision.action).not.toBe('send');
+    expect(result.unreviewedDays).toBe(1);
+  });
+
+  it('reads the rolling line in training days, as of `at` (VW-462)', async () => {
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+    await rowsOnOneDay(new Date(2026, 8, 7), 12, 'visit');
+    await rowsOnOneDay(new Date(2026, 8, 15), 1, 'after-at');
+
+    const result = await describeAccountabilityPreview(makeState(), { at: SUNDAY_NOON });
+
+    expect(result.inputsUsed?.rolling28DayTrainingDays).toBe(1);
+    expect(result.text).toContain('Rolling 28-day training days: 1.');
+  });
+
+  it('offers the planning sitting when no block is dated (VW-476)', async () => {
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+
+    const result = await describeAccountabilityPreview(makeState(), { at: SUNDAY_NOON });
+
+    expect(result.inputsUsed?.planning).toEqual({ reason: 'No block has dates yet.' });
+    expect(result.text).toContain(
+      'The next block is due to be planned: No block has dates yet. Pick a time this week',
+    );
   });
 });

@@ -31,7 +31,9 @@ export const BALLISTIC_PULL: SuppressionReason = 'ballistic_pull';
  * `watch.velocityLoss.force`. Any other class, an unstamped set, and a forced
  * set all evaluate the trigger exactly as they did before this gate.
  */
-export function velocityLossWatchSuppressed(set: ActiveSet): boolean {
+export function velocityLossWatchSuppressed(
+  set: Pick<ActiveSet, 'watch' | 'movementClass'>,
+): boolean {
   if (set.watch?.velocityLoss?.force === true) return false;
   return !velocityLossIsValidFor(set.movementClass ?? 'unknown');
 }

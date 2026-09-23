@@ -39,7 +39,6 @@ interface Fixture {
   sets?: StoredSet[];
   hasSession?: boolean;
   declaredTier?: string;
-  sessionsLogged?: number;
 }
 
 function priorSet(id: string, exerciseId: string, extra: Partial<StoredSet> = {}): StoredSet {
@@ -70,7 +69,13 @@ function makeState(fixture: Fixture = {}): ServerState {
           declaredTier: fixture.declaredTier ?? 'intermediate',
           everPlateaued: true,
         }),
-      countSessions: () => Promise.resolve(fixture.sessionsLogged ?? 30),
+      listSessionReviewRows: () => Promise.resolve([]),
+      listTrainingDayInstants: () =>
+        Promise.resolve(
+          Array.from({ length: 30 }, (_, i) =>
+            new Date(Date.UTC(2026, 0, 1 + i * 7, 12)).toISOString(),
+          ),
+        ),
       getSessionDateSpan: () =>
         Promise.resolve({ first: '2026-01-01T00:00:00.000Z', last: '2026-09-08T00:00:00.000Z' }),
     },

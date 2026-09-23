@@ -142,6 +142,7 @@ interface PlateauBody {
   phase: string;
   verdict: 'plateau' | 'tolerated' | 'none';
   dietPhaseContext: { phase: string; weeksInPhase: number | null; toleranceApplied: boolean };
+  flatline: { days: number; points: number; slopeLbsPerWeek: number } | null;
 }
 
 interface HistoryTrendBody {
@@ -467,5 +468,59 @@ describe('metrics.compute — history.trend plateau tolerance (VW-277)', () => {
     expect(plateau.isPlateau).toBe(false);
     expect(plateau.verdict).toBe('none');
     expect(plateau.dietPhaseContext.phase).toBe('gain');
+  });
+});
+
+// VW-452: a load metric's verdict is a flatline, not WA's ±5% window. WA's
+// `isPlateau` is still reported verbatim beside it.
+describe('metrics.compute — history.trend flatline (VW-452)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function plateauFor(loads: number[], metric?: string): Promise<PlateauBody> {
+    const sets = loads.map((load, i) => makeSet(`s-${i}`, i, load));
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, makeState(sets), makePlaceholders(server));
+    const result = await callTool(tools, {
+      pipeline: 'history.trend',
+      exerciseId: 'back-squat',
+      ...(metric === undefined ? {} : { metric }),
+    });
+    expect(result.isError).toBeUndefined();
+    return (parsePayload(result) as HistoryTrendBody).plateau;
+  }
+
+  it('reports no plateau for a lifter climbing on the programmed ramp', async () => {
+    const plateau = await plateauFor([100, 102.5, 105, 107.5, 110]);
+
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('none');
+    expect(plateau.flatline).toBeNull();
+  });
+
+  it('reports the flatline behind a plateau verdict', async () => {
+    const plateau = await plateauFor([100, 100, 100, 100]);
+
+    expect(plateau.verdict).toBe('plateau');
+    expect(plateau.flatline).toMatchObject({ days: 21, points: 4, slopeLbsPerWeek: 0 });
+  });
+
+  it('judges a half-pound weekly climb flat against the plateau step, not the goal ramp (VW-482)', async () => {
+    const plateau = await plateauFor([100, 100.5, 101, 101.5, 102]);
+
+    expect(plateau.verdict).toBe('plateau');
+  });
+
+  it('keeps the detector verdict for volume, which has no load step to judge by', async () => {
+    const plateau = await plateauFor([100, 102.5, 105, 107.5, 110], 'volume');
+
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('plateau');
+    expect(plateau.flatline).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import {
   GOAL_BAND_CONSTANTS,
   type GoalBandInput,
   type GoalBandWeek,
+  type RampClass,
 } from '../goal-band.js';
 
 /** `count` weeks indexed from 1, with the 1-based indexes in `deloads` flagged. */
@@ -19,7 +20,7 @@ function weeksOf(count: number, deloads: readonly number[] = []): GoalBandWeek[]
   }));
 }
 
-/** A 200 lb row with enough history to earn the RP ramp, in no declared phase. */
+/** A 200 lb row (an upper-body compound) with enough history to earn the RP ramp, in no declared phase. */
 function rowInput(overrides: Partial<GoalBandInput> = {}): GoalBandInput {
   return {
     metric: 'top_load_at_reps',
@@ -27,6 +28,7 @@ function rowInput(overrides: Partial<GoalBandInput> = {}): GoalBandInput {
     horizonWeeks: 6,
     weeks: weeksOf(6),
     tier: 'intermediate',
+    rampClass: 'upper_compound',
     infoLevel: 'ramp',
     dietState: { phase: 'maintenance', weeksInPhase: 4 },
     layoff: false,
@@ -65,49 +67,62 @@ describe('cold: execution ramp, no gain claim', () => {
   });
 });
 
-describe('ramp: a +5 lb/wk row over six weeks with a week-6 deload', () => {
+describe('ramp: a +4 lb/wk row over six weeks with a week-6 deload', () => {
   const band = deriveGoalBand(rowInput({ weeks: weeksOf(6, [6]) }));
 
   it('is the RP ramp, full weekly step on the high edge', () => {
     expect(band.basis).toBe('rp_ramp');
     expect(band.infoLevel).toBe('ramp');
-    expect(band.bandHighPctPerWeek).toBe(2.5); // 5 lb on a 200 lb row
-    expect(band.bandLowPctPerWeek).toBe(1.25); // every other week held
+    expect(band.bandHighPctPerWeek).toBe(2); // 4 lb on a 200 lb row
+    expect(band.bandLowPctPerWeek).toBe(1); // every other week held
   });
 
   it('projects the exact weekly edges, with the deload week flat', () => {
     expect(band.expected).toEqual([
       { weekIndex: 1, low: 200, high: 200 },
-      { weekIndex: 2, low: 202.5, high: 205 },
-      { weekIndex: 3, low: 205, high: 210 },
-      { weekIndex: 4, low: 207.5, high: 215 },
-      { weekIndex: 5, low: 210, high: 220 },
-      { weekIndex: 6, low: 210, high: 220 },
+      { weekIndex: 2, low: 202, high: 204 },
+      { weekIndex: 3, low: 204, high: 208 },
+      { weekIndex: 4, low: 206, high: 212 },
+      { weekIndex: 5, low: 208, high: 216 },
+      { weekIndex: 6, low: 208, high: 216 },
     ]);
   });
 
   it('commits to the low edge and shows the high edge as the stretch', () => {
-    expect(band.committedValue).toBe(210);
-    expect(band.stretchValue).toBe(220);
+    expect(band.committedValue).toBe(208);
+    expect(band.stretchValue).toBe(216);
     expect(band.committedValue).toBe(band.expected[5].low);
     expect(band.stretchValue).toBe(band.expected[5].high);
   });
 
   it('holds the band across a mid-horizon deload and resumes after it', () => {
     const midDeload = deriveGoalBand(rowInput({ weeks: weeksOf(6, [3]) }));
-    expect(midDeload.expected.map((week) => week.high)).toEqual([200, 205, 205, 210, 215, 220]);
+    expect(midDeload.expected.map((week) => week.high)).toEqual([200, 204, 204, 208, 212, 216]);
   });
 });
 
-describe('ramp: the cited 2.5-10 lb bracket clamps the proportional step', () => {
+describe('ramp: a percent of load with no pound floor, capped at 10 lb (VW-482)', () => {
   it('binds the cap on a heavy lift', () => {
-    const band = deriveGoalBand(rowInput({ startValue: 500 }));
-    expect(band.bandHighPctPerWeek).toBe(2); // 10 lb of 500
+    const band = deriveGoalBand(rowInput({ startValue: 500, rampClass: 'lower_compound' }));
+    expect(band.bandHighPctPerWeek).toBe(2); // 10 lb of 500, not 3% = 15 lb
   });
 
-  it('binds the floor on a light lift', () => {
-    const band = deriveGoalBand(rowInput({ startValue: 60 }));
-    expect(band.expected[1].high - band.expected[0].high).toBeCloseTo(2.5, 6);
+  it('takes a light lift’s step as an exact fraction of a pound', () => {
+    const band = deriveGoalBand(rowInput({ startValue: 60, rampClass: 'isolation' }));
+    expect(band.expected[1].high - band.expected[0].high).toBeCloseTo(0.9, 6);
+  });
+
+  it('ramps an exercise the catalog cannot place as an upper-body compound', () => {
+    const { rampClass: _omitted, ...unplaced } = rowInput();
+    expect(deriveGoalBand(unplaced).bandHighPctPerWeek).toBe(2);
+    expect(GOAL_BAND_CONSTANTS.rampClassWhenUnknown).toBe('upper_compound');
+  });
+
+  it('leaves a rep goal on its cited 1-2 reps a week, whatever the class', () => {
+    const reps = (rampClass: RampClass) =>
+      deriveGoalBand(rowInput({ metric: 'reps_at_load', startValue: 10, rampClass }));
+    expect(reps('isolation').expected).toEqual(reps('lower_compound').expected);
+    expect(reps('isolation').bandHighPctPerWeek).toBe(20);
   });
 });
 
@@ -154,8 +169,8 @@ describe('layoff: the high edge is front-loaded for the first two ramping weeks'
   const band = deriveGoalBand(rowInput({ layoff: true }));
 
   it('widens only the high edge, and only early', () => {
-    expect(band.expected.map((week) => week.high)).toEqual([200, 207.5, 215, 220, 225, 230]);
-    expect(band.expected.map((week) => week.low)).toEqual([200, 202.5, 205, 207.5, 210, 212.5]);
+    expect(band.expected.map((week) => week.high)).toEqual([200, 206, 212, 216, 220, 224]);
+    expect(band.expected.map((week) => week.low)).toEqual([200, 202, 204, 206, 208, 210]);
   });
 
   it('cites the deceleration the front-loading comes from', () => {
@@ -167,25 +182,25 @@ describe('diet state: what a declared phase does to a lift band', () => {
   it('centres a fat-loss lift target on hold and widens it', () => {
     const band = deriveGoalBand(rowInput({ dietState: { phase: 'fat-loss', weeksInPhase: 4 } }));
     expect(band.direction).toBe('hold');
-    expect(band.bandLowPctPerWeek).toBe(-1.09375); // half the ramp span, widened x1.75
-    expect(band.bandHighPctPerWeek).toBe(1.09375);
+    expect(band.bandLowPctPerWeek).toBe(-0.875); // half the ramp span, widened x1.75
+    expect(band.bandHighPctPerWeek).toBe(0.875);
     expect(band.expected[0]).toEqual({ weekIndex: 1, low: 200, high: 200 });
-    expect(band.expected[5]).toEqual({ weekIndex: 6, low: 189.0625, high: 210.9375 });
+    expect(band.expected[5]).toEqual({ weekIndex: 6, low: 191.25, high: 208.75 });
   });
 
   it('leaves a beginner untouched in a deficit', () => {
     const band = deriveGoalBand(
       rowInput({ tier: 'beginner', dietState: { phase: 'fat-loss', weeksInPhase: 4 } }),
     );
-    expect(band.bandLowPctPerWeek).toBe(1.25);
-    expect(band.bandHighPctPerWeek).toBe(2.5);
+    expect(band.bandLowPctPerWeek).toBe(1.5);
+    expect(band.bandHighPctPerWeek).toBe(3);
     expect(band.notes.join(' ')).toContain('rp-s4-training-invariant-across-diet-phase');
   });
 
   it('tightens the band toward the full ramp in a gain phase', () => {
     const band = deriveGoalBand(rowInput({ dietState: { phase: 'gain', weeksInPhase: 5 } }));
-    expect(band.bandHighPctPerWeek).toBe(2.5);
-    expect(band.bandLowPctPerWeek).toBe(1.5625); // 1.25 span x0.75, off the high edge
+    expect(band.bandHighPctPerWeek).toBe(2);
+    expect(band.bandLowPctPerWeek).toBe(1.25); // 1 span x0.75, off the high edge
   });
 
   it('is not provisional in a declared phase', () => {
@@ -204,17 +219,17 @@ describe('recomposition: the committed edge is hold and the stretch is the ramp 
   it('holds the low edge at the start value and ramps the high edge', () => {
     const band = deriveGoalBand(recompInput());
     expect(band.bandLowPctPerWeek).toBe(0);
-    expect(band.bandHighPctPerWeek).toBe(2.5);
+    expect(band.bandHighPctPerWeek).toBe(2);
     expect(band.expected).toEqual([
       { weekIndex: 1, low: 200, high: 200 },
-      { weekIndex: 2, low: 200, high: 205 },
-      { weekIndex: 3, low: 200, high: 210 },
-      { weekIndex: 4, low: 200, high: 215 },
-      { weekIndex: 5, low: 200, high: 220 },
-      { weekIndex: 6, low: 200, high: 220 },
+      { weekIndex: 2, low: 200, high: 204 },
+      { weekIndex: 3, low: 200, high: 208 },
+      { weekIndex: 4, low: 200, high: 212 },
+      { weekIndex: 5, low: 200, high: 216 },
+      { weekIndex: 6, low: 200, high: 216 },
     ]);
     expect(band.committedValue).toBe(200);
-    expect(band.stretchValue).toBe(220);
+    expect(band.stretchValue).toBe(216);
     expect(band.direction).toBe('hold');
   });
 
@@ -231,8 +246,8 @@ describe('recomposition: the committed edge is hold and the stretch is the ramp 
     const beginner = deriveGoalBand(recompInput({ tier: 'beginner' }));
     const maintenance = deriveGoalBand(rowInput({ tier: 'beginner', weeks: weeksOf(6, [6]) }));
     expect(beginner.expected).toEqual(maintenance.expected);
-    expect(beginner.bandLowPctPerWeek).toBe(1.25);
-    expect(beginner.bandHighPctPerWeek).toBe(2.5);
+    expect(beginner.bandLowPctPerWeek).toBe(1.5);
+    expect(beginner.bandHighPctPerWeek).toBe(3);
     expect(beginner.notes.join(' ')).toContain('rp-s4-training-invariant-across-diet-phase');
   });
 
@@ -278,27 +293,47 @@ describe('recomposition bodyweight: hold by default, slow loss when declared (VW
     expect(band.notes.join(' ')).toContain('rp-s12-maintenance-buffer-2pct');
   });
 
-  it('runs one slow-loss line when the lifter declared it', () => {
+  it('commits to holding weight and stretches to -0.5%/wk when the lifter declared slow loss (VW-468)', () => {
     const band = bodyweight(true);
     expect(band.direction).toBe('down');
-    expect(band.bandLowPctPerWeek).toBe(-0.5);
+    expect(band.bandLowPctPerWeek).toBe(0);
     expect(band.bandHighPctPerWeek).toBe(-0.5);
     expect(band.corridorPct).toBeNull();
     expect(band.expected).toEqual([
       { weekIndex: 1, low: 200, high: 200 },
-      { weekIndex: 2, low: 199, high: 199 },
-      { weekIndex: 3, low: 198, high: 198 },
-      { weekIndex: 4, low: 197, high: 197 },
+      { weekIndex: 2, low: 200, high: 199 },
+      { weekIndex: 3, low: 200, high: 198 },
+      { weekIndex: 4, low: 200, high: 197 },
     ]);
-    expect(band.committedValue).toBe(197);
+    expect(band.committedValue).toBe(200);
     expect(band.stretchValue).toBe(197);
     expect(band.notes.join(' ')).toContain('rp-s11-fat-loss-rate-heuristic');
+    expect(band.notes.join(' ')).toContain('VW-468');
   });
 
-  it('takes the slow edge from the cited fat-loss range rather than a constant of its own', () => {
-    expect(bodyweight(true).bandLowPctPerWeek).toBe(
+  it('stretches to the slow edge of the cited fat-loss range', () => {
+    expect(bodyweight(true).bandHighPctPerWeek).toBe(
       GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek.low,
     );
+  });
+
+  it.each([
+    [150, 144.75],
+    [190, 183.35],
+    [230, 221.95],
+  ])('pins a %i lb lifter over 8 weeks: hold the start, stretch to %f', (start, stretch) => {
+    const band = deriveGoalBand(
+      rowInput({
+        metric: 'bodyweight',
+        startValue: start,
+        horizonWeeks: 8,
+        weeks: weeksOf(8),
+        dietState: { phase: 'recomposition', weeksInPhase: 4, slowLoss: true },
+      }),
+    );
+    expect(band.committedValue).toBe(start);
+    expect(band.stretchValue).toBeCloseTo(stretch, 6);
+    expect(band.expected.every((week) => week.low === start)).toBe(true);
   });
 });
 

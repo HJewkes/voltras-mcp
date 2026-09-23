@@ -19,7 +19,7 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import { cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
+import { cardChart, cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -108,6 +108,7 @@ function view(
     priority: pri,
     target: tgt,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals,
     weeks: WEEKS,
     now: WEEK_3,
@@ -325,10 +326,80 @@ describe('the two block verdicts on the goals page (VW-400)', () => {
     expect(milestone.target).toEqual({
       metric: 'top_load_at_reps',
       reps: 8,
-      load: 182.5,
+      load: 183, // the stored 182.5 at the device's 1 lb step (VW-482)
       unit: 'lb',
     });
     expect(milestone.state).toBe(benchView.mesoMilestone.state);
     expect(milestone.weeks).toHaveLength(benchView.weekOutcomes.length);
+  });
+});
+
+describe('a goal accepted while calibrating (VW-444)', () => {
+  const SENTENCE =
+    'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.';
+
+  it('says it once, under the compact card; the full card states the wait in its chart', () => {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const cold = view(
+      benchPriority,
+      { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 174)],
+    );
+    data.progress[benchPriority.id] = [cold];
+
+    const html = render(data);
+
+    expect(cold.status).toBe('calibrating');
+    expect(html.split(SENTENCE)).toHaveLength(2);
+  });
+
+  it('adds no calibration sentence once no target is calibrating', () => {
+    expect(render(baseData().data)).not.toContain('to calibrate');
+  });
+
+  it('gives the chart its calibrating note from the same copy, and none once calibrated', () => {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const cold = view(
+      benchPriority,
+      { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 174)],
+    );
+    const calibrated = data.progress[benchPriority.id]![0]!;
+
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(calibrated)).not.toHaveProperty('calibratingNote');
+  });
+});
+
+describe('a calibrated starting ramp (VW-444 part 2)', () => {
+  function rampData(declined: boolean): GoalsPageData {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const ramp = buildGoalProgressView({
+      priority: benchPriority,
+      target: { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      band: BAND,
+      calibrationEvidence: { matchedSessionCount: 3, baselineState: 'PROVISIONAL' },
+      recalibrationDeclined: declined,
+      actuals: [actual(1, 168), actual(2, 171), actual(3, 174)],
+      weeks: WEEKS,
+      now: WEEK_3,
+      dietState: { phase: 'maintenance', weeksInPhase: 4 },
+    });
+    data.progress[benchPriority.id] = [ramp];
+    return data;
+  }
+
+  it('says a target based on the lifts is ready under both cards', () => {
+    const line =
+      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
+    // The full card keeps it: its chart has no in-plot note once the lift has calibrated.
+    expect(render(rampData(false)).split(line)).toHaveLength(3);
+  });
+
+  it('shows no line at all once the lifter declined', () => {
+    expect(render(rampData(true))).not.toContain('Calibrated');
   });
 });

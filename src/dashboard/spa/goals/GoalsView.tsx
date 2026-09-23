@@ -30,12 +30,14 @@
  * viewport without a width of ours.
  */
 import React from 'react';
+import { Text } from 'react-native';
 import {
   EmptyState,
   GoalCard,
   MetricTiles,
   Pill,
   Surface,
+  useOnSurfaceColor,
   type MetricTileData,
 } from '@titan-design/react-ui';
 import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
@@ -45,6 +47,7 @@ import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
+import { calibrationLine } from './calibration-copy.js';
 import {
   bodyweightTarget,
   cardChart,
@@ -92,16 +95,42 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
 function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
   const { priority, view } = props.row;
   return (
-    <GoalCard
-      size="full"
-      title={priorityLabel(priority)}
-      priority={priority.level}
-      status={view.status}
-      basis={view.statusBasis}
-      isPR={hasPR(view)}
-      milestone={cardMilestone(view)}
-      goal={cardChart(view)}
-    />
+    <WithCalibrationNote view={view} chartShowsNote>
+      <GoalCard
+        size="full"
+        title={priorityLabel(priority)}
+        priority={priority.level}
+        status={view.status}
+        basis={view.statusBasis}
+        isPR={hasPR(view)}
+        milestone={cardMilestone(view)}
+        goal={cardChart(view)}
+      />
+    </WithCalibrationNote>
+  );
+}
+
+/**
+ * The line under a card about calibration (VW-444): a calibrating target's plain
+ * sentence, or the line an accepted starting ramp carries once its lift has
+ * calibrated. A card whose chart states the wait in the plot (`chartShowsNote`,
+ * the full card) drops the sentence rather than say the count twice (human,
+ * review round); the compact card's chart has no note, so it keeps it.
+ */
+function WithCalibrationNote(props: {
+  view: GoalTargetRow['view'];
+  chartShowsNote?: boolean;
+  children: React.JSX.Element;
+}): React.JSX.Element {
+  const color = useOnSurfaceColor('secondary');
+  const inPlot = props.chartShowsNote === true && props.view.calibration !== undefined;
+  const line = inPlot ? null : calibrationLine(props.view);
+  if (line === null) return props.children;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: SPACE.xs }}>
+      {props.children}
+      <Text style={{ color, fontSize: 14 }}>{line}</Text>
+    </div>
   );
 }
 
@@ -130,17 +159,18 @@ function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.J
     <PanelCard title="Per-lift">
       <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
-          <GoalCard
-            key={row.view.target.id}
-            size="compact"
-            title={targetLabel(row)}
-            priority={row.priority.level}
-            status={row.view.status}
-            basis={row.view.statusBasis}
-            isPR={hasPR(row.view)}
-            milestone={cardMilestone(row.view)}
-            trend={cardTrend(row.view)}
-          />
+          <WithCalibrationNote key={row.view.target.id} view={row.view}>
+            <GoalCard
+              size="compact"
+              title={targetLabel(row)}
+              priority={row.priority.level}
+              status={row.view.status}
+              basis={row.view.statusBasis}
+              isPR={hasPR(row.view)}
+              milestone={cardMilestone(row.view)}
+              trend={cardTrend(row.view)}
+            />
+          </WithCalibrationNote>
         ))}
       </div>
     </PanelCard>

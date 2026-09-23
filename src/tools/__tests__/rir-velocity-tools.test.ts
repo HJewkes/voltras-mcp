@@ -6,17 +6,25 @@
 // reps-in-reserve, and a lifter with no curve gets the stated caveat instead of
 // a number.
 
+import type { Rep } from '@voltras/workout-analytics';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   fitRirVelocityModel,
   GENERAL_MODEL_CAVEAT,
+  isTrustedRirModel,
+  rirForVelocity,
+  rirModelVelocity,
   type RirVelocityModel,
   type RirVelocityObservation,
 } from '../../analytics/rir-velocity.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { SessionStore, StoredRirVelocityModel } from '../../store/types.js';
-import { registerRirVelocityTools, resolveRirVelocityTarget } from '../rir-velocity-tools.js';
+import {
+  estimateRepRir,
+  registerRirVelocityTools,
+  resolveRirVelocityTarget,
+} from '../rir-velocity-tools.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -245,5 +253,103 @@ describe('resolveRirVelocityTarget', () => {
     // Assert
     expect(viaTool.velocityTargetMps).toBe(direct.velocityTargetMps);
     expect(viaTool.citation).toBe(direct.citation);
+  });
+});
+
+describe('estimateRepRir on a fitted curve (VW-483)', () => {
+  const model = curve(0.3, 0.05);
+
+  /** A rep whose concentric phase has the given mean and peak velocity, m/s. */
+  function repWith(meanMps: number, peakMps: number): Rep {
+    return {
+      concentric: { peakVelocity: peakMps, _totalVelocity: meanMps * 10, _movementSampleCount: 10 },
+    } as unknown as Rep;
+  }
+
+  function readFitted(rep: Rep): ReturnType<typeof estimateRepRir> {
+    return estimateRepRir(model, {
+      meanVelocity: rirModelVelocity(rep),
+      peakVelocity: rep.concentric.peakVelocity,
+      baselineMaxVelocity: 0.9,
+      velLossPct: 25,
+      repIndex: 6,
+      repsInSet: 8,
+    });
+  }
+
+  it('reads the same RIR for a set whose peaks sit further above the same means', () => {
+    const tight = readFitted(repWith(0.45, 0.5));
+    const wide = readFitted(repWith(0.45, 0.7));
+
+    expect(wide).toEqual(tight);
+  });
+
+  it('reads the mean, where the peak would have over-stated reps in reserve', () => {
+    const reading = readFitted(repWith(0.45, 0.6));
+
+    // The peak would read (0.6 - 0.3) / 0.05 = 6; the mean reads 3.
+    expect(reading.basis).toBe('fitted');
+    expect(reading.rir).toBeCloseTo(3, 2);
+  });
+
+  it('reads RIR 0 for a rep whose mean sits on the intercept', () => {
+    expect(readFitted(repWith(0.3, 0.42)).rir).toBeCloseTo(0, 2);
+  });
+
+  it('refuses a raw number where the curve expects its own velocity measure', () => {
+    // @ts-expect-error a peak, or any plain number, is not a model velocity
+    const reading = rirForVelocity(model, 0.6);
+
+    expect(reading.rir).toBeCloseTo(6, 2);
+  });
+});
+
+describe('trusting a fitted curve (VW-485)', () => {
+  const inputs = {
+    peakVelocity: 0.6,
+    baselineMaxVelocity: 0.8,
+    velLossPct: 25,
+    repIndex: 6,
+    repsInSet: 8,
+  };
+  const withError = (rirErrorReps: number): RirVelocityModel => ({
+    ...curve(0.3, 0.05),
+    rirErrorReps,
+  });
+  const meanOf = (mps: number) =>
+    rirModelVelocity({
+      concentric: { peakVelocity: mps, _totalVelocity: mps, _movementSampleCount: 1 },
+    } as unknown as Rep);
+
+  it('trusts a stored curve only when its error is 1.5 reps or under', () => {
+    expect(isTrustedRirModel(undefined)).toBe(false);
+    expect(isTrustedRirModel(withError(1.5))).toBe(true);
+    expect(isTrustedRirModel(withError(1.51))).toBe(false);
+    expect(isTrustedRirModel(withError(1.9))).toBe(false);
+  });
+
+  it('does not trust a curve fitted under an older model version until it is refitted', () => {
+    const tight = withError(0.5);
+
+    expect(isTrustedRirModel(tight)).toBe(true);
+    expect(isTrustedRirModel({ ...tight, version: 'rir-velocity@1.0.0' })).toBe(false);
+  });
+
+  it('reads high only off a trusted curve, and medium off an untrusted one in range', () => {
+    const reading = (model: RirVelocityModel) =>
+      estimateRepRir(model, { ...inputs, meanVelocity: meanOf(0.45) });
+
+    expect(reading(withError(0.5)).confidence).toBe('high');
+    expect(reading(withError(2.5)).confidence).toBe('medium');
+    expect(reading(withError(2.5)).inputDomain).toBe('high');
+  });
+
+  it('never reads high off the placeholder regression, whatever the inputs', () => {
+    const confidences = [0, 10, 20, 30, 40, 50].map(
+      (velLossPct) =>
+        estimateRepRir(undefined, { ...inputs, velLossPct, meanVelocity: meanOf(0.45) }).confidence,
+    );
+
+    expect(new Set(confidences)).toEqual(new Set(['low']));
   });
 });

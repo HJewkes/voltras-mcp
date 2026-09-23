@@ -28,6 +28,7 @@ import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
+import type { SessionKind, SessionKindFilter } from './session-kind.js';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
@@ -195,6 +196,12 @@ export interface StoredSet {
    * back-filled: a row written before v14 was the owner's.
    */
   lifter?: string;
+  /**
+   * Denormalised from the session (VW-489), read-only from a caller's point of
+   * view: `putSet` stamps whatever the session row says, so the two cannot
+   * disagree. Absent means never reviewed. See {@link StoredSession.kind}.
+   */
+  kind?: SessionKind;
   /**
    * GROUND TRUTH for per-unit identity. BLE device id of the unit that
    * performed the set, captured from the slot's connected client. The device
@@ -402,7 +409,21 @@ export interface StoredSet {
    */
   settingsHash?: string;
 
+  /**
+   * The effort context pinned at set start (v40, VW-539). Its fields arrive with the
+   * pinning slice (VW-540); until then nothing writes it and every set reads absent.
+   */
+  effortContext?: JsonObject;
+  /** What the effort cue decided at set end (v40, VW-539). Nothing writes it yet. */
+  cueRecord?: JsonObject;
+
   reps: StoredRep[];
+}
+
+/** A value `JSON.stringify` then `JSON.parse` returns unchanged. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+export interface JsonObject {
+  [key: string]: JsonValue;
 }
 
 /**
@@ -670,9 +691,25 @@ export interface StoredSession {
    * every historical per-muscle rollup for this session.
    */
   catalogVersion?: string;
+  /**
+   * Test or training (VW-489). ABSENT MEANS NEVER REVIEWED, and unreviewed is
+   * excluded from every lifter-facing read — training days, tier, goals,
+   * reports, trends, baselines and the RIR fit. Nothing is back-filled: the
+   * owner's account of his own history is that most of it is bench testing, so
+   * a stamped `'training'` would assert what he denied. See
+   * `store/session-kind.ts`.
+   */
+  kind?: SessionKind;
 }
 
 /** A session's self-reported pre-session carb context (VW-307). */
+/** The session fields a tool may change after start, for {@link SessionStore.patchSession}. */
+export interface SessionPatch {
+  /** `null` clears the label: the session is the owner's again. */
+  lifter?: string | null;
+  preSessionCarbs?: StoredPreSessionCarbs;
+}
+
 export interface StoredPreSessionCarbs {
   level: 'low' | 'normal' | 'high';
   /** Rough self-estimate, not a timestamp. */
@@ -837,6 +874,104 @@ export interface ListAdvisoryDecisionsFilter {
   userResponse?: StoredAdvisoryResponse;
 }
 
+// --- UI action audit (VW-502, v36) ---
+//
+// One row per action submitted through the dashboard's action layer. The row
+// is CLAIMED before its handler runs and COMPLETED after, which is what makes
+// a repeated action id safe: the primary key refuses the second claim, so the
+// handler cannot run twice even when two submits race.
+//
+// The two steps are two statements, not one transaction. Several store methods
+// open their own transactions (`declareDietPhase` among them) and there is no
+// SAVEPOINT nesting, so an outer transaction around a handler is not available.
+// The cost is a crash window: a row left `pending` means the handler's write
+// may or may not have landed, and a replay says `indeterminate` rather than
+// guessing. Nothing sweeps those rows — a pending row is the truthful record of
+// a run that died, and rewriting it to `error` would assert something unknown.
+
+/**
+ * Who submitted an action. Extends the `block_schedules.changed_by` vocabulary
+ * rather than inventing a parallel one: a wall tap by the lifter is `user`, and
+ * `surface` says which screen it came from. `tick` is the agent-free scheduler.
+ *
+ * NOT the client's to assert. `POST /api/actions` pins it to `user`, because a
+ * request arriving there came from a browser on this machine and is a human
+ * tap; `coach` and `tick` belong to in-process callers of `executeAudited`,
+ * which stamp their own. Otherwise anyone holding the write token could file a
+ * human tap as an agent decision, and the column would prove nothing.
+ */
+export const UI_ACTION_ACTORS = ['user', 'coach', 'tick'] as const;
+export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];
+
+/**
+ * Where an action was submitted from. A KIND of surface, never a particular one: two walls
+ * both say `wall`, and `deviceId` is what tells them apart (VW-521).
+ */
+export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram'] as const;
+export type UiActionSurface = (typeof UI_ACTION_SURFACES)[number];
+
+/**
+ * A claimed action's outcome. `pending` is only ever seen after a crash: it is
+ * written by the claim and replaced by the completion in the same call.
+ */
+export const UI_ACTION_STATUSES = ['pending', 'ok', 'error'] as const;
+export type UiActionStatus = (typeof UI_ACTION_STATUSES)[number];
+
+/** One row of the action audit trail. */
+export interface StoredUiAction {
+  /** Client-supplied UUID. The idempotency key, and the primary key. */
+  actionId: string;
+  actionName: string;
+  actor: UiActionActor;
+  surface: UiActionSurface;
+  /**
+   * Which display sent it, when the client named one (VW-521). Absent is valid and is the
+   * common case; every row written before v39 reads absent. A LABEL beside `surface`,
+   * never an authorization input — see `ui-action-device-id.ts`.
+   */
+  deviceId?: string;
+  flowId?: string;
+  flowStep?: string;
+  /** sha256 over the canonical JSON of the input, hashed AFTER the tool's parse. */
+  inputHash: string;
+  resultStatus: UiActionStatus;
+  /** The tool's own error code when it failed. Absent on success. */
+  resultCode?: string;
+  /** The stored result a replay returns. `null` until the action completes. */
+  result?: unknown;
+  createdAt: string;
+  completedAt?: string;
+}
+
+/** Arguments to {@link SessionStore.claimUiAction}. */
+export interface ClaimUiActionInput {
+  actionId: string;
+  actionName: string;
+  actor: UiActionActor;
+  surface: UiActionSurface;
+  deviceId?: string;
+  flowId?: string;
+  flowStep?: string;
+  inputHash: string;
+  createdAt: string;
+}
+
+/** Arguments to {@link SessionStore.completeUiAction}. */
+export interface CompleteUiActionInput {
+  actionId: string;
+  resultStatus: 'ok' | 'error';
+  resultCode?: string;
+  result: unknown;
+  completedAt: string;
+}
+
+/** What a claim attempt produced. */
+export type ClaimUiActionOutcome =
+  /** The id is new. The caller owns it and must complete it. */
+  | { kind: 'claimed' }
+  /** The id exists. `existing` is the row, which the caller replays or refuses. */
+  | { kind: 'taken'; existing: StoredUiAction };
+
 // --- Priorities and goal targets (VW-349, v27) ---
 //
 // TWO TABLES, NOT ONE. A priority is a HUMAN DECLARATION ("get bench up"):
@@ -932,6 +1067,8 @@ export interface StoredGoalTarget {
   anchorReps?: number;
   /** The fixed load a `reps_at_load` target counts reps at (VW-399, v31). Absent on older rows. */
   anchorLoad?: number;
+  /** The block this target was set for (VW-473, v33). Absent on older rows and unbound targets. */
+  blockId?: string;
   startValue: number;
   startMeasuredAt: string;
   bandLowPctPerWeek: number;
@@ -950,6 +1087,119 @@ export interface StoredGoalTarget {
   retiredAt?: string;
   outcome?: StoredGoalTargetOutcome;
   newChapterAt?: string;
+}
+
+/** Why a `block_schedules` row was written (VW-473). */
+export const BLOCK_SCHEDULE_KINDS = [
+  'planned',
+  'moved',
+  'resized',
+  'week_skipped',
+  'cleared',
+] as const;
+export type BlockScheduleKind = (typeof BLOCK_SCHEDULE_KINDS)[number];
+
+/** Who wrote a `block_schedules` row: the lifter, the coach's approved default, or an import. */
+export const BLOCK_SCHEDULE_CHANGED_BY = ['user', 'coach-default', 'import'] as const;
+export type BlockScheduleChangedBy = (typeof BLOCK_SCHEDULE_CHANGED_BY)[number];
+
+/**
+ * A missed calendar week, keyed by the local Monday it starts on, so its identity does not
+ * depend on the order earlier skips were applied. `hold` keeps the block's end date and marks
+ * that week's plan week held; `extend` inserts an off week there and moves every later plan
+ * week one week on.
+ */
+export interface BlockScheduleSkip {
+  weekOf: string;
+  mode: 'hold' | 'extend';
+  reason?: string;
+}
+
+/**
+ * One row of `block_schedules` (VW-473, v33): a COMPLETE snapshot of one block's calendar,
+ * never a delta and never edited. The live schedule is the row with the highest `seq`.
+ * `startsOn` is a local ISO date on a Monday, absent only on a `cleared` row.
+ */
+export interface StoredBlockSchedule {
+  id: string;
+  blockId: string;
+  seq: number;
+  startsOn?: string;
+  weeksCount: number;
+  skips: BlockScheduleSkip[];
+  kind: BlockScheduleKind;
+  reason?: string;
+  changedBy: BlockScheduleChangedBy;
+  declaredAt: string;
+}
+
+/** What a caller supplies to append a schedule row; the store assigns `id` and `seq`. */
+export type AppendBlockScheduleInput = Omit<StoredBlockSchedule, 'id' | 'seq'>;
+
+/** One block and its live schedule row, as a schedule derive sees them (VW-536). */
+export interface ScheduledBlock {
+  block: StoredTrainingBlock;
+  /** The live row (highest `seq`); `undefined` for a block with no schedule. */
+  live: StoredBlockSchedule | undefined;
+  programArchived: boolean;
+}
+
+/** What a schedule derive writes: the rows to append, the block row when it changes, and its answer. */
+export interface DerivedBlockSchedules<T> {
+  block?: StoredTrainingBlock;
+  rows: readonly AppendBlockScheduleInput[];
+  result: T;
+}
+
+/**
+ * One committed training day and the day it falls back to when that one breaks. Shaped like
+ * the composer's `PlannedSlot` (`src/accountability/types.ts`), which is what renders it.
+ */
+export interface CommitmentDay {
+  day: string;
+  fallbackDay: string;
+}
+
+/**
+ * One revision of one week's commitment (VW-505, v37). `ifThen` and `wording` are the LIFTER's
+ * own sentences, stored and rendered verbatim — no trim, no normalisation, no rewrite.
+ *
+ * `effectiveFrom` is the local Monday the week opens on and `effectiveTo` the next committed
+ * week's Monday (`null` while this is the latest week), so a commitment stands until the next
+ * one supersedes it rather than expiring on Sunday night. `sessionsPerWeek` is `days.length`
+ * and states no target of its own: how many sessions is the `sessions_28d` goal target's claim.
+ */
+export interface StoredCommitment {
+  id: string;
+  userId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  sessionsPerWeek: number;
+  days: CommitmentDay[];
+  ifThen: string;
+  wording: string;
+  revision: number;
+  declaredAt: string;
+}
+
+/** What a caller declares; the store assigns `id`, `revision`, `effectiveTo` and the count. */
+export interface DeclareCommitmentInput {
+  userId: string;
+  effectiveFrom: string;
+  days: CommitmentDay[];
+  ifThen: string;
+  wording: string;
+  declaredAt: string;
+}
+
+/**
+ * The stored revision, and whether this declaration wrote one. `unchanged` is true when the
+ * content matched the week's latest revision byte for byte: a retry is a no-op that returns
+ * the existing row rather than a correction that bumps `revision`.
+ */
+export interface DeclaredCommitment {
+  commitment: StoredCommitment;
+  unchanged: boolean;
 }
 
 /** Options for {@link SessionStore.listPriorities}. Retired rows are excluded by default. */
@@ -986,6 +1236,13 @@ export interface SessionListFilter {
    * owner's history unless it is asked for by label.
    */
   lifter?: string;
+  /**
+   * Which kind of recorded work to read (VW-489). ABSENT MEANS `'training'`, so
+   * a caller that says nothing gets the lifter's real history and unreviewed
+   * rows stay out of it. `'any'` is the explicit opt-out, for the reads the
+   * review itself runs on.
+   */
+  kind?: SessionKindFilter;
 }
 
 /**
@@ -998,12 +1255,47 @@ export type SessionCountFilter = SessionListFilter & {
   userId?: string;
   /**
    * Restrict to sessions that have actually finished (`ended_at IS NOT
-   * NULL`). Added for the tier-signal MVP (VW-92), whose `sessionsLogged`
+   * NULL`). Added for the tier-signal MVP (VW-92), whose logged-workout
    * count is explicitly defined over completed sessions only — an
    * in-progress session should not count toward graduation evidence.
    */
   endedOnly?: boolean;
 };
+
+/**
+ * What `session.review_list` may ask for. `'unreviewed'` is the default and the
+ * reason the read exists; no analytic reader ever asks for it.
+ */
+export type SessionReviewKindFilter = SessionKindFilter | 'unreviewed';
+
+/**
+ * One session on the review list (VW-489) — enough to say training or test
+ * without opening it. Sessions are stored one row per exercise, so a row is a
+ * movement and the caller groups rows into local days.
+ */
+export interface SessionReviewRow {
+  sessionId: string;
+  startedAt: string;
+  endedAt?: string;
+  exerciseId?: string;
+  exerciseName?: string;
+  /** Absent means never reviewed, which is what the list is for. */
+  kind?: SessionKind;
+  setCount: number;
+  workingSetCount: number;
+  /** Heaviest working set, absent when no working set recorded a load. */
+  topLoadLbs?: number;
+  /** End of the last set of any purpose. Used for the day's span, never for its date. */
+  lastSetEndedAt?: string;
+  /**
+   * End of the last WORKING set. This is the instant the training-day rule dates an
+   * unended session by, so the review list buckets by it too — a day the owner marks
+   * has to be the day the report files it under (VW-489).
+   */
+  lastWorkingSetEndedAt?: string;
+  /** Whether a planned exercise or workout template was attached to this session. */
+  planned: boolean;
+}
 
 /**
  * The earliest and latest `started_at` among sessions matching `filter`
@@ -1066,6 +1358,13 @@ export interface ExerciseSetsFilter {
    * without every caller having to remember to exclude it.
    */
   lifter?: string;
+  /**
+   * Which kind of recorded work to read (VW-489). ABSENT MEANS `'training'`, so
+   * a caller that says nothing gets the lifter's real history and unreviewed
+   * rows stay out of it. `'any'` is the explicit opt-out, for the reads the
+   * review itself runs on.
+   */
+  kind?: SessionKindFilter;
   /** Inclusive lower bound on `startedAt`. */
   from?: string;
   /** Inclusive upper bound on `startedAt`. */
@@ -1158,6 +1457,30 @@ export interface StoredTargetTempo {
   pauseTop: number;
 }
 
+/**
+ * What a planned row states as its goal (VW-448 amendment). One kind per row, and the
+ * other effort fields become its guards: a `rep_range` row's `targetRpe` is a cap, not a
+ * second goal. Absent means the row states no goal, which is a real answer and never an
+ * implied one — `defaultGoalKind` derives the kind from the fields a row already carries.
+ */
+export const PLAN_GOAL_KINDS = ['rep_range', 'target_rpe', 'velocity_loss'] as const;
+export type PlanGoalKind = (typeof PLAN_GOAL_KINDS)[number];
+
+/**
+ * The intent a rest was learned under (VW-445 s.3.1). `none` is a real key, not a gap:
+ * a value learned for a stated intent is not evidence for a row that states none.
+ */
+export const LEARNED_REST_INTENTS = ['strength', 'hypertrophy', 'power', 'none'] as const;
+export type LearnedRestIntent = (typeof LEARNED_REST_INTENTS)[number];
+
+/** How far a run has got. `learned` is a claim about evidence, so it is stored, not derived. */
+export const LEARNED_REST_STATES = ['calibrating', 'learned'] as const;
+export type LearnedRestStateValue = (typeof LEARNED_REST_STATES)[number];
+
+/** Where the value a run started from came from, kept so a number can explain itself. */
+export const LEARNED_REST_BASE_SOURCES = ['plan', 'lifter_factor', 'intent_default'] as const;
+export type LearnedRestBaseSourceValue = (typeof LEARNED_REST_BASE_SOURCES)[number];
+
 /** A planned exercise within a workout template (sets/reps/weight prescription). */
 export interface StoredPlannedExercise {
   id: string;
@@ -1182,6 +1505,20 @@ export interface StoredPlannedExercise {
    * wrong rep.
    */
   trainingIntent?: TrainingIntent;
+  /**
+   * The goal this row states (VW-448 amendment). Absent means it states none; nothing
+   * infers one from `trainingIntent`, which keeps its own two jobs.
+   */
+  goalKind?: PlanGoalKind;
+  /** The velocity-loss goal, 1 to 95. Only meaningful under `goalKind: 'velocity_loss'`. */
+  targetVelocityLossPct?: number;
+  /**
+   * Whether the system probes and learns this row's rest (VW-445). Absent on a write means
+   * the default, on; a read always states it, because the column is NOT NULL. Off with a
+   * `restSec` is a fixed rest, exactly as today; off without one reads a frozen learned
+   * value if there is a trusted one.
+   */
+  restLearning?: boolean;
   /** Stable authoring key (`tc:item:<id>`), UNIQUE where present. See `StoredWorkoutTemplate`. */
   externalId?: string;
 }
@@ -1212,6 +1549,10 @@ export interface PlanImportExercise {
   targetWeightLbs?: number;
   restSec?: number;
   notes?: string;
+  /** Written on a NEW row only; a re-import keeps the stored kind (VW-537). */
+  goalKind?: PlanGoalKind;
+  /** Written on a NEW row only: on without a rest, off with one (OWNER, "written rests stay fixed"). */
+  restLearning?: boolean;
   // No targetTempo here (VW-46): the TrueCoach parser is not a source of coach
   // tempo data yet, so an import never carries one.
 }
@@ -1287,6 +1628,11 @@ export interface StoredTrainingProfile {
   injuries?: StoredInjury[];
   /** The named program `reportedSetsPerMuscle` came from (VW-148 / B36). */
   namedProgramHistory?: string;
+  /**
+   * How many months the most recent break from consistent training lasted (v34). The LENGTH of
+   * the break, not the time since it ended, so the answer never goes stale. 0 = never stopped.
+   */
+  lastBreakMonths?: number;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */
@@ -1527,6 +1873,16 @@ export interface StoredRirVelocityModel {
   fitQuality: number;
 }
 
+/** Tally from one start-up pass over the stored RIR-velocity curves. */
+export interface RirVelocityRefitCounts {
+  /** Curves stored before the pass. */
+  stored: number;
+  /** Stale curves refitted under the current rules. */
+  refitted: number;
+  /** Stale curves that no longer qualify and were deleted. */
+  removed: number;
+}
+
 /** Verdict tally from a reharvest pass over one key's sets. */
 export interface FailureHarvestCounts {
   failure: number;
@@ -1556,6 +1912,14 @@ export interface SessionStore extends ExerciseSetupStore {
   putSession(s: StoredSession): Promise<void>;
 
   /**
+   * Change the named fields of one stored session and return it as it now stands, or
+   * `undefined` when no row matches (VW-536). Every other column is left as stored, so two
+   * writers editing different fields both land. The diet-phase stamp is re-derived exactly as
+   * {@link putSession} derives it, because it follows the lifter label.
+   */
+  patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined>;
+
+  /**
    * Persist a completed (or partial) set together with its rep array.
    *
    * Same `INSERT OR REPLACE` prohibition as `putSession`: the set row is
@@ -1574,6 +1938,14 @@ export interface SessionStore extends ExerciseSetupStore {
    * which receive a bare `setId` with no surrounding `sessionId`.
    */
   getSet(id: string): Promise<StoredSet | undefined>;
+
+  /**
+   * Relabel one stored set (VW-169) and return it as it now stands, or
+   * `undefined` when no row matches. Writes the `lifter` column and nothing
+   * else, so a relabel can never roll back reps another writer persisted
+   * (VW-536). `null` hands the set back to the owner.
+   */
+  patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined>;
 
   /** Filtered/paginated session listing. */
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
@@ -1594,6 +1966,37 @@ export interface SessionStore extends ExerciseSetupStore {
    * `Math.min`/`Math.max` in JS.
    */
   getSessionDateSpan(filter?: SessionCountFilter): Promise<SessionDateSpan>;
+
+  /**
+   * One instant per session that is a TRAINING DAY, oldest start first — the only
+   * store read behind a training-day count (VW-460, VW-489).
+   *
+   * A session qualifies when `filter` matches it AND it holds at least one working
+   * set. Its instant is `ended_at`, or the end of its LAST WORKING SET when the
+   * session was never ended: the owner's store holds 24 such rows, and a real
+   * workout that nobody closed is still a day he trained. A session with no working
+   * set is never a training day, ended or not — an empty row is a bench test that
+   * opened and closed, not a visit to the gym.
+   *
+   * `endedOnly` is NOT forced on here and callers do not set it: the rule above is
+   * what replaced it.
+   */
+  listTrainingDayInstants(filter?: SessionCountFilter): Promise<string[]>;
+
+  /**
+   * The owner's sessions as review rows (VW-489), newest start first. Not an
+   * analytic read: it deliberately shows the rows every analytic read hides, so
+   * there is something to review.
+   */
+  listSessionReviewRows(filter?: { kind?: SessionReviewKindFilter }): Promise<SessionReviewRow[]>;
+
+  /**
+   * Mark sessions test or training and cascade to their sets (VW-489). Returns
+   * the number of SESSION rows written. Idempotent; re-marking is how a mistake
+   * is undone. Callers re-derive baselines and the RIR fit afterwards — this
+   * writes the flag and nothing else.
+   */
+  setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number>;
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
@@ -1634,6 +2037,8 @@ export interface SessionStore extends ExerciseSetupStore {
   getMostRecentSessionIdForExercise(filter: {
     userId: string;
     exerciseId: string;
+    lifter?: string;
+    kind?: SessionKindFilter;
   }): Promise<string | null>;
 
   // --- Self-reports (VMCP-06.12 / B41) ---
@@ -1762,6 +2167,14 @@ export interface SessionStore extends ExerciseSetupStore {
   /** Upsert a block (mesocycle) within a program. */
   putTrainingBlock(b: StoredTrainingBlock): Promise<void>;
   /**
+   * Upsert a block and append one schedule row for it in ONE transaction (VW-474): a dated
+   * block's length and its live row's length must never disagree (I6), even after a failure.
+   */
+  putTrainingBlockWithSchedule(
+    b: StoredTrainingBlock,
+    schedule: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule>;
+  /**
    * Look up a block by id. One of the three by-id getters that make the
    * planning tree walkable UPWARD (set → planned exercise → template → week →
    * block → program); without them the only way from a leaf back to its
@@ -1817,6 +2230,14 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** Upsert a session-to-plan link. */
   putProgramAssignment(a: StoredProgramAssignment): Promise<void>;
+  /**
+   * Link a session to a workout or a planned lift once (VW-536). When the session already has
+   * a link for that template (or planned exercise), returns it with `created: false` and writes
+   * nothing; the check and the insert are one transaction, so two callers cannot both write.
+   */
+  putProgramAssignmentIfAbsent(
+    a: StoredProgramAssignment,
+  ): Promise<{ assignment: StoredProgramAssignment; created: boolean }>;
   /** Return every assignment that links to a given session. */
   getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
   /**
@@ -1863,6 +2284,53 @@ export interface SessionStore extends ExerciseSetupStore {
    * phase and a different claim entirely.
    */
   declareDietPhase(input: DeclareDietPhaseInput): Promise<StoredDietPhase>;
+
+  /**
+   * Append one complete schedule snapshot for a block (VW-473). The store assigns `seq` as
+   * the block's next number, so the history is gap-free, and refuses a `startsOn` that is not
+   * a Monday. There is deliberately no update or delete: the table is append-only.
+   */
+  appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule>;
+
+  /**
+   * Append several schedule rows in ONE transaction: all land or none do. A cascaded move
+   * writes one row per block, and a half-applied cascade would leave blocks overlapping.
+   */
+  appendBlockSchedules(inputs: readonly AppendBlockScheduleInput[]): Promise<StoredBlockSchedule[]>;
+
+  /**
+   * Read every block with its live row, derive the next rows from that view and write them, in
+   * ONE transaction (VW-536): a row derived from a live row another writer has already replaced
+   * would drop that writer's change while the history showed both. `derive` is synchronous; a
+   * throw from it writes nothing and reaches the caller unchanged.
+   */
+  deriveBlockSchedules<T>(
+    derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
+  ): Promise<{ rows: StoredBlockSchedule[]; result: T }>;
+
+  /** The block's live schedule row (highest `seq`), or `undefined` for an undated block. */
+  getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined>;
+
+  /** One live row per block that has any schedule, `cleared` rows included. */
+  listLiveBlockSchedules(): Promise<StoredBlockSchedule[]>;
+
+  /** Every schedule row of one block, oldest `seq` first. */
+  listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]>;
+
+  /**
+   * Record one week's commitment (VW-505). Append-only per revision: a week already committed
+   * to gains a row at the next `revision` and keeps the superseded one, and a declaration
+   * identical to that week's latest revision writes nothing at all. Every revision row of a
+   * week carries the same re-derived `effectiveTo`, so a correction filed for an earlier week
+   * leaves the timeline sound.
+   */
+  declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment>;
+
+  /**
+   * The commitment standing over `weekOf`: the latest revision of the greatest committed week
+   * at or before it, or `undefined` when nothing has been committed to by then.
+   */
+  getCommitmentForWeek(userId: string, weekOf: string): Promise<StoredCommitment | undefined>;
 
   /** Every declared range for a user, oldest-first. */
   listDietPhases(userId: string): Promise<StoredDietPhase[]>;
@@ -1952,6 +2420,41 @@ export interface SessionStore extends ExerciseSetupStore {
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]>;
 
+  // --- UI action audit (VW-502) ---
+
+  /**
+   * Take ownership of one action id, or report who already holds it.
+   *
+   * This is the whole idempotency mechanism: the insert races on the primary
+   * key, so exactly one caller is told `claimed` and every other is told
+   * `taken` with the existing row. A `taken` caller never runs the handler.
+   */
+  claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome>;
+
+  /**
+   * Record what a claimed action produced. The only legal write to an existing
+   * row, and only from `pending`: a database trigger refuses every other
+   * update and every delete, so the audit trail cannot be edited after the
+   * fact.
+   */
+  completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction>;
+
+  /** One action by its id, or `undefined`. The replay read. */
+  getUiAction(actionId: string): Promise<StoredUiAction | undefined>;
+
+  /**
+   * Actions newest first. `flowId` narrows to one flow, which is what lets a
+   * flow's history be rebuilt from this table alone; `status` narrows to the
+   * `pending` rows a crashed run left behind; `deviceId` narrows to one display,
+   * which is what makes two walls tellable apart (VW-521).
+   */
+  listUiActions(filter?: {
+    flowId?: string;
+    deviceId?: string;
+    status?: UiActionStatus;
+    limit?: number;
+  }): Promise<StoredUiAction[]>;
+
   // --- Priorities and goal targets (VW-349) ---
 
   /**
@@ -1961,6 +2464,17 @@ export interface SessionStore extends ExerciseSetupStore {
    * to edit. `userId` is identity and is never updated.
    */
   putPriority(priority: StoredPriority): Promise<StoredPriority>;
+
+  /**
+   * Read the user's live priorities, derive the rows to write from them and upsert those rows,
+   * in ONE transaction (VW-536): a re-declaration folds into the row it names, and a rule
+   * checked against the live list holds only if nothing is written between the read and the
+   * write. `derive` is synchronous; a throw from it writes nothing and reaches the caller.
+   */
+  putPrioritiesDerived(
+    userId: string,
+    derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
+  ): Promise<StoredPriority[]>;
 
   /** A user's declared priorities, newest declaration first. */
   listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]>;
@@ -2101,6 +2615,14 @@ export interface SessionStore extends ExerciseSetupStore {
    * with a model the current rules say cannot be built.
    */
   refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit>;
+
+  /**
+   * Re-fit every stored curve stamped with an older model version, once each.
+   * Run at start, so a rule change reaches curves fitted under the old rule
+   * (VW-538). Idempotent: a refitted curve carries the current version, and a
+   * curve that no longer qualifies is deleted by the rule above.
+   */
+  refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;

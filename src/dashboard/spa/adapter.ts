@@ -34,6 +34,9 @@ import type { SetupCard } from '../../store/types.js';
 // Type-only, same rationale: the session-pace estimate (VW-290) is computed
 // server-side and shipped whole; the client only needs its shape.
 import type { SessionPaceView } from '../read-models/session-pace.js';
+import type { TrainingIntent, VelocityLossThresholdSource } from '../../schemas/set.js';
+import type { FatigueStop } from '../../state/velocity-loss-intent.js';
+import type { ResolvedRest } from '../../analytics/rest-defaults.js';
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
@@ -175,6 +178,10 @@ export interface SnapshotWatchTrigger {
   value?: number;
   /** Populated for `velocity_loss_exceeded`. */
   pct?: number;
+  /** The goal a `velocity_loss_exceeded` threshold was keyed to, when one was (VW-266). */
+  intent?: TrainingIntent;
+  /** How a `velocity_loss_exceeded` threshold was arrived at (VW-266). */
+  thresholdSource?: VelocityLossThresholdSource;
 }
 
 /** Client-side view of the active set in the snapshot. */
@@ -259,6 +266,16 @@ export interface Snapshot {
    * the rail footer then stays hidden rather than showing an invented budget.
    */
   sessionPace?: SessionPaceView | null;
+  /**
+   * The active exercise's velocity-loss stop threshold (VW-440) for a set with no watch
+   * threshold of its own. Absent on an older server or a hand-built test snapshot.
+   */
+  fatigueStop?: FatigueStop;
+  /**
+   * The rest to count down after the last set, with its provenance (VW-441). Null with no
+   * session open; absent on an older server or a hand-built test snapshot.
+   */
+  rest?: ResolvedRest | null;
   /**
    * Monotonic server send-order stamp (VMCP-03.04). Present on both the poll
    * response and the `snapshot` SSE push; the store applies a snapshot only when
@@ -433,6 +450,7 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     velocitiesMps,
     autoCreatedBy: set.autoCreatedBy ?? null,
+    ...(set.watch !== undefined ? { watch: set.watch } : {}),
   };
 }
 
@@ -620,6 +638,8 @@ export interface CompletedSet {
    * Optional so a fixture built before this field existed still type-checks.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
+  /** The set's advisory triggers, kept so its own stop threshold survives the close (VW-440). */
+  watch?: SnapshotActiveSet['watch'];
 }
 
 export interface AccumulatorState {
@@ -685,6 +705,7 @@ function summariseClosedSet(
     reps: [...reps],
     setPurpose: set.setPurpose ?? 'working',
     autoCreatedBy: set.autoCreatedBy ?? null,
+    ...(set.watch !== undefined ? { watch: set.watch } : {}),
   };
 }
 

@@ -101,6 +101,7 @@ const MIXED_SESSION_ID = 'sess-mixed';
 /** One session, two exercises: 2×8 @135 bench and 1×3 @325 squat. */
 async function seedMixedSession(store: SqliteSessionStore, startedAt: string): Promise<void> {
   await store.putSession({
+    kind: 'training',
     id: MIXED_SESSION_ID,
     startedAt,
     endedAt: startedAt,
@@ -223,6 +224,8 @@ describe('plan.suggest_progression — set-level scoping', () => {
     'plan.template.list_for_week',
     'plan.exercise.create',
     'plan.exercise.list_for_template',
+    'plan.current_block',
+    'plan.block.planning_brief',
     'plan.next_workout',
     'plan.complete_workout',
     'plan.attach_to_session',

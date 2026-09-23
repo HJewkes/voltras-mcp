@@ -265,6 +265,7 @@ function buildFixtureState(): DashboardServerState {
       putWorkoutTemplate: () => Promise.resolve(),
       putPlannedExercise: () => Promise.resolve(),
       deletePlannedExercise: () => Promise.resolve(true),
+      getLiveBlockSchedule: () => Promise.resolve(undefined),
     },
   };
 }

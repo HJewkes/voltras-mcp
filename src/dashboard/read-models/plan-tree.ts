@@ -12,7 +12,9 @@
 //
 // Confidentiality: plan metadata and fitness units only — no protocol data (NF-07).
 
+import { isRestInvalid } from '../../plan/goal-kind.js';
 import type {
+  PlanGoalKind,
   StoredPlannedExercise,
   StoredTrainingBlock,
   StoredTrainingProgram,
@@ -36,6 +38,13 @@ export interface PlanExerciseView {
   targetRpe?: number;
   restSec?: number;
   notes?: string;
+  /** The row's goal (VW-448 amendment); absent when it states none. */
+  goalKind?: PlanGoalKind;
+  targetVelocityLossPct?: number;
+  /** Whether the system learns this row's rest (VW-445). */
+  restLearning: boolean;
+  /** Learning off with no rest: a row no write path accepts, so the planner can flag it. */
+  restInvalid?: true;
 }
 
 /** A workout template (a single planned session) plus its ordered exercises. */
@@ -130,6 +139,7 @@ function toExerciseView(row: StoredPlannedExercise, nameOf: ExerciseNameLookup):
     name: nameOf(row.exerciseId) ?? row.exerciseId,
     orderIndex: row.orderIndex,
     targetSets: row.targetSets,
+    restLearning: row.restLearning !== false,
   };
   if (row.targetRepsLow !== undefined) view.targetRepsLow = row.targetRepsLow;
   if (row.targetRepsHigh !== undefined) view.targetRepsHigh = row.targetRepsHigh;
@@ -137,6 +147,11 @@ function toExerciseView(row: StoredPlannedExercise, nameOf: ExerciseNameLookup):
   if (row.targetRpe !== undefined) view.targetRpe = row.targetRpe;
   if (row.restSec !== undefined) view.restSec = row.restSec;
   if (row.notes !== undefined) view.notes = row.notes;
+  if (row.goalKind !== undefined) view.goalKind = row.goalKind;
+  if (row.targetVelocityLossPct !== undefined) {
+    view.targetVelocityLossPct = row.targetVelocityLossPct;
+  }
+  if (isRestInvalid(row)) view.restInvalid = true;
   return view;
 }
 

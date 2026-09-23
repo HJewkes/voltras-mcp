@@ -21,6 +21,8 @@ import {
   PlanBlockCreateInput,
   PlanBlockListForProgramInput,
   PlanCompleteWorkoutInput,
+  PlanCurrentBlockInput,
+  PlanBlockPlanningBriefInput,
   PlanExerciseCreateInput,
   PlanExerciseListForTemplateInput,
   PlanNextWorkoutInput,
@@ -66,6 +68,7 @@ import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises
 import { computePercentIncrement } from '../analytics/percent-increment.js';
 import {
   LOCAL_USER_ID,
+  type AppendBlockScheduleInput,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredSet,
@@ -76,13 +79,26 @@ import {
   type TrainingFocus,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
+import { todayLocal } from '../analytics/training-days.js';
+import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
+import type { BlockCalendar } from '../plan/block-calendar.js';
+import {
+  resolveCurrentBlock,
+  type CurrentBlockRead,
+  type PlanningRead,
+} from '../plan/current-block.js';
+import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
 class ToolError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /** The input field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: string, message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'ToolError';
   }
 }
@@ -113,7 +129,16 @@ const PLAN_BLOCK_CREATE_DESCRIPTION =
   'Create a training block (mesocycle) under a program — takes the parent programId. A block ' +
   'holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that ' +
   'raises `weeksCount` after weeks were already built under it, `warnings[]` carries a ' +
-  '`meso_length_grew_mid_block` advisory (VMCP-06.03 / B32). Never blocks the write.';
+  '`meso_length_grew_mid_block` advisory (VMCP-06.03 / B32); that advisory never blocks the ' +
+  'write. DATES (VW-474): `startsOn`, a local calendar date on a Monday, dates the block: it ' +
+  'runs whole weeks and ends on the Sunday of its last week. A start that would overlap another ' +
+  'dated block, or put the program out of order (block 2 before block 1), is refused and the ' +
+  'error names the other block. Plan blocks AHEAD of when they start. `scaffoldWeeks: true` ' +
+  'builds one empty week row per week ("Week 1" onwards) for a block with none, and ' +
+  '`deloadWeeks` (1-based week numbers) flags which of them are deloads. An existing dated ' +
+  'block keeps its dates, length, program and order here: use plan.block.schedule and ' +
+  'plan.block.update. Returns the block, its weeks, its calendar and the schedule row written ' +
+  '(or null).';
 const PLAN_BLOCK_LIST_DESCRIPTION = 'List the blocks belonging to one program (takes programId).';
 
 const PLAN_WEEK_CREATE_DESCRIPTION =
@@ -142,19 +167,67 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
   'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
   'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
-  'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The ' +
+  'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
   'decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override ' +
   '— `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/' +
   'movement-pattern default when the live prescription resolves a tempo; omit it to leave the ' +
-  'default in effect.';
+  'default in effect. `goalKind` (VW-537) is `rep_range`, `target_rpe` or `velocity_loss`; ' +
+  'omit it and a loss target gives `velocity_loss`, else a rep range gives `rep_range` (an ' +
+  'RPE on the same row is its effort cap), else an RPE gives `target_rpe`, else no goal. ' +
+  '`targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a ' +
+  '`velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets ' +
+  'the system learn the rest; false makes `restSec` a fixed rest and then requires it. A ' +
+  'row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and ' +
+  'nothing is written; ' +
+  'this is the only refusal, since warnings never block. Nothing reads `goalKind` or ' +
+  '`restLearning` during a set yet.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
+const PLAN_CURRENT_BLOCK_DESCRIPTION =
+  'Which block and program are in force today, by their dates (VW-475). `state` is `current` ' +
+  '(a dated block contains today: `block`, `calendar` and `week` n of N are set), `upcoming` ' +
+  '(nothing has started yet; `nextBlock` names the first dated block), `gap` (a dated block ' +
+  'has ended and none is current: `block` is the one that ended; training continues ' +
+  'unplanned) or `undated_only` (no block has dates: `program` is the newest program with ' +
+  'workouts left, else the newest). Archived programs never count, and once any block is ' +
+  'dated an undated program is never picked. `planning` says whether the next block is due ' +
+  'to be planned: `due`, `windowOpensOn` (the Monday of the current block\u2019s final week) ' +
+  'and `reason`. It is due in the final week of a current block with nothing dated after it, ' +
+  'in a gap with nothing planned, and while no block has dates. Reads only.';
+
+const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
+  'The read for a planning sitting (VW-476): what the coach brings when the next block is due ' +
+  '(`planning.due` on plan.current_block, plan.next_workout and plan.complete_workout). ' +
+  'READS ONLY and never plans anything by itself: run the sitting only after asking the lifter, ' +
+  'and create nothing until they answer. Returns `finishing` (the current block, or the one ' +
+  'that ended: its calendar, `trained` with templates planned and done and the local days ' +
+  'trained, and its `history`), `next` (the block to plan: `forBlockId`, else the block after ' +
+  'the finishing one, else the upcoming dated block, else the first never-trained block of the ' +
+  'program in force), `suggested` (`startsOn`, `endsOn`, `weeksCount` from the next block, else ' +
+  'the finishing one, `deloadWeek` from its week rows, and `basis`), `conflicts` (dated blocks ' +
+  'the suggested range would overlap), `realignment` (the priorities re-ask, as on a block ' +
+  'boundary) and `dietPhase` (null when none is declared; raise it for the next block). The ' +
+  'suggested start is the Monday after the current block ends, else today when today is a ' +
+  'Monday, even if a session was already logged today, else the next Monday. Each `history` ' +
+  'says how that block\u2019s dates changed, in one sentence (`fact`). Then date the block with ' +
+  'plan.block.schedule or plan.block.create, and declare priorities for it.';
+
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
-  'Get the next un-completed workout template for a program (or the active/default program if ' +
-  'programId is omitted). Use this to answer "what should the user do today per their plan?" ' +
+  'Get the next un-completed workout template. With `programId`, that program is walked in ' +
+  'order. Without it, the plan in force today decides (plan.current_block): in a CURRENT ' +
+  'dated block only that block is walked; when no block is dated, the newest program with ' +
+  'workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE ' +
+  'the first dated block starts, there is no planned workout today and the result is ' +
+  '`{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter ' +
+  'training continues unplanned today, and, when `nextBlock` is null, offer to plan the next ' +
+  'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
+  'means every workout in scope is done. Every result also carries `planning`, the same read ' +
+  'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
+  'about planning the next block. ' +
+  'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
   'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
@@ -167,7 +240,8 @@ const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in ' +
   'which case it carries the finished block, the next block (or null if none), the current goal on ' +
   'file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never ' +
-  'written by this tool. Once priorities have been declared (goal.declare_priorities) the boundary ' +
+  'written by this tool. It also returns `current`: plan.current_block as it stands after the ' +
+  'write. Once priorities have been declared (goal.declare_priorities) the boundary ' +
   'also carries `realignment` (VW-359): each declared priority with how many mesocycles it has been ' +
   'held, the bands it would get for the NEXT block re-derived by the same path goal.propose_targets ' +
   'uses, and `warningsIfChanged` — what the declaration guardrails would say if the lifter switched ' +
@@ -346,6 +420,22 @@ export function registerPlanTools(
   // progression / session-link tools
   install(
     placeholders,
+    'plan.current_block',
+    PlanCurrentBlockInput,
+    wrapHandler(PlanCurrentBlockInput, () => resolveCurrentBlock(state.store, todayLocal())),
+    PLAN_CURRENT_BLOCK_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'plan.block.planning_brief',
+    PlanBlockPlanningBriefInput,
+    wrapHandler(PlanBlockPlanningBriefInput, (input) =>
+      buildPlanningBrief(state, input.forBlockId),
+    ),
+    PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION,
+  );
+  install(
+    placeholders,
     'plan.next_workout',
     PlanNextWorkoutInput,
     wrapHandler(PlanNextWorkoutInput, (input) => nextWorkout(state, input)),
@@ -447,7 +537,13 @@ async function archiveProgram(
 async function createBlock(
   state: ServerState,
   input: z.infer<typeof PlanBlockCreateInput>,
-): Promise<{ block: StoredTrainingBlock; warnings: PlanWarning[] }> {
+): Promise<{
+  block: StoredTrainingBlock;
+  warnings: PlanWarning[];
+  weeks: StoredTrainingWeek[];
+  calendar: BlockCalendar;
+  scheduleRow: { seq: number; kind: string } | null;
+}> {
   const id = input.id ?? randomUUID();
   // `putTrainingBlock` upserts by id, so a caller passing a known id is
   // editing that block in place — this is the only seam that can tell
@@ -462,9 +558,75 @@ async function createBlock(
     ...(input.focus !== undefined ? { focus: input.focus } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
-  await state.store.putTrainingBlock(block);
+  const today = todayLocal();
+  const dating = await checkBlockCreate(state, previous, block, input, today);
+  const written =
+    dating === null ? null : await state.store.putTrainingBlockWithSchedule(block, dating);
+  if (dating === null) await state.store.putTrainingBlock(block);
+  if (input.scaffoldWeeks === true) await scaffoldWeeks(state, block, input.deloadWeeks ?? []);
   const warnings = await lintMesoLength(state, previous, block);
-  return { block, warnings };
+  return {
+    block,
+    warnings,
+    weeks: await state.store.getTrainingWeeksForBlock(id),
+    calendar: await calendarOf(state, id, today),
+    scheduleRow: written === null ? null : { seq: written.seq, kind: written.kind },
+  };
+}
+
+/** Everything `plan.block.create` refuses, checked before any write; returns the dating row. */
+async function checkBlockCreate(
+  state: ServerState,
+  previous: StoredTrainingBlock | undefined,
+  block: StoredTrainingBlock,
+  input: z.infer<typeof PlanBlockCreateInput>,
+  today: string,
+): Promise<AppendBlockScheduleInput | null> {
+  const deloads = input.deloadWeeks ?? [];
+  if (deloads.length > 0 && input.scaffoldWeeks !== true) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      'deloadWeeks flags scaffolded weeks; pass scaffoldWeeks: true.',
+    );
+  }
+  const outside = deloads.find((week) => week > block.weeksCount);
+  if (outside !== undefined) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      `deloadWeeks names week ${outside} of a ${block.weeksCount}-week block.`,
+    );
+  }
+  if (input.scaffoldWeeks === true && previous !== undefined) {
+    const existing = await state.store.getTrainingWeeksForBlock(block.id);
+    if (existing.length > 0) {
+      throw new ToolError(
+        'WEEKS_EXIST',
+        `"${previous.name}" already has week rows; scaffoldWeeks only builds an empty block.`,
+      );
+    }
+  }
+  if (previous !== undefined) {
+    await assertCreateKeepsSchedule(state, previous, block, input.startsOn);
+  }
+  if (input.startsOn === undefined) return null;
+  return datingRow(state, block, input.startsOn, today, input.reason);
+}
+
+/** One plan week row per week of the block, "Week 1" onwards, flagging the named deloads. */
+async function scaffoldWeeks(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  deloadWeeks: readonly number[],
+): Promise<void> {
+  for (let n = 1; n <= block.weeksCount; n++) {
+    await state.store.putTrainingWeek({
+      id: randomUUID(),
+      blockId: block.id,
+      orderIndex: n - 1,
+      name: `Week ${n}`,
+      isDeload: deloadWeeks.includes(n),
+    });
+  }
 }
 
 /**
@@ -584,10 +746,27 @@ async function createPlannedExercise(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     ...(input.targetTempo !== undefined ? { targetTempo: input.targetTempo } : {}),
     ...(input.trainingIntent !== undefined ? { trainingIntent: input.trainingIntent } : {}),
+    ...prescriptionGoalAndRest(input),
   };
+  const refusal = validatePrescription(plannedExercise);
+  if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
   const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
   return { plannedExercise, warnings };
+}
+
+/** The goal and rest fields as stored: an omitted kind takes the default, and learning states itself. */
+function prescriptionGoalAndRest(
+  input: z.infer<typeof PlanExerciseCreateInput>,
+): Pick<StoredPlannedExercise, 'goalKind' | 'targetVelocityLossPct' | 'restLearning'> {
+  const goalKind = input.goalKind ?? defaultGoalKind(input);
+  return {
+    ...(goalKind !== null ? { goalKind } : {}),
+    ...(input.targetVelocityLossPct !== undefined
+      ? { targetVelocityLossPct: input.targetVelocityLossPct }
+      : {}),
+    restLearning: input.restLearning ?? true,
+  };
 }
 
 /**
@@ -878,10 +1057,10 @@ function setCarriesVelocity(set: StoredSet): boolean {
 }
 
 /**
- * Resolve the program a progression-tool call refers to. If `programId` is
- * supplied, fetch + verify it exists. Otherwise, pick the most-recent
- * non-archived program (the store returns rows ordered by `created_at DESC`).
- * Throws `NO_PROGRAM_FOUND` when no eligible program exists.
+ * Resolve the program a tool call refers to. If `programId` is supplied, fetch + verify it
+ * exists. Otherwise the current-block rule picks it (VW-475): the program of the block in force
+ * by date, else the newest program with work remaining. Throws `NO_PROGRAM_FOUND` when no
+ * eligible program exists.
  */
 export async function resolveDefaultProgram(
   state: ServerState,
@@ -894,15 +1073,17 @@ export async function resolveDefaultProgram(
     }
     return program;
   }
-  const programs = await state.store.listTrainingPrograms({ includeArchived: false });
-  const latest = programs[0];
-  if (latest === undefined) {
+  return requireProgram(await resolveCurrentBlock(state.store, todayLocal()));
+}
+
+function requireProgram(read: CurrentBlockRead): StoredTrainingProgram {
+  if (read.program === null) {
     throw new ToolError(
       'NO_PROGRAM_FOUND',
       'No training programs exist. Create one with plan.program.create.',
     );
   }
-  return latest;
+  return read.program;
 }
 
 /** The block-tree reference `blockBoundary.finishedBlock`/`nextBlock` carry (VMCP-06.06 / B48). */
@@ -1072,11 +1253,7 @@ async function resolveCompleteWorkoutBlockBoundary(
   return buildBlockBoundary(state, orderedBlocks, blockIndex, await readCurrentGoal(state), true);
 }
 
-/** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
-export async function nextWorkout(
-  state: ServerState,
-  input: z.infer<typeof PlanNextWorkoutInput>,
-): Promise<
+type NextWorkoutResult =
   | {
       template: StoredWorkoutTemplate;
       plannedExercises: StoredPlannedExercise[];
@@ -1085,28 +1262,74 @@ export async function nextWorkout(
       blockBoundary: BlockBoundary | null;
     }
   | { ok: true; completed: true }
-> {
-  const program = await resolveDefaultProgram(state, input.programId);
-  const blocks = await state.store.getTrainingBlocksForProgram(program.id);
+  | {
+      ok: true;
+      unplanned: true;
+      state: 'gap' | 'upcoming';
+      reason: string;
+      endedBlock: BlockBoundaryRef | null;
+      nextBlock: CurrentBlockRead['nextBlock'];
+    };
+
+/** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
+export async function nextWorkout(
+  state: ServerState,
+  input: z.infer<typeof PlanNextWorkoutInput>,
+): Promise<NextWorkoutResult & { planning: PlanningRead }> {
+  const read = await resolveCurrentBlock(state.store, todayLocal());
+  return { ...(await nextWorkoutFor(state, read, input.programId)), planning: read.planning };
+}
+
+async function nextWorkoutFor(
+  state: ServerState,
+  read: CurrentBlockRead,
+  programId: string | undefined,
+): Promise<NextWorkoutResult> {
+  if (programId !== undefined) {
+    const program = await resolveDefaultProgram(state, programId);
+    return walkForNextWorkout(state, await state.store.getTrainingBlocksForProgram(program.id));
+  }
+  if (read.state === 'gap' || read.state === 'upcoming') return unplannedResult(read, read.state);
+  const blocks = await state.store.getTrainingBlocksForProgram(requireProgram(read).id);
+  return walkForNextWorkout(state, blocks, read.state === 'current' ? read.block : null);
+}
+
+/** In a gap or before the first dated block, nothing is planned today: say so, never continue. */
+function unplannedResult(read: CurrentBlockRead, state: 'gap' | 'upcoming'): NextWorkoutResult {
+  return {
+    ok: true,
+    unplanned: true,
+    state,
+    reason: read.planning.reason,
+    endedBlock: read.block === null ? null : toBlockBoundaryRef(read.block),
+    nextBlock: read.nextBlock,
+  };
+}
+
+/** The first template with no assignment, in program order; only `onlyBlock` when given. */
+async function walkForNextWorkout(
+  state: ServerState,
+  blocks: StoredTrainingBlock[],
+  onlyBlock: StoredTrainingBlock | null = null,
+): Promise<NextWorkoutResult> {
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const block = blocks[blockIndex];
+    if (onlyBlock !== null && block.id !== onlyBlock.id) continue;
     const weeks = await state.store.getTrainingWeeksForBlock(block.id);
     for (let weekIndex = 0; weekIndex < weeks.length; weekIndex++) {
       const week = weeks[weekIndex];
       const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
       for (let templateIndex = 0; templateIndex < templates.length; templateIndex++) {
         const template = templates[templateIndex];
-        const assignments = await state.store.getAssignmentsForTemplate(template.id);
-        if (assignments.length === 0) {
-          const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
-          const blockBoundary = await resolveNextWorkoutBlockBoundary(
-            state,
-            blocks,
-            blockIndex,
-            weekIndex === 0 && templateIndex === 0,
-          );
-          return { template, plannedExercises, block, week, blockBoundary };
-        }
+        if ((await state.store.getAssignmentsForTemplate(template.id)).length > 0) continue;
+        const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
+        const blockBoundary = await resolveNextWorkoutBlockBoundary(
+          state,
+          blocks,
+          blockIndex,
+          weekIndex === 0 && templateIndex === 0,
+        );
+        return { template, plannedExercises, block, week, blockBoundary };
       }
     }
   }
@@ -1116,7 +1339,11 @@ export async function nextWorkout(
 async function completeWorkout(
   state: ServerState,
   input: z.infer<typeof PlanCompleteWorkoutInput>,
-): Promise<{ assignment: StoredProgramAssignment; blockBoundary: BlockBoundary | null }> {
+): Promise<{
+  assignment: StoredProgramAssignment;
+  blockBoundary: BlockBoundary | null;
+  current: CurrentBlockRead;
+}> {
   const sessionId = input.sessionId ?? resolveActiveSessionId(state);
   if (sessionId === null) {
     throw new ToolError(
@@ -1136,24 +1363,19 @@ async function completeWorkout(
     throw new ToolError('NOT_FOUND', `No session with id "${sessionId}" exists.`);
   }
   const blockBoundary = await resolveCompleteWorkoutBlockBoundary(state, template);
-  // Idempotency: if an assignment already exists for this (session, template)
-  // pair, return the existing row rather than writing a duplicate. The store
-  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
-  // (session_id, workout_template_id) tuple, so without this check we'd
-  // accumulate duplicate rows on retry.
-  const existing = await state.store.getAssignmentsForSession(sessionId);
-  const prior = existing.find((a) => a.workoutTemplateId === input.workoutTemplateId);
-  if (prior !== undefined) {
-    return { assignment: prior, blockBoundary };
-  }
-  const assignment: StoredProgramAssignment = {
+  // Idempotent: a retry gets the existing (session, template) link back (VW-536).
+  const { assignment } = await state.store.putProgramAssignmentIfAbsent({
     id: randomUUID(),
     sessionId,
     workoutTemplateId: input.workoutTemplateId,
     assignedAt: new Date().toISOString(),
-  };
-  await state.store.putProgramAssignment(assignment);
-  return { assignment, blockBoundary };
+  });
+  return { assignment, blockBoundary, current: await readCurrent(state) };
+}
+
+/** The current-block read as it stands after a write (VW-475). */
+async function readCurrent(state: ServerState): Promise<CurrentBlockRead> {
+  return resolveCurrentBlock(state.store, todayLocal());
 }
 
 async function attachToSession(
@@ -1165,17 +1387,11 @@ async function attachToSession(
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${input.sessionId}" exists.`);
   }
-  // Idempotency: check for an existing assignment before writing. The store
-  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
-  // (session_id, planned_exercise_id / workout_template_id) tuple, so without
-  // this guard a retry would accumulate a duplicate row. Mirrors the same
-  // guard in completeWorkout.
-  const existing = await state.store.getAssignmentsForSession(input.sessionId);
+  // A retry gets its link back without re-resolving the target; the write below is what
+  // guarantees one link per target when two calls race (VW-536).
+  const prior = await existingLink(state, input);
+  if (prior !== undefined) return { assignment: prior };
   if (input.plannedExerciseId !== undefined) {
-    const prior = existing.find((a) => a.plannedExerciseId === input.plannedExerciseId);
-    if (prior !== undefined) {
-      return { assignment: prior };
-    }
     const planned = await findPlannedExerciseById(state, input.plannedExerciseId);
     if (planned === undefined) {
       throw new ToolError(
@@ -1183,33 +1399,38 @@ async function attachToSession(
         `No planned exercise with id "${input.plannedExerciseId}" exists.`,
       );
     }
-    const assignment: StoredProgramAssignment = {
-      id: randomUUID(),
-      sessionId: input.sessionId,
-      plannedExerciseId: input.plannedExerciseId,
-      assignedAt: new Date().toISOString(),
-    };
-    await state.store.putProgramAssignment(assignment);
-    return { assignment };
+    return attachOnce(state, { sessionId: input.sessionId, plannedExerciseId: planned.id });
   }
   // workoutTemplateId branch — Zod's XOR refine guarantees this is defined
   // when plannedExerciseId is not, but TS can't see through the refine.
   const workoutTemplateId = input.workoutTemplateId as string;
-  const priorTemplate = existing.find((a) => a.workoutTemplateId === workoutTemplateId);
-  if (priorTemplate !== undefined) {
-    return { assignment: priorTemplate };
-  }
   const template = await state.store.getWorkoutTemplate(workoutTemplateId);
   if (template === undefined) {
     throw new ToolError('NOT_FOUND', `No workout template with id "${workoutTemplateId}" exists.`);
   }
-  const assignment: StoredProgramAssignment = {
+  return attachOnce(state, { sessionId: input.sessionId, workoutTemplateId });
+}
+
+async function existingLink(
+  state: ServerState,
+  input: z.infer<typeof PlanAttachToSessionInput>,
+): Promise<StoredProgramAssignment | undefined> {
+  return (await state.store.getAssignmentsForSession(input.sessionId)).find((a) =>
+    input.plannedExerciseId !== undefined
+      ? a.plannedExerciseId === input.plannedExerciseId
+      : a.workoutTemplateId === input.workoutTemplateId,
+  );
+}
+
+async function attachOnce(
+  state: ServerState,
+  link: Omit<StoredProgramAssignment, 'id' | 'assignedAt'>,
+): Promise<{ assignment: StoredProgramAssignment }> {
+  const { assignment } = await state.store.putProgramAssignmentIfAbsent({
     id: randomUUID(),
-    sessionId: input.sessionId,
-    workoutTemplateId,
+    ...link,
     assignedAt: new Date().toISOString(),
-  };
-  await state.store.putProgramAssignment(assignment);
+  });
   return { assignment };
 }
 

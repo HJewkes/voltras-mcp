@@ -167,6 +167,8 @@ function makeStore(): SessionStore & {
     getSetsForExercise: vi.fn(async () => []),
     // VW-300: the load-drift check's own profile source.
     getBaseline: vi.fn(async () => undefined),
+    // VW-540: the effort context pinned at set start asks for the fitted curve.
+    getRirVelocityModel: vi.fn(async () => undefined),
     listExerciseSetups: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
@@ -225,6 +227,7 @@ function setup(
   opts: {
     repSource?: RepSource;
     restTimer?: 'on' | 'off';
+    effortCue?: 'on' | 'off';
     /** deviceId → physical side, seeded into the harness bindings store. */
     bindings?: Record<string, 'left' | 'right'>;
   } = {},
@@ -275,7 +278,11 @@ function setup(
     // Default the harness to restTimer:'on' so the existing rest_status
     // coverage exercises the timer mechanics; production defaults to 'off'
     // (opt-in, VMCP-02.54). Tests override to 'off' to assert suppression.
-    config: { repSource: opts.repSource, restTimer: opts.restTimer ?? 'on' } as never,
+    config: {
+      repSource: opts.repSource,
+      restTimer: opts.restTimer ?? 'on',
+      effortCue: opts.effortCue ?? 'off',
+    } as never,
     manager: {} as never,
     slots,
     store,
@@ -682,6 +689,97 @@ describe('set.start', () => {
     expect(stored.isWarmup).toBe(true);
   });
 
+  // ── VW-540 — the effort context pinned at set start ─────────────────────
+  it('pins the effort context on the live set and carries it onto the persisted row', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] } });
+    const pinned = h.live.set?.effortContext;
+    await h.invoke('set.end', {});
+
+    expect(pinned).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 8, repsHigh: 8, source: 'explicit' },
+      guard: { effortCapRpe: null, lossPct: null },
+    });
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toEqual(pinned);
+  });
+
+  // VW-543: the bridge checks reps 1 to N-1; a change landing on the last rep is caught here.
+  it('stores the first changed-setting rep inside the context, checking the last rep at close', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.applySettings({ chainSettingLbs: 20 });
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toMatchObject({ settingChangedAtRep: 2 });
+  });
+
+  it('stores no changed-setting rep when the settings held for the whole set', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toBeDefined();
+    expect(stored.effortContext).not.toHaveProperty('settingChangedAtRep');
+  });
+
+  // VW-544: the cue record is written only when the effort cue decides the set.
+  it('stores the cue record, with the policy that judged it, when the effort cue is on', async () => {
+    h = setup({ effortCue: 'on' });
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Weight Training' });
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 2 }] } });
+    h.live.appendRep(makeRepAtVelocity(1, 0.5));
+    h.live.appendRep(makeRepAtVelocity(2, 0.5));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.cueRecord).toMatchObject({
+      policyId: 'effort/v1',
+      policyVersion: 'effort-policy@1.0.0',
+      goalKind: 'rep_range',
+      reason: 'reps',
+      reachedAtRep: 2,
+    });
+  });
+
+  it('stores no cue record when the effort cue is off', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Weight Training' });
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 2 }] } });
+    h.live.appendRep(makeRepAtVelocity(1, 0.5));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored).not.toHaveProperty('cueRecord');
+  });
+
+  it('persists no effort context for a set that was never pinned', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    h.live.setSessionExercise('bench-press', 'Bench Press');
+    h.store.getAssignmentsForSession.mockRejectedValueOnce(new Error('store unavailable'));
+
+    await h.invoke('set.start', {});
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored).not.toHaveProperty('effortContext');
+  });
+
   it('refuses a setPurpose that contradicts isWarmup rather than picking one', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
@@ -848,6 +946,17 @@ describe('set.start — upgrading an auto-armed set (VW-180)', () => {
     ]);
     expect(h.live.set?.reps).toHaveLength(2);
     expect(h.live.set?.startedAt).toBe(ARMED_AT);
+  });
+
+  it('re-pins the effort context from the watch the upgrade attaches', async () => {
+    autoArm();
+    h.state.setStartDeviceSnapshots.set('set-armed', h.live.snapshotDevice());
+
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 6 }] } });
+
+    expect(h.live.set?.effortContext).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 6, repsHigh: 6, source: 'explicit' },
+    });
   });
 
   it('adopts the session exercise the set was armed without', async () => {

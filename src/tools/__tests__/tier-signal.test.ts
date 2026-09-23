@@ -2,7 +2,7 @@
 //
 // Coverage shape (see the task scope in tier-signal.ts's header comment):
 //   * No profile row yet -> default beginner, provisional, source 'default'.
-//   * Ceiling crossing, positive: plateaued + >=24 ended sessions spanning
+//   * Ceiling crossing, positive: plateaued + >=24 training days spanning
 //     >=12 weeks -> ceiling/tier 'intermediate', confidence 'confident'.
 //   * Ceiling crossing, negative: missing any one of the three conditions
 //     keeps the ceiling (and tier) at 'beginner', confidence 'provisional'.
@@ -26,7 +26,24 @@ function endedSession(id: string, daysOffset: number): StoredSession {
   const endedAt = new Date(
     anchor + daysOffset * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
   ).toISOString();
-  return { id, startedAt, endedAt };
+  return { id, startedAt, endedAt, kind: 'training' };
+}
+
+/**
+ * Persist a session AND one working set on it. VW-489: a session with no
+ * working set is never a training day, so a fixture that means "he trained"
+ * has to record work.
+ */
+async function seedTrainingDay(store: SqliteSessionStore, session: StoredSession): Promise<void> {
+  await store.putSession(session);
+  await store.putSet({
+    id: `set-${session.id}`,
+    sessionId: session.id,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt ?? session.startedAt,
+    partial: false,
+    reps: [],
+  });
 }
 
 async function seedSessions(
@@ -38,7 +55,7 @@ async function seedSessions(
     // Spread sessions evenly across the requested span so weeksSpanned is
     // driven by the first/last offsets, not by count.
     const offset = count <= 1 ? 0 : Math.round((i * spanDays) / (count - 1));
-    await store.putSession(endedSession(`s${i}`, offset));
+    await seedTrainingDay(store, endedSession(`s${i}`, offset));
   }
 }
 
@@ -52,11 +69,15 @@ describe('getTierSignal', () => {
       confidence: 'provisional',
       source: 'default',
       derivedCeiling: 'beginner',
+      ceilingBasis: null,
       declared: null,
       evidence: {
-        sessionsLogged: 0,
+        trainingDaysLogged: 0,
+        unreviewedDays: 0,
         firstSessionAt: null,
         weeksSpanned: 0,
+        loggedHistoryMet: false,
+        longestLoggedGapDays: null,
         plateauDetected: false,
         techniqueStableUnderLoad: null,
         frequencyConsistent: null,
@@ -82,7 +103,7 @@ describe('getTierSignal', () => {
     expect(signal.confidence).toBe('confident');
     expect(signal.tier).toBe('beginner'); // no declared tier -> stays at the safe default
     expect(signal.source).toBe('default');
-    expect(signal.evidence.sessionsLogged).toBe(24);
+    expect(signal.evidence.trainingDaysLogged).toBe(24);
     expect(signal.evidence.weeksSpanned).toBeGreaterThanOrEqual(12);
     expect(signal.evidence.plateauDetected).toBe(true);
     await store.close();
@@ -105,6 +126,32 @@ describe('getTierSignal', () => {
     await store.close();
   });
 
+  it('counts twelve sessions on one day as one training day toward the 24 (VW-462)', async () => {
+    const store = SqliteSessionStore.open(':memory:');
+    await seedSessions(store, 23, 90);
+    for (let i = 0; i < 12; i++) {
+      const extra = endedSession(`extra${i}`, 0);
+      const shift = (i + 1) * 30_000;
+      await seedTrainingDay(store, {
+        kind: 'training',
+        id: extra.id,
+        startedAt: new Date(Date.parse(extra.startedAt) + shift).toISOString(),
+        endedAt: new Date(Date.parse(extra.endedAt!) + shift).toISOString(),
+      });
+    }
+    await store.putTrainingProfile({
+      userId: LOCAL_USER_ID,
+      everPlateaued: true,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
+
+    expect(signal.evidence.trainingDaysLogged).toBe(23);
+    expect(signal.derivedCeiling).toBe('beginner');
+    await store.close();
+  });
+
   it('stays beginner/provisional when sessions span too few weeks', async () => {
     const store = SqliteSessionStore.open(':memory:');
     await seedSessions(store, 30, 30); // plenty of sessions, span under 12 weeks
@@ -121,7 +168,7 @@ describe('getTierSignal', () => {
     await store.close();
   });
 
-  it('stays beginner/provisional when the user never reported a plateau', async () => {
+  it('stays beginner, confidently, when the history is there but no plateau was reported', async () => {
     const store = SqliteSessionStore.open(':memory:');
     await seedSessions(store, 24, 90);
     await store.putTrainingProfile({
@@ -133,7 +180,8 @@ describe('getTierSignal', () => {
     const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
 
     expect(signal.derivedCeiling).toBe('beginner');
-    expect(signal.confidence).toBe('provisional');
+    expect(signal.ceilingBasis).toBeNull();
+    expect(signal.confidence).toBe('confident');
     await store.close();
   });
 
@@ -169,5 +217,138 @@ describe('getTierSignal', () => {
     expect(signal.tier).toBe('beginner');
     expect(signal.source).toBe('declared');
     await store.close();
+  });
+});
+
+describe('the returner path (VW-462)', () => {
+  /** The owner's shape: a declared intermediate who has plateaued, with years of training behind them. */
+  async function ownerShaped(
+    days: number,
+    spanDays: number,
+    profile: Partial<StoredTrainingProfile> = {},
+  ): Promise<SqliteSessionStore> {
+    const store = SqliteSessionStore.open(':memory:');
+    await seedSessions(store, days, spanDays);
+    await store.putTrainingProfile({
+      userId: LOCAL_USER_ID,
+      declaredTier: 'intermediate',
+      everPlateaued: true,
+      yearsTraining: 3,
+      updatedAt: new Date().toISOString(),
+      ...profile,
+    });
+    return store;
+  }
+
+  async function signalOf(store: SqliteSessionStore) {
+    const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
+    await store.close();
+    return signal;
+  }
+
+  const EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS = [18, 126] as const;
+
+  it('reads beginner, provisional when the break question was never answered', async () => {
+    const signal = await signalOf(await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS));
+
+    expect(signal).toMatchObject({
+      tier: 'beginner',
+      confidence: 'provisional',
+      ceilingBasis: null,
+    });
+    expect(signal.evidence.trainingDaysLogged).toBe(18);
+  });
+
+  it('keeps the declared intermediate, provisionally, after a 4-month break', async () => {
+    const signal = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, { lastBreakMonths: 4 }),
+    );
+
+    expect(signal).toMatchObject({
+      tier: 'intermediate',
+      confidence: 'provisional',
+      ceilingBasis: 'returner',
+    });
+  });
+
+  it('reads beginner after a 14-month break', async () => {
+    const signal = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, { lastBreakMonths: 14 }),
+    );
+
+    expect(signal).toMatchObject({
+      tier: 'beginner',
+      confidence: 'provisional',
+      ceilingBasis: null,
+    });
+  });
+
+  it.each([undefined, 4, 14])(
+    'reads intermediate, confident on the logged path after 24 days over 12 weeks (break %s)',
+    async (lastBreakMonths) => {
+      const signal = await signalOf(
+        await ownerShaped(24, 90, lastBreakMonths === undefined ? {} : { lastBreakMonths }),
+      );
+
+      expect(signal).toMatchObject({
+        tier: 'intermediate',
+        confidence: 'confident',
+        ceilingBasis: 'logged_history',
+      });
+    },
+  );
+
+  it('closes the path when a logged gap is a year or more, whatever the answer said', async () => {
+    const store = await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, { lastBreakMonths: 4 });
+    await seedTrainingDay(store, endedSession('after-13-months', 126 + 396));
+
+    const signal = await signalOf(store);
+
+    expect(signal.evidence.longestLoggedGapDays).toBe(396);
+    expect(signal).toMatchObject({
+      tier: 'beginner',
+      confidence: 'provisional',
+      ceilingBasis: null,
+    });
+  });
+
+  it('needs at least a year of declared training', async () => {
+    const signal = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, {
+        lastBreakMonths: 4,
+        yearsTraining: 0.5,
+      }),
+    );
+
+    expect(signal.ceilingBasis).toBeNull();
+  });
+
+  it('needs a reported plateau', async () => {
+    const signal = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, {
+        lastBreakMonths: 4,
+        everPlateaued: false,
+      }),
+    );
+
+    expect(signal.ceilingBasis).toBeNull();
+  });
+
+  it('still only lowers: a declared beginner stays beginner and advanced is clamped to intermediate', async () => {
+    const beginner = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, {
+        lastBreakMonths: 4,
+        declaredTier: 'beginner',
+      }),
+    );
+    const advanced = await signalOf(
+      await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, {
+        lastBreakMonths: 4,
+        declaredTier: 'advanced',
+      }),
+    );
+
+    expect(beginner.tier).toBe('beginner');
+    expect(advanced.tier).toBe('intermediate');
   });
 });

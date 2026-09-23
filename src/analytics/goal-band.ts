@@ -28,7 +28,6 @@
 import { dietPhaseTolerance, type DietPhaseState } from './diet-phase-tolerance.js';
 import type { DietPhase } from '../store/diet-phase.js';
 import type { BaselineState } from '../store/types.js';
-import { computePercentIncrement } from './percent-increment.js';
 import type { Tier } from '../tools/tier-signal.js';
 
 /**
@@ -37,22 +36,36 @@ import type { Tier } from '../tools/tier-signal.js';
  * a reader can tell a mined finding from a call someone made.
  */
 export const GOAL_BAND_CONSTANTS = {
-  /** Smallest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type */
-  rampIncrementFloorLbs: 2.5,
-  /** Largest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type */
+  /**
+   * Largest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type
+   * ("2 1/2 lb to 10 lbish"); LITERATURE: Helms' novice program adds 10 lb a week on heavy
+   * lower-body compounds. It binds only on a heavy lift at a high percent.
+   */
   rampIncrementCapLbs: 10,
   /**
-   * Percent of working load the weekly step is taken from, before the cited
-   * floor and cap clamp it.
+   * Percent of the start load the weekly step is, by tier and exercise class (VW-482). No pound
+   * floor: RP's 2.5 lb was the gym's equipment step (rp:rp-s5-load-increment-by-exercise-type),
+   * and this device steps in 1 lb, which only a prescribed load rounds to.
    *
-   * ENGINEERING DEFAULT. The corpus states the 2.5-10 lb bracket and says the
-   * step is proportional to the exercise's load, but never the proportion;
-   * `plan-tools.ts` leaves its own `PROGRESSION_INCREMENT_PERCENT` null for
-   * exactly that reason. 2.5% is the percent at which the cited floor binds
-   * below a 100 lb working load and the cited cap binds above 400 lb, so the
-   * whole normal working range sits inside the bracket the corpus does state.
+   * HUMAN DECISION 2026-09-19 for the intermediate row (VW-482, "Per-class percent, no pound
+   * floor"). LITERATURE for the direction: ACSM 2009 gives the smaller percent to small muscle
+   * mass, and Brigatto 2020, Garthe 2011 and Helms' novice program put lower-body compounds
+   * above upper-body ones. ENGINEERING DEFAULT for the beginner (x1.5) and advanced (x0.5)
+   * rows: Stronger By Science finds untrained lifters gain far faster than trained ones, which
+   * sources the direction and not the multiplier.
    */
-  rampIncrementPercentOfLoad: 2.5,
+  rampIncrementPctByTier: {
+    beginner: { isolation: 2.25, upper_compound: 3, lower_compound: 4.5 },
+    intermediate: { isolation: 1.5, upper_compound: 2, lower_compound: 3 },
+    advanced: { isolation: 0.75, upper_compound: 1, lower_compound: 1.5 },
+  },
+  /**
+   * The class an exercise the catalog cannot place ramps at.
+   *
+   * ENGINEERING DEFAULT (VW-482): the middle row, so an unplaced lift is neither promised a
+   * leg-day ramp nor held to an isolation one.
+   */
+  rampClassWhenUnknown: 'upper_compound',
   /** Weekly rep step at fixed load, low edge. rp:rp-s5-rep-progression-alternative */
   rampRepFloorPerWeek: 1,
   /** Weekly rep step at fixed load, high edge. rp:rp-s5-rep-progression-alternative */
@@ -86,6 +99,14 @@ export const GOAL_BAND_CONSTANTS = {
   recompositionSpecializationCap: 1,
   /** Weekly bodyweight loss in a deficit, committed then stretch. rp:rp-s11-fat-loss-rate-heuristic */
   bodyweightFatLossPctPerWeek: { low: -0.5, high: -1 },
+  /**
+   * Weekly bodyweight change for a declared slow-loss recomposition, committed then stretch.
+   *
+   * HUMAN DECISION 2026-09-19 (VW-468): an owner-chosen engineering default, "0 to -0.5 %/wk".
+   * The corpus is silent on a recomposition rate. Holding weight is the commitment, and the
+   * stretch is the slow edge of the cited fat-loss range (rp:rp-s11-fat-loss-rate-heuristic).
+   */
+  recompositionSlowLossPctPerWeek: { low: 0, high: -0.5 },
   /** Weekly bodyweight gain in a surplus, committed then stretch. rp:rp-s11-muscle-gain-rate-heuristic */
   bodyweightGainPctPerWeek: { low: 0.25, high: 0.5 },
   /** The corridor a maintenance bodyweight goal lives in. rp:rp-s12-maintenance-buffer-2pct */
@@ -135,6 +156,9 @@ export const GOAL_BAND_CONSTANTS = {
    */
   e1rmSeePct: 9.8,
 } as const;
+
+/** What sets the programmed ramp's weekly percent: isolation, or a compound by body half (VW-482). */
+export type RampClass = 'isolation' | 'upper_compound' | 'lower_compound';
 
 export type GoalMetric =
   | 'top_load_at_reps'
@@ -192,6 +216,8 @@ export interface GoalBandInput {
   weeks: readonly GoalBandWeek[];
   /** The DECLARED tier, which is what sets magnitude (plan §4 Q4). */
   tier: Tier;
+  /** The lift's ramp class; absent reads as `rampClassWhenUnknown`. Ignored by non-lift metrics. */
+  rampClass?: RampClass;
   /** The level the caller is asking for; the result reports what it earned. */
   infoLevel: GoalInfoLevel;
   dietState: GoalDietState;
@@ -238,6 +264,42 @@ const C = GOAL_BAND_CONSTANTS;
 
 /** Baseline tiers a gain band may not be claimed from (plan §2c `cold`). */
 const SHAPE_ONLY_OR_COLDER: readonly BaselineState[] = ['COLD', 'SHAPE_ONLY'];
+
+/** Which of the two calibration gates is still shut. */
+export type CalibrationBlocker = 'sessions' | 'baseline' | 'both';
+
+/** What still keeps a gain band from being claimed (VW-444). */
+export interface CalibrationGap {
+  /** Matched sessions still to come. `0` when only the baseline blocks. */
+  sessionsNeeded: number;
+  blockedBy: CalibrationBlocker;
+}
+
+/**
+ * The calibration gates, stated once: the band's own downgrade and the progress
+ * view's structured shortfall both read this. `null` baseline means the caller
+ * has no baseline to judge, so only the session count can block.
+ */
+export function calibrationGapOf(
+  matchedSessionCount: number,
+  baselineState: BaselineState | null,
+): CalibrationGap | null {
+  const sessionsNeeded = Math.max(0, C.minMatchedSessionsForRamp - matchedSessionCount);
+  const baselineBlocks = baselineState !== null && SHAPE_ONLY_OR_COLDER.includes(baselineState);
+  if (sessionsNeeded > 0 && baselineBlocks) return { sessionsNeeded, blockedBy: 'both' };
+  if (sessionsNeeded > 0) return { sessionsNeeded, blockedBy: 'sessions' };
+  if (baselineBlocks) return { sessionsNeeded, blockedBy: 'baseline' };
+  return null;
+}
+
+/**
+ * A lift target derived before calibration: the generic programmed ramp, the
+ * same for any new lifter. A `sessions_28d` band is cold by construction and
+ * is a commitment, never a ramp, so it is excluded.
+ */
+export function isStartingRamp(metric: GoalMetric, infoLevel: GoalInfoLevel): boolean {
+  return infoLevel === 'cold' && metric !== 'sessions_28d';
+}
 
 /** The edges and framing a metric-plus-evidence combination produces. */
 interface BandShape {
@@ -313,13 +375,10 @@ function shapeFor(input: GoalBandInput, dietState: DietPhaseState, notes: string
  * matched sessions" is copy the page needs (plan §2c).
  */
 function earnedInfoLevel(input: GoalBandInput, notes: string[]): GoalInfoLevel {
-  if (
-    input.matchedSessionCount < C.minMatchedSessionsForRamp ||
-    SHAPE_ONLY_OR_COLDER.includes(input.baselineState)
-  ) {
-    const missing = Math.max(0, C.minMatchedSessionsForRamp - input.matchedSessionCount);
+  const gap = calibrationGapOf(input.matchedSessionCount, input.baselineState);
+  if (gap !== null) {
     notes.push(
-      `Calibrating: ${missing} more matched session(s) and a baseline past SHAPE_ONLY before ` +
+      `Calibrating: ${gap.sessionsNeeded} more matched session(s) and a baseline past SHAPE_ONLY before ` +
         'a gain band is claimed. Until then the band is the programmed ramp itself.',
     );
     return 'cold';
@@ -409,14 +468,18 @@ function rampEdges(input: GoalBandInput): { low: number; high: number } {
   if (input.metric === 'reps_at_load') {
     return { low: C.rampRepFloorPerWeek * perStep, high: C.rampRepCapPerWeek * perStep };
   }
-  const stepLbs = computePercentIncrement(
-    input.startValue,
-    C.rampIncrementPercentOfLoad,
-    C.rampIncrementFloorLbs,
-    C.rampIncrementCapLbs,
-  );
-  const high = stepLbs * perStep;
+  const rampClass = input.rampClass ?? C.rampClassWhenUnknown;
+  const high = programmedRampStepLbs(input.startValue, rampClass, input.tier) * perStep;
   return { low: high * C.heldWeekFraction, high };
+}
+
+/**
+ * The programmed weekly load step at `loadLbs`: the tier and class percent, capped, and exact.
+ * A goal line is not a prescription, so nothing here rounds to the device's step.
+ */
+export function programmedRampStepLbs(loadLbs: number, rampClass: RampClass, tier: Tier): number {
+  const pct = C.rampIncrementPctByTier[tier][rampClass];
+  return Math.min((loadLbs * pct) / 100, C.rampIncrementCapLbs);
 }
 
 function shapeOf(
@@ -471,9 +534,10 @@ function bodyweightShape(
 
 /**
  * A recomposition holds the maintenance corridor unless the lifter declared the
- * slow-loss target instead. The slow variant is one line rather than a band:
- * both edges sit on the SLOW edge of the cited fat-loss range, because anything
- * faster is a fat-loss phase wearing a recomposition label.
+ * slow-loss target instead. The slow variant commits to holding weight and
+ * stretches to the slow edge of the cited fat-loss range, because anything
+ * faster is a fat-loss phase wearing a recomposition label. Its direction is
+ * `down` even though the committed edge is flat: the goal is a loss.
  */
 function recompositionBodyweightShape(input: GoalBandInput, notes: string[]): BandShape {
   if (input.dietState.slowLoss !== true) {
@@ -484,14 +548,14 @@ function recompositionBodyweightShape(input: GoalBandInput, notes: string[]): Ba
     );
     return maintenanceCorridorShape(notes);
   }
-  const rate = C.bodyweightFatLossPctPerWeek.low;
+  const { low, high } = C.recompositionSlowLossPctPerWeek;
   notes.push(
-    `Recomposition declared as slow loss: both edges sit at ${rate}%/wk, the slow edge of the cited ` +
-      'fat-loss range (rp:rp-s11-fat-loss-rate-heuristic). There is no faster stretch to offer — a ' +
-      'faster loss is a fat-loss phase, not this one.',
+    `Recomposition declared as slow loss: holding the start weight is the committed edge and ` +
+      `${high}%/wk is the stretch, the slow edge of the cited fat-loss range ` +
+      '(rp:rp-s11-fat-loss-rate-heuristic). The corpus states no recomposition rate, so the band ' +
+      'is an owner-chosen default (VW-468). A faster loss is a fat-loss phase, not this one.',
   );
-  notes.push(bodyweightNote('loss', input.startValue, rate));
-  return shapeOf('rp_ramp', 'ramp', rate, rate);
+  return { ...shapeOf('rp_ramp', 'ramp', low, high), direction: 'down' };
 }
 
 /** Maintenance names a corridor to stay inside, so there is no weekly rate. */

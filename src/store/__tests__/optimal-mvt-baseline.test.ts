@@ -148,6 +148,7 @@ async function openWith(history: SessionSpec[]): Promise<SqliteSessionStore> {
       startedAt: session.startedAt,
       exerciseId: 'row',
       exerciseName: 'Cable Row',
+      kind: 'training',
     };
     await store.putSession(first);
     for (const spec of session.sets) {

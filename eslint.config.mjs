@@ -25,12 +25,14 @@ export default tseslint.config(
   {
     // `tools/**` holds standalone packages with their own dependencies and
     // toolchains (see tools/truecoach-submit). They are never part of this
-    // package's lint, typecheck, test or build.
+    // package's lint, typecheck, test or build. The exception is
+    // tools/truecoach-retro, which imports src modules by relative path.
     ignores: [
       'dist/**',
       'coverage/**',
       'node_modules/**',
-      'tools/**',
+      'tools/*',
+      '!tools/truecoach-retro',
       'site/.vitepress/dist/**',
       'site/.vitepress/cache/**',
     ],
@@ -43,7 +45,7 @@ export default tseslint.config(
     linterOptions: { reportUnusedDisableDirectives: 'error' },
   },
   {
-    files: ['src/**/*.{ts,tsx,cjs}'],
+    files: ['src/**/*.{ts,tsx,cjs}', 'tools/truecoach-retro/**/*.ts'],
     plugins: { voltras },
     rules: { 'voltras/no-protocol-detail': 'error' },
   },
@@ -54,7 +56,7 @@ export default tseslint.config(
     rules: { 'voltras/no-protocol-detail': 'off' },
   },
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'tools/truecoach-retro/**/*.ts'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

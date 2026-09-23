@@ -434,6 +434,7 @@ describe('SqliteSessionStore — v3 plan schema', () => {
 
     it('re-putting a session to stamp endedAt keeps its program_assignments', async () => {
       await store.putSession({
+        kind: 'training',
         id: 'sess-1',
         startedAt: '2025-02-01T00:00:00.000Z',
         endedAt: '2025-02-01T01:00:00.000Z',
@@ -524,7 +525,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(31);
+      expect(version.user_version).toBe(41);
     } finally {
       await second.close();
     }
@@ -578,7 +579,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(31);
+      expect(version.user_version).toBe(41);
     } finally {
       await store.close();
     }

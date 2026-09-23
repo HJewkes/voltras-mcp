@@ -6,7 +6,7 @@
 
 ## `rir_velocity.fit`
 
-Re-fit this lifter's own RIR-velocity curve for one exercise from their recorded working sets, and store it.
+Re-fit this lifter's own RIR-velocity curve for one exercise from their recorded working sets done at a constant load (Weight Training with no chains, eccentric or damper setting), and store it.
 
 Qualifying sets are those in the 70-90% band of estimated 1RM that ended at failure or carry a self-reported reps-in-reserve; every rep in such a set is one point, with reps in reserve counted back from the last rep. Returns `fitted`, a `reason` naming either what the fit stands on or which minimum was not met, the `model` itself when one stands (a linear fit, with `r2` and `rirErrorReps` — the residual error expressed in reps, the unit the source paper reports), and a `qualification` count of sets, sessions and reps considered. A fit that fails its minimums DELETES any previously stored curve rather than leaving a stale one readable. Individual curves are the whole point: Jukic et al. 2024 (Physiological Reports) — individual RIR-velocity models predicted a later session within under 2 repetitions of mean error across 70/80/90% 1RM; general (group) models failed at 70% and were only acceptable at 80-90%, and individual fits were roughly twice as good.
 

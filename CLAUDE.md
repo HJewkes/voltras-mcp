@@ -12,6 +12,8 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
 - `npm run dashboard:preview -- <goals|body|plan>` — open one wall page on a seeded scratch store and hold it; `goals` takes `--state` (see `src/docs/preview-seeds.ts`)
 
+**Tests run in UTC.** `vitest.config.ts` pins `process.env.TZ = 'UTC'`, which is what CI runs, so a fixture written as a UTC instant reads the same on any machine. Goal weeks, block calendars and `history.trend` buckets are LOCAL weeks, so a green run west of UTC proves nothing about local-time behaviour unless the file pins its own zone: set `process.env.TZ` before the first import, and restore it in `afterAll` (`src/plan/__tests__/block-calendar-local-time.test.ts`, `src/tools/__tests__/goal-targets-on-blocks.test.ts`). The docs site is built in CI (`npm run docs:build`) and is not part of the CI gate below: a rendered tool description containing an angle-bracket placeholder fails it (VitePress parses it as HTML).
+
 CI gate: lint + typecheck + test + build. The pre-commit hook runs `lint-staged` only; `.husky/pre-push` runs `prettier --check` over files changed vs `origin/main` under `src/**`, `scripts/**`, or `site/**` markdown. Typecheck and the full test suite run in CI, not locally.
 
 ## Adapter Modes
@@ -23,13 +25,14 @@ Adapter is read once at startup; runtime switching is out of scope for v1.
 
 ## Environment Variables
 
-| Var               | Default                  | Notes                                                                                                                                     |
-| ----------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER`  | `node`                   | `node` or `mock`                                                                                                                          |
-| `VMCP_DB_PATH`    | `~/.voltras/vmcp.sqlite` | SQLite store path; don't share one path across processes — startup runs a best-effort lock probe (see Concurrency), not a persistent lock |
-| `VMCP_LOG_LEVEL`  | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport)                                         |
-| `VMCP_REST_TIMER` | `off`                    | `off` / `on`; opt-in auto `rest_status` cycle on natural set close (VMCP-02.54). Never armed on a `session.end` cascade                   |
-| `VMCP_AUTO_ARM`   | `on`                     | `off` / `on`; open a set on the lifter's own reps during an open session and count them into it (VW-164, VW-181)                          |
+| Var                  | Default                  | Notes                                                                                                                                     |
+| -------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOLTRA_ADAPTER`     | `node`                   | `node` or `mock`                                                                                                                          |
+| `VMCP_DB_PATH`       | `~/.voltras/vmcp.sqlite` | SQLite store path; don't share one path across processes — startup runs a best-effort lock probe (see Concurrency), not a persistent lock |
+| `VMCP_LOG_LEVEL`     | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport)                                         |
+| `VMCP_REST_TIMER`    | `off`                    | `off` / `on`; opt-in auto `rest_status` cycle on natural set close (VMCP-02.54). Never armed on a `session.end` cascade                   |
+| `VMCP_AUTO_ARM`      | `on`                     | `off` / `on`; open a set on the lifter's own reps during an open session and count them into it (VW-164, VW-181)                          |
+| `VOLTRAS_EFFORT_CUE` | `off`                    | `off` / `on`; the effort rule decides the one mid-set ending cue and stores a cue record with the set (VW-544). Off until the bench       |
 
 ## Concurrency
 
@@ -46,6 +49,7 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, the screenshot definition behind `npm run docs:captures`, and the preview seeds behind `npm run dashboard:preview`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `eslint-rules/` — repo-local ESLint rules loaded by `eslint.config.mjs`
+- `plugins/voltras-channel/` — the installable plugin: launcher shim and the `pt-session` coach skill. Its `references/15-tool-inventory.md` is generated by `npm run docs:reference`; edit `src/docs/skill-inventory-notes.ts` instead
 
 ## Confidentiality / Privacy
 
@@ -62,11 +66,11 @@ Describe the observable behaviour instead. Protocol-derived findings belong in `
 
 **What enforces it, and what does not.**
 
-| layer | covers | runs |
-| --- | --- | --- |
-| `voltras/no-protocol-detail` (`eslint-rules/`) | encoded values and provenance in `src/**`: hex literals, byte sequences, bare hex runs, command codes, private-tree paths | `npm run lint`, CI |
-| NF-07 (`eslint.config.mjs`) | `Buffer.*` inside any `*Handler` function | `npm run lint`, CI |
-| `src/docs/protocol-guard.ts` | protocol-shaped tokens on generated documentation pages | `npm run docs:reference`, `npm test`, CI |
+| layer                                          | covers                                                                                                                    | runs                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `voltras/no-protocol-detail` (`eslint-rules/`) | encoded values and provenance in `src/**`: hex literals, byte sequences, bare hex runs, command codes, private-tree paths | `npm run lint`, CI                       |
+| NF-07 (`eslint.config.mjs`)                    | `Buffer.*` inside any `*Handler` function                                                                                 | `npm run lint`, CI                       |
+| `src/docs/protocol-guard.ts`                   | protocol-shaped tokens on generated documentation pages                                                                   | `npm run docs:reference`, `npm test`, CI |
 
 **Prose is not covered, and no rule will cover it.** A sentence that names a register and describes what writing to it does carries no value in any shape a pattern can match, and a partial redaction is worse than none: `[redacted]` next to an intact mechanism sentence reads as a decision someone already made rather than as an oversight (VW-220). So prose is a **review-checklist item**: when a change touches device behaviour, read the prose and ask whether a reader could reconstruct anything from it.
 

@@ -1,36 +1,39 @@
-// `getTierSignal()` — the training-experience tier signal (VW-92 MVP).
+// `getTierSignal()` — the training-experience tier signal (VW-92, returner path VW-462).
 //
 // Design doc: the internal tier-signal design note, held outside this repo
-// (§3.1 output shape, §6.2 "deliberately crude ceiling"). This is the MVP
-// slice only: no `detectPlateau()` wiring, no g1/g2/g4 gates. The self-report
-// probe (`training_profile.ever_plateaued`) stands in for a real plateau
-// *detector* — that substitution is intentional per §6, not a shortcut to
-// fix later in this file.
+// (§3.1 output shape, §6.2 "deliberately crude ceiling"). The self-report probe
+// (`training_profile.ever_plateaued`) stands in for a real plateau detector,
+// intentionally per §6. Gate evidence: the VW-462 tier-gate web research, held outside this repo.
 //
-// Storage only feeds this: `training_profile` (VW-96 Wave 3, see
-// `profile-tools.ts`) for the declared side, `sessions` for the derived
-// ceiling. Nothing here writes either table, and nothing here is wired into
-// any consumer (deload rules, RIR targets, cue density, `derivePrescription`,
-// …) — that consumption work is explicitly out of scope for VW-92.
+// Two questions, answered separately:
+// - CONFIDENCE is about how much logged history there is: `confident` needs 24 training days
+//   over 12 weeks, whatever the ceiling.
+// - The CEILING rises to intermediate on a plateau plus EITHER that logged history OR the
+//   returner path: declared prior training and a short last break. A returner keeps the tier
+//   and loses confidence, because technique and training knowledge do not detrain.
+// The clamp only ever lowers the declared tier, and `advanced` is never derived.
 //
-// `sessions.user_id` is not populated by any current writer (`putSession`'s
-// INSERT omits the column; see the comment on `SqliteSessionStore.putSession`
-// and the corresponding note in `sqlite-store-queries.test.ts`). Filtering
-// the session aggregates below by `userId` would therefore undercount every
-// session logged since the one-time v6 backfill migration ran. The doc's own
-// framing — "this repo is currently effectively single-user in practice" —
-// is the reason this file counts *all* sessions rather than filtering, the
-// same posture `profile-tools.ts` takes by keying strictly off
-// `LOCAL_USER_ID` for the profile row. Revisit this the day `sessions` gets a
-// real per-session `user_id` writer.
+// Consumers read the clamped `tier`: `plan.warmup_ramp` (rung count), `report.weekly` and
+// `plan.suggest_progression` (whether a set may be added), the plan lints (volume ceilings and
+// the provisional note), and `profile.get_starting_prescription`. Goal derivation reads the
+// DECLARED tier for magnitude and flags when the clamp disagreed.
+//
+// `sessions.user_id` is not populated by any current writer, so this file counts every owner
+// session rather than filtering by user id, the same single-user posture `profile-tools.ts`
+// takes by keying off `LOCAL_USER_ID`.
 
-import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
+import { readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
+import { readUnreviewed } from '../analytics/session-review.js';
+import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
 
 export type TierConfidence = 'provisional' | 'confident';
 
 export type TierSource = 'default' | 'declared' | 'derived';
+
+/** Which path raised the ceiling to intermediate, or `null` when it stayed at beginner. */
+export type TierCeilingBasis = 'logged_history' | 'returner' | null;
 
 /**
  * The store slice `getTierSignal` reads. Declared narrow (rather than
@@ -39,13 +42,30 @@ export type TierSource = 'default' | 'declared' | 'derived';
  * tool path's `ServerState` still satisfies it structurally.
  */
 export interface TierSignalState {
-  store: Pick<SessionStore, 'getTrainingProfile' | 'countSessions' | 'getSessionDateSpan'>;
+  store: Pick<
+    SessionStore,
+    | 'getTrainingProfile'
+    | 'listTrainingDayInstants'
+    | 'getSessionDateSpan'
+    | 'listSessionReviewRows'
+  >;
 }
 
 export interface TierSignalEvidence {
-  sessionsLogged: number;
+  /** Distinct local days with an ended session, all time (VW-462); one visit is one day however many rows it holds. */
+  trainingDaysLogged: number;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are NOT in
+   * `trainingDaysLogged`, so a gate that reads unmet with this above zero is
+   * waiting on a review, not on training.
+   */
+  unreviewedDays: number;
   firstSessionAt: string | null;
   weeksSpanned: number;
+  /** Whether the logged history alone clears the 24-day, 12-week gate. */
+  loggedHistoryMet: boolean;
+  /** The longest run of days between two logged training days; `null` with fewer than two. */
+  longestLoggedGapDays: number | null;
   plateauDetected: boolean;
   /** null = not enough data / not computed by this MVP (needs a later increment). */
   techniqueStableUnderLoad: boolean | null;
@@ -58,6 +78,8 @@ export interface TierSignal {
   confidence: TierConfidence;
   source: TierSource;
   derivedCeiling: Tier;
+  /** Why the ceiling rose, so the coach can say it; `null` when it did not. */
+  ceilingBasis: TierCeilingBasis;
   declared: Tier | null;
   evidence: TierSignalEvidence;
 }
@@ -73,7 +95,36 @@ function minTier(a: Tier, b: Tier): Tier {
   return TIER_ORDER[a] <= TIER_ORDER[b] ? a : b;
 }
 
-const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MS_PER_WEEK = 7 * DAY_MS;
+const DAYS_PER_MONTH = 365.25 / 12;
+
+/**
+ * Logged weeks before the signal is confident. RP's fastest beginner-to-intermediate case:
+ * "Some people can do this in three months of training" (lecture 29, tier-gate web research).
+ */
+const MIN_WEEKS_SPANNED = 12;
+
+/**
+ * Logged training days before the signal is confident. ENGINEERING DEFAULT: RP's minimum
+ * beginner frequency of two days a week over those 12 weeks. It also matches the research's
+ * trend-noise arithmetic, 18 to 24 exposures before a slow trend reads apart from a plateau.
+ */
+const MIN_TRAINING_DAYS = 24;
+
+/**
+ * Declared years of training for the returner path. Rhea et al. 2003 count a lifter as trained
+ * after "at least 1 yr" of weight training; ACSM 2009 puts intermediate at about 6 months. The
+ * stricter of the two, because this path lifts the clamp on self-report alone.
+ */
+const RETURNER_MIN_YEARS_TRAINING = 1;
+
+/**
+ * A break at least this long ends the returner path. Nuckols (Stronger By Science, 2022): after
+ * more than a year out, train as an untrained lifter. It applies both to the declared last
+ * break and to any gap between logged training days, so a break after the answer counts too.
+ */
+const MAX_BREAK_MONTHS = 12;
 
 function weeksBetween(first: string | null, last: string | null): number {
   if (first === null || last === null) return 0;
@@ -82,43 +133,71 @@ function weeksBetween(first: string | null, last: string | null): number {
   return Math.floor(spanMs / MS_PER_WEEK);
 }
 
+/** The longest run of days between consecutive training days; `null` with fewer than two. */
+function longestGapDays(days: readonly string[]): number | null {
+  const gaps = trainingGaps(days).map((gap) => gap.days);
+  return gaps.length === 0 ? null : Math.max(...gaps);
+}
+
 /**
- * The §6.2 crude ceiling plus the §3.1 output shape.
+ * The returner path: declared prior training, a last break under a year, and no logged gap of
+ * a year or more. An unanswered break question never opens it.
+ */
+function isReturner(
+  profile: StoredTrainingProfile | undefined,
+  longestLoggedGapDays: number | null,
+): boolean {
+  const breakMonths = profile?.lastBreakMonths;
+  return (
+    (profile?.yearsTraining ?? 0) >= RETURNER_MIN_YEARS_TRAINING &&
+    breakMonths !== undefined &&
+    breakMonths < MAX_BREAK_MONTHS &&
+    (longestLoggedGapDays ?? 0) < MAX_BREAK_MONTHS * DAYS_PER_MONTH
+  );
+}
+
+function ceilingBasisOf(
+  everPlateaued: boolean,
+  loggedHistoryMet: boolean,
+  returner: boolean,
+): TierCeilingBasis {
+  if (!everPlateaued) return null;
+  if (loggedHistoryMet) return 'logged_history';
+  return returner ? 'returner' : null;
+}
+
+/**
+ * The crude ceiling (§6.2), the returner path, and the §3.1 output shape.
  *
  * ```
- * ceiling = 'beginner'
- * if ever_plateaued and sessionsLogged >= 24 and weeksSpanned >= 12:
- *     ceiling = 'intermediate'
- *     confidence = 'confident'
- * else:
- *     confidence = 'provisional'
+ * loggedHistoryMet = trainingDaysLogged >= 24 and weeksSpanned >= 12
+ * confidence = loggedHistoryMet ? 'confident' : 'provisional'
+ * ceiling = everPlateaued and (loggedHistoryMet or returner) ? 'intermediate' : 'beginner'
  * tier = min(declared ?? 'beginner', ceiling)
  * ```
  *
- * `advanced` is never produced by the ceiling (§3.5) — it can only come from
- * an explicit `declared_tier = 'advanced'`, and even then the clamp still
- * applies: a `declared` above the ceiling is lowered to the ceiling, never
- * honoured past it. (Non-hazard-class consumers that want to see `declared`
- * unclamped read that field directly, per §3.4/§5 — this function always
- * returns the clamped `tier`.)
+ * `advanced` is never produced by the ceiling (§3.5): it can only come from an explicit
+ * `declared_tier = 'advanced'`, and the clamp still applies to it.
  */
 export async function getTierSignal(
   state: TierSignalState,
   userId: string = LOCAL_USER_ID,
 ): Promise<TierSignal> {
   const profile = await state.store.getTrainingProfile(userId);
-  const sessionsLogged = await state.store.countSessions({ endedOnly: true });
+  const days = await readTrainingDaysMatching(state.store, {});
   const span = await state.store.getSessionDateSpan({ endedOnly: true });
   const weeksSpanned = weeksBetween(span.first, span.last);
   const everPlateaued = profile?.everPlateaued ?? false;
+  const loggedHistoryMet = days.length >= MIN_TRAINING_DAYS && weeksSpanned >= MIN_WEEKS_SPANNED;
+  const longestLoggedGapDays = longestGapDays(days);
+  const ceilingBasis = ceilingBasisOf(
+    everPlateaued,
+    loggedHistoryMet,
+    isReturner(profile, longestLoggedGapDays),
+  );
+  const derivedCeiling: Tier = ceilingBasis === null ? 'beginner' : 'intermediate';
 
-  let derivedCeiling: Tier = 'beginner';
-  let confidence: TierConfidence = 'provisional';
-  if (everPlateaued && sessionsLogged >= 24 && weeksSpanned >= 12) {
-    derivedCeiling = 'intermediate';
-    confidence = 'confident';
-  }
-
+  const unreviewed = await readUnreviewed(state.store);
   const declared = isTier(profile?.declaredTier) ? profile.declaredTier : null;
   const tier = minTier(declared ?? 'beginner', derivedCeiling);
   const source: TierSource =
@@ -126,14 +205,18 @@ export async function getTierSignal(
 
   return {
     tier,
-    confidence,
+    confidence: loggedHistoryMet ? 'confident' : 'provisional',
     source,
     derivedCeiling,
+    ceilingBasis,
     declared,
     evidence: {
-      sessionsLogged,
+      trainingDaysLogged: days.length,
+      unreviewedDays: unreviewed.unreviewedDays,
       firstSessionAt: span.first,
       weeksSpanned,
+      loggedHistoryMet,
+      longestLoggedGapDays,
       plateauDetected: everPlateaued,
       techniqueStableUnderLoad: null,
       frequencyConsistent: null,

@@ -25,8 +25,9 @@
 // which boot the real `dist/bin.js` over a real store.
 //
 // ── `--state` ──────────────────────────────────────────────────────────────
-// `#/goals` takes `--state calibrating|on_track|behind|ahead|hit_exact|
-// beyond_goal`, which seeds the readings that land the goal read model in that
+// `#/goals` takes `--state calibrating|recalibration_offered|
+// recalibration_declined|on_track|fast_climb|behind|stalled|ahead|hit_exact|beyond_goal`,
+// which seeds the readings that land the goal read model in that
 // state. The definitions, and why a driven run can only ever produce
 // `calibrating`, are in `src/docs/preview-seeds.ts`; the statuses they reach are
 // pinned by `src/dashboard/__tests__/preview-seeds.test.ts`.

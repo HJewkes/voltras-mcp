@@ -16,6 +16,7 @@ import {
   buildGoalProgressView,
   buildPriorityRollup,
   type GoalActual,
+  type GoalCalibrationEvidence,
   type GoalProgressInput,
   type GoalProgressView,
 } from '../read-models/goal-progress.js';
@@ -107,6 +108,7 @@ function input(overrides: Partial<GoalProgressInput> = {}): GoalProgressInput {
     priority: PRIORITY,
     target: TARGET,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals: [],
     weeks: WEEKS,
     now: WEEK_3,
@@ -212,6 +214,18 @@ describe('buildGoalProgressView stalled source', () => {
     expect(view.statusBasis).toContain('history.trend');
     expect(view.statusBasis).toContain('21 days');
     expect(view.statusBasis).toContain('Variance under 5%.');
+  });
+
+  it('keeps a calibrating target calibrating when the detector finds a flatline (VW-452)', () => {
+    const view = buildGoalProgressView(
+      input({
+        band: { ...BAND, infoLevel: 'cold' },
+        actuals: FLAT_RUN,
+        plateauVerdict: { verdict: 'plateau', plateauDays: 14 },
+      }),
+    );
+
+    expect(view.status).toBe('calibrating');
   });
 
   it('does not stall on a tolerated plateau, because the phase already explains it', () => {
@@ -424,6 +438,173 @@ describe('buildGoalProgressView praise cadence', () => {
     expect(view.praise?.level).toBe('loud');
     expect(view.praise?.text).toContain('128%');
     expect(view.praise?.text).toContain('rp:rp-s12-praise-relative-to-goal-not-magnitude');
+  });
+});
+
+describe('buildGoalProgressView calibration facts (VW-444)', () => {
+  /** What `goal.propose_targets` stores for a lift derived before calibration. */
+  const COLD_TARGET: StoredGoalTarget = {
+    ...TARGET,
+    committedValue: 185,
+    stretchValue: 185,
+    basis: 'execution_ramp',
+    infoLevel: 'cold',
+  };
+
+  function coldView(evidence: GoalCalibrationEvidence): GoalProgressView {
+    const band = deriveGoalBand({
+      metric: 'top_load_at_reps',
+      startValue: 170,
+      horizonWeeks: 6,
+      weeks: WEEKS,
+      tier: 'intermediate',
+      infoLevel: 'own',
+      dietState: { phase: 'maintenance', weeksInPhase: 4 },
+      layoff: false,
+      ...evidence,
+      completedMesoCount: 0,
+    });
+    return buildGoalProgressView(
+      input({
+        target: COLD_TARGET,
+        band,
+        calibrationEvidence: evidence,
+        actuals: [actual(2, 172)],
+      }),
+    );
+  }
+
+  it('counts the sessions still needed when only the session count blocks', () => {
+    const view = coldView({ matchedSessionCount: 1, baselineState: 'PROVISIONAL' });
+
+    expect(view.status).toBe('calibrating');
+    expect(view.calibration).toEqual({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      baselineState: 'PROVISIONAL',
+      targetBasis: 'execution_ramp',
+      targetInfoLevel: 'cold',
+    });
+  });
+
+  it('names the baseline, with no sessions owed, when only the baseline blocks', () => {
+    const view = coldView({ matchedSessionCount: 4, baselineState: 'SHAPE_ONLY' });
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 0,
+      blockedBy: 'baseline',
+      baselineState: 'SHAPE_ONLY',
+    });
+  });
+
+  it('reports both gates when the count and the baseline both block', () => {
+    const view = coldView({ matchedSessionCount: 0, baselineState: 'COLD' });
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 2,
+      blockedBy: 'both',
+      baselineState: 'COLD',
+    });
+  });
+
+  it('leaves statusBasis prose as it was', () => {
+    const view = coldView({ matchedSessionCount: 1, baselineState: 'PROVISIONAL' });
+
+    expect(view.statusBasis).toContain('Calibrating: the band is the programmed execution ramp');
+  });
+
+  it('counts matched readings when the band is warm but the readings are not', () => {
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 174)] }));
+
+    expect(view.calibration).toEqual({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      baselineState: 'CALIBRATED',
+      targetBasis: 'rp_ramp',
+      targetInfoLevel: 'ramp',
+    });
+  });
+
+  it('carries no calibration facts once the target is judged against its band', () => {
+    const view = buildGoalProgressView(input({ actuals: CONVERGING }));
+
+    expect(view.status).toBe('on_track');
+    expect(view).not.toHaveProperty('calibration');
+  });
+
+  it('carries no calibration facts for a session-count commitment with nothing counted', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: { ...COLD_TARGET, metric: 'sessions_28d', exerciseId: undefined },
+        band: { ...BAND, infoLevel: 'cold', basis: 'execution_ramp' },
+        calibrationEvidence: { matchedSessionCount: 0, baselineState: 'CALIBRATED' },
+      }),
+    );
+
+    expect(view.status).toBe('calibrating');
+    expect(view).not.toHaveProperty('calibration');
+  });
+});
+
+describe('buildGoalProgressView recalibration (VW-444 part 2)', () => {
+  const RAMP: StoredGoalTarget = {
+    ...TARGET,
+    committedValue: 185,
+    stretchValue: 185,
+    basis: 'execution_ramp',
+    infoLevel: 'cold',
+  };
+  const CALIBRATED = { matchedSessionCount: 3, baselineState: 'PROVISIONAL' as const };
+
+  it('offers a data-based target on an accepted starting ramp whose lift has calibrated', () => {
+    const view = buildGoalProgressView(
+      input({ target: RAMP, calibrationEvidence: CALIBRATED, actuals: CONVERGING }),
+    );
+
+    expect(view.recalibration).toEqual({ state: 'offered' });
+  });
+
+  it('says the ramp was kept once the lifter declined', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: RAMP,
+        calibrationEvidence: CALIBRATED,
+        recalibrationDeclined: true,
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view.recalibration).toEqual({ state: 'kept_starting_ramp' });
+  });
+
+  it('withdraws the offer when the evidence goes backwards', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: RAMP,
+        calibrationEvidence: { matchedSessionCount: 1, baselineState: 'PROVISIONAL' },
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view).not.toHaveProperty('recalibration');
+  });
+
+  it('has nothing to offer on a target that was accepted from data', () => {
+    const view = buildGoalProgressView(input({ actuals: CONVERGING }));
+
+    expect(view).not.toHaveProperty('recalibration');
+  });
+
+  it('has nothing to offer on an unanswered proposal', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: { ...RAMP, acceptedBy: undefined },
+        calibrationEvidence: CALIBRATED,
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view).not.toHaveProperty('recalibration');
   });
 });
 

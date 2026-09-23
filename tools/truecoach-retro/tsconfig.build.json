@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false },
+  "exclude": ["../../node_modules", "../../dist", "../../.retro-build", "src/**/__tests__/**"]
+}

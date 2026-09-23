@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkPathCitations,
   checkProtocolLeakage,
+  checkToolCoverage,
   checkToolNames,
   extractPathCitations,
 } from '../../../scripts/lib/docs-checks.mjs';
@@ -180,10 +181,38 @@ describe('checkProtocolLeakage', () => {
   });
 });
 
+describe('checkToolCoverage', () => {
+  const coverage = (texts: string[], ignored = new Set<string>()): string[] =>
+    checkToolCoverage(texts, REGISTRY, ignored).map((finding) => finding.message);
+
+  it('names every registered tool no page mentions', () => {
+    expect(coverage(['only `server.health` here'])).toHaveLength(REGISTRY.size - 1);
+  });
+
+  it('accepts a tool named on any one of several pages', () => {
+    const pages = [...REGISTRY].map((name) => `\`${name}\` does a thing`);
+    expect(coverage(pages)).toEqual([]);
+  });
+
+  it('accepts a tool the reviewed ignore list excuses', () => {
+    const pages = [...REGISTRY].filter((name) => name !== 'server.health').map((n) => `\`${n}\``);
+    expect(coverage(pages, new Set(['server.health']))).toEqual([]);
+  });
+
+  it('does not count a tool named only inside a URL', () => {
+    const pages = [...REGISTRY].map((name) =>
+      name === 'session.start' ? 'https://example.com/session.start' : `\`${name}\``,
+    );
+    expect(coverage(pages)).toEqual(['no page of the skill names session.start']);
+  });
+});
+
 describe('ANALYTICS_PIPELINE_IDS', () => {
   it('lists exactly the pipelines metrics.compute dispatches on', () => {
     const source = readFileSync(new URL('src/tools/metrics-tools.ts', REPO_ROOT), 'utf8');
-    const dispatched = [...source.matchAll(/^\s*case '([a-z_]+\.[a-z_]+)':/gm)].map(
+    // The digit class matters: `strength.e1rm` hid from a letters-only pattern,
+    // so the list read seventeen while the dispatch had eighteen (VW-513).
+    const dispatched = [...source.matchAll(/^\s*case '([a-z0-9_]+\.[a-z0-9_]+)':/gm)].map(
       (match) => match[1],
     );
     expect([...ANALYTICS_PIPELINE_IDS].sort()).toEqual([...new Set(dispatched)].sort());

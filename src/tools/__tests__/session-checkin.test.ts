@@ -5,7 +5,7 @@
 //   (a) ending with a check-in writes N rows, and session.get returns them
 //   (b) ending without one writes nothing
 //   (c) the week-1 gate withholds soreness/joint/motivation for a lifter
-//       with zero completed prior sessions
+//       with no training day before today (VW-462: days, not session rows)
 //   (d) a guest session (named `lifter`) writes nothing
 //   (e) an unknown answer code is refused with INVALID_INPUT
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -46,6 +46,8 @@ const TOOL_NAMES = [
   'session.set_lifter',
   'session.list',
   'session.get',
+  'session.mark_kind',
+  'session.review_list',
 ];
 
 function makeFakePlaceholders(): {
@@ -78,7 +80,7 @@ function makeFakePlaceholders(): {
 }
 
 type FakeStore = SessionStore & {
-  countSessions: ReturnType<typeof vi.fn>;
+  listTrainingDayInstants: ReturnType<typeof vi.fn>;
   putSelfReport: ReturnType<typeof vi.fn>;
   getSelfReportsForSession: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
@@ -93,10 +95,16 @@ function makeStore(): FakeStore {
     }),
     putSet: vi.fn(async () => {}),
     getSession: vi.fn(async (id: string) => sessions.get(id)),
+    patchSession: vi.fn(async (id: string, patch: Partial<StoredSession>) => {
+      const stored = sessions.get(id);
+      if (stored !== undefined) sessions.set(id, { ...stored, ...patch });
+      return sessions.get(id);
+    }),
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
-    countSessions: vi.fn(async () => 0),
+    listTrainingDayInstants: vi.fn(async () => []),
+    listSessionReviewRows: vi.fn(async () => []),
     putSelfReport: vi.fn(async (r: StoredSelfReport) => {
       rows.push(r);
     }),
@@ -167,6 +175,21 @@ function setup(): Harness {
   return { state, invoke, store };
 }
 
+/** An end instant two days back: always an earlier local date, DST or not. */
+function twoDaysAgo(): string {
+  return new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/** `count` session end times earlier today, minutes apart: one visit logged per exercise. */
+function earlierToday(count: number): string[] {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const span = Date.now() - midnight.getTime();
+  return Array.from({ length: count }, (_, i) =>
+    new Date(midnight.getTime() + (span * i) / count).toISOString(),
+  );
+}
+
 function parseResult(r: { content: { text: string }[] }): unknown {
   return JSON.parse(r.content[0].text);
 }
@@ -178,8 +201,8 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
   });
 
   it('(a) session.end with a check-in writes one row per answer, and session.get returns them', async () => {
-    // One prior completed session, so the week-1 gate does not withhold anything.
-    h.store.countSessions.mockResolvedValue(1);
+    // A training day before today, so the week-1 gate does not withhold anything.
+    h.store.listTrainingDayInstants.mockResolvedValue([twoDaysAgo()]);
     await h.invoke('session.start', { exerciseName: 'Bench Press' });
     const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
 
@@ -218,7 +241,7 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
   });
 
   it('(c) the week-1 gate withholds soreness/joint/motivation for a lifter with no completed prior session', async () => {
-    h.store.countSessions.mockResolvedValue(0);
+    h.store.listTrainingDayInstants.mockResolvedValue([]);
     await h.invoke('session.start', { exerciseName: 'Bench Press' });
 
     const r = await h.invoke('session.end', {
@@ -240,8 +263,34 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
     expect((h.store.putSelfReport.mock.calls[0][0] as StoredSelfReport).questionCode).toBe('went');
   });
 
+  it('(c2) eleven sessions ended earlier today are one training day, so the gate still withholds', async () => {
+    h.store.listTrainingDayInstants.mockResolvedValue(earlierToday(11));
+    await h.invoke('session.start', { exerciseName: 'Bench Press' });
+
+    const r = await h.invoke('session.end', {
+      checkin: { answers: [{ code: 'soreness', value: 'low' }] },
+    });
+    const body = parseResult(r) as { checkin?: { written: number; withheld: string[] } };
+    expect(body.checkin?.withheld).toEqual(['soreness']);
+  });
+
+  it('(c3) twelve sessions on one earlier day open the gate the same as one', async () => {
+    const earlier = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    earlier.setHours(9, 0, 0, 0);
+    h.store.listTrainingDayInstants.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => new Date(earlier.getTime() + i * 60_000).toISOString()),
+    );
+    await h.invoke('session.start', { exerciseName: 'Bench Press' });
+
+    const r = await h.invoke('session.end', {
+      checkin: { answers: [{ code: 'soreness', value: 'low' }] },
+    });
+    const body = parseResult(r) as { checkin?: { written: number; withheld: string[] } };
+    expect(body.checkin?.withheld).toEqual([]);
+  });
+
   it('(d) a guest session (named lifter) writes nothing', async () => {
-    h.store.countSessions.mockResolvedValue(5);
+    h.store.listTrainingDayInstants.mockResolvedValue([twoDaysAgo()]);
     await h.invoke('session.start', { exerciseName: 'Bench Press', lifter: 'Jordan' });
 
     const r = await h.invoke('session.end', {
@@ -268,7 +317,7 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
   });
 
   it('the standalone session.checkin tool writes against the slot active session', async () => {
-    h.store.countSessions.mockResolvedValue(2);
+    h.store.listTrainingDayInstants.mockResolvedValue([twoDaysAgo()]);
     await h.invoke('session.start', { exerciseName: 'Bench Press' });
     const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
 
@@ -295,7 +344,7 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
   });
 
   it('session.checkin sets preSessionCarbs on the active session (VW-307)', async () => {
-    h.store.countSessions.mockResolvedValue(2);
+    h.store.listTrainingDayInstants.mockResolvedValue([twoDaysAgo()]);
     await h.invoke('session.start', { exerciseName: 'Bench Press' });
     const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
 
@@ -310,7 +359,7 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
   });
 
   it('preSessionCarbs set via session.checkin survives the later session.end re-put', async () => {
-    h.store.countSessions.mockResolvedValue(2);
+    h.store.listTrainingDayInstants.mockResolvedValue([twoDaysAgo()]);
     await h.invoke('session.start', { exerciseName: 'Bench Press' });
     const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
 

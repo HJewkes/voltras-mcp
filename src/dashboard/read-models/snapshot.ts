@@ -19,8 +19,38 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../../state/live-state.js';
+import type { SetEffort } from '@voltras/workout-analytics';
+
+import { effortForSet } from '../../analytics/effort-for-set.js';
+import type { ResolvedRest } from '../../analytics/rest-defaults.js';
+import { log } from '../../logger.js';
+import { exerciseFatigueStop, type FatigueStop } from '../../state/velocity-loss-intent.js';
 import type { SetupCard } from '../../store/types.js';
 import type { SessionPaceView } from './session-pace.js';
+
+/**
+ * A set as the snapshot sends it: the live set plus its resolved effort (VW-543). `null`
+ * only when the resolver failed on it. Nothing in the SPA reads `effort` yet.
+ */
+export type SnapshotSet = ActiveSet & { effort: SetEffort | null };
+
+/** A finished set as the snapshot sends it, with its effort resolved at its close snapshot. */
+export type SnapshotCompletedSet = CompletedSetRecord & { effort: SetEffort | null };
+
+/** Attach the resolved effort to a set, read against `device`. */
+export function withEffort(set: ActiveSet, device: DeviceSnapshot): SnapshotSet {
+  try {
+    return { ...set, effort: effortForSet(set, device) };
+  } catch (err) {
+    log.warn('snapshot: effort could not be resolved for a set', err);
+    return { ...set, effort: null };
+  }
+}
+
+/** Attach the resolved effort to a finished set, read against the snapshot it closed with. */
+export function recordWithEffort(record: CompletedSetRecord): SnapshotCompletedSet {
+  return { ...record, effort: withEffort(record.set, record.device).effort };
+}
 
 /** One slot's device snapshot, tagged with its slot id. */
 export interface DeviceEntry {
@@ -34,7 +64,7 @@ export interface DeviceEntry {
    * set state (and pre-VW-71 callers/test fakes) simply omit it — a consumer then
    * shows an awaiting state for that side rather than a fabricated one.
    */
-  sets?: { active: ActiveSet | null; completed: CompletedSetRecord[] };
+  sets?: { active: SnapshotSet | null; completed: SnapshotCompletedSet[] };
 }
 
 /**
@@ -57,7 +87,7 @@ export interface SnapshotResponse {
    * makes the rail / rest recap / session totals durable — a consumer no longer
    * has to have watched the live active→null transition to see a finished set.
    */
-  sets: { active: ActiveSet | null; completed: CompletedSetRecord[] };
+  sets: { active: SnapshotSet | null; completed: SnapshotCompletedSet[] };
   activeExercise: ActiveExerciseMuscles | null;
   /**
    * The active exercise's reference setup card (VW-275) — the most recently
@@ -73,6 +103,16 @@ export interface SnapshotResponse {
    * footer renders only when this is present, never from a fabricated budget.
    */
   sessionPace: SessionPaceView | null;
+  /**
+   * The velocity-loss % at which a set of the active exercise reads as "stop" when the set
+   * pinned no threshold of its own (VW-440): the plan's intent, else the named default.
+   */
+  fatigueStop: FatigueStop;
+  /**
+   * The rest to count down after the last set (VW-441), from the same resolver
+   * `timer.start` uses, with its provenance. Null with no session open.
+   */
+  rest: ResolvedRest | null;
 }
 
 /**
@@ -95,18 +135,22 @@ export interface SnapshotInput {
   /** The primary active session (first slot that has one), if any. */
   session: ActiveSession | undefined;
   /** The primary active set (first slot that has one), if any. */
-  activeSet: ActiveSet | undefined;
+  activeSet: SnapshotSet | undefined;
   /**
    * The current session's finished sets (first slot that has a session),
    * oldest-first. Optional so callers/tests that predate VW-70 default to none.
    */
-  completedSets?: CompletedSetRecord[];
+  completedSets?: SnapshotCompletedSet[];
   /** The catalog entry for the active session's exercise, if resolved. */
   activeExercise: ExerciseMeta | undefined;
   /** The active exercise's reference setup card (VW-275), if one was resolved. */
   expectedSetupCard?: SetupCard;
   /** The session's plan-derived pace (VW-290), if one was resolved. */
   sessionPace?: SessionPaceView;
+  /** The active exercise's stop threshold (VW-440); the named default when absent. */
+  fatigueStop?: FatigueStop;
+  /** The resolved rest (VW-441), if a session is open. */
+  rest?: ResolvedRest;
 }
 
 /**
@@ -160,5 +204,7 @@ export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),
     expectedSetupCard: input.expectedSetupCard ?? null,
     sessionPace: input.sessionPace ?? null,
+    fatigueStop: input.fatigueStop ?? exerciseFatigueStop(undefined),
+    rest: input.rest ?? null,
   };
 }

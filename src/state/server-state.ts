@@ -43,6 +43,7 @@ import { WriteLease } from './write-lease.js';
 import { deriveLoadState } from './load-state.js';
 
 import type { Config } from '../config.js';
+import type { CapturedTools } from '../actions/capture-handlers.js';
 import { configureLogger, log } from '../logger.js';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
@@ -406,6 +407,14 @@ export interface ServerState {
    * transient port conflict doesn't read the same as an intentional opt-out.
    */
   dashboard?: { available: boolean; url: string | null; disabledReason: 'disabled' | null };
+  /**
+   * Tool schemas and handlers the dashboard action layer runs (VW-502), taken
+   * once at boot by `captureActionHandlers`. Set by `runServer`, so a bootstrap
+   * used by a test fixture leaves it absent and the action route answers 501.
+   * Deliberately NOT the per-connection registrations: those are lease-wrapped
+   * under a connection's client id, and the wall runs with no client attached.
+   */
+  actionTools?: CapturedTools;
 }
 
 /**
@@ -441,6 +450,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // the analytics package; calling once at boot is sufficient. When the
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
     setCatalog(SEED_CABLE_EXERCISES);
+    await refitStaleRirVelocityModels(store);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
@@ -500,6 +510,23 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     await safeCloseStore(store);
     safeDisposeManager(manager);
     throw err;
+  }
+}
+
+/**
+ * A curve fitted under an older rule reads as untrusted until it is refitted, so
+ * refit them here, once. A failure leaves them untrusted rather than failing the boot.
+ */
+async function refitStaleRirVelocityModels(store: SessionStore): Promise<void> {
+  try {
+    const counts = await store.refitStaleRirVelocityModels();
+    if (counts.refitted + counts.removed === 0) return;
+    log.info(
+      `refitted ${String(counts.refitted)} and removed ${String(counts.removed)} of ` +
+        `${String(counts.stored)} stored RIR-velocity curves under the current rules`,
+    );
+  } catch (err) {
+    log.warn('bootstrapState: refitting stale RIR-velocity curves failed', err);
   }
 }
 

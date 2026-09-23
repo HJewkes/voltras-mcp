@@ -4,9 +4,16 @@
 // method gate, the body parser, the route table, and the `PlanApiError` → status
 // mapping are all exercised end to end. The pure shaping is covered separately
 // in `plan-tree-read-model.test.ts`.
+//
+// Every write below goes through the VW-500 guard, and `call` gets its token the
+// way the SPA does — from `GET /api/bootstrap`. So the whole builder flow in
+// this file doubles as the proof that the legitimate flow still works guarded.
+// The guard's own rule table is unit-tested in `write-guard.test.ts`; the
+// per-route refusals live at the bottom of this file.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import { z } from 'zod';
 
 import {
   DEFAULT_DASHBOARD_HOST,
@@ -14,6 +21,7 @@ import {
   type DashboardServerHandle,
   type DashboardServerState,
 } from '../server.js';
+import { WRITE_TOKEN_HEADER } from '../write-guard.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -90,6 +98,8 @@ class FakePlanStore {
   getPlannedExercisesForTemplate = async (templateId: string): Promise<StoredPlannedExercise[]> =>
     ordered([...this.plannedExercises.values()].filter((e) => e.workoutTemplateId === templateId));
   deletePlannedExercise = async (id: string): Promise<boolean> => this.plannedExercises.delete(id);
+  // No block here is dated (VW-475), so the current-block rule falls back to work remaining.
+  getLiveBlockSchedule = async (): Promise<undefined> => undefined;
 
   putProgramAssignment = async (a: StoredProgramAssignment): Promise<void> => {
     this.assignments.set(a.id, a);
@@ -178,13 +188,48 @@ interface Result {
   body: unknown;
 }
 
+/**
+ * Call a route the way the SPA does. A write picks its token up from
+ * `/api/bootstrap` first, exactly as a wall tab whose page predates a restart
+ * does, and carries the same-origin `Origin` a browser would set.
+ */
 async function call(
   port: number,
   method: string,
   path: string,
   payload?: unknown,
 ): Promise<Result> {
+  if (method === 'GET') return callRaw(port, method, path, payload);
+  // A write carries all three guard facts, a bodyless DELETE included: the
+  // content type is what a cross-site form post can never set.
+  return callRaw(port, method, path, payload, {
+    origin: `http://${DEFAULT_DASHBOARD_HOST}:${port}`,
+    'content-type': 'application/json',
+    [WRITE_TOKEN_HEADER]: await bootstrapToken(port),
+  });
+}
+
+/** The token the SPA would read from `/api/bootstrap`. */
+async function bootstrapToken(port: number): Promise<string> {
+  const res = await callRaw(port, 'GET', '/api/bootstrap');
+  return (res.body as { token: string }).token;
+}
+
+/** Send exactly the headers given — nothing is added. Used by the guard tests. */
+async function callRaw(
+  port: number,
+  method: string,
+  path: string,
+  payload?: unknown,
+  headers: Record<string, string> = {},
+): Promise<Result> {
   const raw = payload === undefined ? undefined : JSON.stringify(payload);
+  const sent = {
+    ...headers,
+    ...(raw === undefined || 'content-type' in headers
+      ? {}
+      : { 'content-type': 'application/json' }),
+  };
   return new Promise<Result>((resolve, reject) => {
     const req = httpRequest(
       {
@@ -192,7 +237,7 @@ async function call(
         port,
         path,
         method,
-        ...(raw === undefined ? {} : { headers: { 'content-type': 'application/json' } }),
+        headers: sent,
       },
       (res: IncomingMessage) => {
         const chunks: Buffer[] = [];
@@ -485,9 +530,11 @@ describe('plan write routes', () => {
   it('rejects a malformed JSON body before touching the store', async () => {
     const store = new FakePlanStore();
     const port = await start(makeState(store));
+    // Guard headers and all: the body parser is only reachable past the guard.
+    const headers = await guardHeaders(port);
     const res = await new Promise<Result>((resolve, reject) => {
       const req = httpRequest(
-        { host: DEFAULT_DASHBOARD_HOST, port, path: '/api/plan/programs', method: 'POST' },
+        { host: DEFAULT_DASHBOARD_HOST, port, path: '/api/plan/programs', method: 'POST', headers },
         (r) => {
           const chunks: Buffer[] = [];
           r.on('data', (c: Buffer) => chunks.push(c));
@@ -518,6 +565,139 @@ describe('plan write routes', () => {
   it('404s an unknown write path', async () => {
     const port = await start(makeState(new FakePlanStore()));
     expect((await call(port, 'POST', '/api/plan/nope', {})).status).toBe(404);
+  });
+});
+
+// VW-537: the dashboard is the second of three write paths through the shared validator.
+describe('plan write routes: the goal and the rest pair', () => {
+  async function withTemplate(): Promise<{
+    store: FakePlanStore;
+    port: number;
+    templateId: string;
+  }> {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+    const tree = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    return { store, port, templateId: firstTemplate(tree).id };
+  }
+
+  async function create(port: number, templateId: string, body: object): Promise<Result> {
+    return call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+      exerciseId: 'cable-row',
+      ...body,
+    });
+  }
+
+  it('defaults the goal kind on create and states learning on', async () => {
+    const { store, port, templateId } = await withTemplate();
+    const res = await create(port, templateId, { targetRepsLow: 8, targetRpe: 9 });
+    expect(res.status).toBe(201);
+    const [row] = [...store.plannedExercises.values()];
+    expect(row).toMatchObject({ goalKind: 'rep_range', restLearning: true });
+  });
+
+  it.each([
+    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }],
+    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }],
+    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }],
+    [
+      'a loss percent on a rep range',
+      { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
+    ],
+    ['learning off with no rest', { restLearning: false }],
+    ['an unknown goal type', { goalKind: 'max_effort' }],
+    ['a non-boolean learning flag', { restLearning: 'no' }],
+    ['a loss percent out of range', { goalKind: 'velocity_loss', targetVelocityLossPct: 99 }],
+  ])('refuses %s on create and stores nothing', async (_label, body) => {
+    const { store, port, templateId } = await withTemplate();
+    const res = await create(port, templateId, body);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: 'invalid_input' });
+    expect(store.plannedExercises.size).toBe(0);
+  });
+
+  it('refuses a patch that clears the rest of a learning-off row', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+
+    const res = await call(port, 'PATCH', `/api/plan/exercises/${row.id}`, { restSec: null });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'invalid_input',
+      message:
+        'Rest learning is off, so this exercise needs a fixed rest. Add a rest time, or turn ' +
+        'rest learning on.',
+      field: 'restSec',
+    });
+    expect(store.plannedExercises.get(row.id)).toMatchObject({ restSec: 90, restLearning: false });
+  });
+
+  it('accepts the same clearing patch when it also turns learning on', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+
+    const res = await call(port, 'PATCH', `/api/plan/exercises/${row.id}`, {
+      restSec: null,
+      restLearning: true,
+    });
+    expect(res.status).toBe(200);
+    expect(store.plannedExercises.get(row.id)?.restSec).toBeUndefined();
+    expect(store.plannedExercises.get(row.id)?.restLearning).toBe(true);
+  });
+
+  // Coordinator ruling on #497: a row stored with both null is a tolerated fallback, not a locked row.
+  it('lets a weight-only edit through on a learning-off row with no rest, and leaves it so', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+    const { restSec: _dropped, ...withoutRest } = row;
+    await store.putPlannedExercise(withoutRest);
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { targetWeightLbs: 135 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)).toMatchObject({
+      targetWeightLbs: 135,
+      restLearning: false,
+    });
+    expect(store.plannedExercises.get(row.id)?.restSec).toBeUndefined();
+    expect((await call(port, 'PATCH', path, { restLearning: false })).status).toBe(400);
+  });
+
+  it('checks the goal only when an edit touches a goal field', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRpe: 8 });
+    const [row] = [...store.plannedExercises.values()];
+    await store.putPlannedExercise({ ...row, goalKind: 'rep_range' });
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { restSec: 120 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)?.goalKind).toBe('rep_range');
+    const res = await call(port, 'PATCH', path, { targetRpe: 9 });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      message: 'A rep-range goal needs a rep range. Add one, or choose a different goal type.',
+      field: 'targetRepsLow',
+    });
+  });
+
+  it('switches a velocity_loss row to a rep range only when the percent is cleared too', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 5, targetVelocityLossPct: 20 });
+    const [row] = [...store.plannedExercises.values()];
+    expect(row.goalKind).toBe('velocity_loss');
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { goalKind: 'rep_range' })).status).toBe(400);
+    const res = await call(port, 'PATCH', path, {
+      goalKind: 'rep_range',
+      targetVelocityLossPct: null,
+    });
+    expect(res.status).toBe(200);
+    expect(store.plannedExercises.get(row.id)).toMatchObject({ goalKind: 'rep_range' });
+    expect(store.plannedExercises.get(row.id)?.targetVelocityLossPct).toBeUndefined();
   });
 });
 
@@ -586,5 +766,588 @@ describe('GET /api/session-summary/:sessionId', () => {
   it('501s without a planning store', async () => {
     const port = await start({ slots: new Map(), store: { listSessions: async () => [] } });
     expect((await call(port, 'GET', '/api/session-summary/latest')).status).toBe(501);
+  });
+});
+
+// ── The write guard (VW-500) ──────────────────────────────────────────────
+//
+// Until this landed the loopback bind was the sidecar's only protection, so any
+// page open in any browser on this machine could drive the plan writes. Each
+// case below breaks ONE guard fact on EVERY one of the six routes, and asserts
+// the request never reached a handler.
+
+/** The six write routes, each with a body its handler would accept. */
+const WRITE_ROUTES: { name: string; method: string; path: string; payload?: unknown }[] = [
+  { name: 'create program', method: 'POST', path: '/api/plan/programs', payload: { name: 'P' } },
+  {
+    name: 'create workout',
+    method: 'POST',
+    path: '/api/plan/programs/prog-1/workouts',
+    payload: { name: 'W' },
+  },
+  {
+    name: 'create planned exercise',
+    method: 'POST',
+    path: '/api/plan/templates/tmpl-1/exercises',
+    payload: { exerciseId: 'cable-row' },
+  },
+  {
+    name: 'reorder planned exercises',
+    method: 'POST',
+    path: '/api/plan/templates/tmpl-1/reorder',
+    payload: { plannedExerciseIds: [] },
+  },
+  {
+    name: 'update planned exercise',
+    method: 'PATCH',
+    path: '/api/plan/exercises/pe-1',
+    payload: { targetSets: 4 },
+  },
+  { name: 'delete planned exercise', method: 'DELETE', path: '/api/plan/exercises/pe-1' },
+];
+
+/** Headers a legitimate SPA write carries, for a test to break one of. */
+async function guardHeaders(port: number): Promise<Record<string, string>> {
+  return {
+    origin: `http://${DEFAULT_DASHBOARD_HOST}:${port}`,
+    'content-type': 'application/json',
+    [WRITE_TOKEN_HEADER]: await bootstrapToken(port),
+  };
+}
+
+describe('write guard', () => {
+  for (const route of WRITE_ROUTES) {
+    describe(route.name, () => {
+      it('403s a post from a foreign origin', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'foreign_origin' });
+      });
+
+      it('403s a post with no token', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const { [WRITE_TOKEN_HEADER]: _token, ...headers } = await guardHeaders(port);
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'token_required' });
+      });
+
+      it('403s a post carrying another boot’s token', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = { ...(await guardHeaders(port)), [WRITE_TOKEN_HEADER]: 'f'.repeat(64) };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'stale_token' });
+      });
+
+      it('403s a post with no Origin header at all', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const { origin: _origin, ...headers } = await guardHeaders(port);
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'origin_required' });
+      });
+
+      it('415s the content type a cross-site form post would send', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = {
+          ...(await guardHeaders(port)),
+          'content-type': 'application/x-www-form-urlencoded',
+        };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(415);
+        expect(res.body).toMatchObject({ error: 'unsupported_media_type' });
+      });
+    });
+  }
+
+  it('403s a request whose Host is a rebound domain, not a loopback name', async () => {
+    // Origin and Host AGREE here — that is what DNS rebinding buys an attacker.
+    // Only the loopback-literal rule refuses it.
+    const port = await start(makeState(new FakePlanStore()));
+    const headers = {
+      ...(await guardHeaders(port)),
+      host: 'rebound.example',
+      origin: 'http://rebound.example',
+    };
+    const res = await callRaw(port, 'POST', '/api/plan/programs', { name: 'P' }, headers);
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: 'foreign_host' });
+  });
+
+  it('refuses a foreign-origin write before it can reach the store', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+    await callRaw(port, 'POST', '/api/plan/programs', { name: 'Stolen' }, headers);
+    expect(store.programs.size).toBe(0);
+  });
+
+  it('runs the whole plan-builder flow under the guard', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const created = await call(port, 'POST', '/api/plan/programs', { name: 'Guarded' });
+    expect(created.status).toBe(201);
+    const tree = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    const template = firstTemplate(tree);
+    expect(
+      (
+        await call(port, 'POST', `/api/plan/templates/${template.id}/exercises`, {
+          exerciseId: 'cable-row',
+        })
+      ).status,
+    ).toBe(201);
+    const withExercise = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    const plannedId = firstTemplate(withExercise).exercises[0].id;
+    expect(
+      (await call(port, 'PATCH', `/api/plan/exercises/${plannedId}`, { targetSets: 4 })).status,
+    ).toBe(200);
+    expect((await call(port, 'DELETE', `/api/plan/exercises/${plannedId}`)).status).toBe(200);
+    expect(store.plannedExercises.size).toBe(0);
+  });
+});
+
+describe('GET /api/bootstrap', () => {
+  it('hands the SPA the same token the writes require', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const res = await callRaw(port, 'GET', '/api/bootstrap');
+    expect(res.status).toBe(200);
+    const token = (res.body as { token: string }).token;
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    const headers = { ...(await guardHeaders(port)), [WRITE_TOKEN_HEADER]: token };
+    const write = await callRaw(port, 'POST', '/api/plan/programs', { name: 'P' }, headers);
+    expect(write.status).toBe(201);
+  });
+
+  it('403s when the browser says the fetch is cross-site', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const res = await callRaw(port, 'GET', '/api/bootstrap', undefined, {
+      'sec-fetch-site': 'cross-site',
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('never leaks the token into another GET payload', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const token = await bootstrapToken(port);
+    for (const path of [
+      '/api/health',
+      '/api/snapshot',
+      '/api/history',
+      '/api/session-plan',
+      '/api/exercises',
+      '/api/plan-tree',
+    ]) {
+      const res = await callRaw(port, 'GET', path);
+      expect(JSON.stringify(res.body)).not.toContain(token);
+    }
+  });
+
+  it('never writes the token to the log', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const port = await start(makeState(new FakePlanStore()));
+      const token = await bootstrapToken(port);
+      await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+      await callRaw(
+        port,
+        'POST',
+        '/api/plan/programs',
+        { name: 'P' },
+        { origin: 'https://evil.example' },
+      );
+      const logged = [...warn.mock.calls, ...error.mock.calls].flat().join(' ');
+      expect(logged).not.toContain(token);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+});
+
+// ── The action layer (VW-502) ─────────────────────────────────────────────
+//
+// `POST /api/actions/:name` behind the same write guard as everything else,
+// plus the audit rows the six plan routes now leave behind. The layer's own
+// logic is unit-tested in `actions/__tests__/execute.test.ts`; these are the
+// wiring facts that only a real socket can prove.
+
+/** In-memory `ui_actions`, enough for the route tests. */
+class FakeActionRows {
+  readonly rows = new Map<string, Record<string, unknown>>();
+
+  claimUiAction = (input: Record<string, unknown>): Promise<unknown> => {
+    const id = input.actionId as string;
+    const existing = this.rows.get(id);
+    if (existing !== undefined) return Promise.resolve({ kind: 'taken', existing });
+    this.rows.set(id, { ...input, resultStatus: 'pending' });
+    return Promise.resolve({ kind: 'claimed' });
+  };
+
+  completeUiAction = (input: Record<string, unknown>): Promise<unknown> => {
+    const id = input.actionId as string;
+    const row = { ...this.rows.get(id), ...input };
+    this.rows.set(id, row);
+    return Promise.resolve(row);
+  };
+}
+
+/** A captured tool the action route can run, counting its calls. */
+function actionTools(counter: { runs: number }): Map<string, unknown> {
+  return new Map([
+    [
+      'profile.log_bodyweight',
+      {
+        paramsShape: { weightLbs: zNumber() },
+        handler: () => {
+          counter.runs += 1;
+          return { content: [{ type: 'text', text: JSON.stringify({ logged: true }) }] };
+        },
+      },
+    ],
+  ]);
+}
+
+function zNumber(): unknown {
+  return z.number();
+}
+
+/** A state whose store also carries the audit methods and the captured tools. */
+function actionState(
+  store: FakePlanStore,
+  audit: FakeActionRows,
+  tools?: Map<string, unknown>,
+): DashboardServerState {
+  const state = makeState(store);
+  const mutable = state as unknown as {
+    store: Record<string, unknown>;
+    actionTools?: unknown;
+  };
+  mutable.store.claimUiAction = audit.claimUiAction;
+  mutable.store.completeUiAction = audit.completeUiAction;
+  if (tools !== undefined) mutable.actionTools = tools;
+  return state;
+}
+
+describe('POST /api/actions/:name', () => {
+  it('runs an allowlisted action and records it', async () => {
+    const counter = { runs: 0 };
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools(counter)));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, tier: 'W1', replayed: false });
+    expect(counter.runs).toBe(1);
+    expect(audit.rows.get('act-1')).toMatchObject({ actor: 'user', surface: 'wall' });
+  });
+
+  it('is behind the same write guard as every other write', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+    const res = await callRaw(
+      port,
+      'POST',
+      '/api/actions/profile.log_bodyweight',
+      { actionId: 'act-1', input: { weightLbs: 180 } },
+      headers,
+    );
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: 'foreign_origin' });
+    expect(counter.runs).toBe(0);
+  });
+
+  it('403s a name that is not on the allowlist', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    for (const name of ['device.set_weight', 'goal.retire', 'nonsense']) {
+      const res = await call(port, 'POST', `/api/actions/${name}`, {
+        actionId: `act-${name}`,
+        input: {},
+      });
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ error: 'action_not_allowed' });
+    }
+    expect(counter.runs).toBe(0);
+  });
+
+  it('400s a submission with no action id', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: 'invalid_input' });
+  });
+
+  it('replays a repeated submit and runs the handler once', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    const body = { actionId: 'act-1', input: { weightLbs: 180 } };
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', body);
+    const second = await call(port, 'POST', '/api/actions/profile.log_bodyweight', body);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ replayed: true });
+    expect(counter.runs).toBe(1);
+  });
+
+  it('409s a reused id carrying a different body', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    const second = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 999 },
+    });
+    expect(second.status).toBe(409);
+    expect(second.body).toMatchObject({ error: 'action_id_reused' });
+    expect(counter.runs).toBe(1);
+  });
+
+  it('records a human tap as `user`, and refuses a body claiming otherwise', async () => {
+    // The audit trail's actor column has to mean something. A request here came
+    // from a browser on this machine, so it IS a human tap; the coach and the
+    // tick call the layer in-process and stamp their own actor there.
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const actor of ['coach', 'tick']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${actor}`,
+        actor,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: 'invalid_input' });
+    }
+    expect(audit.rows.size).toBe(0);
+  });
+
+  it('refuses a surface no browser can be', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    for (const surface of ['telegram', 'voice', 'nonsense']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${surface}`,
+        surface,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('keeps the wall/phone distinction, which only the client knows', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-phone',
+      surface: 'phone',
+      input: { weightLbs: 180 },
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ surface: 'phone', actor: 'user' });
+  });
+
+  it('tells two walls apart on one surface (VW-521)', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const deviceId of ['wall-garage', 'wall-spare-room']) {
+      await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${deviceId}`,
+        surface: 'wall',
+        deviceId,
+        input: { weightLbs: 180 },
+      });
+    }
+    expect(audit.rows.get('act-wall-garage')).toMatchObject({
+      surface: 'wall',
+      deviceId: 'wall-garage',
+    });
+    expect(audit.rows.get('act-wall-spare-room')).toMatchObject({
+      surface: 'wall',
+      deviceId: 'wall-spare-room',
+    });
+  });
+
+  it('accepts an action that names no display, and records none', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(200);
+    expect(audit.rows.get('act-1')).not.toHaveProperty('deviceId');
+  });
+
+  it('400s a device id the audit trail could not usefully store', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const deviceId of ['x'.repeat(65), 'wall garage', '-leading-dash', '', 7, {}]) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${String(deviceId).slice(0, 8)}`,
+        deviceId,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: 'invalid_input' });
+    }
+    expect(audit.rows.size).toBe(0);
+  });
+
+  it('405s anything but a POST', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    for (const method of ['PATCH', 'DELETE']) {
+      const res = await call(port, method, '/api/actions/profile.log_bodyweight', {
+        actionId: 'act-1',
+      });
+      expect(res.status).toBe(405);
+    }
+  });
+
+  it('501s when the server captured no handlers', async () => {
+    const port = await start(actionState(new FakePlanStore(), new FakeActionRows()));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(501);
+  });
+});
+
+describe('the plan routes through the action layer', () => {
+  it('leaves an audit row naming the actor and the surface', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const res = await call(port, 'POST', '/api/plan/programs', {
+      name: 'Audited',
+      actionId: 'act-plan-1',
+    });
+    expect(res.status).toBe(201);
+    expect(audit.rows.get('act-plan-1')).toMatchObject({
+      actionName: 'plan.program.create',
+      actor: 'user',
+      surface: 'wall',
+      resultStatus: 'ok',
+    });
+  });
+
+  it('keeps its original response shape, not the action envelope', async () => {
+    const port = await start(actionState(new FakePlanStore(), new FakeActionRows()));
+    const res = await call(port, 'POST', '/api/plan/programs', {
+      name: 'Shape',
+      actionId: 'act-plan-1',
+    });
+    // The SPA reads this body directly; an envelope here would break it.
+    expect(res.body).not.toHaveProperty('ok');
+    expect(res.body).not.toHaveProperty('replayed');
+    expect(res.body).toHaveProperty('program');
+  });
+
+  it('writes once when the same submit arrives twice', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    const body = { name: 'Once', actionId: 'act-plan-1' };
+    await call(port, 'POST', '/api/plan/programs', body);
+    await call(port, 'POST', '/api/plan/programs', body);
+    expect(store.programs.size).toBe(1);
+  });
+
+  it('records a refusal with the plan API’s own code', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const res = await call(port, 'POST', '/api/plan/programs', { actionId: 'act-bad' });
+    expect(res.status).toBe(400);
+    expect(audit.rows.get('act-bad')).toMatchObject({
+      resultStatus: 'error',
+      resultCode: 'invalid_input',
+    });
+  });
+
+  it('forces the actor and narrows the surface on the plan routes too', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const refused = await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-bad-surface',
+      surface: 'telegram',
+    });
+    expect(refused.status).toBe(400);
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-phone',
+      surface: 'phone',
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ actor: 'user', surface: 'phone' });
+  });
+
+  it('never lets the surface reach the plan payload', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'Clean',
+      actionId: 'act-1',
+      surface: 'phone',
+    });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('surface');
+  });
+
+  it('records the display on the plan routes too, and keeps it out of the payload', async () => {
+    const store = new FakePlanStore();
+    const audit = new FakeActionRows();
+    const port = await start(actionState(store, audit));
+    const refused = await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-bad-device',
+      deviceId: 'wall garage',
+    });
+    expect(refused.status).toBe(400);
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'Clean',
+      actionId: 'act-garage',
+      deviceId: 'wall-garage',
+    });
+    expect(audit.rows.get('act-garage')).toMatchObject({ deviceId: 'wall-garage' });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('deviceId');
+  });
+
+  it('keeps the plan builder working on a store with no audit table', async () => {
+    // A test fake or an older store: degrading to an unaudited write beats
+    // refusing the builder outright.
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const res = await call(port, 'POST', '/api/plan/programs', { name: 'Unaudited' });
+    expect(res.status).toBe(201);
+    expect(store.programs.size).toBe(1);
+  });
+
+  it('never leaks the action id into the plan payload', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    await call(port, 'POST', '/api/plan/programs', { name: 'Clean', actionId: 'act-plan-1' });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('actionId');
   });
 });

@@ -39,6 +39,8 @@ import {
   SessionEndInput,
   SessionGetInput,
   SessionListInput,
+  SessionMarkKindInput,
+  SessionReviewListInput,
   SessionSetExerciseInput,
   SessionSetLifterInput,
   SessionStartInput,
@@ -56,6 +58,8 @@ import {
   buildSessionPaceView,
   type SessionPaceView,
 } from '../dashboard/read-models/session-pace.js';
+import { listSessionReview, markSessionKind } from './session-kind-tools.js';
+import type { SessionKind } from '../store/session-kind.js';
 import type { ActiveSession } from '../state/live-state.js';
 import {
   aggregateSession,
@@ -63,6 +67,7 @@ import {
   type SessionListEntrySummary,
   type SessionListEntryFull,
 } from '../state/session-list-aggregator.js';
+import { localDate, readTrainingDaysMatching } from '../analytics/training-days.js';
 import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
 import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
@@ -130,8 +135,9 @@ const SESSION_CHECKIN_DESCRIPTION =
   '`high`, never 5- or 10-point). Completion (loads, reps, sets) is already telemetry-derivable ' +
   '— show the lifter their own numbers back rather than asking `went` as a prompt; it exists ' +
   'only to store whatever they volunteer, and like every other code it is optional, never ' +
-  "required. `soreness`, `joint` and `motivation` are withheld before the lifter's first " +
-  'completed training week (answers are uniformly positive and low-signal that early, and ' +
+  'required. `soreness`, `joint` and `motivation` are withheld until the lifter has a training ' +
+  'day before today: every session on their first training day withholds them (answers are ' +
+  'uniformly positive and low-signal that early, and ' +
   'asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in ' +
   "the response's `withheld` array. RP's cadence: after the very first session, then at the " +
   'end of every completed training week — never mandatory, never a gate on anything. ' +
@@ -169,6 +175,35 @@ const SESSION_GET_DESCRIPTION =
   '`projectedEndAt` estimate, costing every planned set at its rep target and tempo plus its ' +
   'rest (the goal default when the coach set none). It is an estimate from the plan, never a ' +
   'measurement, and it is absent entirely for a session with no plan attached.';
+
+const SESSION_MARK_KIND_DESCRIPTION =
+  'Say whether recorded work was real training or a bench test, for one session ' +
+  '(`sessionId`), one local day (`day`) or an inclusive range of days (`from`/`to`) — exactly ' +
+  'one selector. Every history read (training days, tier evidence, attendance goals, reports, ' +
+  'trends, baselines, the RIR-velocity fit) counts ONLY sessions marked `training`, so a ' +
+  'session nobody has marked is left out of all of them. Days are the same local days ' +
+  '`session.review_list` lists and the reports file work under. Pass `dryRun: true` first: it ' +
+  'returns the identical report and writes nothing. A REAL `from`/`to` call must also pass ' +
+  '`expectSessions` equal to the count the dry run reported, or it is refused with the real ' +
+  'count — a mistyped year would otherwise mark a whole history in one call. A `day` or range ' +
+  'call classifies only sessions nobody has marked; one already marked the other kind is ' +
+  'reported under `skippedAlreadyMarked` and left alone unless you pass `reclassify: true`. ' +
+  'Naming a `sessionId` may always reclassify. The result splits `newlyClassified`, ' +
+  '`reclassified`, `skippedAlreadyMarked` and `alreadyThisKind` as session-id lists, and names ' +
+  'under `rederiveFailed` any exercise whose baseline and RIR fit could not be re-derived — the ' +
+  'mark still landed, so re-run `baselines.recalc` and `rir_velocity.fit` for those. Idempotent ' +
+  'and reversible — marking back re-derives again. NEVER GUESS A KIND: ask the lifter, because ' +
+  'a light day of real training and a bench test look the same in the data.';
+
+const SESSION_REVIEW_LIST_DESCRIPTION =
+  'The past local days of recorded work, newest first, with what each holds: the exercises, ' +
+  'set and working-set counts, top load per exercise, the span in minutes, whether every ' +
+  'session was ended, whether a plan was attached, and the current kind (`mixed` when one ' +
+  "day's sessions disagree). A day is dated the way the reports date it: by when the work " +
+  'ended, or by the last working set when the session was never ended — so an evening session ' +
+  'that ran past midnight is listed, marked and counted under one date. Defaults to the days ' +
+  'nobody has classified — those are the ones being left out of every history read. Feed a ' +
+  "row's `day` straight to `session.mark_kind` to mark the whole day in one call.";
 
 export function registerSessionTools(
   _server: McpServer,
@@ -224,6 +259,20 @@ export function registerSessionTools(
     wrapHandler(SessionGetInput, (input) => getSession(state, input)),
     SESSION_GET_DESCRIPTION,
   );
+  install(
+    placeholders,
+    'session.mark_kind',
+    SessionMarkKindInput,
+    wrapHandler(SessionMarkKindInput, (input) => markSessionKind(state, input)),
+    SESSION_MARK_KIND_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'session.review_list',
+    SessionReviewListInput,
+    wrapHandler(SessionReviewListInput, (input) => listSessionReview(state, input)),
+    SESSION_REVIEW_LIST_DESCRIPTION,
+  );
 }
 
 function install<S extends z.ZodObject>(
@@ -266,6 +315,18 @@ function toStoredPreSessionCarbs(
       ? { hoursSinceLastMeal: input.hoursSinceLastMeal }
       : {}),
   };
+}
+
+/**
+ * The kind a NEW session gets (VW-489). A session someone deliberately started
+ * is training unless they say otherwise, so the default is what makes the flag
+ * cost nothing day to day. `VOLTRA_ADAPTER=mock` overrides whatever was asked
+ * for: every rep came from a synthetic device, and calling that training would
+ * feed the baselines the one corpus that is definitely not the lifter's.
+ */
+function startingKind(state: ServerState, asked: SessionKind | undefined): SessionKind {
+  if (state.config?.adapter === 'mock') return 'test';
+  return asked ?? 'training';
 }
 
 async function startSession(
@@ -317,6 +378,7 @@ async function startSession(
     id: sessionId,
     startedAt,
     catalogVersion: MUSCLE_MAP_VERSION,
+    kind: startingKind(state, input.kind),
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
@@ -515,16 +577,8 @@ async function setSessionLifter(
   if (active === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
   }
-  const lifter = input.lifter ?? undefined;
-  slot.live.setSessionLifter(lifter);
-
-  const stored = await state.store.getSession(active.sessionId);
-  if (stored !== undefined) {
-    const next = { ...stored };
-    if (lifter !== undefined) next.lifter = lifter;
-    else delete next.lifter;
-    await state.store.putSession(next);
-  }
+  slot.live.setSessionLifter(input.lifter ?? undefined);
+  await state.store.patchSession(active.sessionId, { lifter: input.lifter });
   return { sessionId: active.sessionId, lifter: input.lifter };
 }
 
@@ -591,7 +645,8 @@ async function endSession(
   const finalizedSession = slot.live.endSession();
   // `endSession` returns undefined only when there was no active session; we
   // checked that above, so `finalizedSession` is non-undefined here.
-  const endedAt = new Date().toISOString();
+  const now = new Date();
+  const endedAt = now.toISOString();
   const stored: StoredSession = {
     id: active.sessionId,
     startedAt: active.startedAt,
@@ -602,8 +657,8 @@ async function endSession(
     ...(active.preSessionCarbs !== undefined ? { preSessionCarbs: active.preSessionCarbs } : {}),
   };
   // VMCP-06.12 / B41: write the check-in BEFORE putSession marks this session
-  // ended, so the week-1 gate's session count (below, in writeCheckin) never
-  // counts the very session it is gating.
+  // ended, the order the gate was built around; the day rule in writeCheckin
+  // would exclude it anyway, since it ends today.
   let checkinResult: CheckinWriteResult | undefined;
   if (checkin !== undefined) {
     checkinResult = await writeCheckin(
@@ -614,6 +669,7 @@ async function endSession(
       },
       checkin.answers,
       checkin.notes,
+      now,
     );
   }
   await state.store.putSession(stored);
@@ -645,26 +701,25 @@ const CHECKIN_GATED_CODE_SET: ReadonlySet<string> = new Set(CHECKIN_GATED_CODES)
  * Guest sessions write NOTHING (VW-169): rows are keyed by the owner only, so
  * a second person's subjective ratings never land in the owner's history.
  *
- * Week-1 gating consults the owner's completed-session count: fewer than one
- * finished session means no training week has completed yet, so the
+ * Week-1 gating consults the owner's training days (VW-462): with none on a
+ * local date before today's, no training week has completed yet, so the
  * fatigue/joint/motivation codes are withheld (backlog idea 15 — answers are
  * uniformly positive and low-signal that early, and asking can seed
- * unwarranted concern). Called before the target session's own `endedAt`
- * lands in the store (see `endSession`), so the count never includes the
- * session being gated.
+ * unwarranted concern). Today is excluded so a first visit that logs one
+ * session per exercise stays gated for every one of them.
  */
 async function writeCheckin(
   state: ServerState,
   target: CheckinTarget,
   answers: z.infer<typeof CheckinAnswerInput>[],
   notes: string | undefined,
+  now: Date,
 ): Promise<CheckinWriteResult> {
   if (target.lifter !== undefined) {
     return { sessionId: target.sessionId, written: 0, withheld: [] };
   }
 
-  const priorCompletedSessions = await state.store.countSessions({ endedOnly: true });
-  const weekOne = priorCompletedSessions < 1;
+  const weekOne = !(await hasTrainedBefore(state, now));
 
   const withheld: string[] = [];
   const toWrite = answers.filter((answer) => {
@@ -675,7 +730,7 @@ async function writeCheckin(
     return true;
   });
 
-  const recordedAt = new Date().toISOString();
+  const recordedAt = now.toISOString();
   for (const answer of toWrite) {
     await state.store.putSelfReport({
       id: randomUUID(),
@@ -737,6 +792,13 @@ async function resolveCheckinTarget(
   };
 }
 
+/** Whether the owner has a training day on a local date before `now`'s. */
+async function hasTrainedBefore(state: ServerState, now: Date): Promise<boolean> {
+  const nowIso = now.toISOString();
+  const days = await readTrainingDaysMatching(state.store, { to: nowIso });
+  return days.some((day) => day < localDate(nowIso));
+}
+
 async function checkinSession(
   state: ServerState,
   input: z.infer<typeof SessionCheckinInput>,
@@ -745,7 +807,7 @@ async function checkinSession(
   if (input.preSessionCarbs !== undefined) {
     await updatePreSessionCarbs(state, target.sessionId, input.preSessionCarbs);
   }
-  return writeCheckin(state, target, input.answers, input.notes);
+  return writeCheckin(state, target, input.answers, input.notes, new Date());
 }
 
 /**
@@ -761,10 +823,9 @@ async function updatePreSessionCarbs(
   sessionId: string,
   preSessionCarbs: z.infer<typeof PreSessionCarbsInput>,
 ): Promise<void> {
-  const stored = await state.store.getSession(sessionId);
-  if (stored === undefined) return;
   const normalized = toStoredPreSessionCarbs(preSessionCarbs);
-  await state.store.putSession({ ...stored, preSessionCarbs: normalized });
+  const patched = await state.store.patchSession(sessionId, { preSessionCarbs: normalized });
+  if (patched === undefined) return;
   for (const slot of state.slots.values()) {
     if (slot.live.session?.sessionId === sessionId) {
       slot.live.setSessionPreSessionCarbs(normalized);
@@ -787,6 +848,10 @@ async function listSessions(
     // rather than defaulted here so there is one place that decides what
     // "no lifter named" means.
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+    // VW-489: `'any'` by default, unlike every analytic read. This is the tool
+    // the history under review is looked at with, and hiding the unreviewed
+    // rows here would hide the thing being reviewed.
+    kind: input.kind ?? 'any',
     sort: (input.sort ?? 'startedAt:desc') as 'startedAt:desc' | 'startedAt:asc',
     limit: input.limit ?? 50,
     offset: input.offset ?? 0,

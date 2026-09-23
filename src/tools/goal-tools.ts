@@ -23,13 +23,23 @@
 // its optimistic one, and accepting a value outside the band never moves the
 // band to match.
 
+import { todayLocal } from '../analytics/training-days.js';
+import {
+  contextInFrame,
+  defaultDatedBlockId,
+  goalBlockFrame,
+  targetBlockId,
+  type GoalBlockFrame,
+} from './goal-block-frame.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
 import type { GoalBand } from '../analytics/goal-band.js';
+import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import {
   selectGoalMetrics,
+  wholeBodyRefOf,
   type GoalGainMetric,
   type GoalMetricSelection,
 } from '../analytics/goal-metrics.js';
@@ -45,6 +55,7 @@ import {
 import type { ServerState } from '../state/server-state.js';
 import {
   LOCAL_USER_ID,
+  type StoredAdvisoryDecision,
   type StoredGoalTarget,
   type StoredPriority,
   type StoredPriorityLevel,
@@ -76,7 +87,25 @@ import {
   GOAL_RETIRE_DESCRIPTION,
   GOAL_WEEKLY_REVIEW_DESCRIPTION,
 } from './goal-descriptions.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
+import {
+  checkOffer,
+  completeOffer,
+  declineOfferFor,
+  findOpenOffer,
+  listOfferDecisions,
+  offerRowIds,
+  reconcileRecalibrationOffers,
+  withdrawOffersFor,
+  type RecalibrationOffer,
+} from './goal-recalibration.js';
+import {
+  acceptedStartingRamp,
+  proposedStartingRamp,
+  type ProposedStartingRamp,
+  type StartingRampNotice,
+} from './goal-starting-ramp.js';
 
 /** Weeks a horizon falls back to. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
@@ -148,7 +177,10 @@ export function registerGoalTools(
     placeholders,
     'goal.weekly_review',
     GoalWeeklyReviewInput,
-    wrapHandler(GoalWeeklyReviewInput, (input) => runWeeklyReview(state, input)),
+    wrapHandler(GoalWeeklyReviewInput, async (input) => ({
+      ...(await runWeeklyReview(state, input)),
+      recalibrationOffers: await reconcileRecalibrationOffers(state),
+    })),
     GOAL_WEEKLY_REVIEW_DESCRIPTION,
   );
 }
@@ -176,17 +208,23 @@ export interface DeclarePrioritiesResult {
   dietPhase: string;
   tierUsed: string;
   thresholds: typeof GOAL_GUARDRAIL_THRESHOLDS;
+  /** The block the declaration was stamped with, and whether it was the dated default (VW-476). */
+  block: { id: string; defaulted: boolean } | null;
 }
 
 async function declarePriorities(
   state: ServerState,
-  input: z.infer<typeof GoalDeclarePrioritiesInput>,
+  given: z.infer<typeof GoalDeclarePrioritiesInput>,
 ): Promise<DeclarePrioritiesResult> {
+  const blockId = given.blockId ?? (await defaultDatedBlockId(state.store, todayLocal()));
+  const input = blockId === undefined ? given : { ...given, blockId };
   const declaredAt = new Date().toISOString();
   const signal = await getTierSignal(state, LOCAL_USER_ID);
   const tier = signal.declared ?? signal.tier;
   const dietState = await readDietPhaseState(state, declaredAt);
   const existing = await state.store.listPriorities(LOCAL_USER_ID);
+  // Refuse before any decline is recorded; `storeDeclaration` re-checks inside its write.
+  assertOneWholeBodyPriorityPerRef(input.items, existing);
   const guardrails = evaluateDeclaration({
     items: input.items,
     existing,
@@ -197,29 +235,67 @@ async function declarePriorities(
   });
   await recordDeclines(state, guardrails.declinedNow, dietState.phase, declaredAt);
   return {
-    priorities: await storeDeclaration(state, input, existing, declaredAt),
+    priorities: await storeDeclaration(state, input, declaredAt),
     warnings: guardrails.warnings,
     proposals: guardrails.proposals,
     dietPhase: dietState.phase,
     tierUsed: tier,
     thresholds: GOAL_GUARDRAIL_THRESHOLDS,
+    block: blockId === undefined ? null : { id: blockId, defaulted: given.blockId === undefined },
   };
 }
 
-/** Every declared item, written as declared. No guardrail reaches this. */
+type DeclaredItem = { kind: StoredPriority['kind']; ref: string };
+
+/**
+ * One live priority per whole-body ref. Two would each derive a target for the
+ * same metric, and the page would draw one goal twice. Re-declaring the same
+ * kind and ref is a re-declaration, which `mergePriority` folds into its row.
+ */
+function assertOneWholeBodyPriorityPerRef(
+  items: readonly DeclaredItem[],
+  existing: readonly StoredPriority[],
+): void {
+  const seen = new Set<string>();
+  for (const item of items) {
+    const ref = wholeBodyRefOf(item);
+    if (ref === null) continue;
+    const other = existing.find(
+      (row) => wholeBodyRefOf(row) === ref && !(row.kind === item.kind && row.ref === item.ref),
+    );
+    if (seen.has(ref) || other !== undefined) throw duplicateWholeBody(ref, other);
+    seen.add(ref);
+  }
+}
+
+function duplicateWholeBody(ref: string, other: StoredPriority | undefined): ToolError {
+  const where =
+    other === undefined
+      ? 'twice in this declaration'
+      : `already, as priority ${other.id} with ref "${other.ref}"`;
+  return new ToolError(
+    'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
+    `The whole-body priority "${ref}" is declared ${where}. Declare it once: re-declare the same ` +
+      'ref to change its level, or retire the other priority first.',
+  );
+}
+
+/**
+ * Every declared item, written as declared. No guardrail reaches this. The merge and the
+ * one-per-ref rule read the live list inside the write, so two declarations cannot both
+ * mint a row for one ref (VW-536).
+ */
 async function storeDeclaration(
   state: ServerState,
   input: z.infer<typeof GoalDeclarePrioritiesInput>,
-  existing: readonly StoredPriority[],
   declaredAt: string,
 ): Promise<StoredPriority[]> {
   const horizonWeeks = await resolveHorizonWeeks(state, input.horizonWeeks, input.blockId);
   const stamp = { declaredAt, horizonWeeks, blockId: input.blockId };
-  const priorities: StoredPriority[] = [];
-  for (const item of input.items) {
-    priorities.push(await state.store.putPriority(mergePriority(item, existing, stamp)));
-  }
-  return priorities;
+  return state.store.putPrioritiesDerived(LOCAL_USER_ID, (live) => {
+    assertOneWholeBodyPriorityPerRef(input.items, live);
+    return input.items.map((item) => mergePriority(item, live, stamp));
+  });
 }
 
 /** A re-declaration keeps its row, so `mesosHeld` keeps counting across blocks. */
@@ -325,6 +401,8 @@ export interface ProposedTarget {
   acceptedBy: null;
   rpIds: string[];
   notes: string[];
+  /** A cold lift target: the generic starting ramp, re-proposed after calibration (VW-444). */
+  startingRamp?: ProposedStartingRamp;
 }
 
 /** One derived leg before anything is written: the same shape, minus the row. */
@@ -339,6 +417,17 @@ export interface ProposeTargetsResult {
   selections: GoalMetricSelection[];
   horizonWeeks: number;
   notes: string[];
+  /** Calibrated starting ramps under this priority, each with its data-based offer (VW-444). */
+  recalibrationOffers: RecalibrationOffer[];
+  /**
+   * Past local days nobody has marked training or test (VW-489). Every start value
+   * and every attendance band here is derived from training-marked history only, so
+   * a cold proposal or a skipped attendance leg beside a non-zero `unreviewedDays`
+   * means the evidence is withheld pending review, not missing.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 /** A primary leg that would be stored, with everything the writer needs. */
@@ -357,8 +446,12 @@ export interface GoalTargetPreview {
   horizonWeeks: number;
   notes: string[];
   derivation: GoalDerivationContext;
+  /** The dated block the targets are set for, when there is one (VW-477). */
+  frame: GoalBlockFrame | null;
   /** Rows this preview was blocked against; a writer reuses their ids. */
   stored: readonly StoredGoalTarget[];
+  /** Proposal rows written by a recalibration offer: answers, never a declined leg. */
+  offerRows: ReadonlySet<string>;
 }
 
 /**
@@ -372,7 +465,13 @@ export async function previewTargets(
   state: ServerState,
   priority: StoredPriority,
 ): Promise<GoalTargetPreview> {
-  const derivation = await readDerivationContext(state, priority);
+  const today = todayLocal();
+  const frame = await goalBlockFrame(
+    state.store,
+    await targetBlockId(state.store, priority, today),
+    today,
+  );
+  const derivation = contextInFrame(await readDerivationContext(state, priority), frame);
   const preview: GoalTargetPreview = {
     priorityId: priority.id,
     legs: [],
@@ -382,10 +481,12 @@ export async function previewTargets(
     horizonWeeks: derivation.horizonWeeks,
     notes: derivation.notes,
     derivation,
+    frame,
     stored: await state.store.listGoalTargets(
       { priorityId: priority.id },
       { includeRetired: true },
     ),
+    offerRows: offerRowIds(await listOfferDecisions(state.store)),
   };
   for (const selection of preview.selections) {
     if (selection.kind !== 'gain') continue;
@@ -399,7 +500,7 @@ async function addPreviewLeg(
   preview: GoalTargetPreview,
   selection: GoalGainMetric,
 ): Promise<void> {
-  const blocked = blockingRow(preview.stored, selection);
+  const blocked = blockingRow(preview.stored, selection, preview.offerRows);
   if (blocked !== null) {
     preview.skipped.push(blocked);
     return;
@@ -428,7 +529,7 @@ async function proposeTargets(
     const row = await state.store.putGoalTarget(
       toStoredTarget(
         leg.derived,
-        preview.derivation,
+        preview,
         reusableId(preview.stored, leg.selection),
         await chapterStamp(state, leg.derived),
       ),
@@ -443,6 +544,8 @@ async function proposeTargets(
     selections: preview.selections,
     horizonWeeks: preview.horizonWeeks,
     notes: preview.notes,
+    recalibrationOffers: await reconcileRecalibrationOffers(state, [priority.id]),
+    ...(await readUnreviewed(state.store)),
   };
 }
 
@@ -466,8 +569,9 @@ async function chapterStamp(state: ServerState, derived: DerivedTarget): Promise
 function blockingRow(
   stored: readonly StoredGoalTarget[],
   selection: GoalGainMetric,
+  offerRows: ReadonlySet<string>,
 ): SkippedMetric | null {
-  const matching = stored.filter((row) => sameLeg(row, selection));
+  const matching = stored.filter((row) => sameLeg(row, selection) && !offerRows.has(row.id));
   const accepted = matching.find(
     (row) => row.acceptedBy !== undefined && row.retiredAt === undefined,
   );
@@ -508,6 +612,7 @@ function sameLeg(row: StoredGoalTarget, selection: GoalGainMetric): boolean {
 }
 
 function previewEntry(derived: DerivedTarget, context: GoalDerivationContext): PreviewedTarget {
+  const startingRamp = proposedStartingRamp(derived);
   return {
     metric: derived.metric,
     exerciseId: derived.exerciseId,
@@ -527,6 +632,7 @@ function previewEntry(derived: DerivedTarget, context: GoalDerivationContext): P
     provisional: derived.band.provisional,
     rpIds: citedRpIds(derived.band),
     notes: derived.band.notes,
+    ...(startingRamp === undefined ? {} : { startingRamp }),
   };
 }
 
@@ -542,10 +648,12 @@ function citedRpIds(band: GoalBand): string[] {
 
 function toStoredTarget(
   derived: DerivedTarget,
-  context: GoalDerivationContext,
+  preview: Pick<GoalTargetPreview, 'derivation' | 'frame'>,
   id: string | undefined,
   newChapterAt: string | null,
 ): StoredGoalTarget {
+  const context = preview.derivation;
+  const frame = preview.frame;
   return {
     id: id ?? randomUUID(),
     priorityId: context.priorityId,
@@ -565,7 +673,8 @@ function toStoredTarget(
     dietPhaseAtDerivation: context.dietState.phase,
     acknowledgedStretch: false,
     derivedAt: context.derivedAt,
-    endsAt: context.endsAt,
+    endsAt: frame?.endsAt ?? blockEndsAt(derived.startMeasuredAt, context.horizonWeeks),
+    ...(frame === null ? {} : { blockId: frame.blockId }),
     ...(newChapterAt !== null ? { newChapterAt } : {}),
   };
 }
@@ -579,6 +688,10 @@ export interface AcceptTargetResult {
   bandUnchanged: true;
   rpIds: string[];
   note: string;
+  /** A cold lift target: the generic starting ramp, re-proposed after calibration (VW-444). */
+  startingRamp?: StartingRampNotice;
+  /** Present when this acceptance answered a recalibration offer: the ramp it retired. */
+  recalibration?: { decisionId: string; supersededTargetId: string };
 }
 
 async function acceptTarget(
@@ -588,18 +701,49 @@ async function acceptTarget(
   const target = await findTarget(state, input.targetId);
   assertAcceptable(target);
   assertAnchorLoadApplies(target, input.anchorLoad);
+  const offer = await liveOffer(state, target);
   const committed = input.committedValue ?? target.committedValue;
   const stretch = input.stretchValue ?? target.stretchValue;
   const custom = input.committedValue !== undefined || input.stretchValue !== undefined;
   const outside = assertInsideBand(target, committed, stretch, input.acknowledgeStretch === true);
   const saved = await state.store.putGoalTarget({
     ...target,
+    ...(await blockStampFor(state, target)),
     committedValue: committed,
     stretchValue: stretch,
     ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
     acceptedBy: custom ? 'user' : 'coach-default',
     acknowledgedStretch: outside,
   });
+  if (offer === undefined) return acceptedResult(saved);
+  const supersededTargetId = await completeOffer(state, offer, saved.id);
+  return { ...acceptedResult(saved), recalibration: { decisionId: offer.id, supersededTargetId } };
+}
+
+/**
+ * A proposal written before targets carried a block gets one at acceptance (VW-477): the same
+ * block a new proposal would be set for, and that block's end. A target that has one keeps it.
+ */
+async function blockStampFor(
+  state: ServerState,
+  target: StoredGoalTarget,
+): Promise<Pick<StoredGoalTarget, 'blockId' | 'endsAt'> | Record<string, never>> {
+  if (target.blockId !== undefined) return {};
+  const priority = (await state.store.listPriorities(LOCAL_USER_ID)).find(
+    (row) => row.id === target.priorityId,
+  );
+  if (priority === undefined) return {};
+  const today = todayLocal();
+  const frame = await goalBlockFrame(
+    state.store,
+    await targetBlockId(state.store, priority, today),
+    today,
+  );
+  return frame === null ? {} : { blockId: frame.blockId, endsAt: frame.endsAt };
+}
+
+function acceptedResult(saved: StoredGoalTarget): AcceptTargetResult {
+  const startingRamp = acceptedStartingRamp(saved);
   return {
     target: saved,
     acceptedBy: saved.acceptedBy ?? 'coach-default',
@@ -609,7 +753,30 @@ async function acceptTarget(
     note:
       'Accepted and now fixed: these numbers do not move again. The band itself is unchanged — ' +
       'accepting a value past its edge never re-draws the projection to match (B55).',
+    ...(startingRamp === undefined ? {} : { startingRamp }),
   };
+}
+
+/**
+ * The open recalibration offer this row answers, re-checked now (VW-444). An
+ * offer whose evidence went backwards is withdrawn and refused rather than
+ * accepted on stale calibration; one whose starting ramp is already gone is
+ * accepted as an ordinary proposal.
+ */
+async function liveOffer(
+  state: ServerState,
+  target: StoredGoalTarget,
+): Promise<StoredAdvisoryDecision | undefined> {
+  const open = await findOpenOffer(state, target.id);
+  if (open === undefined) return undefined;
+  const check = await checkOffer(state, open, target);
+  if (check === 'live') return open;
+  if (check === 'orphaned') return undefined;
+  throw new ToolError(
+    'GOAL_RECALIBRATION_WITHDRAWN',
+    `The recalibration offer ${target.id} was withdrawn: the lift is no longer calibrated, so ` +
+      'the accepted starting ramp stays. It is offered again once calibration returns.',
+  );
 }
 
 function assertAcceptable(target: StoredGoalTarget): void {
@@ -712,6 +879,8 @@ export interface RetireGoalResult {
   priority: StoredPriority | null;
   targets: StoredGoalTarget[];
   cascaded: number;
+  /** True when the retired row was an open recalibration offer, now recorded as declined (VW-444). */
+  declinedOffer?: boolean;
 }
 
 async function retireGoal(
@@ -729,7 +898,9 @@ async function retireGoal(
   if (input.targetId !== undefined) {
     const target = await state.store.retireGoalTarget(input.targetId, input.outcome, retiredAt);
     if (target === undefined) throw notFound('goal target', input.targetId);
-    return { priority: null, targets: [target], cascaded: 0 };
+    const declinedOffer = await declineOfferFor(state, target.id);
+    await withdrawOffersFor(state, [target.id]);
+    return { priority: null, targets: [target], cascaded: 0, declinedOffer };
   }
   const priorityId = input.priorityId as string;
   const priority = await state.store.retirePriority(priorityId, retiredAt);
@@ -737,6 +908,10 @@ async function retireGoal(
   const targets = await state.store.listGoalTargets({ priorityId }, { includeRetired: true });
   const cascaded = targets.filter((target) => target.retiredAt === retiredAt).length;
   await applyOutcome(state, targets, input.outcome, retiredAt);
+  await withdrawOffersFor(
+    state,
+    targets.map((target) => target.id),
+  );
   return { priority, targets: await refreshTargets(state, priorityId), cascaded };
 }
 

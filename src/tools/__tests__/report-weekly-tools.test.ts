@@ -14,6 +14,8 @@ import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import { buildWeeklyReport, renderWeeklyMarkdown } from '../report-tools.js';
+import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 const EXERCISE_ID = 'seated-row';
 
@@ -45,11 +47,11 @@ const FORCE_CONSISTENT_PEAK_FORCE = DEFAULT_WEIGHT_LBS * 1.017;
 function makeRep(
   setId: string,
   index: number,
-  overrides: { peakVelocity?: number; peakForce?: number } = {},
+  overrides: { peakVelocity?: number; meanVelocity?: number; peakForce?: number } = {},
 ): StoredRep {
   // `getRepMeanVelocity` reads `_totalVelocity / _movementSampleCount`, not
   // `peakVelocity` — set both so a fixture's "velocity" reads the same way to
-  // every WA consumer (mean- and peak-based alike).
+  // every WA consumer (mean- and peak-based alike), unless a mean is supplied.
   const velocity = overrides.peakVelocity ?? 0.6;
   const rep: Rep = {
     repNumber: index + 1,
@@ -57,7 +59,7 @@ function makeRep(
       ...EMPTY_PHASE,
       peakVelocity: velocity,
       peakForce: overrides.peakForce ?? FORCE_CONSISTENT_PEAK_FORCE,
-      _totalVelocity: velocity,
+      _totalVelocity: overrides.meanVelocity ?? velocity,
       _movementSampleCount: 1,
     },
     eccentric: { ...EMPTY_PHASE, peakVelocity: 0.4, _totalVelocity: 0.4, _movementSampleCount: 1 },
@@ -133,7 +135,8 @@ function fitRirVelocityRow(
 ): void {
   const model = {
     form: 'linear',
-    version: 'rir-velocity@1.0.0',
+    version: RIR_VELOCITY_MODEL_VERSION,
+    resistanceFamily: 'constant',
     interceptMps,
     slopeMpsPerRir,
     r2: 0.9,
@@ -203,7 +206,8 @@ describe('report.weekly', () => {
       orderIndex: 2,
     });
 
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's1',
       startedAt: '2026-09-08T00:00:00.000Z',
       endedAt: '2026-09-08T00:30:00.000Z',
@@ -214,7 +218,8 @@ describe('report.weekly', () => {
       workoutTemplateId: 'tpl-1',
       assignedAt: '2026-09-08T00:00:00.000Z',
     });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's2',
       startedAt: '2026-09-09T00:00:00.000Z',
       endedAt: '2026-09-09T00:30:00.000Z',
@@ -226,7 +231,8 @@ describe('report.weekly', () => {
       assignedAt: '2026-09-09T00:00:00.000Z',
     });
     // An unattached, unplanned session in the same range.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's3',
       startedAt: '2026-09-10T00:00:00.000Z',
       endedAt: '2026-09-10T00:30:00.000Z',
@@ -239,12 +245,69 @@ describe('report.weekly', () => {
     });
 
     // Assert
-    expect(report.header.adherence).toEqual({ planned: 3, done: 2, trend: 'no-prior-data' });
-    expect(report.header.sessionsCompleted).toBe(3);
+    expect(report.header.adherence).toEqual({
+      planned: 3,
+      done: 2,
+      trend: 'no-prior-data',
+      // No block is dated in this fixture, so the older touched-weeks rule counts (VW-478).
+      basis: 'touched_weeks',
+      weeks: [],
+    });
+    expect(report.header.trainingDaysCompleted).toBe(3);
+  });
+
+  // VW-489. An empty week and a withheld week read the same in the counts, so the
+  // header has to say which one it is or the coach reads "no training".
+  it('leaves an unreviewed day out of both counts and says how many are waiting', async () => {
+    const at = new Date(2026, 8, 8, 9);
+    await store.putSession({
+      id: 'unreviewed',
+      startedAt: at.toISOString(),
+      endedAt: new Date(at.getTime() + 60_000).toISOString(),
+    });
+    await store.putSet({
+      id: 'unreviewed-set',
+      sessionId: 'unreviewed',
+      startedAt: at.toISOString(),
+      endedAt: new Date(at.getTime() + 30_000).toISOString(),
+      partial: false,
+      reps: [],
+    });
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: new Date(2026, 8, 7).toISOString(),
+      to: new Date(2026, 8, 11).toISOString(),
+    });
+
+    expect(report.header.trainingDaysCompleted).toBe(0);
+    expect(report.header.rolling28DayTrainingDays).toBe(0);
+    expect(report.header.unreviewedDays).toBe(1);
+  });
+
+  it('counts twelve sessions on one local day as one training day in both header counts (VW-462)', async () => {
+    for (let i = 0; i < 12; i++) {
+      const start = new Date(2026, 8, 8, 9, i * 4);
+      await seedTrainingDay(store, {
+        kind: 'training',
+        id: `row-${i}`,
+        startedAt: start.toISOString(),
+        endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),
+      });
+    }
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: new Date(2026, 8, 7).toISOString(),
+      to: new Date(2026, 8, 11).toISOString(),
+    });
+
+    expect(report.sessions).toHaveLength(12);
+    expect(report.header.trainingDaysCompleted).toBe(1);
+    expect(report.header.rolling28DayTrainingDays).toBe(1);
   });
 
   it("omits a guest lifter's sets from a session's rendered exercises", async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -267,7 +330,8 @@ describe('report.weekly', () => {
     // whose final rep drops far enough below the first to cross VL30. The
     // flag is a ratio of same-set values, so it must read correctly whether
     // or not the absolute numbers have been through `normaliseVelocityToMps`.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -294,7 +358,8 @@ describe('report.weekly', () => {
   });
 
   it('omits the RIR line when the rir-estimate gate is withheld (no baseline)', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -311,7 +376,8 @@ describe('report.weekly', () => {
 
   it('includes the RIR line only once the rir-estimate gate is CALIBRATED, general-model labelled (VW-310)', async () => {
     calibrateRirBaseline(store);
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -334,7 +400,8 @@ describe('report.weekly', () => {
   it('labels the RIR line "fitted" once the lifter has a fitted RIR-velocity curve (VW-310)', async () => {
     calibrateRirBaseline(store);
     fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -348,6 +415,27 @@ describe('report.weekly', () => {
 
     // Final rep peaks at 0.6 m/s: (0.6 - 0.3) / 0.15 = 2.
     expect(report.sessions[0]?.exercises[0]?.rir).toBe('RIR (final rep, fitted): 2.0');
+  });
+
+  it('reads the fitted curve with the final rep mean velocity, not its peak (VW-483)', async () => {
+    calibrateRirBaseline(store);
+    fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
+    await seedTrainingDay(store, {
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2026-09-08T12:00:00.000Z',
+      endedAt: '2026-09-08T12:30:00.000Z',
+    });
+    const reps = [0, 1].map((i) => makeRep('s1', i, { peakVelocity: 0.6, meanVelocity: 0.45 }));
+    await store.putSet(makeSet({ id: 's1', reps }));
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-15T00:00:00.000Z',
+    });
+
+    // The peak would read (0.6 - 0.3) / 0.15 = 2; the mean reads 1.
+    expect(report.sessions[0]?.exercises[0]?.rir).toBe('RIR (final rep, fitted): 1.0');
   });
 
   it('clusters repeated check-in text and surfaces repeated off-code muscle groups', async () => {
@@ -409,13 +497,15 @@ describe('report.weekly', () => {
   });
 
   it('lists preSessionCarbs on the session entry, and omits it when absent (VW-307)', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-carbs',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
       preSessionCarbs: { level: 'low', hoursSinceLastMeal: 4 },
     });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-no-carbs',
       startedAt: '2026-09-09T12:00:00.000Z',
       endedAt: '2026-09-09T12:30:00.000Z',
@@ -436,7 +526,8 @@ describe('report.weekly', () => {
   });
 
   it('renders markdown that is paste-safe: no HTML tags, no emoji, no wide tables', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -495,7 +586,8 @@ describe('report.weekly', () => {
       orderIndex: 1,
     });
 
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -533,7 +625,8 @@ describe('report.weekly', () => {
     );
 
     // A second, unattached session, so adherence sees planned 2 / done 1.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-2',
       startedAt: '2026-09-09T12:00:00.000Z',
       endedAt: '2026-09-09T12:30:00.000Z',
@@ -564,9 +657,9 @@ describe('report.weekly', () => {
     expect(report.flags.velocityLossHold).toHaveLength(1);
     expect(report.checkIn?.themes).toHaveLength(1);
 
-    expect(markdown).toContain(`Sessions completed: ${report.header.sessionsCompleted}`);
+    expect(markdown).toContain(`Training days: ${report.header.trainingDaysCompleted}`);
     expect(markdown).toContain(
-      `Last 28 days: ${report.header.rolling28DayCompletedSessions} sessions completed`,
+      `Last 28 days: ${report.header.rolling28DayTrainingDays} training days`,
     );
     const adherence = report.header.adherence!;
     expect(markdown).toContain(

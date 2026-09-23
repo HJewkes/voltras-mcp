@@ -14,6 +14,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import { commitmentWeekOf } from '../accountability/commitment-week.js';
 import {
   composeGhostNudge,
   composeMissRecovery,
@@ -33,14 +34,28 @@ import {
   type AdherenceRead,
   type AdherenceTrend,
   type NextWorkoutRead,
+  type PlanningDueRead,
   type ProactiveKind,
   type ProtocolState,
 } from '../accountability/types.js';
-import { AccountabilityPreviewInput, AccountabilityStateInput } from '../schemas/accountability.js';
+import { localDate } from '../analytics/training-days.js';
+import { resolveCurrentBlock } from '../plan/current-block.js';
+import {
+  AccountabilityDeclareCommitmentInput,
+  AccountabilityPreviewInput,
+  AccountabilityStateInput,
+} from '../schemas/accountability.js';
 import type { ServerState } from '../state/server-state.js';
-import { LOCAL_USER_ID } from '../store/types.js';
+import { LOCAL_USER_ID, type StoredCommitment } from '../store/types.js';
+import {
+  commitmentRead,
+  declareCommitment,
+  ACCOUNTABILITY_DECLARE_COMMITMENT_DESCRIPTION,
+  type CommitmentRead,
+} from './accountability-commitment.js';
 import { wrapHandler } from './helpers.js';
 import { nextWorkout as lookupNextWorkout } from './plan-tools.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { buildWeeklyReport } from './report-tools.js';
 
 const SUNDAY = 0;
@@ -83,18 +98,21 @@ export const ACCOUNTABILITY_STATE_DESCRIPTION =
   '`persisted` (false when no row exists yet and the defaults are being shown), ' +
   '`evaluatedAt` (the instant the dry run was evaluated at), plus `tick` ' +
   '(`sunday_anchor` on a Sunday, `thursday` on a Thursday, `none` on every other day), ' +
-  '`adherenceTrend` read from `report.weekly`, and `decision` — `{action, kind, reason}` where ' +
-  '`action` is `send` or `silent` and `reason` always says why, including why it is silent. ' +
-  'Pass `at` to evaluate the dry run as of another instant. No device traffic, no network.';
+  '`adherenceTrend` read from `report.weekly`, `decision` — `{action, kind, reason}` where ' +
+  '`action` is `send` or `silent` and `reason` always says why, including why it is silent — ' +
+  "and `commitment`, the lifter's own commitment standing over the week being committed to " +
+  '(`weekOf`, `revision`, `days`, `ifThen`, `wording`, `declaredAt`), or null when none is ' +
+  'stored. Pass `at` to evaluate the dry run as of another instant. No device traffic, no network.';
 
 export const ACCOUNTABILITY_PREVIEW_DESCRIPTION =
   'READ-ONLY. Run the same dry evaluation as `accountability.state` and, when the decision is ' +
   '`send`, also render the coach message that decision would carry — from live reads (`report.weekly` ' +
-  'adherence, `plan.next_workout`, the rolling 28-day count), never from stored copy. Sends nothing ' +
+  'adherence, `plan.next_workout`, the rolling 28-day training-day count), never from stored copy. Sends nothing ' +
   "and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, " +
   'or null when the decision is silent), `text` (the rendered message, or null when silent or when ' +
-  'the plan has nothing queued to render from), `inputsUsed` (the adherence, rolling-count and ' +
-  'next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass ' +
+  'the plan has nothing queued to render from), `inputsUsed` (the adherence, ' +
+  '`rolling28DayTrainingDays`, next-workout and `commitment` values the render read, or null ' +
+  'when nothing was rendered), and `evaluatedAt`. Pass ' +
   '`at` to evaluate as of another instant.';
 
 interface PlaceholderTools {
@@ -114,6 +132,16 @@ export interface AccountabilityStateResult {
   tick: 'sunday_anchor' | 'thursday' | 'none';
   adherenceTrend: AdherenceTrend | null;
   decision: AccountabilityDecision;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are excluded
+   * from every count here, so a zero beside a non-zero `unreviewedDays` means the
+   * history is withheld pending review, not absent.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
+  /** The commitment standing over the week being committed to, or null when there is none. */
+  commitment: CommitmentRead | null;
 }
 
 export function registerAccountabilityTools(
@@ -134,6 +162,13 @@ export function registerAccountabilityTools(
     AccountabilityPreviewInput,
     wrapHandler(AccountabilityPreviewInput, (input) => describeAccountabilityPreview(state, input)),
     ACCOUNTABILITY_PREVIEW_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'accountability.declare_commitment',
+    AccountabilityDeclareCommitmentInput,
+    wrapHandler(AccountabilityDeclareCommitmentInput, (input) => declareCommitment(state, input)),
+    ACCOUNTABILITY_DECLARE_COMMITMENT_DESCRIPTION,
   );
 }
 
@@ -163,6 +198,7 @@ interface DryRunEvaluation {
   tick: AccountabilityStateResult['tick'];
   trend: AdherenceTrend | null;
   decision: AccountabilityDecision;
+  commitment: StoredCommitment | undefined;
 }
 
 async function evaluateDryRun(
@@ -173,7 +209,7 @@ async function evaluateDryRun(
   const stored = await state.store.getAccountabilityState(LOCAL_USER_ID);
   const current = stored ?? initialAccountabilityState(LOCAL_USER_ID, now);
   const tick = tickForDay(now);
-  const trend = tick === 'thursday' ? await readAdherenceTrend(state) : null;
+  const trend = tick === 'thursday' ? await readAdherenceTrend(state, now) : null;
   return {
     current,
     persisted: stored !== undefined,
@@ -181,6 +217,7 @@ async function evaluateDryRun(
     tick,
     trend,
     decision: dryRunDecision(current, tick, trend, now),
+    commitment: await state.store.getCommitmentForWeek(LOCAL_USER_ID, commitmentWeekOf(now)),
   };
 }
 
@@ -202,13 +239,19 @@ export async function describeAccountabilityState(
     tick: evaluation.tick,
     adherenceTrend: evaluation.trend,
     decision: evaluation.decision,
+    ...(await readUnreviewed(state.store)),
+    commitment: evaluation.commitment === undefined ? null : commitmentRead(evaluation.commitment),
   };
 }
 
 export interface AccountabilityPreviewInputsUsed {
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   nextWorkout: NextWorkoutRead | null;
+  /** Set when the next block is due to be planned; the Sunday anchor offers the sitting. */
+  planning: PlanningDueRead | null;
+  /** The lifter's own commitment for the coming week, or null when none is stored (VW-505). */
+  commitment: CommitmentRead | null;
 }
 
 export interface AccountabilityPreviewResult {
@@ -217,6 +260,14 @@ export interface AccountabilityPreviewResult {
   text: string | null;
   inputsUsed: AccountabilityPreviewInputsUsed | null;
   evaluatedAt: string;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are excluded
+   * from every count here, so a zero beside a non-zero `unreviewedDays` means the
+   * history is withheld pending review, not absent.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 export async function describeAccountabilityPreview(
@@ -226,20 +277,23 @@ export async function describeAccountabilityPreview(
   const evaluation = await evaluateDryRun(state, input);
   const evaluatedAt = evaluation.now.toISOString();
   if (evaluation.decision.action !== 'send') {
-    return { decision: evaluation.decision, kind: null, text: null, inputsUsed: null, evaluatedAt };
+    return {
+      decision: evaluation.decision,
+      kind: null,
+      text: null,
+      inputsUsed: null,
+      evaluatedAt,
+      ...(await readUnreviewed(state.store)),
+    };
   }
-  const rendered = await renderDecision(
-    state,
-    evaluation.current,
-    evaluation.decision.kind,
-    evaluation.now,
-  );
+  const rendered = await renderDecision(state, evaluation, evaluation.decision.kind);
   return {
     decision: evaluation.decision,
     kind: evaluation.decision.kind,
     text: rendered.text,
     inputsUsed: rendered.inputsUsed,
     evaluatedAt,
+    ...(await readUnreviewed(state.store)),
   };
 }
 
@@ -249,20 +303,23 @@ export async function describeAccountabilityPreview(
  */
 async function renderDecision(
   state: ServerState,
-  current: AccountabilityState,
+  evaluation: DryRunEvaluation,
   kind: ProactiveKind,
-  now: Date,
 ): Promise<{ text: string; inputsUsed: AccountabilityPreviewInputsUsed }> {
-  const [report, nextWorkoutRead] = await Promise.all([
-    buildWeeklyReport(state, { format: 'json' }),
+  const now = evaluation.now;
+  const [report, nextWorkoutRead, block] = await Promise.all([
+    buildWeeklyReport(state, { format: 'json', to: now.toISOString() }),
     readNextWorkout(state),
+    resolveCurrentBlock(state.store, localDate(now.toISOString())),
   ]);
   const inputsUsed: AccountabilityPreviewInputsUsed = {
     adherence: report.header.adherence,
-    rolling28DayCompletedSessions: report.header.rolling28DayCompletedSessions,
+    rolling28DayTrainingDays: report.header.rolling28DayTrainingDays,
     nextWorkout: nextWorkoutRead,
+    planning: block.planning.due ? { reason: block.planning.reason } : null,
+    commitment: evaluation.commitment === undefined ? null : commitmentRead(evaluation.commitment),
   };
-  const text = composeForKind(kind, current, inputsUsed, now);
+  const text = composeForKind(kind, evaluation.current, inputsUsed, now);
   return { text, inputsUsed };
 }
 
@@ -277,13 +334,16 @@ function composeForKind(
       return composeSundayAnchor({
         lifterName: LIFTER_NAME_PLACEHOLDER,
         adherence: inputs.adherence,
-        rolling28DayCompletedSessions: inputs.rolling28DayCompletedSessions,
+        rolling28DayTrainingDays: inputs.rolling28DayTrainingDays,
         nextWorkout: inputs.nextWorkout,
-        // No slot/fallback-day configuration is persisted anywhere yet
-        // (VW-236 lands the Sunday goal-setting sitting that will produce
-        // one); rendering with none named is the honest state until then.
-        slots: [],
-        monthlyCommitmentReoffer: false,
+        planning: inputs.planning,
+        // With nothing committed the slots stay empty and the placeholder
+        // renders: an unfilled commitment is visible in the message rather
+        // than silently absent (copy.ts).
+        slots: inputs.commitment?.days ?? [],
+        ...(inputs.commitment === null ? {} : { ifThenPlan: inputs.commitment.ifThen }),
+        ...(inputs.commitment === null ? {} : { commitmentLanguage: inputs.commitment.wording }),
+        monthlyCommitmentReoffer: isFirstSundayOfMonth(now),
       }).text;
     case 'miss_recovery': {
       const nextWorkoutRead = requireNextWorkout(inputs.nextWorkout);
@@ -308,10 +368,19 @@ function composeForKind(
       return composeRealignOpener({
         lifterName: LIFTER_NAME_PLACEHOLDER,
         adherence: inputs.adherence,
-        rolling28DayCompletedSessions: inputs.rolling28DayCompletedSessions,
-        slots: [],
+        rolling28DayTrainingDays: inputs.rolling28DayTrainingDays,
+        slots: inputs.commitment?.days ?? [],
       }).text;
   }
+}
+
+/**
+ * ENGINEERING DEFAULT: the first Sunday of the local month is the re-offer landmark the copy's
+ * "temporal landmark" (LIT section 1.2, 1.5) asks for. How often the coach re-offers is the
+ * owner's call, not a finding.
+ */
+function isFirstSundayOfMonth(now: Date): boolean {
+  return now.getDay() === SUNDAY && Number(localDate(now.toISOString()).slice(8)) <= 7;
 }
 
 function requireNextWorkout(nextWorkoutRead: NextWorkoutRead | null): NextWorkoutRead {
@@ -325,10 +394,9 @@ function requireNextWorkout(nextWorkoutRead: NextWorkoutRead | null): NextWorkou
 }
 
 /**
- * No persisted slot/fallback-day configuration exists yet (VW-236); the day
- * the miss was detected stands in for the planned day, and one named day
- * later stands in for its fallback — both a documented approximation, not a
- * lookup, until real per-day slots land.
+ * A commitment now names the planned days and their fallbacks (VW-505), but miss recovery does
+ * not read it yet: the day the miss was detected still stands in for the planned day, and one
+ * named day later for its fallback. Both remain a documented approximation, not a lookup.
  */
 function missedSessionFacts(current: AccountabilityState, nextWorkoutRead: NextWorkoutRead) {
   const enteredAt = new Date(current.enteredAt);
@@ -352,7 +420,8 @@ function weekdayName(date: Date): string {
 
 async function readNextWorkout(state: ServerState): Promise<NextWorkoutRead | null> {
   const result = await lookupNextWorkout(state, {});
-  if ('completed' in result) return null;
+  // Nothing planned today (a gap, or before the first dated block) reads as nothing queued.
+  if (!('template' in result)) return null;
   return {
     templateName: result.template.name,
     exercises: result.plannedExercises.map((plannedExercise) => ({
@@ -407,8 +476,8 @@ function enteredMissedOnMonOrTue(current: AccountabilityState): boolean {
   return day === MONDAY || day === TUESDAY;
 }
 
-async function readAdherenceTrend(state: ServerState): Promise<AdherenceTrend | null> {
-  const report = await buildWeeklyReport(state, { format: 'json' });
+async function readAdherenceTrend(state: ServerState, now: Date): Promise<AdherenceTrend | null> {
+  const report = await buildWeeklyReport(state, { format: 'json', to: now.toISOString() });
   return report.header.adherence?.trend ?? null;
 }
 

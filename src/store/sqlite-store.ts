@@ -29,8 +29,13 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
-import { fitRirVelocityModel, type RirVelocityFit } from '../analytics/rir-velocity.js';
 import {
+  fitRirVelocityModel,
+  RIR_VELOCITY_MODEL_VERSION,
+  type RirVelocityFit,
+} from '../analytics/rir-velocity.js';
+import {
+  constantLoadSets,
   referenceOneRepMax,
   toRirVelocityObservations,
   type RirAnchorRow,
@@ -44,6 +49,12 @@ import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
+  isSessionKind,
+  sessionKindPredicate,
+  type SessionKind,
+  type SessionKindFilter,
+} from './session-kind.js';
+import {
   baselineRowId,
   deriveBaselineState,
   selectSetupAnchors,
@@ -55,24 +66,56 @@ import {
   type AnchorSelectionReport,
   type BaselineObservations,
 } from './exercise-baselines.js';
+import { scheduleProblem } from '../plan/block-calendar.js';
+import { defaultGoalKind } from '../plan/goal-kind.js';
+import { DEFAULT_LEARNED_REST_CONTEXT } from './learned-rest-context.js';
 import {
+  BLOCK_SCHEDULE_CHANGED_BY,
+  BLOCK_SCHEDULE_KINDS,
+  LEARNED_REST_BASE_SOURCES,
+  LEARNED_REST_INTENTS,
+  LEARNED_REST_STATES,
   LOCAL_USER_ID,
+  PLAN_GOAL_KINDS,
+  UI_ACTION_ACTORS,
+  UI_ACTION_STATUSES,
+  UI_ACTION_SURFACES,
+  type ClaimUiActionInput,
+  type ClaimUiActionOutcome,
+  type CompleteUiActionInput,
+  type StoredUiAction,
+  type UiActionStatus,
+  type AppendBlockScheduleInput,
   type BaselineState,
+  type BlockScheduleChangedBy,
+  type BlockScheduleKind,
+  type BlockScheduleSkip,
+  type StoredBlockSchedule,
+  type DerivedBlockSchedules,
+  type ScheduledBlock,
+  type CommitmentDay,
+  type DeclareCommitmentInput,
+  type DeclaredCommitment,
   type DeclareDietPhaseInput,
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
+  type RirVelocityRefitCounts,
   type GoalTargetSelector,
   type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
   type ListGoalTargetsOptions,
+  type JsonObject,
   type ListPrioritiesOptions,
   type MarkExerciseChapterInput,
   type PutAdvisoryDecisionInput,
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
+  type SessionReviewKindFilter,
+  type SessionReviewRow,
   type SessionListFilter,
+  type SessionPatch,
   type SessionStore,
   type SetCountFilter,
   type SetupCard,
@@ -87,11 +130,13 @@ import {
   type PlanImportExercise,
   type PlanImportResult,
   type PlanImportTemplate,
+  type PlanGoalKind,
   type StoredPlannedExercise,
   type StoredTargetTempo,
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
   type StoredBodyMetric,
+  type StoredCommitment,
   type StoredDietPhase,
   type StoredExerciseBaseline,
   type StoredExerciseChapter,
@@ -123,7 +168,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 41;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -248,6 +293,8 @@ const GOAL_TARGETS_DDL = `
     anchor_reps INTEGER,
     -- v31 (VW-399): the fixed load a reps_at_load target is counted at; NULL elsewhere.
     anchor_load REAL,
+    -- v33 (VW-473): the block this target was set for; NULL on older and unbound targets.
+    block_id TEXT REFERENCES training_blocks(id) ON DELETE SET NULL,
     start_value REAL NOT NULL,
     start_measured_at TEXT NOT NULL,
     band_low_pct_per_week REAL NOT NULL,
@@ -309,6 +356,250 @@ const EXERCISE_CHAPTERS_DDL = `
   );
 `;
 
+/**
+ * v33 (VW-473): `block_schedules`, the dated history of each block's calendar (VW-447 model C).
+ *
+ * APPEND-ONLY. Every row is a complete snapshot, never a delta; the live schedule is the
+ * block's highest `seq`. The trigger refuses any UPDATE, and the block FK is RESTRICT, so a
+ * block with schedule history cannot be deleted until a tool decides what that should mean.
+ * UNIQUE (block_id, seq) is both the race guard and the index the live-row read uses.
+ *
+ * Shared with `migrateV32ToV33` so the fresh-DB shape and the migrated shape cannot drift.
+ */
+const BLOCK_SCHEDULES_DDL = `
+  CREATE TABLE IF NOT EXISTS block_schedules (
+    id TEXT PRIMARY KEY,
+    block_id TEXT NOT NULL REFERENCES training_blocks(id) ON DELETE RESTRICT,
+    seq INTEGER NOT NULL CHECK (seq >= 1),
+    starts_on TEXT CHECK (starts_on IS NULL OR starts_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    weeks_count INTEGER NOT NULL CHECK (weeks_count >= 1),
+    skips_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(skips_json)),
+    kind TEXT NOT NULL CHECK (kind IN (${sqlList(BLOCK_SCHEDULE_KINDS)})),
+    reason TEXT,
+    changed_by TEXT NOT NULL CHECK (changed_by IN (${sqlList(BLOCK_SCHEDULE_CHANGED_BY)})),
+    declared_at TEXT NOT NULL,
+    CHECK ((kind = 'cleared') = (starts_on IS NULL)),
+    UNIQUE (block_id, seq)
+  );
+  CREATE TRIGGER IF NOT EXISTS block_schedules_append_only
+    BEFORE UPDATE ON block_schedules
+    BEGIN SELECT RAISE(ABORT, 'block_schedules is append-only: write a new row'); END;
+`;
+
+/**
+ * v36 (VW-502): one row per action submitted through the dashboard's action
+ * layer.
+ *
+ * `action_id` is the client's own UUID and the PRIMARY KEY, which is the whole
+ * idempotency mechanism: two racing submits of the same id collide on the
+ * insert, so exactly one of them runs the handler.
+ *
+ * A row is CLAIMED as `pending` and COMPLETED to `ok` or `error`. The trigger
+ * allows exactly that one transition and refuses every other update, and a
+ * second trigger refuses deletes: an audit trail that can be edited after the
+ * fact is not one. A row left `pending` is a run that died between its
+ * handler and its completion; nothing rewrites it, because `error` would
+ * assert an outcome nobody knows.
+ *
+ * v39 (VW-521) adds `device_id`: which display sent the row, when the client named one.
+ * Nullable with no back-fill, because no earlier row knows. Free text validated in code
+ * (`ui-action-device-id.ts`), a LABEL exactly as `surface` is, and pinned by the
+ * completion trigger so a device id cannot be rewritten after the fact.
+ */
+/**
+ * Which display sent what, without scanning the trail (VW-521).
+ *
+ * NOT in `SCHEMA_SQL`, and neither is the trigger below: both name `device_id`, and
+ * `SCHEMA_SQL` runs BEFORE the migrations on every open, when a pre-v39 file has no such
+ * column. The v39 step owns them instead and runs on a fresh store too, which is where a
+ * fresh store gets them. Same placement as `COMMITMENT_REVISION_INDEX_SQL`.
+ */
+/**
+ * One link per session and plan target (VW-536): `putProgramAssignmentIfAbsent` checks before
+ * it inserts, and these refuse any other writer that does not. A link names one target and
+ * leaves the other column NULL, and NULLs never collide in a unique index.
+ *
+ * NOT in `SCHEMA_SQL`: that runs BEFORE the migrations, so on a file already holding a
+ * duplicate it would fail with SQLite's bare constraint error instead of the count the v41
+ * step reports. The step owns them, and runs on a fresh store too.
+ */
+const ASSIGNMENT_UNIQUE_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_program_assignments_session_template_unique
+    ON program_assignments(session_id, workout_template_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_program_assignments_session_planned_unique
+    ON program_assignments(session_id, planned_exercise_id);`;
+
+const UI_ACTION_DEVICE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_device
+    ON ui_actions(device_id, created_at DESC);`;
+
+/**
+ * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * submitted and WHAT they submitted held fixed.
+ *
+ * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
+ * migrated from v36 already carries the v36 trigger, which would otherwise survive and
+ * leave `device_id` the one column an out-of-band UPDATE could rewrite.
+ */
+const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.device_id IS OLD.device_id
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
+
+const UI_ACTIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS ui_actions (
+    action_id TEXT PRIMARY KEY,
+    action_name TEXT NOT NULL,
+    actor TEXT NOT NULL CHECK (actor IN (${sqlList(UI_ACTION_ACTORS)})),
+    surface TEXT NOT NULL CHECK (surface IN (${sqlList(UI_ACTION_SURFACES)})),
+    device_id TEXT,
+    flow_id TEXT,
+    flow_step TEXT,
+    input_hash TEXT NOT NULL,
+    result_status TEXT NOT NULL CHECK (result_status IN (${sqlList(UI_ACTION_STATUSES)})),
+    result_code TEXT,
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_created
+    ON ui_actions(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_flow
+    ON ui_actions(flow_id, created_at DESC);
+  CREATE TRIGGER IF NOT EXISTS ui_actions_no_delete
+    BEFORE DELETE ON ui_actions
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never deleted'); END;
+`;
+
+/** One row per revision of one week, so a correction can never overwrite what it corrects. */
+const COMMITMENT_REVISION_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_user_week_revision
+    ON commitments(user_id, effective_from, revision);`;
+
+/**
+ * `effective_to` is the one derived column and the one exception: it is re-derived from the
+ * user's other rows, so an UPDATE of it carries no lifter-authored content.
+ */
+const COMMITMENTS_APPEND_ONLY_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS commitments_append_only
+    BEFORE UPDATE OF id, user_id, effective_from, sessions_per_week, days_json,
+                     declared_at, lifter_if_then, lifter_wording, revision
+    ON commitments
+    BEGIN SELECT RAISE(ABORT, 'commitments is append-only: write the next revision'); END;`;
+
+/**
+ * v37 (VW-505): the lifter's own weekly commitment — which days, the named fallback for each,
+ * the if-then sentence and the commitment in the lifter's own words.
+ *
+ * APPEND-ONLY PER REVISION, the same way `block_schedules` keeps complete snapshots: a
+ * correction for a week already committed to inserts a new row at `revision` + 1 and the
+ * superseded wording stays readable. Reads take the greatest revision of the week. The trigger
+ * refuses every UPDATE except `effective_to`, which is re-derived across the user's rows after
+ * each insert so the timeline holds whatever order weeks arrive in.
+ *
+ * `sessions_per_week` is `days.length`, a denormalisation of the day list and NOT a second
+ * target: how many sessions a week is the attendance goal target's to state (VW-498).
+ *
+ * The delete guard rides here, so a fresh store and a migrated one get it from the same
+ * statement. The index and the update trigger name `revision` and cannot: a pre-migration
+ * table still lacks that column, and `migrateV36ToV37` installs those two instead.
+ */
+const COMMITMENTS_DDL = `
+  -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
+  -- observed-regularity proxy that is wrong in both directions.
+  CREATE TABLE IF NOT EXISTS commitments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+    sessions_per_week INTEGER NOT NULL,
+    days_json TEXT,
+    declared_at TEXT NOT NULL,
+    lifter_if_then TEXT,
+    lifter_wording TEXT,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  -- An append-only record a DELETE can empty is not one: without this, every superseded
+  -- revision the UPDATE trigger protects is one statement away from gone. Nothing in this
+  -- repo deletes a commitment or a user; the FK's ON DELETE CASCADE would abort here rather
+  -- than discard the lifter's own words, which is the outcome to want if a purge is ever
+  -- written. Same stance as ui_actions_no_delete (VW-502).
+  CREATE TRIGGER IF NOT EXISTS commitments_no_delete
+    BEFORE DELETE ON commitments
+    BEGIN SELECT RAISE(ABORT, 'commitments is append-only: rows are never deleted'); END;
+`;
+
+/**
+ * The goal-kind column's shape, shared by `SCHEMA_SQL` and the v38 step so a fresh store
+ * and a migrated one carry the same CHECK. NULL is a stated answer — the row names no goal.
+ */
+const PLANNED_GOAL_KIND_DDL = `TEXT CHECK (goal_kind IS NULL OR goal_kind IN (${sqlList(
+  PLAN_GOAL_KINDS,
+)}))`;
+
+/**
+ * The two v40 JSON columns on `sets`, shared by `SCHEMA_SQL` and the v40 step so a fresh
+ * store and a migrated one carry the same CHECK. NULL is the ordinary case: nothing filled it.
+ */
+const SET_EFFORT_CONTEXT_DDL = `TEXT CHECK (effort_context_json IS NULL OR json_valid(effort_context_json))`;
+const SET_CUE_RECORD_DDL = `TEXT CHECK (cue_record_json IS NULL OR json_valid(cue_record_json))`;
+
+/**
+ * v38 (VW-445 s.3.2): one learned rest per lifter, exercise, intent and superset context.
+ *
+ * The key is four parts because each one changes the quantity: the signal and the target
+ * differ by intent, and rest inside a superset is elapsed time containing another
+ * exercise's work. Version 1 writes `straight` only; the column carries `interleaved` from
+ * the start so a later rule needs no migration and cannot pollute straight-set values.
+ * Slot is NOT part of the key — one lifter has one value per exercise whichever side
+ * recorded the set.
+ *
+ * `context` carries NO enumerated CHECK on purpose (OWNER, VW-525): each resistance family
+ * will later learn its own rest and the family goes in this column. Widening a CHECK is a
+ * migration; widening a code-side validator is not. `learned-rest-context.ts` holds the
+ * vocabulary and the predicate every write path into this table must ask first — the schema
+ * cannot answer it, so nothing here may be read as though it did.
+ *
+ * `base_source`, `plan_base_sec`, `policy_version` and `history_json` together answer "why
+ * is this number what it is" without reading a single set.
+ *
+ * Nothing reads or writes this table yet. It lands with the columns so the store step is
+ * one migration rather than two.
+ */
+const LEARNED_REST_DDL = `
+  CREATE TABLE IF NOT EXISTS learned_rest (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    intent TEXT NOT NULL CHECK (intent IN (${sqlList(LEARNED_REST_INTENTS)})),
+    context TEXT NOT NULL DEFAULT '${DEFAULT_LEARNED_REST_CONTEXT}',
+    value_sec INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (${sqlList(LEARNED_REST_STATES)})),
+    base_sec INTEGER NOT NULL,
+    base_source TEXT NOT NULL CHECK (base_source IN (${sqlList(LEARNED_REST_BASE_SOURCES)})),
+    plan_base_sec INTEGER,
+    run_started_on TEXT NOT NULL,
+    last_evaluated_on TEXT,
+    last_step_on TEXT,
+    days_evaluated INTEGER NOT NULL DEFAULT 0,
+    informative_pairs INTEGER NOT NULL DEFAULT 0,
+    history_json TEXT NOT NULL CHECK (json_valid(history_json)),
+    policy_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, exercise_id, intent, context)
+  );
+`;
+
 const SCHEMA_SQL = `
   -- ── Identity (v6) ────────────────────────────────────────────────────
   -- Declared before everything that references it. SQLite resolves foreign
@@ -349,7 +640,11 @@ const SCHEMA_SQL = `
     -- session.start or corrected via session.checkin. NULL = never reported,
     -- never defaulted. No index: nothing filters or sorts by it.
     pre_session_carbs_level TEXT,
-    pre_session_carbs_hours_since_meal REAL
+    pre_session_carbs_hours_since_meal REAL,
+    -- v35 (VW-489): test or training. NULL = never reviewed, and unreviewed is
+    -- excluded from every lifter-facing read. See store/session-kind.ts for why
+    -- there is no stored cut-over instant.
+    kind TEXT CHECK (kind IN ('training','test'))
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -365,6 +660,7 @@ const SCHEMA_SQL = `
   --     downstream; a silent default is not — which is the whole reason
   --     training_mode and weight_lbs stopped being NOT NULL here.
 
+  -- No comma in a comment above the last column: DROP COLUMN cuts at the nearest one.
   CREATE TABLE IF NOT EXISTS sets (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -477,7 +773,17 @@ const SCHEMA_SQL = `
     -- VOLTRA_ADAPTER=mock writes into the same store as real hardware. Without
     -- this marker any corpus fit silently ingests synthetic rows.
     source TEXT NOT NULL DEFAULT 'local'
-      CHECK (source IN ('local','imported','mock'))
+      CHECK (source IN ('local','imported','mock')),
+
+    -- Denormalised from the session (v35 / VW-489), exactly as lifter is:
+    -- the set-level reads behind baselines and the RIR fit filter here rather
+    -- than joining back to the sessions table. NULL = never reviewed.
+    kind TEXT CHECK (kind IN ('training','test')),
+
+    -- v40 (VW-539): the effort context pinned at set start and the cue record
+    -- written at set end. NULL = not recorded. Every pre-v40 set reads NULL.
+    effort_context_json ${SET_EFFORT_CONTEXT_DDL},
+    cue_record_json ${SET_CUE_RECORD_DDL}
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
   -- The four v7 sets indexes are created by the rebuild in migrateV6ToV7, for
@@ -575,6 +881,20 @@ const SCHEMA_SQL = `
     -- Feeds the velocity-loss stop threshold (VW-266). NULL where the coach
     -- did not say, which is a gap, never an implied 'strength'.
     training_intent TEXT,
+    -- v38 (VW-448 amendment). What the row states as its goal. NULL means it
+    -- states none, which is an answer: nothing infers a goal from an intent.
+    -- The other effort fields become the stated kind's guards.
+    goal_kind ${PLANNED_GOAL_KIND_DDL},
+    -- v38. The velocity-loss goal, 1 to 95. Only meaningful under
+    -- goal_kind = 'velocity_loss'; the validator that enforces that is the
+    -- plan tools' (VW-448 task B), never a CHECK here.
+    target_velocity_loss_pct REAL,
+    -- v38 (VW-445). Whether the system probes and learns this row's rest.
+    -- With rest_sec: that number is the base the staircase starts from.
+    -- Without it: the learned value replaces today's population default.
+    -- Off with no rest_sec falls back at READ time, by the owner's ruling —
+    -- there is deliberately no CHECK pairing the two columns.
+    rest_learning INTEGER NOT NULL DEFAULT 1,
     -- v14. tc:item:<id> for a TrueCoach import; see workout_templates above.
     external_id TEXT
   );
@@ -594,6 +914,8 @@ const SCHEMA_SQL = `
     ON program_assignments(planned_exercise_id);
   CREATE INDEX IF NOT EXISTS idx_program_assignments_template
     ON program_assignments(workout_template_id);
+  -- v41 (VW-536): one link per (session, template) and per (session, planned exercise),
+  -- created by the v41 step: see ASSIGNMENT_UNIQUE_INDEX_SQL.
 
   -- v6 (VMCP-04.11): isometric assessments. One isometric_measurements row
   -- per run of isometric.measure_imbalance, with one isometric_trials row per
@@ -694,6 +1016,9 @@ const SCHEMA_SQL = `
     -- replaced on write, because a merge cannot express a removal.
     injuries_json TEXT,
     named_program_history TEXT,
+    -- v34: how many months the lifter's most recent break from consistent
+    -- training lasted, self-reported; NULL means never asked.
+    last_break_months REAL,
     -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
     -- actually gave and which we assumed on their behalf.
     provenance_json TEXT,
@@ -919,17 +1244,7 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_diet_phases_user ON diet_phases(user_id, started_at);
 
-  -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
-  -- observed-regularity proxy that is wrong in both directions.
-  CREATE TABLE IF NOT EXISTS commitments (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    effective_from TEXT NOT NULL,
-    effective_to TEXT,
-    sessions_per_week INTEGER NOT NULL,
-    days_json TEXT,
-    declared_at TEXT NOT NULL
-  );
+${COMMITMENTS_DDL}
 
   -- v28 (VW-364) adds the four leanness columns below bodyweight. Each is
   -- SELF-REPORTED and independently optional: a row may carry a weigh-in and
@@ -1008,7 +1323,10 @@ ${ACCOUNTABILITY_STATE_DDL}
 ${RIR_VELOCITY_MODELS_DDL}
 ${PRIORITIES_DDL}
 ${GOAL_TARGETS_DDL}
-${EXERCISE_CHAPTERS_DDL}`;
+${EXERCISE_CHAPTERS_DDL}
+${BLOCK_SCHEDULES_DDL}
+${UI_ACTIONS_DDL}
+${LEARNED_REST_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1673,9 +1991,391 @@ function migrateV30ToV31(db: DatabaseSync): void {
   addColumnIfMissing(db, 'goal_targets', 'anchor_load', 'REAL');
 }
 
+/**
+ * v31 -> v32: `sessions_28d` counts training days, not session rows (VW-460).
+ * No shape change; the unit of every live session-count row changed under it.
+ *
+ * - An ACCEPTED live row is retired `'abandoned'`. Its committed number is a
+ *   row count, and judging it against a day count silently moves the goal,
+ *   while editing it rewrites a commitment the lifter made. The priority stays
+ *   declared, so the next `goal.propose_targets` offers a day-count target.
+ * - An UNACCEPTED live row is a draft and is deleted. Retiring it would read as
+ *   a declined proposal, which blocks that metric from ever being re-offered.
+ *
+ * Retired rows are history and are left alone. Idempotent: a second run finds
+ * no live `sessions_28d` row from before the change.
+ */
+function migrateV31ToV32(db: DatabaseSync): void {
+  const live = `metric = 'sessions_28d' AND retired_at IS NULL`;
+  db.exec('BEGIN');
+  try {
+    const retired = db
+      .prepare(
+        `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
+           WHERE ${live} AND accepted_by IS NOT NULL`,
+      )
+      .run(new Date().toISOString());
+    const deleted = db
+      .prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`)
+      .run();
+    db.exec('COMMIT');
+    if (retired.changes > 0 || deleted.changes > 0) {
+      log.warn(
+        `store v32: sessions_28d now counts training days; retired ${retired.changes} accepted ` +
+          `and deleted ${deleted.changes} proposed session-count target(s). Propose again.`,
+      );
+    }
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v32 -> v33: dated blocks (VW-473). PURELY ADDITIVE and back-fills NOTHING: the
+ * `block_schedules` table and its append-only trigger, and `goal_targets.block_id`. Every
+ * existing block stays undated (zero schedule rows) and every existing target stays unbound
+ * (NULL `block_id`): a date given to a block after the fact would be a guess. One transaction,
+ * so a failure leaves the v32 shape; idempotent, so a re-open changes nothing.
+ */
+function migrateV32ToV33(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(BLOCK_SCHEDULES_DDL);
+    addColumnIfMissing(
+      db,
+      'goal_targets',
+      'block_id',
+      'TEXT REFERENCES training_blocks(id) ON DELETE SET NULL',
+    );
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v33 -> v34: `training_profile.last_break_months`, the length of the lifter's most recent break
+ * from consistent training. PURELY ADDITIVE and back-fills nothing: an absent answer means the
+ * question was never asked, and the tier signal's returner path then does not apply.
+ */
+function migrateV33ToV34(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'training_profile', 'last_break_months', 'REAL');
+}
+
+/**
+ * v34 -> v35: `sessions.kind` and `sets.kind`, test or training (VW-489). PURELY ADDITIVE
+ * and back-fills NOTHING: every existing row stays NULL, which `session-kind.ts` reads as
+ * "never reviewed" and every lifter-facing read then excludes. Back-filling `'training'`
+ * would assert the opposite of what the owner said about this history, and back-filling
+ * `'test'` would decide for him. One transaction, so a failure leaves the v34 shape;
+ * idempotent, so a re-open changes nothing.
+ */
+function migrateV34ToV35(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'sessions', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
+    addColumnIfMissing(db, 'sets', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v35 -> v36: the `ui_actions` audit table (VW-502). Additive and never
+ * back-filled — there is no earlier record of a dashboard write to recover.
+ *
+ * The body is empty on purpose. Its DDL lives in `SCHEMA_SQL` behind
+ * `IF NOT EXISTS`, which `db.exec(SCHEMA_SQL)` runs before this on every open,
+ * so an existing DB picks the table up there. Same pattern as v2 -> v3; the
+ * function exists to make the version bump explicit and to hold this note.
+ *
+ * The rung below reads `current <= 35`, which is the ladder's rule (stated
+ * above `applyMigrations`) and not a claim about which versions exist: a store
+ * at 34 and a store at 35 both fall into it and both reach v36. That is what
+ * let the v34 -> v35 step above be inserted without touching this one.
+ */
+function migrateV35ToV36(_db: DatabaseSync): void {
+  // Intentionally empty. See the note above.
+}
+
+/**
+ * v36 -> v37: the lifter's own words on `commitments` (VW-505). PURELY ADDITIVE and back-fills
+ * nothing: two nullable text columns, `revision` defaulting to 1 so every pre-v37 row reads as
+ * the first revision of its week, the per-revision unique index and the append-only trigger.
+ * One transaction, so a failure leaves the v36 shape; idempotent, so a re-open changes nothing.
+ */
+function migrateV36ToV37(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'commitments', 'lifter_if_then', 'TEXT');
+    addColumnIfMissing(db, 'commitments', 'lifter_wording', 'TEXT');
+    addColumnIfMissing(db, 'commitments', 'revision', 'INTEGER NOT NULL DEFAULT 1');
+    db.exec(COMMITMENT_REVISION_INDEX_SQL);
+    db.exec(COMMITMENTS_APPEND_ONLY_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v37 -> v38: one prescription shape (VW-517). The goal of VW-448 and the rest flag of
+ * VW-445 land in a single additive step, because both are columns on `planned_exercises`
+ * and a row is only readable once it carries all three.
+ *
+ * `learned_rest` is NOT created here. Its DDL lives in `SCHEMA_SQL` behind `IF NOT EXISTS`,
+ * which `db.exec(SCHEMA_SQL)` runs before this on every open, so an existing DB picks the
+ * table up there. Same pattern as v35 -> v36.
+ *
+ * TWO BACKFILLS, BOTH RUN ONCE, both guarded by the version stamp and not by their own
+ * WHERE clauses:
+ *
+ *   * `rest_learning`. A rest someone wrote stays fixed and is never extended (OWNER), so
+ *     rows that carry one read 0. Rows without one read the ADD COLUMN default of 1: those
+ *     get the population default today, and learning is what replaces it. This must not
+ *     re-run — a planner who later sets a rest with learning ON would be silently reset.
+ *   * `goal_kind`, through `defaultGoalKind`, the same function the write paths call. Every
+ *     row with a rep range becomes `rep_range` and an RPE on it becomes that range's cap.
+ *
+ * One transaction, so a failure leaves the v37 shape.
+ */
+function migrateV37ToV38(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'planned_exercises', 'goal_kind', PLANNED_GOAL_KIND_DDL);
+    addColumnIfMissing(db, 'planned_exercises', 'target_velocity_loss_pct', 'REAL');
+    addColumnIfMissing(db, 'planned_exercises', 'rest_learning', 'INTEGER NOT NULL DEFAULT 1');
+    db.exec('UPDATE planned_exercises SET rest_learning = 0 WHERE rest_sec IS NOT NULL');
+    backfillGoalKind(db);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v38 -> v39: which display sent an action (VW-521). One nullable column on `ui_actions`
+ * and one index.
+ *
+ * NO BACK-FILL, and none is possible: a row written before this step records no display,
+ * and inventing one would put a claim in an audit trail that nobody made. Existing rows
+ * read NULL, which says exactly that.
+ *
+ * THE STEP OWNS THE INDEX AND THE COMPLETION TRIGGER. Neither is in `SCHEMA_SQL`: both
+ * name `device_id`, and `db.exec(SCHEMA_SQL)` runs BEFORE the migrations on every open,
+ * when a pre-v39 file has no such column. A fresh store gets them here too, because every
+ * rung runs from 0.
+ *
+ * The trigger is DROPPED and recreated rather than left to `IF NOT EXISTS` — the step's
+ * riskiest line. A store migrated from v36 already carries the v36 trigger, which would
+ * otherwise survive and leave `device_id` the one column an out-of-band UPDATE could
+ * rewrite.
+ *
+ * One transaction, so a failure leaves the v38 shape; `addColumnIfMissing`, `IF NOT
+ * EXISTS` and the unconditional drop make a second run a no-op.
+ */
+function migrateV38ToV39(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'ui_actions', 'device_id', 'TEXT');
+    db.exec(UI_ACTION_DEVICE_INDEX_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v39 -> v40: storage for the pinned effort context and the set-end cue record (VW-539).
+ * Two nullable JSON columns on `sets`. Nothing writes them yet.
+ *
+ * NO BACK-FILL: a set recorded before this step was never pinned, and NULL says so.
+ *
+ * One transaction, so a failure leaves the v39 shape; `addColumnIfMissing` makes a second
+ * run, and a fresh store whose `SCHEMA_SQL` already declared both, a no-op.
+ */
+function migrateV39ToV40(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'sets', 'effort_context_json', SET_EFFORT_CONTEXT_DDL);
+    addColumnIfMissing(db, 'sets', 'cue_record_json', SET_CUE_RECORD_DDL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v40 -> v41: the two unique indexes behind one link per session and plan target (VW-536).
+ *
+ * NO REPAIR: the owner's store held no duplicate pair when this step was written, so a
+ * duplicate here is a surprise to report, not a row to choose between. The step refuses to
+ * open the store and names the count; it deletes nothing.
+ *
+ * One transaction, so a failure leaves the v40 shape; `IF NOT EXISTS` makes a second run a
+ * no-op.
+ */
+function migrateV40ToV41(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    assertNoDuplicateAssignments(db);
+    db.exec(ASSIGNMENT_UNIQUE_INDEX_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+function assertNoDuplicateAssignments(db: DatabaseSync): void {
+  const { pairs } = db
+    .prepare(
+      `SELECT COUNT(*) AS pairs FROM (
+         SELECT 1 FROM program_assignments WHERE workout_template_id IS NOT NULL
+           GROUP BY session_id, workout_template_id HAVING COUNT(*) > 1
+         UNION ALL
+         SELECT 1 FROM program_assignments WHERE planned_exercise_id IS NOT NULL
+           GROUP BY session_id, planned_exercise_id HAVING COUNT(*) > 1)`,
+    )
+    .get() as { pairs: number };
+  if (pairs === 0) return;
+  throw new Error(
+    `schema v41: ${String(pairs)} session and plan-target pair(s) have more than one ` +
+      'program_assignments row, so the one-link-per-pair index cannot be created. Nothing was ' +
+      'changed or deleted; resolve the duplicates by hand, then reopen.',
+  );
+}
+
+/**
+ * Row by row rather than as a SQL `CASE`, so the migration and every write path read the
+ * same rule from `defaultGoalKind` and cannot drift. `planned_exercises` holds one row per
+ * programmed lift, so the loop is over a table measured in hundreds.
+ */
+function backfillGoalKind(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT id, target_reps_low, target_rpe, target_velocity_loss_pct
+         FROM planned_exercises WHERE goal_kind IS NULL`,
+    )
+    .all() as unknown as GoalKindBackfillRow[];
+  const update = db.prepare('UPDATE planned_exercises SET goal_kind = ? WHERE id = ?');
+  for (const row of rows) {
+    const kind = defaultGoalKind({
+      targetVelocityLossPct: row.target_velocity_loss_pct ?? undefined,
+      targetRepsLow: row.target_reps_low ?? undefined,
+      targetRpe: row.target_rpe ?? undefined,
+    });
+    if (kind !== null) update.run(kind, row.id);
+  }
+}
+
+interface GoalKindBackfillRow {
+  id: string;
+  target_reps_low: number | null;
+  target_rpe: number | null;
+  target_velocity_loss_pct: number | null;
+}
+
+/**
+ * The WHERE half every session count shares: the same predicates as
+ * `listSessions` plus `userId` and `endedOnly`, never a page.
+ */
+function sessionCountPredicates(filter: SessionCountFilter): {
+  where: string[];
+  params: (string | number)[];
+} {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (filter.from !== undefined) {
+    where.push('started_at >= ?');
+    params.push(filter.from);
+  }
+  if (filter.to !== undefined) {
+    where.push('started_at <= ?');
+    params.push(filter.to);
+  }
+  if (filter.exerciseId !== undefined) {
+    // VMCP-01.72b (S6): same set-level OR-subquery as `listSessions` — see
+    // the comment there. A session-column-only WHERE here would silently
+    // break the contract: `list` would find a session `count` doesn't.
+    where.push(
+      '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+    );
+    params.push(filter.exerciseId, filter.exerciseId);
+  }
+  if (filter.userId !== undefined) {
+    where.push('user_id = ?');
+    params.push(filter.userId);
+  }
+  // Same owner-only default as `listSessions` (VW-169): the tier signal counts
+  // through here, and a guest's sessions must not become the owner's evidence.
+  if (filter.lifter === undefined) {
+    where.push('lifter IS NULL');
+  } else {
+    where.push('lifter = ?');
+    params.push(filter.lifter);
+  }
+  // VW-489: training-only unless the caller opts out. Sited beside the lifter
+  // predicate deliberately — both answer "is this the OWNER'S REAL history",
+  // and two answers that can drift apart is the bug this avoids.
+  const kind = sessionKindPredicate(filter.kind);
+  if (kind !== undefined) {
+    where.push(kind.where);
+    params.push(...kind.params);
+  }
+  if (filter.endedOnly === true) {
+    where.push('ended_at IS NOT NULL');
+  }
+  return { where, params };
+}
+
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
+}
+
+interface UiActionRow {
+  action_id: string;
+  action_name: string;
+  actor: string;
+  surface: string;
+  device_id: string | null;
+  flow_id: string | null;
+  flow_step: string | null;
+  input_hash: string;
+  result_status: string;
+  result_code: string | null;
+  result_json: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+function rowToUiAction(row: UiActionRow): StoredUiAction {
+  return {
+    actionId: row.action_id,
+    actionName: row.action_name,
+    actor: row.actor as StoredUiAction['actor'],
+    surface: row.surface as StoredUiAction['surface'],
+    ...(row.device_id === null ? {} : { deviceId: row.device_id }),
+    ...(row.flow_id === null ? {} : { flowId: row.flow_id }),
+    ...(row.flow_step === null ? {} : { flowStep: row.flow_step }),
+    inputHash: row.input_hash,
+    resultStatus: row.result_status as UiActionStatus,
+    ...(row.result_code === null ? {} : { resultCode: row.result_code }),
+    ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as unknown }),
+    createdAt: row.created_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
 }
 
 /**
@@ -1866,6 +2566,7 @@ interface SessionRow {
   pre_session_carbs_level: string | null;
   pre_session_carbs_hours_since_meal: number | null;
   catalog_version: string | null;
+  kind: string | null;
 }
 
 interface DietPhaseRow {
@@ -1930,6 +2631,106 @@ interface PriorityRow {
   mesos_held: number;
 }
 
+interface BlockScheduleRow {
+  id: string;
+  block_id: string;
+  seq: number;
+  starts_on: string | null;
+  weeks_count: number;
+  skips_json: string;
+  kind: string;
+  reason: string | null;
+  changed_by: string;
+  declared_at: string;
+}
+
+const INSERT_BLOCK_SCHEDULE_SQL = `
+  INSERT INTO block_schedules
+    (id, block_id, seq, starts_on, weeks_count, skips_json, kind, reason, changed_by, declared_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+function blockScheduleBindings(row: StoredBlockSchedule): (string | number | null)[] {
+  return [
+    row.id,
+    row.blockId,
+    row.seq,
+    row.startsOn ?? null,
+    row.weeksCount,
+    JSON.stringify(row.skips),
+    row.kind,
+    row.reason ?? null,
+    row.changedBy,
+    row.declaredAt,
+  ];
+}
+
+function rowToBlockSchedule(row: BlockScheduleRow): StoredBlockSchedule {
+  const out: StoredBlockSchedule = {
+    id: row.id,
+    blockId: row.block_id,
+    seq: row.seq,
+    weeksCount: row.weeks_count,
+    skips: JSON.parse(row.skips_json) as BlockScheduleSkip[],
+    kind: row.kind as BlockScheduleKind,
+    changedBy: row.changed_by as BlockScheduleChangedBy,
+    declaredAt: row.declared_at,
+  };
+  if (row.starts_on !== null) out.startsOn = row.starts_on;
+  if (row.reason !== null) out.reason = row.reason;
+  return out;
+}
+
+interface CommitmentRow {
+  id: string;
+  user_id: string;
+  effective_from: string;
+  effective_to: string | null;
+  sessions_per_week: number;
+  days_json: string | null;
+  declared_at: string;
+  lifter_if_then: string | null;
+  lifter_wording: string | null;
+  revision: number;
+}
+
+function rowToCommitment(row: CommitmentRow): StoredCommitment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    effectiveFrom: row.effective_from,
+    effectiveTo: row.effective_to,
+    sessionsPerWeek: row.sessions_per_week,
+    days: row.days_json === null ? [] : (JSON.parse(row.days_json) as CommitmentDay[]),
+    ifThen: row.lifter_if_then ?? '',
+    wording: row.lifter_wording ?? '',
+    revision: row.revision,
+    declaredAt: row.declared_at,
+  };
+}
+
+/**
+ * Whether a declaration says exactly what the week's latest revision already says. Byte for
+ * byte, order included: a retry must not bump `revision`, and a reordered day list is a
+ * different week to run.
+ */
+function sameCommitmentContent(latest: StoredCommitment, input: DeclareCommitmentInput): boolean {
+  return (
+    latest.ifThen === input.ifThen &&
+    latest.wording === input.wording &&
+    latest.days.length === input.days.length &&
+    latest.days.every(
+      (day, i) => day.day === input.days[i]?.day && day.fallbackDay === input.days[i]?.fallbackDay,
+    )
+  );
+}
+
+function blockScheduleInvalid(blockId: string, problem: string): Error {
+  const err = new Error(`block ${blockId}: ${problem}.`);
+  (err as Error & { code: string }).code = 'BLOCK_SCHEDULE_INVALID';
+  return err;
+}
+
 interface GoalTargetRow {
   id: string;
   priority_id: string;
@@ -1937,6 +2738,7 @@ interface GoalTargetRow {
   exercise_id: string | null;
   anchor_reps: number | null;
   anchor_load: number | null;
+  block_id: string | null;
   start_value: number;
   start_measured_at: string;
   band_low_pct_per_week: number;
@@ -1960,6 +2762,7 @@ interface GoalTargetRow {
 interface SetRow {
   id: string;
   session_id: string;
+  kind: string | null;
   started_at: string;
   ended_at: string;
   partial: number;
@@ -2001,6 +2804,8 @@ interface SetRow {
   assist_mode: string | null;
   settings_json: string | null;
   settings_hash: string | null;
+  effort_context_json: string | null;
+  cue_record_json: string | null;
 }
 
 interface RepRow {
@@ -2102,6 +2907,7 @@ interface TrainingProfileRow {
   target: string | null;
   injuries_json: string | null;
   named_program_history: string | null;
+  last_break_months: number | null;
   provenance_json: string | null;
   updated_at: string;
 }
@@ -2149,6 +2955,12 @@ interface FailureAnchorVerdictRow {
   set_id: string | null;
   filter_verdict: FailureVerdict;
   self_reported_rir: number | null;
+}
+
+interface StaleRirVelocityModelRow {
+  user_id: string;
+  exercise_id: string;
+  model_json: string;
 }
 
 interface RirVelocityModelRow {
@@ -2224,8 +3036,9 @@ const WORKOUT_TEMPLATE_UPSERT_SQL = `INSERT INTO workout_templates
 const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    (id, workout_template_id, exercise_id, order_index, target_sets,
     target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
-    rest_sec, notes, target_tempo_json, training_intent, external_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    rest_sec, notes, target_tempo_json, training_intent, goal_kind,
+    target_velocity_loss_pct, rest_learning, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(id) DO UPDATE SET
    workout_template_id = excluded.workout_template_id,
    exercise_id = excluded.exercise_id,
@@ -2239,6 +3052,9 @@ const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    notes = excluded.notes,
    target_tempo_json = excluded.target_tempo_json,
    training_intent = excluded.training_intent,
+   goal_kind = excluded.goal_kind,
+   target_velocity_loss_pct = excluded.target_velocity_loss_pct,
+   rest_learning = excluded.rest_learning,
    external_id = excluded.external_id`;
 
 interface WorkoutTemplateRow {
@@ -2265,6 +3081,9 @@ interface PlannedExerciseRow {
   notes: string | null;
   target_tempo_json: string | null;
   training_intent: string | null;
+  goal_kind: string | null;
+  target_velocity_loss_pct: number | null;
+  rest_learning: number;
   external_id: string | null;
 }
 
@@ -2333,15 +3152,22 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putSession(s: StoredSession): Promise<void> {
-    // catalog_version is deliberately outside the ON CONFLICT UPDATE SET below:
-    // it is stamped once at session.start, and session.end's re-put never
-    // carries it, so updating it here would null out the stamp on every close.
+    // catalog_version and kind are deliberately outside the ON CONFLICT UPDATE
+    // SET below: both are stamped once at session.start, and every re-put path
+    // (session.end, the guided-load reap) rebuilds the row from LIVE state,
+    // which carries neither — so updating them here would null out the stamp on
+    // every close. For `kind` that is not a lost annotation but a lost session:
+    // a NULL kind reads as unreviewed, and unreviewed is excluded from every
+    // lifter-facing read, so the workout that just finished would vanish from
+    // training days, tier, goals, reports and calibration the moment it ended
+    // (VW-489). `setSessionKind` is the one path that changes an existing row's
+    // kind, which is what makes marking auditable.
     this.db
       .prepare(
         `INSERT INTO sessions
            (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
@@ -2368,8 +3194,42 @@ export class SqliteSessionStore implements SessionStore {
         s.preSessionCarbs?.level ?? null,
         s.preSessionCarbs?.hoursSinceLastMeal ?? null,
         s.catalogVersion ?? null,
+        s.kind ?? null,
       );
     return Promise.resolve();
+  }
+
+  async patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
+        | SessionRow
+        | undefined;
+      const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
+      if (next !== undefined) this.writeSessionPatch(next);
+      this.db.exec('COMMIT');
+      return Promise.resolve(next);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** The patchable columns only; the rest of the row stays as another writer left it. */
+  private writeSessionPatch(s: StoredSession): void {
+    this.db
+      .prepare(
+        `UPDATE sessions SET lifter = ?, diet_phase = ?,
+           pre_session_carbs_level = ?, pre_session_carbs_hours_since_meal = ?
+         WHERE id = ?`,
+      )
+      .run(
+        s.lifter ?? null,
+        this.stampableDietPhase(s),
+        s.preSessionCarbs?.level ?? null,
+        s.preSessionCarbs?.hoursSinceLastMeal ?? null,
+        s.id,
+      );
   }
 
   /**
@@ -2380,6 +3240,18 @@ export class SqliteSessionStore implements SessionStore {
   private stampableDietPhase(s: StoredSession): string | null {
     if (s.lifter !== undefined) return null;
     return this.findDietPhaseCovering(LOCAL_USER_ID, s.startedAt, s.startedAt)?.phase ?? null;
+  }
+
+  /**
+   * The kind to stamp on a set (VW-489): whatever its session says, or NULL when
+   * the session row is not there yet. NULL is the fail-closed answer — an
+   * unreviewed set is excluded, never counted as training on a guess.
+   */
+  private sessionKindOf(sessionId: string): string | null {
+    const row = this.db.prepare(`SELECT kind FROM sessions WHERE id = ?`).get(sessionId) as
+      | { kind: string | null }
+      | undefined;
+    return row?.kind ?? null;
   }
 
   async putSet(s: StoredSet): Promise<void> {
@@ -2397,15 +3269,15 @@ export class SqliteSessionStore implements SessionStore {
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
-          source, position_units, velocity_units, auto_created_by, upgraded, lifter,
+          source, position_units, velocity_units, auto_created_by, upgraded, lifter, kind,
           sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms,
           firmware_peak_force_lbs, firmware_peak_power, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
-          settings_json, settings_hash)
+          settings_json, settings_hash, effort_context_json, cue_record_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -2429,6 +3301,7 @@ export class SqliteSessionStore implements SessionStore {
          auto_created_by = excluded.auto_created_by,
          upgraded = excluded.upgraded,
          lifter = excluded.lifter,
+         kind = excluded.kind,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
@@ -2443,7 +3316,9 @@ export class SqliteSessionStore implements SessionStore {
          inverse_chains_lbs = excluded.inverse_chains_lbs,
          assist_mode = excluded.assist_mode,
          settings_json = excluded.settings_json,
-         settings_hash = excluded.settings_hash`,
+         settings_hash = excluded.settings_hash,
+         effort_context_json = excluded.effort_context_json,
+         cue_record_json = excluded.cue_record_json`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -2480,6 +3355,9 @@ export class SqliteSessionStore implements SessionStore {
         s.autoCreatedBy ?? null,
         s.upgraded === true ? 1 : null,
         s.lifter ?? null,
+        // Derived from the session, never taken from the caller — the same
+        // reason `stampableDietPhase` is: two writers for one fact drift.
+        this.sessionKindOf(s.sessionId),
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
@@ -2495,6 +3373,8 @@ export class SqliteSessionStore implements SessionStore {
         s.assistMode ?? null,
         s.settingsJson ?? null,
         s.settingsHash ?? null,
+        s.effortContext === undefined ? null : JSON.stringify(s.effortContext),
+        s.cueRecord === undefined ? null : JSON.stringify(s.cueRecord),
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -2525,6 +3405,22 @@ export class SqliteSessionStore implements SessionStore {
     if (!row) return Promise.resolve(undefined);
     const reps = this.loadRepsForSet(row.id);
     return Promise.resolve(rowToSet(row, reps));
+  }
+
+  async patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined> {
+    // One column, never a `putSet` round-trip: that re-inserts the reps it read (VW-536).
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db
+        .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
+        .get(lifter, setId) as SetRow | undefined;
+      const patched = row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      this.db.exec('COMMIT');
+      return Promise.resolve(patched);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   async listSessions(filter: SessionListFilter): Promise<StoredSession[]> {
@@ -2562,6 +3458,12 @@ export class SqliteSessionStore implements SessionStore {
       where.push('lifter = ?');
       params.push(filter.lifter);
     }
+    // VW-489: training-only unless the caller opts out (`session-kind.ts`).
+    const kind = sessionKindPredicate(filter.kind);
+    if (kind !== undefined) {
+      where.push(kind.where);
+      params.push(...kind.params);
+    }
     const direction = filter.sort === 'startedAt:asc' ? 'ASC' : 'DESC';
     const limit = filter.limit ?? 50;
     const offset = filter.offset ?? 0;
@@ -2574,43 +3476,7 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async countSessions(filter: SessionCountFilter = {}): Promise<number> {
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (filter.from !== undefined) {
-      where.push('started_at >= ?');
-      params.push(filter.from);
-    }
-    if (filter.to !== undefined) {
-      where.push('started_at <= ?');
-      params.push(filter.to);
-    }
-    if (filter.exerciseId !== undefined) {
-      // VMCP-01.72b (S6): same set-level OR-subquery as `listSessions` — see
-      // the comment there. This method's own doc contract ("same predicates
-      // as listSessions") is a promise a session-column-only WHERE here
-      // would silently break: `list` would find a session `count` doesn't.
-      where.push(
-        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
-      );
-      params.push(filter.exerciseId, filter.exerciseId);
-    }
-    if (filter.userId !== undefined) {
-      where.push('user_id = ?');
-      params.push(filter.userId);
-    }
-    // Same owner-only default as `listSessions` (VW-169). This method's
-    // contract is "the same predicates as listSessions", and the tier signal
-    // counts through here — a guest's sessions must not become the owner's
-    // graduation evidence.
-    if (filter.lifter === undefined) {
-      where.push('lifter IS NULL');
-    } else {
-      where.push('lifter = ?');
-      params.push(filter.lifter);
-    }
-    if (filter.endedOnly === true) {
-      where.push('ended_at IS NOT NULL');
-    }
+    const { where, params } = sessionCountPredicates(filter);
     // `sort` / `limit` / `offset` are intentionally not applied: they describe
     // a page, and the count of a page is not a count.
     const sql =
@@ -2620,41 +3486,7 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async getSessionDateSpan(filter: SessionCountFilter = {}): Promise<SessionDateSpan> {
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (filter.from !== undefined) {
-      where.push('started_at >= ?');
-      params.push(filter.from);
-    }
-    if (filter.to !== undefined) {
-      where.push('started_at <= ?');
-      params.push(filter.to);
-    }
-    if (filter.exerciseId !== undefined) {
-      // Same set-level OR-subquery as `listSessions`/`countSessions` — see
-      // the comment on `listSessions`.
-      where.push(
-        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
-      );
-      params.push(filter.exerciseId, filter.exerciseId);
-    }
-    if (filter.userId !== undefined) {
-      where.push('user_id = ?');
-      params.push(filter.userId);
-    }
-    // Same owner-only default as `listSessions` (VW-169). This method's
-    // contract is "the same predicates as listSessions", and the tier signal
-    // counts through here — a guest's sessions must not become the owner's
-    // graduation evidence.
-    if (filter.lifter === undefined) {
-      where.push('lifter IS NULL');
-    } else {
-      where.push('lifter = ?');
-      params.push(filter.lifter);
-    }
-    if (filter.endedOnly === true) {
-      where.push('ended_at IS NOT NULL');
-    }
+    const { where, params } = sessionCountPredicates(filter);
     const sql =
       `SELECT MIN(started_at) AS first, MAX(started_at) AS last FROM sessions` +
       (where.length ? ` WHERE ${where.join(' AND ')}` : '');
@@ -2662,6 +3494,83 @@ export class SqliteSessionStore implements SessionStore {
       | { first: string | null; last: string | null }
       | undefined;
     return Promise.resolve({ first: row?.first ?? null, last: row?.last ?? null });
+  }
+
+  async listTrainingDayInstants(filter: SessionCountFilter = {}): Promise<string[]> {
+    const { where, params } = sessionCountPredicates(filter);
+    // Correlated subqueries rather than a JOIN so the shared predicates above
+    // stay unqualified: `sessions` and `sets` both carry started_at, ended_at,
+    // lifter and kind, and a join would make every one of them ambiguous.
+    const working = `SELECT 1 FROM sets WHERE session_id = sessions.id AND set_purpose = 'working'`;
+    const lastWorkingEnd =
+      `SELECT MAX(ended_at) FROM sets ` +
+      `WHERE session_id = sessions.id AND set_purpose = 'working'`;
+    const sql =
+      `SELECT COALESCE(ended_at, (${lastWorkingEnd})) AS instant FROM sessions ` +
+      `WHERE ${where.join(' AND ')} AND EXISTS (${working}) ORDER BY started_at ASC`;
+    const rows = this.db.prepare(sql).all(...params) as { instant: string | null }[];
+    return Promise.resolve(
+      rows.map((row) => row.instant).filter((instant): instant is string => instant !== null),
+    );
+  }
+
+  async listSessionReviewRows(
+    filter: { kind?: SessionReviewKindFilter } = {},
+  ): Promise<SessionReviewRow[]> {
+    // Owner-only, like every other history read: a guest's session is not the
+    // owner's to classify. `kind` here admits 'unreviewed', which no analytic
+    // read ever asks for and which is the whole point of this one.
+    const where = ['lifter IS NULL'];
+    const params: string[] = [];
+    if (filter.kind === 'unreviewed') {
+      where.push('kind IS NULL');
+    } else {
+      const kind = sessionKindPredicate(filter.kind ?? 'any');
+      if (kind !== undefined) {
+        where.push(kind.where);
+        params.push(...kind.params);
+      }
+    }
+    const perSession = (columns: string) =>
+      `(SELECT ${columns} FROM sets WHERE session_id = sessions.id)`;
+    const rows = this.db
+      .prepare(
+        `SELECT id, started_at, ended_at, exercise_id, exercise_name, kind,
+                ${perSession('COUNT(*)')} AS set_count,
+                ${perSession(`COUNT(*) FILTER (WHERE set_purpose = 'working')`)} AS working_count,
+                ${perSession(`MAX(weight_lbs) FILTER (WHERE set_purpose = 'working')`)} AS top_load,
+                ${perSession('MAX(ended_at)')} AS last_set_ended_at,
+                ${perSession(`MAX(ended_at) FILTER (WHERE set_purpose = 'working')`)}
+                  AS last_working_set_ended_at,
+                EXISTS (SELECT 1 FROM program_assignments WHERE session_id = sessions.id) AS planned
+           FROM sessions
+          WHERE ${where.join(' AND ')}
+          ORDER BY started_at DESC`,
+      )
+      .all(...params) as unknown as SessionReviewSqlRow[];
+    return Promise.resolve(rows.map(rowToSessionReviewRow));
+  }
+
+  async setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number> {
+    if (sessionIds.length === 0) return Promise.resolve(0);
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    this.db.exec('BEGIN');
+    try {
+      // One transaction over both tables. `sets.kind` is denormalised from the
+      // session, so a partial write would leave the set-level readers and the
+      // session-level ones disagreeing about the same bout.
+      const sessions = this.db
+        .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+        .run(kind, ...sessionIds);
+      this.db
+        .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+        .run(kind, ...sessionIds);
+      this.db.exec('COMMIT');
+      return Promise.resolve(Number(sessions.changes));
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -2729,6 +3638,12 @@ export class SqliteSessionStore implements SessionStore {
       where.push('lifter = ?');
       params.push(filter.lifter);
     }
+    // VW-489: training-only unless the caller opts out (`session-kind.ts`).
+    const kind = sessionKindPredicate(filter.kind);
+    if (kind !== undefined) {
+      where.push(kind.where);
+      params.push(...kind.params);
+    }
     if (filter.purpose !== undefined) {
       where.push(`set_purpose IN (${filter.purpose.map(() => '?').join(', ')})`);
       params.push(...filter.purpose);
@@ -2757,6 +3672,7 @@ export class SqliteSessionStore implements SessionStore {
     userId: string;
     exerciseId: string;
     lifter?: string;
+    kind?: SessionKindFilter;
   }): Promise<string | null> {
     // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
     // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
@@ -2766,13 +3682,20 @@ export class SqliteSessionStore implements SessionStore {
     // `getSetsForExercise`. Without it a guest's set — which is by definition
     // the most recent one on a shared rig — becomes the owner's progression
     // basis.
+    //
+    // VW-489: and training-only unless the caller opts out, for the same
+    // reason — a bench test is the most recent set far more often than a
+    // guest's is.
     const lifterClause = filter.lifter === undefined ? 'lifter IS NULL' : 'lifter = ?';
     const params = [filter.userId, filter.exerciseId];
     if (filter.lifter !== undefined) params.push(filter.lifter);
+    const kind = sessionKindPredicate(filter.kind);
+    const kindClause = kind === undefined ? '' : ` AND ${kind.where}`;
+    if (kind !== undefined) params.push(...kind.params);
     const row = this.db
       .prepare(
-        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause} ` +
-          `ORDER BY started_at DESC LIMIT 1`,
+        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause}` +
+          `${kindClause} ORDER BY started_at DESC LIMIT 1`,
       )
       .get(...params) as { session_id: string } | undefined;
     return Promise.resolve(row?.session_id ?? null);
@@ -3103,6 +4026,29 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putTrainingBlock(b: StoredTrainingBlock): Promise<void> {
+    this.writeTrainingBlock(b);
+    return Promise.resolve();
+  }
+
+  async putTrainingBlockWithSchedule(
+    b: StoredTrainingBlock,
+    schedule: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule> {
+    const problem = scheduleProblem(schedule);
+    if (problem !== null) throw blockScheduleInvalid(schedule.blockId, problem);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.writeTrainingBlock(b);
+      const row = this.insertBlockSchedule(schedule);
+      this.db.exec('COMMIT');
+      return Promise.resolve(row);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private writeTrainingBlock(b: StoredTrainingBlock): void {
     this.db
       .prepare(
         `INSERT INTO training_blocks
@@ -3117,7 +4063,6 @@ export class SqliteSessionStore implements SessionStore {
            notes = excluded.notes`,
       )
       .run(b.id, b.programId, b.orderIndex, b.name, b.focus ?? null, b.weeksCount, b.notes ?? null);
-    return Promise.resolve();
   }
 
   async getTrainingBlock(id: string): Promise<StoredTrainingBlock | undefined> {
@@ -3204,24 +4149,26 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
-    this.db
-      .prepare(PLANNED_EXERCISE_UPSERT_SQL)
-      .run(
-        e.id,
-        e.workoutTemplateId,
-        e.exerciseId,
-        e.orderIndex,
-        e.targetSets,
-        e.targetRepsLow ?? null,
-        e.targetRepsHigh ?? null,
-        e.targetWeightLbs ?? null,
-        e.targetRpe ?? null,
-        e.restSec ?? null,
-        e.notes ?? null,
-        e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
-        e.trainingIntent ?? null,
-        e.externalId ?? null,
-      );
+    this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL).run(
+      e.id,
+      e.workoutTemplateId,
+      e.exerciseId,
+      e.orderIndex,
+      e.targetSets,
+      e.targetRepsLow ?? null,
+      e.targetRepsHigh ?? null,
+      e.targetWeightLbs ?? null,
+      e.targetRpe ?? null,
+      e.restSec ?? null,
+      e.notes ?? null,
+      e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
+      e.trainingIntent ?? null,
+      e.goalKind ?? null,
+      e.targetVelocityLossPct ?? null,
+      // Absent means the default, on. The column is NOT NULL, so a write states it.
+      e.restLearning === false ? 0 : 1,
+      e.externalId ?? null,
+    );
     return Promise.resolve();
   }
 
@@ -3337,6 +4284,11 @@ export class SqliteSessionStore implements SessionStore {
       // Same reasoning as tempo: the importer is not a source of training
       // intent, so an existing local value survives a re-import.
       existing?.training_intent ?? null,
+      // A new row takes the importer's kind and learning flag; a re-import keeps the
+      // stored three, as it keeps a local RPE (VW-537).
+      existing === undefined ? (next.goalKind ?? null) : existing.goal_kind,
+      existing?.target_velocity_loss_pct ?? null,
+      importedRestLearning(existing, next),
       next.externalId ?? null,
     );
   }
@@ -3354,6 +4306,11 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putProgramAssignment(a: StoredProgramAssignment): Promise<void> {
+    this.writeProgramAssignment(a);
+    return Promise.resolve();
+  }
+
+  private writeProgramAssignment(a: StoredProgramAssignment): void {
     this.db
       .prepare(
         // Upsert in place, not `INSERT OR REPLACE`. `program_assignments` has
@@ -3376,7 +4333,36 @@ export class SqliteSessionStore implements SessionStore {
         a.workoutTemplateId ?? null,
         a.assignedAt,
       );
-    return Promise.resolve();
+  }
+
+  async putProgramAssignmentIfAbsent(
+    a: StoredProgramAssignment,
+  ): Promise<{ assignment: StoredProgramAssignment; created: boolean }> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.assignmentFor(a);
+      if (existing === undefined) this.writeProgramAssignment(a);
+      this.db.exec('COMMIT');
+      return Promise.resolve({ assignment: existing ?? a, created: existing === undefined });
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** The session's earliest link to the same planned lift, or else the same template. */
+  private assignmentFor(a: StoredProgramAssignment): StoredProgramAssignment | undefined {
+    const [column, target] =
+      a.plannedExerciseId !== undefined
+        ? ['planned_exercise_id', a.plannedExerciseId]
+        : ['workout_template_id', a.workoutTemplateId ?? null];
+    const row = this.db
+      .prepare(
+        `SELECT * FROM program_assignments WHERE session_id = ? AND ${column} = ?
+           ORDER BY assigned_at ASC LIMIT 1`,
+      )
+      .get(a.sessionId, target) as ProgramAssignmentRow | undefined;
+    return row === undefined ? undefined : rowToProgramAssignment(row);
   }
 
   async getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]> {
@@ -3408,8 +4394,8 @@ export class SqliteSessionStore implements SessionStore {
             ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
             days_available, days_reliable, onboarded_at, current_baseline,
             effort_tolerance, target, injuries_json, named_program_history,
-            provenance_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_break_months, provenance_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            declared_tier = excluded.declared_tier,
            declared_at = excluded.declared_at,
@@ -3427,6 +4413,7 @@ export class SqliteSessionStore implements SessionStore {
            target = excluded.target,
            injuries_json = excluded.injuries_json,
            named_program_history = excluded.named_program_history,
+           last_break_months = excluded.last_break_months,
            provenance_json = excluded.provenance_json,
            updated_at = excluded.updated_at`,
       )
@@ -3448,6 +4435,7 @@ export class SqliteSessionStore implements SessionStore {
         p.target ?? null,
         p.injuries === undefined ? null : JSON.stringify(p.injuries),
         p.namedProgramHistory ?? null,
+        p.lastBreakMonths ?? null,
         p.provenance === undefined ? null : JSON.stringify(p.provenance),
         p.updatedAt,
       );
@@ -3548,6 +4536,208 @@ export class SqliteSessionStore implements SessionStore {
       throw err;
     }
     return Promise.resolve(declared);
+  }
+
+  async appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule> {
+    const [row] = await this.appendBlockSchedules([input]);
+    return row;
+  }
+
+  async appendBlockSchedules(
+    inputs: readonly AppendBlockScheduleInput[],
+  ): Promise<StoredBlockSchedule[]> {
+    for (const input of inputs) {
+      const problem = scheduleProblem(input);
+      if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = inputs.map((input) => this.insertBlockSchedule(input));
+      this.db.exec('COMMIT');
+      return Promise.resolve(rows);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private insertBlockSchedule(input: AppendBlockScheduleInput): StoredBlockSchedule {
+    const last = this.db
+      .prepare(`SELECT MAX(seq) AS seq FROM block_schedules WHERE block_id = ?`)
+      .get(input.blockId) as { seq: number | null } | undefined;
+    const row: StoredBlockSchedule = { ...input, id: randomUUID(), seq: (last?.seq ?? 0) + 1 };
+    this.db.prepare(INSERT_BLOCK_SCHEDULE_SQL).run(...blockScheduleBindings(row));
+    return row;
+  }
+
+  async getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM block_schedules WHERE block_id = ? ORDER BY seq DESC LIMIT 1`)
+      .get(blockId) as BlockScheduleRow | undefined;
+    return Promise.resolve(row === undefined ? undefined : rowToBlockSchedule(row));
+  }
+
+  async deriveBlockSchedules<T>(
+    derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
+  ): Promise<{ rows: StoredBlockSchedule[]; result: T }> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const derived = derive(this.scheduledBlocks());
+      for (const input of derived.rows) {
+        const problem = scheduleProblem(input);
+        if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+      }
+      if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
+      const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
+      this.db.exec('COMMIT');
+      return Promise.resolve({ rows, result: derived.result });
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Every block in program order, with its live row and whether its program is archived. */
+  private scheduledBlocks(): ScheduledBlock[] {
+    const live = new Map(this.liveBlockSchedules().map((row) => [row.blockId, row]));
+    const rows = this.db
+      .prepare(
+        `SELECT b.*, p.archived_at IS NOT NULL AS program_archived
+           FROM training_blocks b LEFT JOIN training_programs p ON p.id = b.program_id
+           ORDER BY b.program_id ASC, b.order_index ASC`,
+      )
+      .all() as unknown as (TrainingBlockRow & { program_archived: number })[];
+    return rows.map((row) => ({
+      block: rowToTrainingBlock(row),
+      live: live.get(row.id),
+      programArchived: row.program_archived === 1,
+    }));
+  }
+
+  async listLiveBlockSchedules(): Promise<StoredBlockSchedule[]> {
+    return Promise.resolve(this.liveBlockSchedules());
+  }
+
+  private liveBlockSchedules(): StoredBlockSchedule[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.* FROM block_schedules s
+           WHERE s.seq = (SELECT MAX(seq) FROM block_schedules WHERE block_id = s.block_id)
+           ORDER BY s.starts_on ASC, s.block_id ASC`,
+      )
+      .all() as unknown as BlockScheduleRow[];
+    return rows.map(rowToBlockSchedule);
+  }
+
+  async listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM block_schedules WHERE block_id = ? ORDER BY seq ASC`)
+      .all(blockId) as unknown as BlockScheduleRow[];
+    return Promise.resolve(rows.map(rowToBlockSchedule));
+  }
+
+  async declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
+      const declared =
+        latest !== undefined && sameCommitmentContent(latest, input)
+          ? { commitment: latest, unchanged: true }
+          : { commitment: this.insertCommitmentRevision(input, latest), unchanged: false };
+      this.db.exec('COMMIT');
+      return Promise.resolve(declared);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private latestCommitmentRevision(userId: string, weekOf: string): StoredCommitment | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM commitments WHERE user_id = ? AND effective_from = ?
+           ORDER BY revision DESC LIMIT 1`,
+      )
+      .get(userId, weekOf) as CommitmentRow | undefined;
+    return row === undefined ? undefined : rowToCommitment(row);
+  }
+
+  private insertCommitmentRevision(
+    input: DeclareCommitmentInput,
+    latest: StoredCommitment | undefined,
+  ): StoredCommitment {
+    const row: StoredCommitment = {
+      id: randomUUID(),
+      userId: input.userId,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: null,
+      sessionsPerWeek: input.days.length,
+      days: input.days,
+      ifThen: input.ifThen,
+      wording: input.wording,
+      revision: (latest?.revision ?? 0) + 1,
+      declaredAt: input.declaredAt,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO commitments
+           (id, user_id, effective_from, effective_to, sessions_per_week, days_json,
+            declared_at, lifter_if_then, lifter_wording, revision)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.userId,
+        row.effectiveFrom,
+        row.sessionsPerWeek,
+        JSON.stringify(row.days),
+        row.declaredAt,
+        row.ifThen,
+        row.wording,
+        row.revision,
+      );
+    this.rederiveCommitmentRanges(input.userId);
+    return { ...row, effectiveTo: this.commitmentWeekAfter(input.userId, input.effectiveFrom) };
+  }
+
+  /**
+   * Each row's `effective_to` is the next committed week's Monday, so every revision of a week
+   * carries the same value and a correction filed for an older week still closes at the right
+   * date. The append-only trigger allows this column and only this column.
+   */
+  private rederiveCommitmentRanges(userId: string): void {
+    this.db
+      .prepare(
+        `UPDATE commitments SET effective_to = (
+           SELECT MIN(later.effective_from) FROM commitments later
+             WHERE later.user_id = commitments.user_id
+               AND later.effective_from > commitments.effective_from)
+         WHERE user_id = ?`,
+      )
+      .run(userId);
+  }
+
+  private commitmentWeekAfter(userId: string, weekOf: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(effective_from) AS next FROM commitments
+           WHERE user_id = ? AND effective_from > ?`,
+      )
+      .get(userId, weekOf) as { next: string | null } | undefined;
+    return row?.next ?? null;
+  }
+
+  async getCommitmentForWeek(
+    userId: string,
+    weekOf: string,
+  ): Promise<StoredCommitment | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM commitments WHERE user_id = ? AND effective_from <= ?
+           ORDER BY effective_from DESC, revision DESC LIMIT 1`,
+      )
+      .get(userId, weekOf) as CommitmentRow | undefined;
+    return Promise.resolve(row === undefined ? undefined : rowToCommitment(row));
   }
 
   async listDietPhases(userId: string): Promise<StoredDietPhase[]> {
@@ -3726,6 +4916,105 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rowToAdvisoryDecision(row));
   }
 
+  /**
+   * Insert the row, or report the existing one. `INSERT ... ON CONFLICT DO
+   * NOTHING` then re-read: the primary key decides the race, not this process,
+   * so two servers over one file would arbitrate correctly too.
+   */
+  async claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome> {
+    const inserted = this.db
+      .prepare(
+        `INSERT INTO ui_actions (
+           action_id, action_name, actor, surface, device_id, flow_id, flow_step,
+           input_hash, result_status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+         ON CONFLICT(action_id) DO NOTHING`,
+      )
+      .run(
+        input.actionId,
+        input.actionName,
+        input.actor,
+        input.surface,
+        input.deviceId ?? null,
+        input.flowId ?? null,
+        input.flowStep ?? null,
+        input.inputHash,
+        input.createdAt,
+      );
+    if (inserted.changes > 0) return Promise.resolve({ kind: 'claimed' });
+    const existing = this.readUiAction(input.actionId);
+    if (existing === undefined) {
+      // The row lost the insert race and then vanished. `ui_actions` refuses
+      // deletes, so this cannot happen against this schema; it is reported
+      // rather than silently retried because a retry could double-run.
+      throw new Error(`ui_actions: claim lost on ${input.actionId} but no row exists`);
+    }
+    return Promise.resolve({ kind: 'taken', existing });
+  }
+
+  async completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction> {
+    // The trigger enforces the pending -> ok|error transition; the WHERE only
+    // keeps a second completion from being a no-op that reads as success.
+    const updated = this.db
+      .prepare(
+        `UPDATE ui_actions
+            SET result_status = ?, result_code = ?, result_json = ?, completed_at = ?
+          WHERE action_id = ? AND result_status = 'pending'`,
+      )
+      .run(
+        input.resultStatus,
+        input.resultCode ?? null,
+        JSON.stringify(input.result ?? null),
+        input.completedAt,
+        input.actionId,
+      );
+    if (updated.changes === 0) {
+      throw new Error(`ui_actions: no pending action to complete for ${input.actionId}`);
+    }
+    const row = this.readUiAction(input.actionId);
+    if (row === undefined) throw new Error(`ui_actions: ${input.actionId} vanished`);
+    return Promise.resolve(row);
+  }
+
+  getUiAction(actionId: string): Promise<StoredUiAction | undefined> {
+    return Promise.resolve(this.readUiAction(actionId));
+  }
+
+  listUiActions(filter?: {
+    flowId?: string;
+    deviceId?: string;
+    status?: UiActionStatus;
+    limit?: number;
+  }): Promise<StoredUiAction[]> {
+    const clauses: string[] = [];
+    const bindings: (string | number)[] = [];
+    if (filter?.flowId !== undefined) {
+      clauses.push('flow_id = ?');
+      bindings.push(filter.flowId);
+    }
+    if (filter?.deviceId !== undefined) {
+      clauses.push('device_id = ?');
+      bindings.push(filter.deviceId);
+    }
+    if (filter?.status !== undefined) {
+      clauses.push('result_status = ?');
+      bindings.push(filter.status);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    bindings.push(filter?.limit ?? 100);
+    const rows = this.db
+      .prepare(`SELECT * FROM ui_actions ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...bindings) as unknown as UiActionRow[];
+    return Promise.resolve(rows.map(rowToUiAction));
+  }
+
+  private readUiAction(actionId: string): StoredUiAction | undefined {
+    const row = this.db.prepare(`SELECT * FROM ui_actions WHERE action_id = ?`).get(actionId) as
+      | UiActionRow
+      | undefined;
+    return row === undefined ? undefined : rowToUiAction(row);
+  }
+
   async listAdvisoryDecisions(
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
@@ -3760,14 +5049,37 @@ export class SqliteSessionStore implements SessionStore {
    * MUST APPEAR IN BOTH LISTS.
    */
   async putPriority(priority: StoredPriority): Promise<StoredPriority> {
+    return Promise.resolve(this.writePriority(priority));
+  }
+
+  private writePriority(priority: StoredPriority): StoredPriority {
     this.db.prepare(PUT_PRIORITY_SQL).run(...priorityBindings(priority));
     const row = this.db
       .prepare(`SELECT * FROM priorities WHERE id = ?`)
       .get(priority.id) as unknown as PriorityRow;
-    return Promise.resolve(rowToPriority(row));
+    return rowToPriority(row);
+  }
+
+  async putPrioritiesDerived(
+    userId: string,
+    derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
+  ): Promise<StoredPriority[]> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const written = derive(this.priorities(userId)).map((row) => this.writePriority(row));
+      this.db.exec('COMMIT');
+      return Promise.resolve(written);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   async listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]> {
+    return Promise.resolve(this.priorities(userId, options));
+  }
+
+  private priorities(userId: string, options?: ListPrioritiesOptions): StoredPriority[] {
     const retiredClause = options?.includeRetired === true ? '' : 'AND retired_at IS NULL';
     const rows = this.db
       .prepare(
@@ -3775,7 +5087,7 @@ export class SqliteSessionStore implements SessionStore {
          ORDER BY declared_at DESC, id ASC`,
       )
       .all(userId) as unknown as PriorityRow[];
-    return Promise.resolve(rows.map(rowToPriority));
+    return rows.map(rowToPriority);
   }
 
   /**
@@ -4040,6 +5352,12 @@ export class SqliteSessionStore implements SessionStore {
    * reads (owner-only, accepted verdicts), narrowed to ids because the fit
    * needs the set's own load and velocity, which the anchor row does not carry
    * on the scale the rest of the fit uses.
+   *
+   * NO `kind` PREDICATE, deliberately (VW-489). This returns a lookup keyed by
+   * set id, and the caller intersects it with the sets `getSetsForExercise`
+   * returned — already training-only. A second copy of the filter here could
+   * never change an answer, and an unreachable predicate reads as a guarantee
+   * the next person will rely on somewhere it does not hold.
    */
   private failureSetIds(key: BaselineKey): ReadonlySet<string> {
     const where = ['user_id = ?', 'exercise_id = ?', 'lifter IS NULL', 'set_id IS NOT NULL'];
@@ -4113,7 +5431,16 @@ export class SqliteSessionStore implements SessionStore {
     // has been counting it — a silent CALIBRATED-to-SHAPE_ONLY demotion. The
     // pooled key therefore keeps counting the whole pool, and preference by
     // setup happens after the fetch.
-    const where = ['fa.user_id = ?', 'fa.exercise_id = ?', 'fa.lifter IS NULL'];
+    //
+    // VW-489: `s.kind = 'training'` also makes the LEFT JOIN below effectively
+    // inner. An anchor whose set row is gone can no longer be SHOWN to be
+    // training, and an unprovable anchor must not calibrate a baseline.
+    const where = [
+      'fa.user_id = ?',
+      'fa.exercise_id = ?',
+      'fa.lifter IS NULL',
+      "s.kind = 'training'",
+    ];
     const params: string[] = [key.userId, key.exerciseId];
     if (key.side !== undefined) {
       where.push('fa.side = ?');
@@ -4382,13 +5709,15 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Re-fit from the lifter's own working sets. Owner-scoped through
+   * Re-fit from the lifter's own constant-load working sets. Owner-scoped through
    * `getSetsForExercise`, which filters `lifter IS NULL` — a guest's set on the
    * same rig never enters the owner's curve, matching the baseline and anchor
    * reads.
    */
   async refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit> {
-    const sets = await this.getSetsForExercise({ userId, exerciseId, purpose: ['working'] });
+    const sets = constantLoadSets(
+      await this.getSetsForExercise({ userId, exerciseId, purpose: ['working'] }),
+    );
     const reference = referenceOneRepMax(sets);
     const fit =
       reference === undefined
@@ -4398,6 +5727,21 @@ export class SqliteSessionStore implements SessionStore {
           );
     this.persistRirVelocityFit(userId, exerciseId, fit);
     return fit;
+  }
+
+  async refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts> {
+    const rows = this.db
+      .prepare(`SELECT user_id, exercise_id, model_json FROM rir_velocity_models`)
+      .all() as unknown as StaleRirVelocityModelRow[];
+    const counts: RirVelocityRefitCounts = { stored: rows.length, refitted: 0, removed: 0 };
+    for (const row of rows) {
+      const { version } = JSON.parse(row.model_json) as { version?: unknown };
+      if (version === RIR_VELOCITY_MODEL_VERSION) continue;
+      const fit = await this.refitRirVelocityModel(row.user_id, row.exercise_id);
+      if (fit.model === null) counts.removed++;
+      else counts.refitted++;
+    }
+    return counts;
   }
 
   /**
@@ -4439,6 +5783,9 @@ export class SqliteSessionStore implements SessionStore {
    * CURRENT filter version is read: an older row was scored under thresholds
    * that no longer hold, and mixing the two would build one curve out of two
    * definitions of failure.
+   *
+   * No `kind` predicate here either, for the reason `failureSetIds` gives: the
+   * sets this map is looked up against are training-only already.
    */
   private rirAnchorRows(userId: string, exerciseId: string): Map<string, RirAnchorRow> {
     const rows = this.db
@@ -4572,6 +5919,11 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
  * shape and skip every migration body.
  */
 function applyMigrations(db: DatabaseSync): void {
+  // THE RULE FOR EVERY RUNG BELOW: its condition is `current <= its
+  // from-version`, never `current === it`. Read the ladder as buckets, not as
+  // steps that must chain — a store several versions back has to fall into
+  // every rung above it. An equality test would silently skip such a store,
+  // and a rung inserted between two others would strand it.
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const current = row?.user_version ?? 0;
   if (current === 1) {
@@ -4664,6 +6016,36 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 30) {
     migrateV30ToV31(db);
   }
+  if (current <= 31) {
+    migrateV31ToV32(db);
+  }
+  if (current <= 32) {
+    migrateV32ToV33(db);
+  }
+  if (current <= 33) {
+    migrateV33ToV34(db);
+  }
+  if (current <= 34) {
+    migrateV34ToV35(db);
+  }
+  if (current <= 35) {
+    migrateV35ToV36(db);
+  }
+  if (current <= 36) {
+    migrateV36ToV37(db);
+  }
+  if (current <= 37) {
+    migrateV37ToV38(db);
+  }
+  if (current <= 38) {
+    migrateV38ToV39(db);
+  }
+  if (current <= 39) {
+    migrateV39ToV40(db);
+  }
+  if (current <= 40) {
+    migrateV40ToV41(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4727,6 +6109,49 @@ function createLockedError(path: string, cause: unknown): Error {
   return err;
 }
 
+interface SessionReviewSqlRow {
+  id: string;
+  started_at: string;
+  ended_at: string | null;
+  exercise_id: string | null;
+  exercise_name: string | null;
+  kind: string | null;
+  set_count: number;
+  working_count: number;
+  top_load: number | null;
+  last_set_ended_at: string | null;
+  last_working_set_ended_at: string | null;
+  planned: number;
+}
+
+function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
+  const out: SessionReviewRow = {
+    sessionId: row.id,
+    startedAt: row.started_at,
+    setCount: row.set_count,
+    workingSetCount: row.working_count,
+    planned: row.planned !== 0,
+  };
+  if (row.ended_at !== null) out.endedAt = row.ended_at;
+  if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  if (row.exercise_name !== null) out.exerciseName = row.exercise_name;
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
+  if (row.top_load !== null) out.topLoadLbs = row.top_load;
+  if (row.last_set_ended_at !== null) out.lastSetEndedAt = row.last_set_ended_at;
+  if (row.last_working_set_ended_at !== null) {
+    out.lastWorkingSetEndedAt = row.last_working_set_ended_at;
+  }
+  return out;
+}
+
+function patchedSession(s: StoredSession, patch: SessionPatch): StoredSession {
+  const next = { ...s };
+  if (patch.lifter === null) delete next.lifter;
+  else if (patch.lifter !== undefined) next.lifter = patch.lifter;
+  if (patch.preSessionCarbs !== undefined) next.preSessionCarbs = patch.preSessionCarbs;
+  return next;
+}
+
 function rowToSession(row: SessionRow): StoredSession {
   const out: StoredSession = { id: row.id, startedAt: row.started_at };
   if (row.ended_at !== null) out.endedAt = row.ended_at;
@@ -4747,6 +6172,8 @@ function rowToSession(row: SessionRow): StoredSession {
     };
   }
   if (row.catalog_version !== null) out.catalogVersion = row.catalog_version;
+  // VW-489: absent = never reviewed, which no lifter-facing read counts.
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
   return out;
 }
 
@@ -4849,6 +6276,7 @@ function rowToGoalTarget(row: GoalTargetRow): StoredGoalTarget {
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
   if (row.anchor_reps !== null) out.anchorReps = row.anchor_reps;
   if (row.anchor_load !== null) out.anchorLoad = row.anchor_load;
+  if (row.block_id !== null) out.blockId = row.block_id;
   if (row.accepted_by !== null) out.acceptedBy = row.accepted_by as StoredGoalTargetAcceptedBy;
   if (row.retired_at !== null) out.retiredAt = row.retired_at;
   if (row.outcome !== null) out.outcome = row.outcome as StoredGoalTargetOutcome;
@@ -4944,8 +6372,9 @@ const PUT_GOAL_TARGET_SQL = `
     (id, priority_id, metric, exercise_id, anchor_reps, anchor_load, start_value,
      start_measured_at, band_low_pct_per_week, band_high_pct_per_week, committed_value,
      stretch_value, basis, info_level, tier_used, tier_provisional, diet_phase_at_derivation,
-     accepted_by, acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     accepted_by, acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at,
+     block_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     metric = excluded.metric,
     exercise_id = excluded.exercise_id,
@@ -4968,7 +6397,8 @@ const PUT_GOAL_TARGET_SQL = `
     ends_at = excluded.ends_at,
     retired_at = excluded.retired_at,
     outcome = excluded.outcome,
-    new_chapter_at = excluded.new_chapter_at
+    new_chapter_at = excluded.new_chapter_at,
+    block_id = excluded.block_id
 `;
 
 function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
@@ -4997,6 +6427,7 @@ function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
     t.retiredAt ?? null,
     t.outcome ?? null,
     t.newChapterAt ?? null,
+    t.blockId ?? null,
   ];
 }
 
@@ -5053,6 +6484,8 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // `set_purpose` is the stored value and `is_warmup` the column GENERATED
   // from it, so reading both cannot produce a disagreeing pair. A `'working'`
   // row contributes neither key, keeping the pre-enum shape (VMCP-02.84).
+  // VW-489: denormalised from the session; absent = never reviewed.
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
   if (isSetPurpose(row.set_purpose) && row.set_purpose !== 'working') {
     out.setPurpose = row.set_purpose;
   }
@@ -5113,7 +6546,20 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.assist_mode !== null) out.assistMode = row.assist_mode;
   if (row.settings_json !== null) out.settingsJson = row.settings_json;
   if (row.settings_hash !== null) out.settingsHash = row.settings_hash;
+  const effortContext = parseJsonObject(row.effort_context_json);
+  if (effortContext !== undefined) out.effortContext = effortContext;
+  const cueRecord = parseJsonObject(row.cue_record_json);
+  if (cueRecord !== undefined) out.cueRecord = cueRecord;
   return out;
+}
+
+/** The CHECK admits any valid JSON; only an object is a context or a record. */
+function parseJsonObject(text: string | null): JsonObject | undefined {
+  if (text === null) return undefined;
+  const parsed: unknown = JSON.parse(text);
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as JsonObject)
+    : undefined;
 }
 
 function rowToIdleRep(row: IdleRepRow): StoredIdleRep {
@@ -5304,6 +6750,7 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   if (row.target !== null) out.target = row.target;
   if (row.injuries_json !== null) out.injuries = JSON.parse(row.injuries_json) as StoredInjury[];
   if (row.named_program_history !== null) out.namedProgramHistory = row.named_program_history;
+  if (row.last_break_months !== null) out.lastBreakMonths = row.last_break_months;
   if (row.provenance_json !== null) {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }
@@ -5478,6 +6925,18 @@ function sameTemplate(row: WorkoutTemplateRow | undefined, next: StoredWorkoutTe
   );
 }
 
+/**
+ * The stored learning flag, kept on a re-import unless keeping it would leave learning off
+ * with no rest: the import never writes that pair (VW-445 s.7.2), so learning turns on.
+ */
+function importedRestLearning(
+  existing: PlannedExerciseRow | undefined,
+  next: StoredPlannedExercise,
+): number {
+  if (existing === undefined) return next.restLearning === false ? 0 : 1;
+  return existing.rest_learning === 0 && next.restSec === undefined ? 1 : existing.rest_learning;
+}
+
 function sameExercise(row: PlannedExerciseRow | undefined, next: StoredPlannedExercise): boolean {
   if (row === undefined) return false;
   return (
@@ -5554,8 +7013,18 @@ function rowToPlannedExercise(row: PlannedExerciseRow): StoredPlannedExercise {
   if (row.notes !== null) out.notes = row.notes;
   if (row.target_tempo_json !== null) out.targetTempo = tempoFromJson(row.target_tempo_json);
   if (isTrainingIntent(row.training_intent)) out.trainingIntent = row.training_intent;
+  if (isPlanGoalKind(row.goal_kind)) out.goalKind = row.goal_kind;
+  if (row.target_velocity_loss_pct !== null) {
+    out.targetVelocityLossPct = row.target_velocity_loss_pct;
+  }
+  out.restLearning = row.rest_learning !== 0;
   if (row.external_id !== null) out.externalId = row.external_id;
   return out;
+}
+
+/** Same stance as `isTrainingIntent`: a stored word the schema does not name is no goal. */
+function isPlanGoalKind(value: string | null): value is PlanGoalKind {
+  return PLAN_GOAL_KINDS.includes(value as PlanGoalKind);
 }
 
 /**

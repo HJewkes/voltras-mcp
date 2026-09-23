@@ -265,7 +265,7 @@ export function rateBandForPhase(
   if (phase === 'fat-loss') return GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek;
   if (phase === 'gain') return GOAL_BAND_CONSTANTS.bodyweightGainPctPerWeek;
   if (phase === 'recomposition' && recompMode === 'slow-loss') {
-    return GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek;
+    return GOAL_BAND_CONSTANTS.recompositionSlowLossPctPerWeek;
   }
   return null;
 }
@@ -285,15 +285,30 @@ function targetPositionLbs(
   return line.startWeightLbs + line.weeklyRateLbs * (daysBetween(phaseStartedAt, atIso) / 7);
 }
 
+/**
+ * Which way the goal runs: the line's own slope, or the band's stretch when the
+ * committed line is flat (a slow-loss recomposition commits to holding weight, VW-468).
+ * Zero only when neither says, and then the raw gap is the deviation.
+ */
+function goalSignOf(line: BodyweightTargetLine, band: RateBand | null): number {
+  return Math.sign(line.weeklyRateLbs) || Math.sign(band?.high ?? 0);
+}
+
+/** A band whose committed edge is no change: holding weight is on track. */
+function commitsToHold(band: RateBand): boolean {
+  return band.low === 0 && band.high !== 0;
+}
+
 /** Signed distance off the goal line, negative when the lifter is behind it. */
 function signedDeviationLbs(
   meanLbs: number,
   line: BodyweightTargetLine,
+  goalSign: number,
   phaseStartedAt: string,
   atIso: string,
 ): number {
   const gap = meanLbs - targetPositionLbs(line, phaseStartedAt, atIso);
-  return line.weeklyRateLbs === 0 ? gap : gap * Math.sign(line.weeklyRateLbs);
+  return goalSign === 0 ? gap : gap * goalSign;
 }
 
 /** The mean point nearest `targetIso`, or `null` if none is close enough. */
@@ -313,7 +328,9 @@ function nearestMeanPoint(
   return bestGap <= C.nearestPointToleranceDays ? best : null;
 }
 
-function isInsideBand(pctPerWeek: number, band: { low: number; high: number }): boolean {
+type RateBand = { low: number; high: number };
+
+function isInsideBand(pctPerWeek: number, band: RateBand): boolean {
   return pctPerWeek >= Math.min(band.low, band.high) && pctPerWeek <= Math.max(band.low, band.high);
 }
 
@@ -347,6 +364,7 @@ function countWeeksOutsideBand(
 function isTrendConsistent(
   series: readonly BodyweightMeanPoint[],
   line: BodyweightTargetLine,
+  goalSign: number,
   phaseStartedAt: string,
   now: string,
 ): boolean {
@@ -356,7 +374,7 @@ function isTrendConsistent(
   });
   if (window.length < C.offCadenceConsistencyMinPoints) return false;
   const deviations = window.map((p) =>
-    signedDeviationLbs(p.meanLbs, line, phaseStartedAt, p.measuredAt),
+    signedDeviationLbs(p.meanLbs, line, goalSign, phaseStartedAt, p.measuredAt),
   );
   return deviations.every((value, i) => i === 0 || value <= deviations[i - 1]);
 }
@@ -382,6 +400,8 @@ interface VetoContext {
   spikeInWindow: boolean;
   phase: DietPhase;
   selfReport: WeeklySelfReport | undefined;
+  /** A noise-level week under a hold commitment is a verdict (flat, on track), not a veto. */
+  noiseIsOnTrack: boolean;
 }
 
 function collectVetoes(ctx: VetoContext): BodyweightRateVetoRecord[] {
@@ -393,7 +413,7 @@ function collectVetoes(ctx: VetoContext): BodyweightRateVetoRecord[] {
       sourceId: 'rp-s12-exclude-water-weight-from-phase-transition-baseline',
     });
   }
-  if (ctx.rateClass === 'noise' && ctx.weeklyDeltaLbs !== null) {
+  if (ctx.rateClass === 'noise' && ctx.weeklyDeltaLbs !== null && !ctx.noiseIsOnTrack) {
     vetoes.push({
       veto: 'noise_floor',
       reason: `Weekly change is under the ${BODYWEIGHT_TREND_CONSTANTS.noiseFloorLbsPerWeek} lb noise floor, which is water and food mass rather than tissue.`,
@@ -593,6 +613,7 @@ export function computeBodyweightRateAdvisory(
     spikeInWindow,
     phase: input.phase,
     selfReport: input.selfReport,
+    noiseIsOnTrack: commitsToHold(band),
   });
   return assemble(input, observation, band, vetoes, trend.meanSeries);
 }
@@ -608,7 +629,13 @@ function buildObservation(
   const signed =
     latest === null
       ? null
-      : signedDeviationLbs(latest.meanLbs, line, input.trend.phaseStartedAt, input.trend.now);
+      : signedDeviationLbs(
+          latest.meanLbs,
+          line,
+          goalSignOf(line, band),
+          input.trend.phaseStartedAt,
+          input.trend.now,
+        );
   const deviationPct =
     latest === null || signed === null ? null : (Math.abs(signed) / latest.meanLbs) * 100;
   return {
@@ -629,6 +656,19 @@ function buildObservation(
   };
 }
 
+/**
+ * Losing inside a hold-committed band is the stretch being earned, not a drift to correct;
+ * past the stretch edge it is outside the band and the ladder applies again.
+ */
+function aheadInsideHoldBand(observation: BodyweightRateObservation, band: RateBand): boolean {
+  return (
+    commitsToHold(band) &&
+    observation.deviationDirection === 'ahead' &&
+    observation.observedPctPerWeek !== null &&
+    isInsideBand(observation.observedPctPerWeek, band)
+  );
+}
+
 /** Fold the vetoes, the cadence and the two-week cap into one result. */
 function assemble(
   input: BodyweightRateAdvisoryInput,
@@ -646,12 +686,15 @@ function assemble(
   if (vetoes.length > 0) return { ...base, outcome: 'vetoed', vetoes };
   if (observation.slopeClass === null || observation.deviationBand === null) return base;
 
-  const urgencyRank = URGENCY_TABLE[observation.deviationBand][observation.slopeClass];
+  const urgencyRank = aheadInsideHoldBand(observation, band)
+    ? 0
+    : URGENCY_TABLE[observation.deviationBand][observation.slopeClass];
   const conditions = offCadenceConditions(
     observation.deviationBand,
     isTrendConsistent(
       meanSeries,
       input.trend.targetLine,
+      goalSignOf(input.trend.targetLine, band),
       input.trend.phaseStartedAt,
       input.trend.now,
     ),

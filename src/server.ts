@@ -35,6 +35,7 @@ import {
   registerClient,
   type ClientConnection,
 } from './client-connection.js';
+import { captureActionHandlers } from './actions/capture-handlers.js';
 import {
   startDashboardServer,
   isAddressInUse,
@@ -126,6 +127,10 @@ export async function runServer(): Promise<void> {
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
+    // Once, at boot, before any connection: the dashboard action layer must
+    // work with zero MCP clients attached, and must not run the lease-wrapped
+    // callbacks a connection installs (VW-502, `actions/capture-handlers.ts`).
+    state.actionTools = captureActionHandlers(state);
     registerClient(state, connection);
     wireProcessState(state, connection);
     // Hot-swap real handlers into this connection's placeholders. (Resources

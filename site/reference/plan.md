@@ -2,7 +2,7 @@
 
 # `plan.*`
 
-18 tools in the `plan` namespace.
+26 tools in the `plan` namespace.
 
 ## `plan.program.create`
 
@@ -44,7 +44,7 @@ Archive a program (soft-retire it from active use without deleting its history).
 
 Create a training block (mesocycle) under a program — takes the parent programId.
 
-A block holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that raises `weeksCount` after weeks were already built under it, `warnings[]` carries a `meso_length_grew_mid_block` advisory (VMCP-06.03 / B32). Never blocks the write.
+A block holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that raises `weeksCount` after weeks were already built under it, `warnings[]` carries a `meso_length_grew_mid_block` advisory (VMCP-06.03 / B32); that advisory never blocks the write. DATES (VW-474): `startsOn`, a local calendar date on a Monday, dates the block: it runs whole weeks and ends on the Sunday of its last week. A start that would overlap another dated block, or put the program out of order (block 2 before block 1), is refused and the error names the other block. Plan blocks AHEAD of when they start. `scaffoldWeeks: true` builds one empty week row per week ("Week 1" onwards) for a block with none, and `deloadWeeks` (1-based week numbers) flags which of them are deloads. An existing dated block keeps its dates, length, program and order here: use plan.block.schedule and plan.block.update. Returns the block, its weeks, its calendar and the schedule row written (or null).
 
 **Parameters**
 
@@ -55,6 +55,10 @@ A block holds one or more weeks. Passing the `id` of an EXISTING block updates i
 - `focus` — `string`, optional.
 - `weeksCount` — `integer` (min 1), **required**.
 - `notes` — `string`, optional.
+- `startsOn` — `string`, optional.
+- `deloadWeeks` — `integer[]`, optional.
+- `scaffoldWeeks` — `boolean`, optional.
+- `reason` — `string`, optional.
 
 ## `plan.block.list_for_program`
 
@@ -63,6 +67,54 @@ List the blocks belonging to one program (takes programId).
 **Parameters**
 
 - `programId` — `string`, **required**.
+
+## `plan.block.update`
+
+Edit a block (mesocycle): name, focus, notes or length in weeks (weeksCount).
+
+On a DATED block a length change records a 'resized' schedule row and moves the block's end date; the start never moves here (that is plan.block.schedule). Refused on a block that has ended, when a current block would be shortened below the week it is in, and when the longer block would overlap another dated block (the error names it; move that block first). An undated block just takes the edit. `targetsAffected` lists the goal targets whose end moved with a resize. `warnings[]` carries the `meso_length_grew_mid_block` advisory when a block grows after its weeks were built.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `name` — `string`, optional.
+- `focus` — `string`, optional.
+- `notes` — `string`, optional.
+- `weeksCount` — `integer` (min 1), optional.
+- `reason` — `string`, optional.
+
+## `plan.block.schedule`
+
+Date, move or un-date a block.
+
+`startsOn` is a local calendar date on a Monday; the block ends on the Sunday of its last week. The first date given records a planned row; a new date for a block that has not started records a 'moved' row; `startsOn: null` un-dates an upcoming block and keeps the dates it had in its history. A block that has started or ended can never move: offer plan.week.skip for a missed week, or plan.block.update to change its length. `cascade: 'later_blocks'` moves every later dated block of the same program by the same number of weeks, all in one write. Without it, a date that would overlap another dated block (in any active program) is refused and the error names that block. Dates must follow the program order: block 2 cannot start before block 1. Setting the date it already has writes nothing. Returns every row written with the dates it moved from and to. Goal targets set for a moved block follow its dates, and `targetsAffected` lists them (`blockId`, `targetId`, `metric`, `exerciseId`); their committed and stretch numbers do not change.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `startsOn` — `any`, **required**.
+- `reason` — `string`, optional.
+- `cascade` — `none` | `later_blocks`, optional.
+
+## `plan.block.schedule_history`
+
+Every schedule change a block has had, oldest first: each row's kind (planned, moved, resized, week_skipped, cleared), the start and end in force under it, its length, its skipped weeks, the reason given, who made it (`user`, `coach-default` or `import`) and when.
+
+Use it to say how a block has moved, for example "first planned for Mon 14 Sep, now Mon 28 Sep". An undated block has no rows.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+
+## `plan.block.calendar`
+
+A block's dated calendar: start, end, state (`undated`, `upcoming`, `current`, `ended`) and one entry per calendar week with its dates, the plan week run in it (null for an off week added by an extend), deload flag, name, whether it was skipped (`hold` or `extend`), the plan week row id, how many workout templates it holds, and the local dates the owner trained in it (`sessionDays`).
+
+A week with `templateCount: 0` has nothing planned; it is not a shorter block. An undated block returns no weeks. `history` counts the moves, resizes and missed weeks in its schedule and says them in one sentence (`fact`), for example "This block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep (travel)."
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
 
 ## `plan.week.create`
 
@@ -89,6 +141,32 @@ Each week reports `phaseType`, `isDeload` and `weekIndex` alongside its `orderIn
 **Parameters**
 
 - `blockId` — `string`, **required**.
+
+## `plan.week.update`
+
+Edit one plan week: `isDeload`, `name` or `phaseType` (give at least one).
+
+The week keeps its place in the block; its dates come from the block schedule, never from the week.
+
+**Parameters**
+
+- `weekId` — `string`, **required**.
+- `isDeload` — `boolean`, optional.
+- `name` — `string`, optional.
+- `phaseType` — `string`, optional.
+
+## `plan.week.skip`
+
+Record a missed week in the CURRENT block.
+
+ASK THE LIFTER EACH TIME which they want, and never infer it from a quiet week: `hold` keeps the calendar (the week is marked held, its plan week is not re-run, and the block still ends on its planned date); `extend` inserts an off week there, so that plan week and every later one run a week later and the block ends a week later. Pass `mode` with their answer. Omit `mode` only when the lifter did not choose: the calendar holds, recorded as the coach's default rather than their choice. `week` is the calendar week number plan.block.calendar shows; the result echoes the Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the lifter. Refused for a block that is not current, for a week that has not started, for a week already skipped, and for an extend that would run into the next dated block (the error names it). After an extend, `targetsAffected` lists the goal targets whose end moved; a hold moves none.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `week` — `integer` (min 1), **required**.
+- `reason` — `string`, optional.
+- `mode` — `hold` | `extend`, optional.
 
 ## `plan.template.create`
 
@@ -125,7 +203,7 @@ List the workout templates belonging to one week (takes weekId).
 
 Add a planned exercise to a workout template — takes the parent workoutTemplateId.
 
-This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect.
+This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect. `goalKind` (VW-537) is `rep_range`, `target_rpe` or `velocity_loss`; omit it and a loss target gives `velocity_loss`, else a rep range gives `rep_range` (an RPE on the same row is its effort cap), else an RPE gives `target_rpe`, else no goal. `targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a `velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets the system learn the rest; false makes `restSec` a fixed rest and then requires it. A row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and nothing is written; this is the only refusal, since warnings never block. Nothing reads `goalKind` or `restLearning` during a set yet.
 
 **Parameters**
 
@@ -142,6 +220,9 @@ This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps
 - `notes` — `string`, optional.
 - `targetTempo` — `object`, optional.
 - `trainingIntent` — `strength` | `hypertrophy` | `power`, optional.
+- `goalKind` — `rep_range` | `target_rpe` | `velocity_loss`, optional.
+- `targetVelocityLossPct` — `number` (1–95), optional.
+- `restLearning` — `boolean`, optional.
 
 ## `plan.exercise.list_for_template`
 
@@ -151,11 +232,29 @@ List the planned exercises belonging to one workout template (takes workoutTempl
 
 - `workoutTemplateId` — `string`, **required**.
 
+## `plan.current_block`
+
+Which block and program are in force today, by their dates (VW-475).
+
+`state` is `current` (a dated block contains today: `block`, `calendar` and `week` n of N are set), `upcoming` (nothing has started yet; `nextBlock` names the first dated block), `gap` (a dated block has ended and none is current: `block` is the one that ended; training continues unplanned) or `undated_only` (no block has dates: `program` is the newest program with workouts left, else the newest). Archived programs never count, and once any block is dated an undated program is never picked. `planning` says whether the next block is due to be planned: `due`, `windowOpensOn` (the Monday of the current block’s final week) and `reason`. It is due in the final week of a current block with nothing dated after it, in a gap with nothing planned, and while no block has dates. Reads only.
+
+**Parameters:** none.
+
+## `plan.block.planning_brief`
+
+The read for a planning sitting (VW-476): what the coach brings when the next block is due (`planning.due` on plan.current_block, plan.next_workout and plan.complete_workout).
+
+READS ONLY and never plans anything by itself: run the sitting only after asking the lifter, and create nothing until they answer. Returns `finishing` (the current block, or the one that ended: its calendar, `trained` with templates planned and done and the local days trained, and its `history`), `next` (the block to plan: `forBlockId`, else the block after the finishing one, else the upcoming dated block, else the first never-trained block of the program in force), `suggested` (`startsOn`, `endsOn`, `weeksCount` from the next block, else the finishing one, `deloadWeek` from its week rows, and `basis`), `conflicts` (dated blocks the suggested range would overlap), `realignment` (the priorities re-ask, as on a block boundary) and `dietPhase` (null when none is declared; raise it for the next block). The suggested start is the Monday after the current block ends, else today when today is a Monday, even if a session was already logged today, else the next Monday. Each `history` says how that block’s dates changed, in one sentence (`fact`). Then date the block with plan.block.schedule or plan.block.create, and declare priorities for it.
+
+**Parameters**
+
+- `forBlockId` — `string`, optional.
+
 ## `plan.next_workout`
 
-Get the next un-completed workout template for a program (or the active/default program if programId is omitted).
+Get the next un-completed workout template.
 
-Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms.
+With `programId`, that program is walked in order. Without it, the plan in force today decides (plan.current_block): in a CURRENT dated block only that block is walked; when no block is dated, the newest program with workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE the first dated block starts, there is no planned workout today and the result is `{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter training continues unplanned today, and, when `nextBlock` is null, offer to plan the next block now; never present a workout from the ended block. `{ ok: true, completed: true }` means every workout in scope is done. Every result also carries `planning`, the same read plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter about planning the next block. Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms.
 
 **Parameters**
 
@@ -165,7 +264,7 @@ Use this to answer "what should the user do today per their plan?" Returns `bloc
 
 Mark a workout template as completed, optionally linking the real session that completed it (sessionId).
 
-Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in which case it carries the finished block, the next block (or null if none), the current goal on file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never written by this tool. Once priorities have been declared (goal.declare_priorities) the boundary also carries `realignment` (VW-359): each declared priority with how many mesocycles it has been held, the bands it would get for the NEXT block re-derived by the same path goal.propose_targets uses, and `warningsIfChanged` — what the declaration guardrails would say if the lifter switched now. A block-end re-evaluation is RP’s own contracting pattern (rp:rp-s10-three-month-planning-horizon); switching a priority held fewer than two mesocycles draws the "commit to a couple more?" nudge (rp:rp-s5-goal-persistence-multi-meso) and changing one still bound to the block that just ended draws the hold-it-for-the-whole-block warning (rp:rp-s6-priority-muscle-held-constant-per-block). Nothing here is written and no accepted target is re-banded: an accepted target comes back under `skipped`, because the re-ask re-proposes and never silently lowers a target you committed to. The boundary also carries `recompReAsk` (VW-369): the recomposition re-ask, present on every boundary and always explained. Its `proposal` is null unless the lifter is in a declared recomposition AND one of three things is true — the phase has reached its second block boundary, cumulative bodyweight loss since the phase started has reached the bands RP calls noticeable or significant diet fatigue, or the self-reported leanness band has moved a rung toward lean. The block-boundary question opens at the second boundary and returns at every boundary after it until the lifter answers; an ignored question must not be able to close it, because that is how a recomposition runs forever. When `proposal` is null, `silentReason` says which test it failed, that the ask was already answered, or which earlier decline still holds. A proposal offers switching to a declared fat-loss or gain phase, or keeping the recomposition on its declared mode; answer it with profile.respond_recomp_advisory. Nothing here switches a phase and nothing here writes one.
+Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in which case it carries the finished block, the next block (or null if none), the current goal on file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never written by this tool. It also returns `current`: plan.current_block as it stands after the write. Once priorities have been declared (goal.declare_priorities) the boundary also carries `realignment` (VW-359): each declared priority with how many mesocycles it has been held, the bands it would get for the NEXT block re-derived by the same path goal.propose_targets uses, and `warningsIfChanged` — what the declaration guardrails would say if the lifter switched now. A block-end re-evaluation is RP’s own contracting pattern (rp:rp-s10-three-month-planning-horizon); switching a priority held fewer than two mesocycles draws the "commit to a couple more?" nudge (rp:rp-s5-goal-persistence-multi-meso) and changing one still bound to the block that just ended draws the hold-it-for-the-whole-block warning (rp:rp-s6-priority-muscle-held-constant-per-block). Nothing here is written and no accepted target is re-banded: an accepted target comes back under `skipped`, because the re-ask re-proposes and never silently lowers a target you committed to. The boundary also carries `recompReAsk` (VW-369): the recomposition re-ask, present on every boundary and always explained. Its `proposal` is null unless the lifter is in a declared recomposition AND one of three things is true — the phase has reached its second block boundary, cumulative bodyweight loss since the phase started has reached the bands RP calls noticeable or significant diet fatigue, or the self-reported leanness band has moved a rung toward lean. The block-boundary question opens at the second boundary and returns at every boundary after it until the lifter answers; an ignored question must not be able to close it, because that is how a recomposition runs forever. When `proposal` is null, `silentReason` says which test it failed, that the ask was already answered, or which earlier decline still holds. A proposal offers switching to a declared fat-loss or gain phase, or keeping the recomposition on its declared mode; answer it with profile.respond_recomp_advisory. Nothing here switches a phase and nothing here writes one.
 
 **Parameters**
 

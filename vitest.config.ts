@@ -11,11 +11,18 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Every test runs in UTC unless its file pins another zone (VW-477). Goal weeks and history
+// buckets are LOCAL weeks, so a fixture written as UTC instants would read differently on a
+// laptop west of UTC than in CI. Files that test local-time behaviour set `process.env.TZ`
+// themselves, before any Date is built (`block-calendar-local-time.test.ts`).
+process.env.TZ = 'UTC';
+
 // Spawns a real child process and waits on a boot-readiness line; under full-suite
 // parallel load the boot can miss that wait (VW-210, two flakes on 2026-09-08).
 // Its own sequence group (below) keeps it off the CPU while the rest of the suite runs.
 const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
-const ALL_TESTS_GLOB = 'src/**/*.{test,spec}.ts';
+// tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.
+const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
 
 const alias = [
   { find: '@', replacement: resolve(__dirname, 'src') },
@@ -60,7 +67,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: [ALL_TESTS_GLOB],
+    include: ALL_TESTS_GLOB,
     projects: [
       {
         plugins,
@@ -70,7 +77,7 @@ export default defineConfig({
           environment: 'node',
           globals: false,
           server,
-          include: [ALL_TESTS_GLOB],
+          include: ALL_TESTS_GLOB,
           exclude: [LAUNCHER_TEST_FILE],
         },
       },

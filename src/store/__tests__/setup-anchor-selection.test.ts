@@ -160,8 +160,8 @@ describe('anchor selection over the store', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: daysAgo(9) });
-    await store.putSession({ id: 'sess-2', startedAt: daysAgo(2) });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: daysAgo(9) });
+    await store.putSession({ kind: 'training', id: 'sess-2', startedAt: daysAgo(2) });
   });
 
   afterEach(async () => {

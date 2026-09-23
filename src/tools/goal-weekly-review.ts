@@ -22,6 +22,8 @@
 // re-proposal is a NEW proposal beside it, never an edit of it (methodology
 // §4; plan v2 §1.7, B55).
 
+import { todayLocal } from '../analytics/training-days.js';
+import { resolveCurrentBlock, type PlanningRead } from '../plan/current-block.js';
 import type { z } from 'zod';
 
 import {
@@ -30,12 +32,17 @@ import {
   type BodyweightRateOutcome,
   type WeeklySelfReport,
 } from '../analytics/bodyweight-rate-advisory.js';
-import type { BodyweightReading, BodyweightTargetLine } from '../analytics/bodyweight-trend.js';
+import {
+  readingsAsOf,
+  type BodyweightReading,
+  type BodyweightTargetLine,
+} from '../analytics/bodyweight-trend.js';
 import type { GoalWeeklyReviewInput } from '../schemas/goal.js';
 import type { ServerState } from '../state/server-state.js';
 import type { DietPhase, RecompMode } from '../store/diet-phase.js';
 import {
   LOCAL_USER_ID,
+  type SessionStore,
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
   type StoredGoalTarget,
@@ -101,10 +108,24 @@ export interface WeeklyReviewResult {
   proposal: WeeklyReviewProposal | null;
   suppressedByDecline: boolean;
   response: WeeklyReviewResponse | null;
+  /** Whether the next block is due to be planned (VW-478); `prompt` says what to do. */
+  planning: PlanningRead;
   notes: string[];
 }
 
 /** The reads one review runs on, assembled once. */
+/** The reads the rate loop makes, and nothing it writes: what the goals page can also supply. */
+export interface WeeklyReviewReadState {
+  store: Pick<
+    SessionStore,
+    | 'getDietPhaseCovering'
+    | 'listGoalTargets'
+    | 'listBodyMetrics'
+    | 'getSelfReportsForUser'
+    | 'listAdvisoryDecisions'
+  >;
+}
+
 interface ReviewContext {
   weekOf: string;
   reviewedAt: string;
@@ -124,15 +145,19 @@ export async function runWeeklyReview(
   state: ServerState,
   input: z.infer<typeof GoalWeeklyReviewInput>,
 ): Promise<WeeklyReviewResult> {
-  const weekOf = input.weekOf ?? mostRecentSundayIso(new Date());
-  const reviewedAt = reviewInstant(weekOf);
+  const now = new Date();
+  const weekOf = input.weekOf ?? mostRecentSundayIso(now);
+  const reviewedAt = reviewInstant(weekOf, now);
   const response =
     input.response === undefined
       ? null
       : await recordResponse(state, weekOf, input.response, reviewedAt);
+  const planning = (await resolveCurrentBlock(state.store, todayLocal())).planning;
   const context = await readContext(state, weekOf, reviewedAt);
-  if ('gap' in context) return { ...emptyResult(weekOf, reviewedAt, response), ...context.gap };
-  return review(state, context, response);
+  if ('gap' in context) {
+    return { ...emptyResult(weekOf, reviewedAt, response), ...context.gap, planning };
+  }
+  return { ...(await review(state, context, response)), planning };
 }
 
 /**
@@ -140,13 +165,27 @@ export async function runWeeklyReview(
  * past week is being reviewed. A back-dated review must not read a series the
  * week it is judging had not produced yet.
  */
-function reviewInstant(weekOf: string): string {
+function reviewInstant(weekOf: string, now: Date): string {
   const weekEnd = Date.parse(`${weekOf}T00:00:00.000Z`) + 7 * DAY_MS;
-  return new Date(Math.min(Date.now(), weekEnd)).toISOString();
+  return new Date(Math.min(now.getTime(), weekEnd)).toISOString();
+}
+
+/**
+ * The advisory `goal.weekly_review` computes for the week containing `now`,
+ * without recording anything. `null` when there is no declared phase or no
+ * accepted bodyweight target, the two gaps the tool reports instead.
+ */
+export async function readBodyweightRateAdvisory(
+  state: WeeklyReviewReadState,
+  now: Date,
+): Promise<BodyweightRateAdvisory | null> {
+  const weekOf = mostRecentSundayIso(now);
+  const context = await readContext(state, weekOf, reviewInstant(weekOf, now));
+  return 'gap' in context ? null : runAdvisory(state, context);
 }
 
 async function readContext(
-  state: ServerState,
+  state: WeeklyReviewReadState,
   weekOf: string,
   reviewedAt: string,
 ): Promise<ReviewContext | { gap: Partial<WeeklyReviewResult> }> {
@@ -163,7 +202,7 @@ async function readContext(
     phase: diet.phase,
     recompMode: diet.recompMode ?? null,
     phaseStartedAt: diet.startedAt,
-    readings: metrics.map((row) => ({
+    readings: readingsAsOf(metrics, reviewedAt).map((row) => ({
       measuredAt: row.measuredAt,
       bodyweightLbs: row.bodyweightLbs,
     })),
@@ -199,7 +238,9 @@ function noAcceptedTarget(phase: string): Partial<WeeklyReviewResult> {
  * ACCEPTED one counts: the committed line this advisory is measured against
  * has to be one the lifter agreed to.
  */
-async function findBodyweightTarget(state: ServerState): Promise<StoredGoalTarget | null> {
+async function findBodyweightTarget(
+  state: WeeklyReviewReadState,
+): Promise<StoredGoalTarget | null> {
   const targets = await state.store.listGoalTargets({ userId: LOCAL_USER_ID });
   return (
     targets.find(
@@ -214,7 +255,10 @@ async function findBodyweightTarget(state: ServerState): Promise<StoredGoalTarge
  * value and its COMMITTED edge, converted from percent per week to lb per
  * week. The committed edge is the band's low edge (plan v2 §1.7), and reading
  * the stored row rather than re-deriving it is what keeps this advisory
- * measured against the line on the chart.
+ * measured against the line on the chart. For a slow-loss recomposition the
+ * committed edge is 0 %/wk (VW-468), so the line is flat at the start weight and
+ * the advisory takes the goal's direction from the band. Never the stretch edge:
+ * against it a flat week, which keeps the commitment, would read behind.
  */
 function targetLineFor(target: StoredGoalTarget): BodyweightTargetLine {
   return {
@@ -224,7 +268,7 @@ function targetLineFor(target: StoredGoalTarget): BodyweightTargetLine {
 }
 
 async function runAdvisory(
-  state: ServerState,
+  state: WeeklyReviewReadState,
   context: ReviewContext,
 ): Promise<BodyweightRateAdvisory> {
   return computeBodyweightRateAdvisory({
@@ -245,7 +289,7 @@ async function review(
   state: ServerState,
   context: ReviewContext,
   response: WeeklyReviewResponse | null,
-): Promise<WeeklyReviewResult> {
+): Promise<Omit<WeeklyReviewResult, 'planning'>> {
   const advisory = await runAdvisory(state, context);
   const emitted = await emit(state, context, advisory);
   return {
@@ -285,13 +329,16 @@ function toSelfReport(checkin: WeeklyCheckin): WeeklySelfReport {
  * half-week floor. Repeats inside one week are deduplicated by the
  * observation key instead (see {@link observationKey}).
  */
-async function lastProposalBefore(state: ServerState, weekOf: string): Promise<string | null> {
+async function lastProposalBefore(
+  state: WeeklyReviewReadState,
+  weekOf: string,
+): Promise<string | null> {
   const rows = await listDecisions(state);
   const anchor = `${weekOf}T00:00:00.000Z`;
   return rows.find((row) => row.issuedAt < anchor)?.issuedAt ?? null;
 }
 
-function listDecisions(state: ServerState): Promise<StoredAdvisoryDecision[]> {
+function listDecisions(state: WeeklyReviewReadState): Promise<StoredAdvisoryDecision[]> {
   return state.store.listAdvisoryDecisions(LOCAL_USER_ID, {
     code: BODYWEIGHT_RATE_ADVISORY_CODE,
   });
@@ -424,7 +471,7 @@ function emptyResult(
   weekOf: string,
   reviewedAt: string,
   response: WeeklyReviewResponse | null,
-): WeeklyReviewResult {
+): Omit<WeeklyReviewResult, 'planning'> {
   return {
     weekOf,
     reviewedAt,

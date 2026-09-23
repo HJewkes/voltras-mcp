@@ -18,7 +18,7 @@
 // are silently dropped on serialization). Values must all be strings —
 // helpers `toFixed(N)` or `String(...)` numbers before assignment.
 
-import type { Rep } from '@voltras/workout-analytics';
+import type { EffortMarker, EffortRep, Rep, SetEffort } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
   getPhaseRangeOfMotion,
@@ -1037,6 +1037,41 @@ export function buildSetTargetReachedPayload(
       actual: actualReps,
     },
     set_so_far: summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for an `effort_target_reached` channel event (VW-544): the
+ * effort resolver's cue fired on its effort condition. Typed fields only, and no summary
+ * line: the wording a lifter hears for this event is the owner's, and it lands in slice 8.
+ */
+export function buildEffortTargetReachedPayload(
+  set: ActiveSet,
+  effort: SetEffort,
+  rep: EffortRep,
+  marker: EffortMarker,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'effort_target_reached',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    goal_kind: effort.goal?.kind ?? 'none',
+    cue_reason: 'effort',
+    rep_count_at_target: String(rep.repNumber),
+    ...(marker.targetRpe !== null ? { target_rpe: String(marker.targetRpe) } : {}),
+    ...(rep.rpe !== null ? { rpe: rep.rpe.toFixed(1) } : {}),
+  };
+  const content = JSON.stringify({
+    effort: {
+      basis: effort.basis,
+      policy_id: effort.policyId,
+      policy_version: effort.policyVersion,
+      goal: effort.goal,
+      marker,
+      rep: { rep_number: rep.repNumber, rir: rep.rir, rir_range: rep.rirRange, rpe: rep.rpe },
+    },
   });
   return { meta, content };
 }

@@ -13,22 +13,31 @@
 // which already carries its own target, so banding the rollup would commit the
 // lifter twice to the same work.
 
+import { bucketStartIso } from '../analytics/goal-block-weeks.js';
 import { deriveGoalBand, type GoalBand, type GoalBandInput } from '../analytics/goal-band.js';
 import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-band.js';
 import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
+import {
+  SESSION_WINDOW_DAYS,
+  readTrainingDays,
+  readTrainingDaysMatching,
+  trainingGaps,
+} from '../analytics/training-days.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import {
   LOCAL_USER_ID,
   type BaselineState,
   type SessionStore,
+  type StoredGoalTarget,
   type StoredPriority,
   type StoredSet,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { computeHistoryTrend } from './metrics-tools.js';
 import { getTierSignal, type Tier } from './tier-signal.js';
+import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 
 /**
  * The store slice this module reads. Declared narrow (rather than
@@ -40,11 +49,11 @@ export interface GoalDerivationState {
   store: Pick<
     SessionStore,
     | 'getTrainingProfile'
-    | 'countSessions'
+    | 'listTrainingDayInstants'
     | 'getSessionDateSpan'
+    | 'listSessionReviewRows'
     | 'getTrainingWeeksForBlock'
     | 'getDietPhaseCovering'
-    | 'listSessions'
     | 'getTrainingBlock'
     | 'getTrainingBlocksForProgram'
     | 'listBodyMetrics'
@@ -58,22 +67,18 @@ export interface GoalDerivationState {
 const LAYOFF_GAP_DAYS = 90;
 
 /**
- * Sessions since a gap that make a return a continuation again.
+ * Training days since a gap that make a return a continuation again.
  *
  * ENGINEERING DEFAULT. A mesocycle's session count is a plan fact this module
  * cannot read for a lifter with no plan tree, and the corpus gives no regain
  * figure at all ("Silent: any regain-rate figure", plan §1.10). Twelve is four
- * weeks at three sessions, the shortest ordinary mesocycle.
+ * weeks at three workouts, the shortest ordinary mesocycle. Counted in training
+ * days (VW-462), so one visit logged as a row per exercise is one workout.
  */
-const SESSIONS_PER_MESO = 12;
-
-/** The rolling window a `sessions_28d` commitment is counted over. */
-const SESSION_COUNT_WINDOW_DAYS = 28;
+const TRAINING_DAYS_PER_MESO = 12;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Everything a band needs that is the same for every metric of one priority. */
 export interface GoalDerivationContext {
@@ -88,7 +93,6 @@ export interface GoalDerivationContext {
   layoff: boolean;
   completedMesoCount: number;
   derivedAt: string;
-  endsAt: string;
   notes: string[];
 }
 
@@ -134,10 +138,9 @@ export async function readDerivationContext(
     },
     horizonWeeks: weeks.length,
     weeks,
-    layoff: await hasRecentLayoff(state),
+    layoff: await hasRecentLayoff(state, derivedAt),
     completedMesoCount: await countCompletedMesos(state, priority),
     derivedAt,
-    endsAt: new Date(Date.parse(derivedAt) + weeks.length * 7 * DAY_MS).toISOString(),
     notes,
   };
 }
@@ -172,22 +175,17 @@ async function readHorizonWeeks(
 /**
  * Whether the lifter is inside the first mesocycle back after a 3+ month gap.
  *
- * Read off the session timeline rather than a self-report: a fitted slope over
- * a regain phase over-projects, and the timeline is what shows the gap
- * (plan §1.10).
+ * Read off the training-day timeline rather than a self-report: a fitted slope
+ * over a regain phase over-projects, and the timeline is what shows the gap
+ * (plan §1.10). The whole timeline, uncapped, so the newest gap is always seen.
  */
-async function hasRecentLayoff(state: GoalDerivationState): Promise<boolean> {
-  const sessions = await state.store.listSessions({ sort: 'startedAt:asc', limit: 500 });
-  const starts = sessions.map((session) => Date.parse(session.startedAt));
-  let lastGapEndedAt: number | null = null;
-  for (const [index, start] of starts.entries()) {
-    const previous = starts[index - 1];
-    if (previous !== undefined && start - previous >= LAYOFF_GAP_DAYS * DAY_MS) {
-      lastGapEndedAt = start;
-    }
-  }
-  if (lastGapEndedAt === null) return false;
-  return starts.filter((start) => start >= lastGapEndedAt).length < SESSIONS_PER_MESO;
+async function hasRecentLayoff(state: GoalDerivationState, nowIso: string): Promise<boolean> {
+  const days = await readTrainingDaysMatching(state.store, { to: nowIso });
+  const lastGap = trainingGaps(days)
+    .filter((gap) => gap.days >= LAYOFF_GAP_DAYS)
+    .at(-1);
+  if (lastGap === undefined) return false;
+  return days.filter((day) => day >= lastGap.endsOn).length < TRAINING_DAYS_PER_MESO;
 }
 
 /**
@@ -262,14 +260,13 @@ async function deriveSessionCount(
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
-  const from = new Date(Date.now() - SESSION_COUNT_WINDOW_DAYS * DAY_MS).toISOString();
-  const count = await state.store.countSessions({ from, endedOnly: true });
+  const count = (await readTrainingDays(state.store, context.derivedAt)).length;
   if (count === 0) {
     return {
       metric: selection.metric,
       exerciseId: null,
       reason:
-        `No completed sessions in the last ${SESSION_COUNT_WINDOW_DAYS} days, so there is no ` +
+        `No training days in the last ${SESSION_WINDOW_DAYS} days, so there is no ` +
         'current rate to hold. Train a week and ask again.',
     };
   }
@@ -359,7 +356,7 @@ async function deriveE1rmContext(
   const baseline = await state.store.getBaseline({ userId: LOCAL_USER_ID, exerciseId });
   return bandFor(context, selection, {
     startValue: latest.value,
-    startMeasuredAt: latest.ts,
+    startMeasuredAt: bucketStartIso(latest.ts),
     matchedSessionCount: trend?.series.length ?? 0,
     baselineState: baseline?.state ?? 'COLD',
   });
@@ -419,6 +416,85 @@ interface FittedHistoryTrend {
   trend: NonNullable<Awaited<ReturnType<typeof computeHistoryTrend>>['trend']>;
 }
 
+/**
+ * The metrics whose band is anchored to a stored target's own frame. Every
+ * metric that stores a start value is (VW-449 lifts, VW-451 bodyweight and the
+ * session count); `composite_strength` never stores a target.
+ */
+const FRAMED_METRICS: readonly GoalMetric[] = [
+  'top_load_at_reps',
+  'reps_at_load',
+  'e1rm_trend',
+  'bodyweight',
+  'sessions_28d',
+];
+
+/** The lift metrics a fitted slope can carry; `e1rm_trend` has never had one. */
+const SLOPED_METRICS: readonly GoalMetric[] = ['top_load_at_reps', 'reps_at_load'];
+
+/** The gain selection a stored target was derived from. */
+export function selectionOf(target: StoredGoalTarget): GoalGainMetric {
+  return {
+    kind: 'gain',
+    metric: target.metric,
+    exerciseId: target.exerciseId ?? null,
+    anchorReps: target.anchorReps ?? null,
+    role: 'primary',
+  };
+}
+
+/**
+ * A stored target's band, re-derived INSIDE its own frame: the target's start
+ * value on week 1 of its block, never today's latest lift (VW-449), today's
+ * 30-day mean weight or today's session count (VW-451). Today's evidence still
+ * decides the info level and, for a lift that earned one, supplies the fitted
+ * slope, expressed against the frame's own start value.
+ */
+export async function deriveTargetInFrame(
+  state: GoalDerivationState,
+  context: GoalDerivationContext,
+  frame: StoredGoalTarget,
+): Promise<DerivedTarget | SkippedMetric> {
+  const selection = selectionOf(frame);
+  const today = await deriveTarget(state, context, selection);
+  if (!('band' in today) && frame.metric === 'bodyweight' && frame.startValue > 0) {
+    return bodyweightFrameWithoutReadings(context, selection, frame);
+  }
+  if (!('band' in today) || !FRAMED_METRICS.includes(frame.metric)) return today;
+  if (frame.startValue <= 0) return today;
+  const anchorReps = frame.anchorReps ?? today.anchorReps;
+  const slope =
+    frame.exerciseId !== undefined && SLOPED_METRICS.includes(frame.metric)
+      ? await readOwnSlope(state, frame.exerciseId, frame.startValue)
+      : {};
+  return bandFor(context, selection, {
+    startValue: frame.startValue,
+    startMeasuredAt: frame.startMeasuredAt,
+    matchedSessionCount: today.matchedSessionCount,
+    baselineState: today.baselineState,
+    ...(anchorReps === null ? {} : { anchorReps }),
+    ...slope,
+  });
+}
+
+/**
+ * An accepted bodyweight target with no recent reading still has its frame:
+ * the band starts at the stored start weight, and the missing readings are the
+ * page's to show, not a reason to hide the goal.
+ */
+function bodyweightFrameWithoutReadings(
+  context: GoalDerivationContext,
+  selection: GoalGainMetric,
+  frame: StoredGoalTarget,
+): DerivedTarget {
+  return bandFor(context, selection, {
+    startValue: frame.startValue,
+    startMeasuredAt: frame.startMeasuredAt,
+    matchedSessionCount: 0,
+    baselineState: 'CALIBRATED',
+  });
+}
+
 function bandFor(
   context: GoalDerivationContext,
   selection: GoalGainMetric,
@@ -430,6 +506,7 @@ function bandFor(
     horizonWeeks: context.horizonWeeks,
     weeks: context.weeks,
     tier: context.tier,
+    rampClass: rampClassForExerciseId(selection.exerciseId),
     infoLevel: 'own',
     dietState: context.dietState,
     layoff: context.layoff,

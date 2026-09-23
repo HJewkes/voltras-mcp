@@ -246,10 +246,10 @@ const GOALS_VALUES: readonly string[] = [
   // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
   // and the coach's own proposal. Never asserted as a raw number elsewhere,
   // so a wrong target here would pass every other shot's check.
-  'Goal 8 x 127.5 lb',
+  'Goal 8 x 133 lb',
   // The driven PR set as the block's best, and the gap it leaves to the goal.
   'Best 8 x 110 lb',
-  '17.5 lb to goal',
+  '23 lb to goal',
   // The whole-body panel's own line for the same priority.
   'CABLE CHEST PRESS · specialize',
 ];
@@ -288,8 +288,9 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // reason the burst has to be pinned: these moved every run before it.
       'VL 20% VL 30% 0.50 0.49 0.47 0.46',
       // The readout that caught this: two runs of the OLD harness disagreed
-      // here (5.5 "Good" against 6.0 "Slowing") and both were green.
-      'FATIGUE 5.0 RPE Good',
+      // here (5.5 "Good" against 6.0 "Slowing") and both were green. The RPE is
+      // a dash: withheld until a trusted fitted profile exists (VW-485).
+      'FATIGUE — RPE Good',
     ],
     holdsPageOpen: true,
   },
@@ -301,13 +302,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     waitFor: { kind: 'rest' },
     expectText: ['TONNAGE', 'Cable Chest Press', 'Push A · Hypertrophy'],
     expectValues: [
-      'VOLUME 5 TONNAGE 0 lbs',
+      // The mock now reports the load the driver configured it with (140 lb), so
+      // tonnage is the 5 pinned reps at that weight. It read 0 until the SDK 0.15
+      // adoption (#441) taught the mock to report a weight at all.
+      'VOLUME 5 TONNAGE 700 lbs',
       '1/8 sets',
-      // Tonnage is 0 and load is `—` because the mock emits no settings
-      // cascade, so the dashboard never learns a weight. That degradation is
-      // real and pinned here on purpose — see dashboard-plan-drive's header.
-      'SET REPS LBS RPE 1 5 0 —',
-      'SET VERDICT 5 Reps 0 lbs 12%',
+      'SET REPS LBS RPE 1 5 140 —',
+      'SET VERDICT 5 Reps 140 lbs 12%',
       'Next · Cable Chest Press · set 2 of 3',
     ],
     holdsPageOpen: true,
@@ -322,13 +323,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectValues: [
       // `DURATION` sits between `VOLUME` and its value and is deliberately not
       // asserted: it is wall-clock, unlike everything before it.
-      'EXERCISES 1 SETS 2 REPS 10 VOLUME —',
-      'FATIGUE 5.0 RPE Good',
-      'RIR 4.8',
+      'EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb',
+      // No RPE and no RIR line: withheld until a trusted fitted profile exists (VW-485).
+      'FATIGUE — RPE Good',
       'BEST VELOCITY 0.5',
       '12% peak-to-last within a set — set #2, the set the verdict above reads.',
-      'RECOMMENDATION -5 lb TARGET LOAD 40 lb',
-      '#1 5 × — loss 12% best 0.5 #2 5 × — loss 12% best 0.5',
+      'RECOMMENDATION -5 lb TARGET LOAD 135 lb',
+      '#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5',
     ],
     holdsPageOpen: false,
   },

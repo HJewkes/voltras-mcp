@@ -82,6 +82,20 @@ describe('server.health', () => {
     expect((body.version as string).length).toBeGreaterThan(0);
   });
 
+  it('reports which rule decides the mid-set ending cue (VW-544)', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info', effortCue: 'on' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    expect(body.effortCue).toBe('on');
+  });
+
   it('reports channelsWired when a real publisher is installed', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
