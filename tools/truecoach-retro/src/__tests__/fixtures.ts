@@ -1,6 +1,7 @@
 // Synthetic rows for the tests. No value here comes from a real log.
 
-import type { Block, ExerciseMapEntry, SetRecord } from '../types.js';
+import { addDays } from '../dates.js';
+import type { Block, CheckinRecord, ExerciseMapEntry, SetRecord } from '../types.js';
 
 export function setRow(overrides: Partial<SetRecord> = {}): SetRecord {
   return {
@@ -39,4 +40,21 @@ export function mapEntry(overrides: Partial<ExerciseMapEntry> = {}): ExerciseMap
     main_lift: true,
     ...overrides,
   };
+}
+
+/** Twelve sessions of one lift three days apart, and six weekly weigh-ins. */
+export function syntheticLog() {
+  const rows = Array.from({ length: 12 }, (_, i) => {
+    const date = addDays('2030-01-07', 3 * i);
+    return [1, 2, 3].map((set) =>
+      setRow({ message_id: `m${i}`, workout_due_date: date, set_index: set, load: 100 + i }),
+    );
+  }).flat();
+  const checkins: CheckinRecord[] = Array.from({ length: 6 }, (_, i) => ({
+    field: 'Weight',
+    workout_due_date: addDays('2030-01-07', 7 * i),
+    email_date: null,
+    value: 200 - i,
+  }));
+  return { rows, checkins };
 }

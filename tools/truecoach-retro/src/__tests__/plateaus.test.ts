@@ -10,6 +10,8 @@ function point(date: string, e1rm: number, overrides: Partial<SessionPoint> = {}
     bestE1RM: e1rm,
     topLoad: e1rm * 0.85,
     topLoadAtModal: e1rm * 0.85,
+    sets: 3,
+    totalReps: 15,
     exercises: ['Lift One'],
     ...overrides,
   };

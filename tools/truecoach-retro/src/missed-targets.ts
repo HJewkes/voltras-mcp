@@ -3,7 +3,7 @@
 import { countMissed, type TargetVerdict } from '../../../src/analytics/target-verdict.js';
 
 import { isWorkRow } from './log-rules.js';
-import { blockTarget } from './prescription.js';
+import { blockTarget, type PrescriptionTarget } from './prescription.js';
 import type { Block, SetRecord } from './types.js';
 
 /**
@@ -20,6 +20,11 @@ export interface BlockVerdict {
   loadShort: boolean;
   /** Reps were filled from the prescription by the parser, so the rep check cannot fail. */
   repsFromPrescription: boolean;
+  target: PrescriptionTarget | null;
+  /** Sets matched to the prescription, by the rows' `sets` field. */
+  reportedSets: number;
+  /** The lowest rep count among the matched sets; `null` when none. */
+  minReps: number | null;
 }
 
 function matchedRows(block: Block, loadLbs: number | null): SetRecord[] {
@@ -40,6 +45,9 @@ const NO_TARGET: BlockVerdict = {
   repMisses: 0,
   loadShort: false,
   repsFromPrescription: false,
+  target: null,
+  reportedSets: 0,
+  minReps: null,
 };
 
 /** A block misses when it reports fewer sets than prescribed or any set under the rep floor. */
@@ -47,7 +55,7 @@ export function judgeBlock(block: Block): BlockVerdict {
   const target = blockTarget(block.prescriptionLines);
   if (target === null) return NO_TARGET;
   const rows = matchedRows(block, target.loadLbs);
-  if (rows.length === 0) return { ...NO_TARGET, verdict: 'miss', setsShort: true };
+  if (rows.length === 0) return { ...NO_TARGET, target, verdict: 'miss', setsShort: true };
   const reported = rows.reduce((sum, row) => sum + row.sets, 0);
   const repCounts = rows.flatMap((row) => Array<number>(row.sets).fill(row.reps));
   const repMisses = target.repsLow === null ? 0 : (countMissed(repCounts, target.repsLow) ?? 0);
@@ -59,5 +67,8 @@ export function judgeBlock(block: Block): BlockVerdict {
     repMisses,
     loadShort: target.loadLbs !== null && topLoad < target.loadLbs,
     repsFromPrescription: rows.some((row) => row.decided_by.includes('bare_load')),
+    target,
+    reportedSets: reported,
+    minReps: Math.min(...repCounts),
   };
 }

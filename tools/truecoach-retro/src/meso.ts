@@ -7,10 +7,20 @@ import { addDays, daysBetween, isoWeekStart } from './dates.js';
 
 export const MESO_RULE = { dropPct: 10, liftsDropping: 2, gapDays: 10 } as const;
 
+export interface LoadDrop {
+  lift: string;
+  /** Percent under the lift's previous trained week, unrounded. */
+  pct: number;
+}
+
 export interface MesoBoundary {
   /** Monday of the first week of the new meso. */
   week: string;
   triggers: string[];
+  /** The gap that ended the meso, or `null` when a load drop alone did. */
+  gapDays: number | null;
+  /** The lifts that dropped, when the load half of the rule fired; empty otherwise. */
+  drops: LoadDrop[];
 }
 
 export interface Meso {
@@ -24,43 +34,51 @@ export interface Meso {
 
 /** Weeks where a lift's top load fell at least `dropPct` below its previous trained week. */
 export function loadDropWeeks(
-  topLoadsByFamily: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  topLoadsByLift: ReadonlyMap<string, ReadonlyMap<string, number>>,
   dropPct: number = MESO_RULE.dropPct,
-): Map<string, string[]> {
-  const drops = new Map<string, string[]>();
-  for (const [family, weeks] of topLoadsByFamily) {
+): Map<string, LoadDrop[]> {
+  const drops = new Map<string, LoadDrop[]>();
+  for (const [lift, weeks] of topLoadsByLift) {
     const ordered = [...weeks].sort(([a], [b]) => a.localeCompare(b));
     ordered.slice(1).forEach(([week, load], index) => {
       const previous = ordered[index]![1];
       const pct = ((previous - load) / previous) * 100;
-      if (pct >= dropPct)
-        drops.set(week, [...(drops.get(week) ?? []), `${family} -${Math.round(pct)}%`]);
+      if (pct >= dropPct) drops.set(week, [...(drops.get(week) ?? []), { lift, pct }]);
     });
   }
   return drops;
 }
 
-function addTrigger(boundaries: Map<string, string[]>, week: string, trigger: string): void {
-  boundaries.set(week, [...(boundaries.get(week) ?? []), trigger]);
+function boundaryAt(boundaries: Map<string, MesoBoundary>, week: string): MesoBoundary {
+  const boundary = boundaries.get(week) ?? { week, triggers: [], gapDays: null, drops: [] };
+  boundaries.set(week, boundary);
+  return boundary;
+}
+
+function dropTrigger(drops: readonly LoadDrop[]): string {
+  const lifts = [...drops].sort((a, b) => a.lift.localeCompare(b.lift));
+  return `load drop: ${lifts.map((d) => `${d.lift} -${Math.round(d.pct)}%`).join(', ')}`;
 }
 
 /** Every boundary the rule finds, oldest first; triggers landing in one week merge. */
 export function mesoBoundaries(
   days: readonly string[],
-  topLoadsByFamily: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  topLoadsByLift: ReadonlyMap<string, ReadonlyMap<string, number>>,
 ): MesoBoundary[] {
-  const boundaries = new Map<string, string[]>();
-  for (const [week, lifts] of loadDropWeeks(topLoadsByFamily)) {
-    if (lifts.length >= MESO_RULE.liftsDropping)
-      addTrigger(boundaries, week, `load drop: ${lifts.sort().join(', ')}`);
+  const boundaries = new Map<string, MesoBoundary>();
+  for (const [week, drops] of loadDropWeeks(topLoadsByLift)) {
+    if (drops.length < MESO_RULE.liftsDropping) continue;
+    const boundary = boundaryAt(boundaries, week);
+    boundary.drops = [...drops].sort((a, b) => a.lift.localeCompare(b.lift));
+    boundary.triggers.push(dropTrigger(drops));
   }
   for (const gap of trainingGaps(days)) {
-    if (gap.days >= MESO_RULE.gapDays)
-      addTrigger(boundaries, isoWeekStart(gap.endsOn), `gap ${gap.days} days`);
+    if (gap.days < MESO_RULE.gapDays) continue;
+    const boundary = boundaryAt(boundaries, isoWeekStart(gap.endsOn));
+    boundary.gapDays = gap.days;
+    boundary.triggers.push(`gap ${gap.days} days`);
   }
-  return [...boundaries]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([week, triggers]) => ({ week, triggers }));
+  return [...boundaries.values()].sort((a, b) => a.week.localeCompare(b.week));
 }
 
 /** The mesos between the first training week, each boundary, and the week after the last day. */

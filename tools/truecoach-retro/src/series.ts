@@ -22,6 +22,9 @@ export interface SessionPoint {
   topLoadAtModal: number | null;
   bestE1RM: number | null;
   topLoad: number;
+  /** Work sets in the session, by the rows' `sets` field. */
+  sets: number;
+  totalReps: number;
   exercises: string[];
 }
 
@@ -84,6 +87,8 @@ function pointOf(date: string, rows: readonly LoadedRow[], modalReps: number | n
     topLoadAtModal: atModal?.value ?? null,
     bestE1RM: bestE1RM(rows),
     topLoad: Math.max(...rows.map((row) => row.load)),
+    sets: rows.reduce((sum, row) => sum + row.sets, 0),
+    totalReps: rows.reduce((sum, row) => sum + row.sets * row.reps, 0),
     exercises: [...new Set(rows.map((row) => row.exercise_name ?? ''))].sort(),
   };
 }

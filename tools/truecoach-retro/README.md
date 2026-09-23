@@ -5,8 +5,12 @@ extraction and a hand-built exercise map, runs six checks, and writes one markdo
 Nothing here touches the store or a device.
 
 ```bash
-npm run retro:truecoach -- <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--programme-split YYYY-MM-DD]
+npm run retro:truecoach -- <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD]
 ```
+
+`--json` also writes every number the report computed, unrounded, for the visual walkthrough.
+Its keys are listed in `RETRO_DATA_KEYS` (`src/data.ts`); `retro-data.schema.md` beside the
+output describes each one.
 
 None of the three inputs is checked in, and the repo holds no values from them: every test
 fixture is synthetic. The design note and the RP digest the report cites live in the

@@ -26,7 +26,7 @@ export function e1rmTrend(points: readonly SessionPoint[], period: Period): Tren
   return trendOf(series);
 }
 
-function topLoadTrend(points: readonly SessionPoint[], period: Period): TrendRead | null {
+export function topLoadTrend(points: readonly SessionPoint[], period: Period): TrendRead | null {
   const series = points
     .filter((point) => point.topLoadAtModal !== null && inPeriod(point.date, period))
     .map((point) => ({ ts: noonInstant(point.date), value: point.topLoadAtModal! }));

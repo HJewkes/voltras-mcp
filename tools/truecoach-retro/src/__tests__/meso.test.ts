@@ -24,7 +24,15 @@ describe('mesoBoundaries', () => {
       ],
     ]);
     expect(mesoBoundaries(days, tops)).toEqual([
-      { week: '2030-01-21', triggers: ['load drop: Lift One -10%, Lift Two -15%'] },
+      {
+        week: '2030-01-21',
+        triggers: ['load drop: Lift One -10%, Lift Two -15%'],
+        gapDays: null,
+        drops: [
+          { lift: 'Lift One', pct: 10 },
+          { lift: 'Lift Two', pct: 15 },
+        ],
+      },
     ]);
   });
 
@@ -87,7 +95,15 @@ describe('mesoBoundaries', () => {
       ],
     ]);
     expect(mesoBoundaries(gapped, tops)).toEqual([
-      { week: '2030-01-14', triggers: ['load drop: Lift One -15%, Lift Two -20%', 'gap 10 days'] },
+      {
+        week: '2030-01-14',
+        triggers: ['load drop: Lift One -15%, Lift Two -20%', 'gap 10 days'],
+        gapDays: 10,
+        drops: [
+          { lift: 'Lift One', pct: 15 },
+          { lift: 'Lift Two', pct: 20 },
+        ],
+      },
     ]);
   });
 
@@ -99,7 +115,9 @@ describe('mesoBoundaries', () => {
 describe('mesosBetween', () => {
   it('counts trained weeks apart from the calendar weeks a gap spans', () => {
     const trained = ['2030-01-07', '2030-01-14', '2030-02-18', '2030-02-25'];
-    const mesos = mesosBetween(trained, [{ week: '2030-02-18', triggers: ['gap 35 days'] }]);
+    const mesos = mesosBetween(trained, [
+      { week: '2030-02-18', triggers: ['gap 35 days'], gapDays: 35, drops: [] },
+    ]);
     expect(mesos).toEqual([
       { startWeek: '2030-01-07', endWeek: '2030-02-18', weeks: 6, trainedWeeks: 2 },
       { startWeek: '2030-02-18', endWeek: '2030-03-04', weeks: 2, trainedWeeks: 2 },
