@@ -3,6 +3,7 @@
 import { adherenceSection } from './checks/adherence.js';
 import { bodyweightSection } from './checks/bodyweight.js';
 import { deloadSection } from './checks/deload.js';
+import { rampSection, restartSection, stalenessSection } from './checks/meso-reviews.js';
 import { missedSection } from './checks/missed.js';
 import { progressionSection } from './checks/progression.js';
 import { segmentContext, segmentsSection } from './checks/segments.js';
@@ -46,7 +47,7 @@ const CANNOT_TELL = [
   '',
   '- Effort. There is no RIR or RPE field, so a hit at RPE 6 and a grinding hit read the same, and no check can see the within-meso effort ramp RP expects.',
   '- Fatigue as the live system means it. Velocity loss, ROM drift and rep speed do not exist in an email log; the missed-target runs are a proxy, and a coach who prescribed conservatively would hide real fatigue from it.',
-  '- Whether a boundary was a planned deload. The meso rule sees load drops and gaps, not intent, so a planned light week, a variant change and a holiday all read alike.',
+  "- Whether a boundary was a planned deload, from the log alone. The meso rule sees load drops and gaps, not intent, so it reads the human's marks (`--boundary-decisions`).",
   '- Warm-ups in undivided blocks. Rows with no divider are counted as work, which inflates weekly sets for those blocks.',
   '- Individual landmarks. MEV and MRV are population defaults; RP finds MRV by performance, not set counts.',
   '- Waist meaning. It is reported against bodyweight only; the RP corpus has no rule for it.',
@@ -57,10 +58,7 @@ const CANNOT_TELL = [
 const NEXT_CHECKS = [
   '## Suggested next checks',
   '',
-  '- Have the human mark the boundaries in check 4 as real or not, then re-run the meso checks (restart load against the previous meso, RP ranked check 6) on the confirmed set.',
-  '- The within-meso ramp of weekly sets per muscle (MEV towards MRV), once boundaries are confirmed.',
   '- Underperformance against the previous session at matched load, alongside the missed-prescription proxy, to see where the two disagree.',
-  '- Staleness: consecutive mesos that kept one main lift while its plateau window held (RP ranked check 9).',
   '- RPE note lines: attach the stated RPE to its block and look for rising RPE at the same load.',
   '',
 ];
@@ -81,6 +79,9 @@ export function renderReport(ctx: Context, generatedOn: string): string {
     deloadSection(ctx),
     adherenceSection(ctx, regular),
     bodyweightSection(ctx),
+    restartSection(ctx),
+    rampSection(ctx),
+    stalenessSection(ctx),
     ...CANNOT_TELL,
     ...NEXT_CHECKS,
   ].join('\n');

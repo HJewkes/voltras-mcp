@@ -6,7 +6,8 @@ import type { TitanMuscleGroup } from '../../../src/exercises/muscle-map.js';
 
 import { bodyweightPhases, readingsOf, type BodyweightPhase } from './bodyweight.js';
 import { adherenceFigures } from './checks/adherence.js';
-import { boundariesOf } from './checks/deload.js';
+import { boundariesOf, choiceOf, confirmedBoundaries, decisionsFinding } from './checks/deload.js';
+import { liftCarries, liftRestarts, ramps } from './checks/meso-reviews.js';
 import { missedFigures, muscleVerdicts } from './checks/missed.js';
 import { e1rmTrend, progressionFigures, topLoadTrend } from './checks/progression.js';
 import { labelCounts, mesoLabels, segmentContext, type Segmented } from './checks/segments.js';
@@ -40,6 +41,7 @@ export const RETRO_DATA_KEYS = [
   'bodyweight',
   'segments',
   'regularOnly',
+  'mesoChecks',
 ] as const;
 
 type RetroData = Record<(typeof RETRO_DATA_KEYS)[number], unknown>;
@@ -198,11 +200,12 @@ function boundaries(ctx: Context) {
     kinds: [...(b.gapDays === null ? [] : ['gap']), ...(b.drops.length === 0 ? [] : ['load_drop'])],
     gapDays: b.gapDays,
     dropLifts: b.drops,
+    choice: choiceOf(ctx, b.week),
   }));
 }
 
 function mesos(ctx: Context) {
-  return mesosBetween(ctx.days, boundariesOf(ctx)).map((m) => ({
+  return mesosBetween(ctx.days, confirmedBoundaries(ctx)).map((m) => ({
     start: m.startWeek,
     nextStart: m.endWeek,
     calendarWeeks: m.weeks,
@@ -275,6 +278,8 @@ function decisionsJson(ctx: Context) {
   return {
     present: ctx.decisions !== null,
     marked: ctx.decisions?.filter((d) => d.choice !== null).length ?? 0,
+    plannedDeloads: ctx.decisions?.filter((d) => d.choice === 'planned_deload').length ?? 0,
+    finding: decisionsFinding(ctx, boundariesOf(ctx)),
   };
 }
 
@@ -332,5 +337,6 @@ export function buildRetroData(ctx: Context, generatedOn: string): RetroData {
     bodyweight: bodyweight(ctx),
     segments: segments(ctx, segmented),
     regularOnly: regularOnly(segmented.regular),
+    mesoChecks: { restarts: liftRestarts(ctx), ramps: ramps(ctx), carries: liftCarries(ctx) },
   };
 }

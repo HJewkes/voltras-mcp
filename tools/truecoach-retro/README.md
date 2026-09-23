@@ -9,8 +9,10 @@ npm run retro:truecoach -- <records.jsonl> <checkins.jsonl> <exercise-map.json> 
 ```
 
 `--boundary-decisions` reads the human's marks from the walkthrough page (`{week, choice, note}[]`,
-choice `planned_deload`, `life_gap`, `not_a_boundary` or `null`). Without it every gap over 10 days
-ends a run of regular weeks, and the report says so.
+choice `planned_deload`, `life_gap`, `unplanned_drop`, `not_a_boundary` or `null`; any other value
+fails the run). Without it every gap over 10 days ends a run of regular weeks, and the report says so.
+`not_a_boundary` removes a boundary from the mesos; `unplanned_drop` is a real boundary that is
+neither a deload nor a gap, so it bridges nothing.
 
 `--json` also writes every number the report computed, unrounded, for the visual walkthrough.
 Its keys are listed in `RETRO_DATA_KEYS` (`src/data.ts`); `retro-data.schema.md` beside the
@@ -44,6 +46,7 @@ Unlike `tools/truecoach-submit`, this directory is inside the package's gates: `
 | The programme split is the first day of the first month written mostly load-first                                                                     | `periods.ts`          |
 | A week is regular when steady (modal sessions minus 1, 3 written-out exercises) in a run of 3 steady weeks; gaps over 10 days end a run unless marked | `segmentation.ts`     |
 | Checks 1, 2, 3 and 5 are computed twice: all weeks, and regular weeks only                                                                            | `checks/segments.ts`  |
+| On the confirmed mesos: restart load against the previous meso's weekly loads, the weekly-sets ramp per muscle, staleness                             | `meso-checks.ts`      |
 
 ## What it imports from `src/`
 

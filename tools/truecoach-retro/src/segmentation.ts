@@ -29,13 +29,39 @@ export const BREAK_REASONS = [
 ] as const;
 export type BreakReason = (typeof BREAK_REASONS)[number];
 
-export type BoundaryChoice = 'planned_deload' | 'life_gap' | 'not_a_boundary';
+/** `unplanned_drop`: a real boundary the human saw as a load drop, neither a deload nor a gap. */
+export const BOUNDARY_CHOICES = [
+  'planned_deload',
+  'life_gap',
+  'unplanned_drop',
+  'not_a_boundary',
+] as const;
+export type BoundaryChoice = (typeof BOUNDARY_CHOICES)[number];
 
 /** One row of the human's `boundary-decisions.json`, written by the page's section 5. */
 export interface BoundaryDecision {
   week: string;
   choice: BoundaryChoice | null;
   note?: string;
+}
+
+function isDecision(entry: unknown): entry is BoundaryDecision {
+  if (entry === null || typeof entry !== 'object') return false;
+  const { week, choice } = entry as { week?: unknown; choice?: unknown };
+  const knownChoice = choice === null || BOUNDARY_CHOICES.includes(choice as BoundaryChoice);
+  return typeof week === 'string' && knownChoice;
+}
+
+/** The page's decisions file; an unknown choice fails loudly rather than reading as unmarked. */
+export function parseBoundaryDecisions(json: unknown): BoundaryDecision[] {
+  if (!Array.isArray(json))
+    throw new Error('boundary decisions: expected an array of { week, choice, note }');
+  const bad = json.find((entry) => !isDecision(entry));
+  if (bad !== undefined)
+    throw new Error(
+      `boundary decisions: unknown entry ${JSON.stringify(bad)}; choice is one of ${BOUNDARY_CHOICES.join(', ')} or null`,
+    );
+  return json as BoundaryDecision[];
 }
 
 /** Choices that keep a run going across a long gap: the block did not end there. */
@@ -206,7 +232,7 @@ export function ruleText(modal: number | null): string {
   const floor = modal === null ? 'the modal weekly count' : `${modal - r.frequencySlack}`;
   return (
     `A trained week holds at least one training day. A run is a stretch of trained weeks with no gap between training days longer than ${r.breakGapDays} days; ` +
-    `a gap the human marked a planned deload or not a boundary stays inside the run, and a gap marked a life gap or left unmarked ends it. ` +
+    `a gap the human marked a planned deload or not a boundary stays inside the run, and any other mark (a life gap or an unplanned drop) or no mark ends it. ` +
     `A trained week is steady when it holds at least ${floor} sessions (the modal ${modal ?? 'n/a'} minus ${r.frequencySlack}) ` +
     `and at least ${r.minReportedExercises} of its exercises carry a set the lifter wrote out rather than one load line the parser filled from the prescription. ` +
     `A week is regular when it is steady and its run holds at least ${r.minRunWeeks} steady weeks. ` +

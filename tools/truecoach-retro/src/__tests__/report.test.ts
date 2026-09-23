@@ -19,6 +19,9 @@ describe('renderReport', () => {
       '## 4. Deload cadence',
       '## 5. Adherence',
       '## 6. Bodyweight and waist against strength',
+      '## 7. Meso restart load',
+      '## 8. The ramp of weekly sets inside each meso',
+      '## 9. Staleness',
       '## What this cannot tell us',
       '## Suggested next checks',
     ]);
