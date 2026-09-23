@@ -21,6 +21,15 @@ process.env.TZ = 'UTC';
 // parallel load the boot can miss that wait (VW-210, two flakes on 2026-09-08).
 // Its own sequence group (below) keeps it off the CPU while the rest of the suite runs.
 const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
+// These files pin `process.env.TZ` to a local zone before any Date is built (VW-477).
+// A worker THREAD cannot change its zone after start (Node reads TZ once per
+// process), so they run on the forks pool; everything else runs on threads.
+const LOCAL_TIME_TEST_FILES = [
+  'src/accountability/__tests__/commitment-week-local-time.test.ts',
+  'src/dashboard/__tests__/banner-clears-via-skip.test.ts',
+  'src/plan/__tests__/block-calendar-local-time.test.ts',
+  'src/tools/__tests__/goal-targets-on-blocks.test.ts',
+];
 // tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.
 const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
 
@@ -68,17 +77,40 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     include: ALL_TESTS_GLOB,
+    // Threads, not forks: forks spawn one node process per core (13 on a 14-core Mac),
+    // each with its own copy of the inlined titan and WA builds, and they outlive a
+    // dead parent. Threads share the process and die with it. Same fix as brain #97.
+    // Vitest 4 caps every pool with maxWorkers; `pool` is set per project because a
+    // project inherits nothing from the root.
+    // CI runners have two cores; four threads there contend and pushed one 5 s test
+    // budget over (goal-band-in-frame, 5073 ms on the first run of this change).
+    maxWorkers: process.env.CI ? 2 : 4,
+    minWorkers: 1,
+    teardownTimeout: 30_000,
     projects: [
       {
         plugins,
         resolve: resolution,
         test: {
           name: 'unit',
+          pool: 'threads',
           environment: 'node',
           globals: false,
           server,
           include: ALL_TESTS_GLOB,
-          exclude: [LAUNCHER_TEST_FILE],
+          exclude: [LAUNCHER_TEST_FILE, ...LOCAL_TIME_TEST_FILES],
+        },
+      },
+      {
+        plugins,
+        resolve: resolution,
+        test: {
+          name: 'local-time',
+          environment: 'node',
+          globals: false,
+          server,
+          pool: 'forks',
+          include: LOCAL_TIME_TEST_FILES,
         },
       },
       {
@@ -86,6 +118,7 @@ export default defineConfig({
         resolve: resolution,
         test: {
           name: 'launcher',
+          pool: 'threads',
           environment: 'node',
           globals: false,
           server,
