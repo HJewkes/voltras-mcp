@@ -10,7 +10,7 @@
  * The lead lift as titan's full `GoalCard` (title row, folded block-end
  * summary with its week cells, trajectory chart), then a grid of compact
  * `GoalCard`s, then a grid of `GoalMuscleCard`, then a whole-body panel with
- * the priority rail and the bodyweight tile. Sections come from plan G8'/§4,
+ * the priority rail and the bodyweight tile, drawn only when a whole-body goal exists. Sections come from plan G8'/§4,
  * not invented here. The old header block is gone rather than restyled
  * (VW-385): the week, committed/stretch, next target and status basis each
  * read off something the card already draws.
@@ -231,10 +231,11 @@ function MuscleGrid(props: {
   );
 }
 
-/** Sessions commitment, bodyweight tile (hidden with no VW-327 data) and the priority rail. */
-function WholeBodyPanel(props: { data: GoalsPageData }): React.JSX.Element {
+/** Sessions commitment, bodyweight tile and priority rail; nothing without a whole-body goal (VW-454). */
+function WholeBodyPanel(props: { data: GoalsPageData }): React.JSX.Element | null {
   const sessions = sessionsTarget(props.data);
   const bodyweight = bodyweightTarget(props.data);
+  if (sessions === null && bodyweight === null) return null;
   const tiles: MetricTileData[] = [];
   if (sessions !== null) {
     tiles.push({ label: 'Sessions (28d)', value: `${round1(sessions.view.committed)} committed` });

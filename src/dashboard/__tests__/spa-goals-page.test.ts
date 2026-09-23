@@ -334,6 +334,27 @@ describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
   });
 });
 
+describe('the whole-body section needs a whole-body goal (VW-454 ruling)', () => {
+  it('drops the section and its priority rail when no sessions or bodyweight goal exists', () => {
+    const { data, benchPriority } = baseData();
+    data.priorities[0]!.targets.splice(1, 1);
+    data.progress[benchPriority.id]!.splice(1, 1);
+
+    const html = render(data);
+
+    expect(html).not.toContain('Whole body');
+    expect(html).not.toContain('BENCH PRESS · specialize');
+  });
+
+  it('keeps the section when a sessions goal exists', () => {
+    const html = render(baseData().data);
+
+    expect(html).toContain('Whole body');
+    expect(html).toContain('Sessions (28d)');
+    expect(html).toContain('BENCH PRESS · specialize');
+  });
+});
+
 describe('GoalsView phone layout (VW-356)', () => {
   it('stacks the card grids to one full-width column below the narrow breakpoint', () => {
     vi.mocked(useIsNarrowViewport).mockReturnValue(true);

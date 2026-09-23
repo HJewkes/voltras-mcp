@@ -258,8 +258,6 @@ const GOALS_VALUES: readonly string[] = [
   // The driven PR set as the block's best, and the gap it leaves to the goal.
   'Best 8 x 110 lb',
   '23 lb to goal',
-  // The whole-body panel's own line for the same priority.
-  'CABLE CHEST PRESS · specialize',
 ];
 
 /**
@@ -402,7 +400,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // `goal.declare_priorities` ever ran — the shot opened on an empty
     // "No priorities declared" page (VW-389). The fourth is the driven session.
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
@@ -416,7 +414,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // and content rather than re-deriving one.
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
     viewport: PHONE_VIEWPORT,
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
