@@ -1,9 +1,11 @@
 // Everything the six checks share, computed once from the three inputs.
 
+import { isoWeekStart } from './dates.js';
 import { buildExerciseLookup, type ExerciseLookup } from './exercise-map.js';
 import { groupBlocks, trainingDays } from './log-rules.js';
 import { judgeBlock, type BlockVerdict } from './missed-targets.js';
 import { detectProgrammeSplit, periodsAround, type Period } from './periods.js';
+import type { BoundaryDecision } from './segmentation.js';
 import { buildSeries, loadedRowsBy, mainLiftRows, type LiftSeries } from './series.js';
 import type { Block, CheckinRecord, ExerciseMapEntry, SetRecord } from './types.js';
 
@@ -28,6 +30,8 @@ export interface Context {
   periods: Period[];
   programmeSplit: { date: string | null; source: 'detected' | 'argument' };
   mainLifts: MainLift[];
+  /** The human's boundary marks, or `null` when no decisions file was given. */
+  decisions: BoundaryDecision[] | null;
 }
 
 function mainLiftsOf(rows: readonly SetRecord[], lookup: ExerciseLookup): MainLift[] {
@@ -45,22 +49,39 @@ function mainLiftsOf(rows: readonly SetRecord[], lookup: ExerciseLookup): MainLi
     );
 }
 
+/** The row-derived parts of a context; periods and decisions carry over unchanged. */
+function fromRows(rows: SetRecord[], lookup: ExerciseLookup) {
+  return {
+    rows,
+    days: trainingDays(rows),
+    judged: groupBlocks(rows).map((block) => ({ block, verdict: judgeBlock(block) })),
+    mainLifts: mainLiftsOf(rows, lookup),
+  };
+}
+
 export function buildContext(
   rows: SetRecord[],
   checkins: CheckinRecord[],
   map: readonly ExerciseMapEntry[],
   programmeSplitArg: string | null,
+  decisions: BoundaryDecision[] | null = null,
 ): Context {
   const lookup = buildExerciseLookup(map);
   const split = programmeSplitArg ?? detectProgrammeSplit(rows);
   return {
-    rows,
+    ...fromRows(rows, lookup),
     checkins,
     lookup,
-    days: trainingDays(rows),
-    judged: groupBlocks(rows).map((block) => ({ block, verdict: judgeBlock(block) })),
     periods: periodsAround(split),
     programmeSplit: { date: split, source: programmeSplitArg === null ? 'detected' : 'argument' },
-    mainLifts: mainLiftsOf(rows, lookup),
+    decisions,
   };
+}
+
+/** The same context over the rows dated inside `weeks`: what a check reads for regular weeks only. */
+export function restrictToWeeks(ctx: Context, weeks: ReadonlySet<string>): Context {
+  const rows = ctx.rows.filter(
+    (row) => row.workout_due_date !== null && weeks.has(isoWeekStart(row.workout_due_date)),
+  );
+  return { ...ctx, ...fromRows(rows, ctx.lookup) };
 }

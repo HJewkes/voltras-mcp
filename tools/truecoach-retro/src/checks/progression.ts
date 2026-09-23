@@ -2,7 +2,7 @@
 
 import type { Context, MainLift } from '../context.js';
 import { noonInstant } from '../dates.js';
-import { num, section, signed, table } from '../markdown.js';
+import { comparisonBlock, num, section, signed, table, type Figure } from '../markdown.js';
 import { inPeriod, type Period } from '../periods.js';
 import {
   plateauWindows,
@@ -92,15 +92,30 @@ function followUpCounts(windows: readonly PlateauWindow[]): string {
   );
 }
 
+interface PeriodRise {
+  up: number;
+  trained: number;
+  median: number | null;
+}
+
+function periodRise(ctx: Context, period: Period): PeriodRise {
+  const trends = ctx.mainLifts.map((lift) => e1rmTrend(lift.series.points, period));
+  const slopes = trends.flatMap((t) => (t === null ? [] : [t.slopePerWeek])).sort((a, b) => a - b);
+  return {
+    up: trends.filter(rising).length,
+    trained: slopes.length,
+    median: slopes[Math.floor(slopes.length / 2)] ?? null,
+  };
+}
+
+function allWindows(ctx: Context): PlateauWindow[] {
+  return ctx.mainLifts.flatMap((lift) => plateauWindows(lift.series.points, lift.familyDates));
+}
+
 function findings(ctx: Context, all: readonly PlateauWindow[]): string[] {
   const perPeriod = ctx.periods.map((period) => {
-    const trends = ctx.mainLifts.map((lift) => e1rmTrend(lift.series.points, period));
-    const up = trends.filter(rising).length;
-    const slopes = trends
-      .flatMap((t) => (t === null ? [] : [t.slopePerWeek]))
-      .sort((a, b) => a - b);
-    const median = slopes[Math.floor(slopes.length / 2)] ?? null;
-    return `${period.name} ${up} of the ${slopes.length} trained (median ${signed(median, 2)} lb/wk)`;
+    const { up, trained, median } = periodRise(ctx, period);
+    return `${period.name} ${up} of the ${trained} trained (median ${signed(median, 2)} lb/wk)`;
   });
   const flat = all.filter((w) => w.flatline).length;
   return [
@@ -110,7 +125,34 @@ function findings(ctx: Context, all: readonly PlateauWindow[]): string[] {
   ];
 }
 
-export function progressionSection(ctx: Context): string {
+/** The figures check 1 compares between all weeks and regular weeks. */
+export function progressionFigures(ctx: Context): Figure[] {
+  const rises = ctx.periods.flatMap((period): Figure[] => {
+    const { up, trained, median } = periodRise(ctx, period);
+    return [
+      [`${period.name}: lifts rising, 95% interval above zero`, `${up} of ${trained}`],
+      [`${period.name}: median e1RM slope, lb/wk`, signed(median, 2)],
+    ];
+  });
+  const slopes = ctx.mainLifts.flatMap((lift) =>
+    ctx.periods.map(
+      (period): Figure => [
+        `${lift.series.label} e1RM lb/wk, ${period.name}`,
+        trendCell(e1rmTrend(lift.series.points, period)),
+      ],
+    ),
+  );
+  const windows = allWindows(ctx);
+  const flat = windows.filter((w) => w.flatline);
+  return [
+    ...rises,
+    ...slopes,
+    ['plateau windows (±5%), of them flatlines', `${windows.length}, ${flat.length}`],
+    ['what followed the flatlines', followUpCounts(flat)],
+  ];
+}
+
+export function progressionSection(ctx: Context, regular: Context | null = null): string {
   const perLift = ctx.mainLifts.map((lift) => ({
     lift,
     windows: plateauWindows(lift.series.points, lift.familyDates),
@@ -126,6 +168,11 @@ export function progressionSection(ctx: Context): string {
     table(
       ['lift', 'start', 'end', 'sessions', 'flatline', 'followed by'],
       perLift.flatMap((e) => windowRows(e.lift, e.windows)),
+    ),
+    ...comparisonBlock(
+      progressionFigures(ctx),
+      regular && progressionFigures(regular),
+      'Regular-only slopes and windows read the sessions of regular weeks alone, so a series has holes where broken weeks were; a flatline whose next session fell in a broken week reads as followed by a gap.',
     ),
   ];
   return section('1. Progression and plateaus per main lift', findings(ctx, all), body, CITATION);

@@ -2,7 +2,8 @@
 
 import type { Context, JudgedBlock } from '../context.js';
 import { LOW_CONFIDENCE } from '../log-rules.js';
-import { pct, section, table } from '../markdown.js';
+import { comparisonBlock, pct, section, table, type Figure } from '../markdown.js';
+import { inPeriod } from '../periods.js';
 import {
   underperformanceRuns,
   type MuscleVerdict,
@@ -88,7 +89,38 @@ function findings(ctx: Context, runs: readonly UnderperformanceRun[]): string[] 
   ];
 }
 
-export function missedSection(ctx: Context): string {
+function rate(entries: readonly JudgedBlock[]): string {
+  const misses = entries.filter((entry) => entry.verdict.verdict === 'miss').length;
+  return `${misses} of ${entries.length} (${pct(misses, entries.length)})`;
+}
+
+/** The figures check 2 compares between all weeks and regular weeks. */
+export function missedFigures(ctx: Context): Figure[] {
+  const judged = ctx.judged.filter((entry) => entry.verdict.verdict !== 'no-target');
+  const misses = judged.filter((entry) => entry.verdict.verdict === 'miss');
+  const runs = underperformanceRuns(muscleVerdicts(ctx));
+  const perPeriod = ctx.periods.map(
+    (period): Figure => [
+      `${period.name}: missed of judged blocks`,
+      rate(judged.filter((entry) => inPeriod(entry.block.date, period))),
+    ],
+  );
+  return [
+    ['missed of judged blocks', rate(judged)],
+    ...perPeriod,
+    [
+      'misses that were sets short',
+      `${misses.filter((e) => e.verdict.setsShort).length} of ${misses.length}`,
+    ],
+    [
+      'two-session miss runs, muscles',
+      `${runs.length}, ${new Set(runs.map((r) => r.muscle)).size}`,
+    ],
+    ['longest run, sessions', `${Math.max(0, ...runs.map((r) => r.sessions))}`],
+  ];
+}
+
+export function missedSection(ctx: Context, regular: Context | null = null): string {
   const runs = underperformanceRuns(muscleVerdicts(ctx));
   const byMonth = new Map(
     [...tallyBy(ctx.judged, (e) => e.block.date.slice(0, 7))].sort(([a], [b]) =>
@@ -114,6 +146,7 @@ export function missedSection(ctx: Context): string {
       ['muscle', 'runs', 'longest run (sessions)', 'first run starts', 'last run ends'],
       runRows(runs),
     ),
+    ...comparisonBlock(missedFigures(ctx), regular && missedFigures(regular)),
   ];
   return section('2. Missed targets', findings(ctx, runs), body, CITATION);
 }

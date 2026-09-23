@@ -4,7 +4,7 @@ import { trainingGaps } from '../../../../src/analytics/training-days.js';
 import type { TitanMuscleGroup } from '../../../../src/exercises/muscle-map.js';
 
 import type { Context } from '../context.js';
-import { num, pct, section, table } from '../markdown.js';
+import { comparisonBlock, num, pct, section, table, type Figure } from '../markdown.js';
 import { MESO_RULE } from '../meso.js';
 import { inPeriod, type Period } from '../periods.js';
 import { modalWeeklyCount, sessionsPerWeek, weeklyFrequencyByMuscle } from '../weekly.js';
@@ -74,7 +74,25 @@ function frequencyFinding(reads: readonly FrequencyRead[]): string {
   return `Of the regularly trained muscles, twice a week in at least half the weeks: ${often.join(', ') || 'none'}; never twice in a week: ${once.join(', ') || 'none'}.`;
 }
 
-export function adherenceSection(ctx: Context): string {
+/** The figures check 5 compares; read over trained weeks so a window of chosen weeks compares fairly. */
+export function adherenceFigures(ctx: Context): Figure[] {
+  const trained = [...sessionsPerWeek(ctx.days).values()].filter((n) => n > 0);
+  const modal = modalWeeklyCount(trained);
+  const atModal = trained.filter((n) => modal !== null && n >= modal).length;
+  const mean = trained.reduce((a, b) => a + b, 0) / Math.max(trained.length, 1);
+  const twice = frequencyReads(ctx)
+    .filter((r) => r.weeksTrained >= r.weeks / 2)
+    .map((r): Figure => [`${r.muscle}: trained weeks at 2+ sessions`, pct(r.weeksAtTwo, r.weeks)]);
+  return [
+    ['trained weeks, training days', `${trained.length}, ${ctx.days.length}`],
+    ['mean sessions per trained week', num(mean, 2)],
+    ['modal sessions per trained week', `${modal ?? 'n/a'}`],
+    ['trained weeks at or above the modal count', `${atModal} (${pct(atModal, trained.length)})`],
+    ...twice,
+  ];
+}
+
+export function adherenceSection(ctx: Context, regular: Context | null = null): string {
   const gaps = trainingGaps(ctx.days).filter((gap) => gap.days > MESO_RULE.gapDays);
   const allWeeks = [...sessionsPerWeek(ctx.days).values()];
   const modal = modalWeeklyCount(allWeeks);
@@ -116,6 +134,7 @@ export function adherenceSection(ctx: Context): string {
       ],
       reads.map(frequencyRow),
     ),
+    ...comparisonBlock(adherenceFigures(ctx), regular && adherenceFigures(regular)),
   ];
   return section('5. Adherence', finding, body, CITATION);
 }

@@ -1,10 +1,11 @@
-// CLI: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD]
+// CLI: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD] [--boundary-decisions <boundary-decisions.json>]
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
 import { buildContext } from './context.js';
 import { buildRetroData } from './data.js';
 import { parseExerciseMap } from './exercise-map.js';
+import type { BoundaryDecision } from './segmentation.js';
 import { renderReport } from './report.js';
 import type { CheckinRecord, SetRecord } from './types.js';
 
@@ -20,6 +21,14 @@ function flag(args: readonly string[], name: string): string | null {
   return index === -1 ? null : (args[index + 1] ?? null);
 }
 
+function readDecisions(path: string | null): BoundaryDecision[] | null {
+  if (path === null) return null;
+  const json: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  if (!Array.isArray(json))
+    throw new Error('boundary decisions: expected an array of { week, choice, note }');
+  return json as BoundaryDecision[];
+}
+
 function main(args: readonly string[]): void {
   const [recordsPath, checkinsPath, mapPath] = args;
   const out = flag(args, '--out');
@@ -30,7 +39,7 @@ function main(args: readonly string[]): void {
     out === null
   ) {
     console.error(
-      'usage: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD]',
+      'usage: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD] [--boundary-decisions <boundary-decisions.json>]',
     );
     process.exit(2);
   }
@@ -40,6 +49,7 @@ function main(args: readonly string[]): void {
     readJsonl<CheckinRecord>(checkinsPath),
     map,
     flag(args, '--programme-split'),
+    readDecisions(flag(args, '--boundary-decisions')),
   );
   const today = new Date().toISOString().slice(0, 10);
   writeFileSync(out, renderReport(ctx, today));
