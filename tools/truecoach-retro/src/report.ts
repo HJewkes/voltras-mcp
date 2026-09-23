@@ -1,0 +1,83 @@
+// The report: a data summary, the six checks in the approved order, and the two closing sections.
+
+import { adherenceSection } from './checks/adherence.js';
+import { bodyweightSection } from './checks/bodyweight.js';
+import { deloadSection } from './checks/deload.js';
+import { missedSection } from './checks/missed.js';
+import { progressionSection } from './checks/progression.js';
+import { volumeSection } from './checks/volume.js';
+import type { Context } from './context.js';
+import { isWorkRow, LOW_CONFIDENCE } from './log-rules.js';
+import { pct, table } from './markdown.js';
+
+function dataSummary(ctx: Context): string {
+  const work = ctx.rows.filter(isWorkRow);
+  const unmapped = work.filter((row) => !ctx.lookup.isMapped(row.exercise_name));
+  const unmappedNames = new Set(unmapped.map((row) => row.exercise_name ?? '(no name)'));
+  const rows: [string, string | number][] = [
+    ['set rows', ctx.rows.length],
+    ['work rows (not above a warm-up divider)', work.length],
+    [
+      'work rows with no divider (is_warmup null), read as work',
+      work.filter((r) => r.is_warmup === null).length,
+    ],
+    [
+      'rows under 0.6 confidence, included',
+      ctx.rows.filter((r) => r.confidence < LOW_CONFIDENCE).length,
+    ],
+    ['rows stating more than one set', ctx.rows.filter((r) => r.sets > 1).length],
+    ['work sets (sum of the sets field)', work.reduce((sum, r) => sum + r.sets, 0)],
+    ['training days', `${ctx.days.length}, ${ctx.days[0] ?? ''} to ${ctx.days.at(-1) ?? ''}`],
+    [
+      'work rows with no mapped muscle',
+      `${unmapped.length} (${pct(unmapped.length, work.length)}), ${unmappedNames.size} names`,
+    ],
+    [
+      'main lifts (map main_lift)',
+      ctx.mainLifts.map((l) => `${l.series.label} (${l.family})`).join(', '),
+    ],
+  ];
+  return ['## The data', '', table(['what', 'count'], rows), ''].join('\n');
+}
+
+const CANNOT_TELL = [
+  '## What this cannot tell us',
+  '',
+  '- Effort. There is no RIR or RPE field, so a hit at RPE 6 and a grinding hit read the same, and no check can see the within-meso effort ramp RP expects.',
+  '- Fatigue as the live system means it. Velocity loss, ROM drift and rep speed do not exist in an email log; the missed-target runs are a proxy, and a coach who prescribed conservatively would hide real fatigue from it.',
+  '- Whether a boundary was a planned deload. The meso rule sees load drops and gaps, not intent, so a planned light week, a variant change and a holiday all read alike.',
+  '- Warm-ups in undivided blocks. Rows with no divider are counted as work, which inflates weekly sets for those blocks.',
+  '- Individual landmarks. MEV and MRV are population defaults; RP finds MRV by performance, not set counts.',
+  '- Waist meaning. It is reported against bodyweight only; the RP corpus has no rule for it.',
+  '- The tier self-report half: years training, earlier breaks, earlier plateaus.',
+  '',
+];
+
+const NEXT_CHECKS = [
+  '## Suggested next checks',
+  '',
+  '- Have the human mark the boundaries in check 4 as real or not, then re-run the meso checks (restart load against the previous meso, RP ranked check 6) on the confirmed set.',
+  '- The within-meso ramp of weekly sets per muscle (MEV towards MRV), once boundaries are confirmed.',
+  '- Underperformance against the previous session at matched load, alongside the missed-prescription proxy, to see where the two disagree.',
+  '- Staleness: consecutive mesos that kept one main lift while its plateau window held (RP ranked check 9).',
+  '- RPE note lines: attach the stated RPE to its block and look for rising RPE at the same load.',
+  '',
+];
+
+export function renderReport(ctx: Context, generatedOn: string): string {
+  return [
+    '# TrueCoach retrospective, first pass (VW-546)',
+    '',
+    `Generated ${generatedOn} by \`voltras-mcp/tools/truecoach-retro\`. Loads read as lb. Checks run in the order the human approved.`,
+    '',
+    dataSummary(ctx),
+    progressionSection(ctx),
+    missedSection(ctx),
+    volumeSection(ctx),
+    deloadSection(ctx),
+    adherenceSection(ctx),
+    bodyweightSection(ctx),
+    ...CANNOT_TELL,
+    ...NEXT_CHECKS,
+  ].join('\n');
+}

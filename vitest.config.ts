@@ -21,7 +21,8 @@ process.env.TZ = 'UTC';
 // parallel load the boot can miss that wait (VW-210, two flakes on 2026-09-08).
 // Its own sequence group (below) keeps it off the CPU while the rest of the suite runs.
 const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
-const ALL_TESTS_GLOB = 'src/**/*.{test,spec}.ts';
+// tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.
+const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
 
 const alias = [
   { find: '@', replacement: resolve(__dirname, 'src') },
@@ -66,7 +67,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: [ALL_TESTS_GLOB],
+    include: ALL_TESTS_GLOB,
     projects: [
       {
         plugins,
@@ -76,7 +77,7 @@ export default defineConfig({
           environment: 'node',
           globals: false,
           server,
-          include: [ALL_TESTS_GLOB],
+          include: ALL_TESTS_GLOB,
           exclude: [LAUNCHER_TEST_FILE],
         },
       },
