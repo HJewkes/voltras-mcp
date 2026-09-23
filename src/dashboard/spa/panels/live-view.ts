@@ -27,7 +27,6 @@ import {
   buildCurrentSet,
   pickRepresentativeDevice,
   repMeanVelocityMps,
-  roundMps,
   type AccumulatorState,
   type CompletedSet as StoreCompletedSet,
   type PrescriptionView,
@@ -160,7 +159,8 @@ function mapMode(trainingMode: string | null): CompletedSet['mode'] {
 function repVelocitiesMps(reps: readonly Rep[]): number[] {
   const out: number[] = [];
   for (const rep of reps) {
-    const mps = roundMps(repMeanVelocityMps(rep));
+    // Unrounded, like the live bars: titan formats the numbers and bands on the exact loss.
+    const mps = repMeanVelocityMps(rep);
     if (mps !== null) out.push(mps);
   }
   return out;

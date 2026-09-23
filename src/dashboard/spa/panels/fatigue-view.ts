@@ -469,7 +469,8 @@ function buildHeroSide(
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
   const velocities: number[] = [];
   for (const rep of reps) {
-    const mps = roundMps(repMeanVelocityMps(rep));
+    // Unrounded, like the single hero: titan bands each wing's bars on the exact loss.
+    const mps = repMeanVelocityMps(rep);
     if (mps !== null) velocities.push(mps);
   }
   const best = velocities.length > 0 ? Math.max(...velocities) : null;

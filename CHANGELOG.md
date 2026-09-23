@@ -107,7 +107,10 @@ entry is written from the user's point of view is a review question, not a check
   into an info tip in the plot's corner ("Why is there no band?"). Every week of a goal chart
   opens a tip with that week's reading and band. On a phone, a goal card's Week / Best / Goal
   lines sit together as one block. Velocity bars on the live page and the pinned strip now
-  colour by the exact loss from the set's best rep, not the loss rounded to a whole percent.
+  colour by the exact loss from the set's best rep, not the loss rounded to a whole percent. The
+  dashboard now hands those bars unrounded velocities too, so a bar and the red or amber
+  background agree at a band edge. The rest recap's "Vel loss" and Fatigue tile read the same
+  exact loss as the live page, so they can shift by up to about a percent from before.
 
 - A fitted RIR-velocity curve now has to be tighter before its readings are called
   high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
