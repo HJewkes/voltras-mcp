@@ -240,7 +240,15 @@ async function seedPriorWeek(dbPath, exerciseId, weightLbs) {
   const setId = `${sessionId}-set`;
   const store = SqliteSessionStore.open(dbPath);
   try {
-    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    // VW-489: the lifter's own training, so the goal tools read it as history. An
+    // unmarked session is not, and `goal.propose_targets` then finds no start value.
+    await store.putSession({
+      id: sessionId,
+      startedAt: at,
+      endedAt: at,
+      exerciseId,
+      kind: 'training',
+    });
     await store.putSet({
       id: setId,
       sessionId,
@@ -621,7 +629,7 @@ async function runGoal() {
     await acceptProposedLiftTarget(priorityId);
   }
 
-  await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
+  const { sessionId } = await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
   summarize(await snapshot(), 'session.start');
 
   await applyLoad(GOAL_LOAD_LBS);
@@ -632,6 +640,10 @@ async function runGoal() {
   await runOneSet('PR set     ', DWELL_MS);
 
   await callTool('session.end', {});
+  // VW-489: a mock-adapter session is stored as a test, which every goal read skips, so
+  // the page would never see the PR set. This scratch store's lifter marks it training,
+  // through the same review tool a lifter uses.
+  await callTool('session.mark_kind', { sessionId, kind: 'training' });
   summarize(await snapshot(), 'session.end');
   log(
     `goal loop complete: ${GOAL_PR_LOAD_LBS} lb passes last week's ${GOAL_LOAD_LBS} lb — ` +
