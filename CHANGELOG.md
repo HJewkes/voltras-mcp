@@ -102,6 +102,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The dashboard picks up `@titan-design/react-ui` 0.21.1. Goal charts drop their y-axis
+  labels and carry each gridline's value inside the plot. A calibrating chart moves its note
+  into an info tip in the plot's corner ("Why is there no band?"). Every week of a goal chart
+  opens a tip with that week's reading and band. On a phone, a goal card's Week / Best / Goal
+  lines sit together as one block. Velocity bars on the live page and the pinned strip now
+  colour by the exact loss from the set's best rep, not the loss rounded to a whole percent.
+
 - A fitted RIR-velocity curve now has to be tighter before its readings are called
   high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
   enough before. A curve with an error between 1.5 and 2 now reads medium, and its note
