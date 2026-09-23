@@ -5,6 +5,7 @@ import { bodyweightSection } from './checks/bodyweight.js';
 import { deloadSection } from './checks/deload.js';
 import { missedSection } from './checks/missed.js';
 import { progressionSection } from './checks/progression.js';
+import { segmentContext, segmentsSection } from './checks/segments.js';
 import { volumeSection } from './checks/volume.js';
 import type { Context } from './context.js';
 import { isWorkRow, LOW_CONFIDENCE } from './log-rules.js';
@@ -65,17 +66,20 @@ const NEXT_CHECKS = [
 ];
 
 export function renderReport(ctx: Context, generatedOn: string): string {
+  const segmented = segmentContext(ctx);
+  const { regular } = segmented;
   return [
-    '# TrueCoach retrospective, first pass (VW-546)',
+    '# TrueCoach retrospective, first pass (VW-546), with regular and broken weeks (VW-548)',
     '',
-    `Generated ${generatedOn} by \`voltras-mcp/tools/truecoach-retro\`. Loads read as lb. Checks run in the order the human approved.`,
+    `Generated ${generatedOn} by \`voltras-mcp/tools/truecoach-retro\`. Loads read as lb. Checks run in the order the human approved; checks 1, 2, 3 and 5 end with their figures for all weeks against regular weeks only (VW-548).`,
     '',
     dataSummary(ctx),
-    progressionSection(ctx),
-    missedSection(ctx),
-    volumeSection(ctx),
+    segmentsSection(ctx, segmented),
+    progressionSection(ctx, regular),
+    missedSection(ctx, regular),
+    volumeSection(ctx, regular),
     deloadSection(ctx),
-    adherenceSection(ctx),
+    adherenceSection(ctx, regular),
     bodyweightSection(ctx),
     ...CANNOT_TELL,
     ...NEXT_CHECKS,

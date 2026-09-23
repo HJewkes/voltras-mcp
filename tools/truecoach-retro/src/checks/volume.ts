@@ -8,7 +8,7 @@ import type { TitanMuscleGroup } from '../../../../src/exercises/muscle-map.js';
 
 import type { Context } from '../context.js';
 import { isoWeekStart } from '../dates.js';
-import { num, section, table } from '../markdown.js';
+import { comparisonBlock, num, pct, section, table, type Figure } from '../markdown.js';
 import { underperformanceRuns } from '../underperformance.js';
 import { volumeStatus, weeklySetsByMuscle } from '../weekly.js';
 
@@ -118,7 +118,25 @@ function readRow({ muscle, counts, median, trained }: MuscleRead): (string | num
   ];
 }
 
-export function volumeSection(ctx: Context): string {
+/** The figures check 3 compares between all weeks and regular weeks. */
+export function volumeFigures(ctx: Context): Figure[] {
+  const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
+  const reads = ALL_MUSCLES.map((m) => muscleRead(m, weeks)).filter((r) => r.trained > 0);
+  const perMuscle = reads.map(
+    (r): Figure => [
+      `${r.muscle}: median sets/wk, weeks below MEV`,
+      `${num(r.median, 0)}, ${pct(r.counts.under, weeks.size)}`,
+    ],
+  );
+  return [
+    ['weeks counted', `${weeks.size}`],
+    ...perMuscle,
+    ['systemic weeks', `${systemicWeeks(ctx).size}`],
+    ['weeks with two unrelated muscles at or above MRV', `${overMrvWeeks(ctx, weeks)}`],
+  ];
+}
+
+export function volumeSection(ctx: Context, regular: Context | null = null): string {
   const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
   const reads = ALL_MUSCLES.map((m) => muscleRead(m, weeks)).filter((r) => r.trained > 0);
   const systemic = systemicWeeks(ctx);
@@ -131,6 +149,7 @@ export function volumeSection(ctx: Context): string {
       ['systemic week', 'flagged muscles'],
       [...systemic].map(([week, list]) => [week, list.join(', ')]),
     ),
+    ...comparisonBlock(volumeFigures(ctx), regular && volumeFigures(regular)),
   ];
   return section(
     '3. Weekly sets per muscle against the landmarks',

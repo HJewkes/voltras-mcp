@@ -5,16 +5,20 @@ import { POPULATION_VOLUME_LANDMARKS } from '../../../src/dashboard/read-models/
 import type { TitanMuscleGroup } from '../../../src/exercises/muscle-map.js';
 
 import { bodyweightPhases, readingsOf, type BodyweightPhase } from './bodyweight.js';
+import { adherenceFigures } from './checks/adherence.js';
 import { boundariesOf } from './checks/deload.js';
-import { muscleVerdicts } from './checks/missed.js';
-import { e1rmTrend, topLoadTrend } from './checks/progression.js';
-import { systemicWeeks } from './checks/volume.js';
+import { missedFigures, muscleVerdicts } from './checks/missed.js';
+import { e1rmTrend, progressionFigures, topLoadTrend } from './checks/progression.js';
+import { labelCounts, mesoLabels, segmentContext, type Segmented } from './checks/segments.js';
+import { systemicWeeks, volumeFigures } from './checks/volume.js';
 import type { Context, JudgedBlock, MainLift } from './context.js';
-import { addDays } from './dates.js';
+import { addDays, isoWeekStart } from './dates.js';
 import { isWorkRow, LOW_CONFIDENCE } from './log-rules.js';
+import type { Figure } from './markdown.js';
 import { classifyMesoLength, MESO_RULE, mesosBetween } from './meso.js';
 import { inPeriod, type Period } from './periods.js';
 import { plateauWindows, type TrendRead } from './plateaus.js';
+import { ruleText, SEGMENT_RULE } from './segmentation.js';
 import { underperformanceRuns } from './underperformance.js';
 import {
   modalWeeklyCount,
@@ -34,6 +38,8 @@ export const RETRO_DATA_KEYS = [
   'mesos',
   'adherence',
   'bodyweight',
+  'segments',
+  'regularOnly',
 ] as const;
 
 type RetroData = Record<(typeof RETRO_DATA_KEYS)[number], unknown>;
@@ -256,7 +262,65 @@ function bodyweight(ctx: Context) {
   };
 }
 
+function comparison(figures: (ctx: Context) => Figure[], ctx: Context, regular: Context) {
+  const regularByLabel = new Map(figures(regular));
+  return figures(ctx).map(([figure, all]) => ({
+    figure,
+    all,
+    regular: regularByLabel.get(figure) ?? 'n/a',
+  }));
+}
+
+function decisionsJson(ctx: Context) {
+  return {
+    present: ctx.decisions !== null,
+    marked: ctx.decisions?.filter((d) => d.choice !== null).length ?? 0,
+  };
+}
+
+function segments(ctx: Context, { segmentation, regular }: Segmented) {
+  const labelOf = new Map(segmentation.weeks.map((w) => [w.week, w]));
+  const trained = segmentation.weeks.filter((w) => w.label !== 'untrained');
+  return {
+    rule: SEGMENT_RULE,
+    ruleText: ruleText(segmentation.modalSessionsPerWeek),
+    decisions: decisionsJson(ctx),
+    modalSessionsPerWeek: segmentation.modalSessionsPerWeek,
+    weeks: segmentation.weeks,
+    sessions: ctx.days.map((date) => {
+      const week = labelOf.get(isoWeekStart(date))!;
+      return { date, week: week.week, label: week.label, reasons: week.reasons };
+    }),
+    runs: segmentation.runs,
+    gaps: segmentation.gaps,
+    counts: { weeks: labelCounts(trained), sessions: labelCounts(trained, (w) => w.sessions) },
+    mesos: mesoLabels(ctx, segmentation),
+    comparisons: {
+      progression: comparison(progressionFigures, ctx, regular),
+      misses: comparison(missedFigures, ctx, regular),
+      volume: comparison(volumeFigures, ctx, regular),
+      adherence: comparison(adherenceFigures, ctx, regular),
+    },
+  };
+}
+
+/** Checks 1, 2, 3 and 5 over regular weeks only, in the same shapes; adherence lists trained weeks only. */
+function regularOnly(regular: Context) {
+  const regularAdherence = adherence(regular);
+  return {
+    lifts: regular.mainLifts.map((lift) => liftJson(regular, lift)),
+    misses: misses(regular),
+    volume: volume(regular),
+    adherence: {
+      ...regularAdherence,
+      weeks: regularAdherence.weeks.filter((w) => w.sessions > 0),
+      gaps: [],
+    },
+  };
+}
+
 export function buildRetroData(ctx: Context, generatedOn: string): RetroData {
+  const segmented = segmentContext(ctx);
   return {
     meta: meta(ctx, generatedOn),
     lifts: ctx.mainLifts.map((lift) => liftJson(ctx, lift)),
@@ -266,5 +330,7 @@ export function buildRetroData(ctx: Context, generatedOn: string): RetroData {
     mesos: mesos(ctx),
     adherence: adherence(ctx),
     bodyweight: bodyweight(ctx),
+    segments: segments(ctx, segmented),
+    regularOnly: regularOnly(segmented.regular),
   };
 }

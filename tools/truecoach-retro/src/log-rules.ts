@@ -13,6 +13,11 @@ export function isWorkRow(row: SetRecord): row is SetRecord & { workout_due_date
   return row.workout_due_date !== null && row.is_warmup !== true;
 }
 
+/** A work row the lifter wrote out, not one the parser filled from a bare load and the prescription. */
+export function isReportedSet(row: SetRecord): boolean {
+  return isWorkRow(row) && !row.decided_by.includes('bare_load');
+}
+
 /** Training days: dates holding at least one work row, oldest first. */
 export function trainingDays(rows: readonly SetRecord[]): string[] {
   const dates = rows.filter(isWorkRow).map((row) => noonInstant(row.workout_due_date));

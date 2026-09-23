@@ -12,6 +12,7 @@ describe('renderReport', () => {
     const headings = report.split('\n').filter((line) => line.startsWith('## '));
     expect(headings).toEqual([
       '## The data',
+      '## Regular and broken weeks',
       '## 1. Progression and plateaus per main lift',
       '## 2. Missed targets',
       '## 3. Weekly sets per muscle against the landmarks',
