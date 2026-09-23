@@ -82,7 +82,9 @@ export default defineConfig({
     // dead parent. Threads share the process and die with it. Same fix as brain #97.
     // Vitest 4 caps every pool with maxWorkers; `pool` is set per project because a
     // project inherits nothing from the root.
-    maxWorkers: 4,
+    // CI runners have two cores; four threads there contend and pushed one 5 s test
+    // budget over (goal-band-in-frame, 5073 ms on the first run of this change).
+    maxWorkers: process.env.CI ? 2 : 4,
     minWorkers: 1,
     teardownTimeout: 30_000,
     projects: [
