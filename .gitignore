@@ -59,3 +59,6 @@ site/.vitepress/cache/
 
 # Rehearsal scratch for the store export/import tool (VW-534)
 .store-scratch/
+
+# Scratch build for tools/truecoach-retro (npm run retro:truecoach)
+.retro-build/
