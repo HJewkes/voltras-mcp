@@ -1,5 +1,5 @@
 {
-  "definitionHash": "17370a33cb74a3318f344565877fb1bec1fc4e6a19b8a22e7f2e63fb8372f17b",
+  "definitionHash": "7eb04d0f43616b2b96aa2325f7647f8722b0857ca05ba6d81c274227c07ad26b",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -151,13 +151,8 @@
         "kind": "sessions-ended",
         "minSessions": 4
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT", "Whole body"],
-      "assertedValues": [
-        "Goal 8 x 133 lb",
-        "Best 8 x 110 lb",
-        "23 lb to goal",
-        "CABLE CHEST PRESS · specialize"
-      ],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT"],
+      "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
       "width": 1440,
       "height": 900,
       "bytes": 88516,
@@ -173,13 +168,8 @@
         "kind": "sessions-ended",
         "minSessions": 4
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT", "Whole body"],
-      "assertedValues": [
-        "Goal 8 x 133 lb",
-        "Best 8 x 110 lb",
-        "23 lb to goal",
-        "CABLE CHEST PRESS · specialize"
-      ],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT"],
+      "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
       "width": 390,
       "height": 844,
       "bytes": 52329,
