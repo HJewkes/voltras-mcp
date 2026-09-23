@@ -402,10 +402,10 @@ entry is written from the user's point of view is a review question, not a check
   lifter's local calendar day. Any accepted session-count goal made under the old count is
   retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
   one in days (VW-460, #455).
-- A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
-  session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
-  no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no
-  such note, keeps the sentence (VW-444).
+- A calibrating goal's chart now says what it is waiting on ("1 more comparable session to
+  calibrate.", or the set it needs), in full, in the chart's info tip, instead of titan's
+  generic "No band yet", so the full goal card no longer repeats it in a sentence underneath.
+  The compact per-lift card, whose chart has no such tip, keeps the sentence (VW-444).
 - The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
   colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
   thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and

@@ -411,7 +411,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     expect(cold.status).toBe('calibrating');
     expect(primaryTarget(data)?.view.target.id).toBe('tgt-bench');
     expect(html).not.toContain(SENTENCE);
-    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
   });
 
   it('says it once, under the compact card, for a calibrating lift that is not the lead', () => {
@@ -445,7 +445,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     );
     const calibrated = data.progress[benchPriority.id]![0]!;
 
-    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
     expect(cardChart(calibrated)).not.toHaveProperty('calibratingNote');
   });
 });
