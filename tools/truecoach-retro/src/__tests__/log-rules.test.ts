@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildExerciseLookup } from '../exercise-map.js';
 import { groupBlocks, trainingDays } from '../log-rules.js';
-import { detectCoachSplit } from '../periods.js';
+import { detectProgrammeSplit } from '../periods.js';
 import {
   modalWeeklyCount,
   sessionsPerWeek,
@@ -89,7 +89,7 @@ describe('exercise lookup', () => {
   });
 });
 
-describe('detectCoachSplit', () => {
+describe('detectProgrammeSplit', () => {
   const day = (date: string, line: string) =>
     setRow({ workout_due_date: date, prescription_lines: [line] });
 
@@ -100,10 +100,10 @@ describe('detectCoachSplit', () => {
       day('2030-02-11', '100 @ 3 x 5'),
       day('2030-02-18', '100 @ 3 x 5'),
     ];
-    expect(detectCoachSplit(rows)).toBe('2030-02-11');
+    expect(detectProgrammeSplit(rows)).toBe('2030-02-11');
   });
 
   it('finds no split when load-first never dominates', () => {
-    expect(detectCoachSplit([day('2030-01-07', '3 x 10 RPE 8')])).toBeNull();
+    expect(detectProgrammeSplit([day('2030-01-07', '3 x 10 RPE 8')])).toBeNull();
   });
 });

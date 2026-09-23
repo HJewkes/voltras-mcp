@@ -1,4 +1,4 @@
-// Check 1: progression and plateaus per main lift, per coaching period.
+// Check 1: progression and plateaus per main lift, per programme period.
 
 import type { Context, MainLift } from '../context.js';
 import { noonInstant } from '../dates.js';
@@ -117,7 +117,7 @@ export function progressionSection(ctx: Context): string {
   }));
   const all = perLift.flatMap((entry) => entry.windows);
   const body = [
-    `Coaching split: ${ctx.coachSplit.date ?? 'none'} (${ctx.coachSplit.source}). Slopes are least-squares lb per week with a 95% interval; e1RM is Epley on sets of 12 reps or fewer.`,
+    `Programme split: ${ctx.programmeSplit.date ?? 'none'} (${ctx.programmeSplit.source}), where prescriptions switch to load-first lines. The coach was the same on both sides of it; only the way the programme was written changed. Slopes are least-squares lb per week with a 95% interval; e1RM is Epley on sets of 12 reps or fewer.`,
     '',
     trendTable(ctx),
     '',

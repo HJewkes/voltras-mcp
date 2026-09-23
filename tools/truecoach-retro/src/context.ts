@@ -3,7 +3,7 @@
 import { buildExerciseLookup, type ExerciseLookup } from './exercise-map.js';
 import { groupBlocks, trainingDays } from './log-rules.js';
 import { judgeBlock, type BlockVerdict } from './missed-targets.js';
-import { detectCoachSplit, periodsAround, type Period } from './periods.js';
+import { detectProgrammeSplit, periodsAround, type Period } from './periods.js';
 import { buildSeries, loadedRowsBy, mainLiftRows, type LiftSeries } from './series.js';
 import type { Block, CheckinRecord, ExerciseMapEntry, SetRecord } from './types.js';
 
@@ -26,7 +26,7 @@ export interface Context {
   days: string[];
   judged: JudgedBlock[];
   periods: Period[];
-  coachSplit: { date: string | null; source: 'detected' | 'argument' };
+  programmeSplit: { date: string | null; source: 'detected' | 'argument' };
   mainLifts: MainLift[];
 }
 
@@ -49,10 +49,10 @@ export function buildContext(
   rows: SetRecord[],
   checkins: CheckinRecord[],
   map: readonly ExerciseMapEntry[],
-  coachSplitArg: string | null,
+  programmeSplitArg: string | null,
 ): Context {
   const lookup = buildExerciseLookup(map);
-  const split = coachSplitArg ?? detectCoachSplit(rows);
+  const split = programmeSplitArg ?? detectProgrammeSplit(rows);
   return {
     rows,
     checkins,
@@ -60,7 +60,7 @@ export function buildContext(
     days: trainingDays(rows),
     judged: groupBlocks(rows).map((block) => ({ block, verdict: judgeBlock(block) })),
     periods: periodsAround(split),
-    coachSplit: { date: split, source: coachSplitArg === null ? 'detected' : 'argument' },
+    programmeSplit: { date: split, source: programmeSplitArg === null ? 'detected' : 'argument' },
     mainLifts: mainLiftsOf(rows, lookup),
   };
 }

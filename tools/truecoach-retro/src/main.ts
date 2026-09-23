@@ -1,4 +1,4 @@
-// CLI: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--coach-split YYYY-MM-DD]
+// CLI: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--programme-split YYYY-MM-DD]
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -29,7 +29,7 @@ function main(args: readonly string[]): void {
     out === null
   ) {
     console.error(
-      'usage: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--coach-split YYYY-MM-DD]',
+      'usage: truecoach-retro <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--programme-split YYYY-MM-DD]',
     );
     process.exit(2);
   }
@@ -38,7 +38,7 @@ function main(args: readonly string[]): void {
     readJsonl<SetRecord>(recordsPath),
     readJsonl<CheckinRecord>(checkinsPath),
     map,
-    flag(args, '--coach-split'),
+    flag(args, '--programme-split'),
   );
   writeFileSync(out, renderReport(ctx, new Date().toISOString().slice(0, 10)));
   console.error(`wrote ${out}`);

@@ -91,9 +91,14 @@ export function bodyweightSection(ctx: Context): string {
   const weight = readingsOf(ctx.checkins, 'Weight');
   const waist = readingsOf(ctx.checkins, 'Waist');
   const phases = bodyweightPhases(weight.readings);
-  const dropped = [...weight.dropped, ...waist.dropped].map((r) => r.date).join(', ') || 'none';
+  const dropped = [
+    ...weight.dropped.map((r) => [r.date, 'Weight', num(r.value)]),
+    ...waist.dropped.map((r) => [r.date, 'Waist', num(r.value)]),
+  ].sort((a, b) => a[0]!.localeCompare(b[0]!));
   const body = [
-    `A phase ends where the week-on-week sign of the weekly mean flips and holds ${PHASE_RULE.holdWeeks} weeks, or where check-ins stop for more than ${PHASE_RULE.gapDays} days. Loss or gain means a fitted rate of at least 0.25% of bodyweight a week. A reading more than 20% from its field's median is dropped (dates: ${dropped}).`,
+    `A phase ends where the week-on-week sign of the weekly mean flips and holds ${PHASE_RULE.holdWeeks} weeks, or where check-ins stop for more than ${PHASE_RULE.gapDays} days. Loss or gain means a fitted rate of at least 0.25% of bodyweight a week. A reading more than 20% from its field's median is dropped; each one is listed below so the source can be corrected.`,
+    '',
+    table(['dropped reading: date', 'field', 'value'], dropped),
     '',
     table(
       PHASE_HEADERS,

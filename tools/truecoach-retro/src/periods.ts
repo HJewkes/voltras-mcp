@@ -1,4 +1,4 @@
-// Coaching periods: the log shows the coach change as a switch in how prescriptions are written.
+// Programme periods: the log shows a change of programme as a switch in how prescriptions are written.
 
 import { isWorkRow } from './log-rules.js';
 import type { SetRecord } from './types.js';
@@ -28,7 +28,7 @@ function groupBy(
  * The first training day of the first month where load-first lines ('205 @ 5 x 5') are most of
  * the prescriptions, and that day's own lines are too. `null` when no month qualifies.
  */
-export function detectCoachSplit(rows: readonly SetRecord[]): string | null {
+export function detectProgrammeSplit(rows: readonly SetRecord[]): string | null {
   for (const [month, monthRows] of groupBy(rows, (date) => date.slice(0, 7))) {
     if (loadFirstShare(monthRows) <= 0.5) continue;
     const days = groupBy(monthRows, (date) => date);
@@ -48,8 +48,8 @@ export interface Period {
 export function periodsAround(split: string | null): Period[] {
   if (split === null) return [{ name: 'whole log', from: '0000-01-01', to: '9999-12-31' }];
   return [
-    { name: 'coach 1', from: '0000-01-01', to: split },
-    { name: 'coach 2', from: split, to: '9999-12-31' },
+    { name: 'programme period 1', from: '0000-01-01', to: split },
+    { name: 'programme period 2', from: split, to: '9999-12-31' },
   ];
 }
 
