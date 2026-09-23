@@ -15,6 +15,7 @@ import type { Phase } from '@voltras/workout-analytics';
 import * as analytics from '@voltras/workout-analytics';
 import { detectBounce, detectHesitation } from '../../analytics/rep-faults.js';
 import { readRomIntegrity } from '../../analytics/rom-integrity.js';
+import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
 
 // Stub the SDK so the static import chain (helpers -> errors -> SDK)
 // does not pull in optional native peers.
@@ -1257,6 +1258,7 @@ interface RirRep {
   confidence: string;
   peakVelocity: number;
   meanVelocity: number;
+  inputDomain: string;
   velocityLossPct: number;
 }
 interface RirPayload {
@@ -1480,23 +1482,28 @@ describe('metrics.compute — vbt.rir', () => {
     expect(body.caveat).toContain('no fitted RIR-velocity curve');
     expect(body.final.rir).toBeCloseTo(1.09375, 6);
     expect(body.final.range).toEqual({ low: 0, high: 3 });
-    expect(body.final.confidence).toBe('high');
+    // VW-485: placeholder coefficients never read 'high'; WA's own domain grade survives.
+    expect(body.final.confidence).toBe('low');
+    expect(body.final.inputDomain).toBe('high');
+    expect(body.confidence.modelCalibration.level).toBe('low');
   });
 
   /** A `StoredRirVelocityModel`-shaped row, deliberately untyped like the store returns it. */
   function fittedRirRow(
     interceptMps: number,
     slopeMpsPerRir: number,
+    rirErrorReps = 0.5,
   ): { model: Record<string, unknown> } {
     return {
       model: {
         form: 'linear',
-        version: 'rir-velocity@1.0.0',
+        version: RIR_VELOCITY_MODEL_VERSION,
+        resistanceFamily: 'constant',
         interceptMps,
         slopeMpsPerRir,
         r2: 0.9,
         seeMps: 0.05,
-        rirErrorReps: 0.5,
+        rirErrorReps,
         pointCount: 12,
         setCount: 3,
         sessionCount: 2,
@@ -1526,6 +1533,31 @@ describe('metrics.compute — vbt.rir', () => {
     // Final rep's mean is 0.35 m/s: (0.35 - 0.3) / 0.05 = 1.
     expect(body.final.rir).toBeCloseTo(1, 6);
     expect(body.final.meanVelocity).toBeCloseTo(0.35, 6);
+  });
+
+  it('VW-485: grades a fitted reading by the curve own error, never high past the trust bound', async () => {
+    const read = async (rirErrorReps: number): Promise<RirPayload> => {
+      const state = makeStateWithStore({
+        getSet: vi.fn(async () => decayingSet('set-rir', PEAKS, MEANS)),
+        getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05, rirErrorReps)),
+      });
+      const payload = await callTool(registerAndCapture(state), {
+        pipeline: 'vbt.rir',
+        setId: 'set-rir',
+      });
+      return parsePayload(payload) as RirPayload;
+    };
+
+    const tight = await read(1.5);
+    const wide = await read(1.51);
+
+    // Both final reads sit inside the fitted RIR range, so only the fit error differs.
+    expect(tight.final.inputDomain).toBe('high');
+    expect(wide.final.inputDomain).toBe('high');
+    expect(tight.final.confidence).toBe('high');
+    expect(tight.confidence.modelCalibration.level).toBe('high');
+    expect(wide.final.confidence).toBe('medium');
+    expect(wide.confidence.modelCalibration.level).toBe('medium');
   });
 
   it('VW-483: reads the fitted curve with mean velocity, where the peak over-stated RIR', async () => {

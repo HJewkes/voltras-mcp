@@ -52,7 +52,13 @@ import {
 } from '../analytics/load-drift.js';
 import { inferExerciseSetups } from '../store/exercise-setups.js';
 import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
-import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type JsonObject,
+  type SetPurpose,
+  type StoredRep,
+  type StoredSet,
+} from '../store/types.js';
 import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
@@ -88,6 +94,9 @@ import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
 import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
+import { cueRecordFor } from '../state/effort-cue.js';
+import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
+import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
 import { isModeRevertStillActive } from './device-handler-helpers.js';
 import { stopMotorForRest, type SetStopOutcome } from './device-exit.js';
@@ -118,6 +127,8 @@ type SetCapture = Pick<
   | 'assistMode'
   | 'settingsHash'
   | 'lifter'
+  | 'effortContext'
+  | 'cueRecord'
 >;
 
 class ToolError extends Error {
@@ -554,11 +565,14 @@ async function startSet(
     // set, which this slot cannot give while one is recording.
     if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
       assertEngageAllowed(state, slot, slotId, session.sessionId);
-      return upgradeAutoArmedSet(state, slotId, {
+      const upgraded = upgradeAutoArmedSet(state, slotId, {
         watch: await resolveWatchThresholds(state, session, watch),
         setPurpose,
         lifter,
       });
+      // The upgrade can change the watch, exercise or lifter the context was pinned from.
+      await repinEffortContext(state, slot.live, upgraded.setId);
+      return upgraded;
     }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
@@ -628,6 +642,7 @@ async function startSet(
   }
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
+  await onSetStarted(state, { slotId, setId });
   // Push a lifecycle event so a channel-enabled host wakes the model on the
   // set boundary instead of forcing it to poll. Fire-and-forget when the
   // host didn't opt in to channels (see channel-publisher.ts).
@@ -997,6 +1012,11 @@ export async function finalizeSet(
   // — those are intentional close moments where the analytics output is
   // already the right shape.
   const dropTrailingInProgress = opts.partialReason === 'inactivity_timeout';
+  // The bridge checks reps 1 to N-1 for a setting change; the last rep is checked here.
+  const lastRep = slot.live.set.reps.at(-1);
+  if (lastRep !== undefined) {
+    markSettingChange(state, slot.live, setId, lastRep.repNumber, slot.live.snapshotDevice());
+  }
   const finalized = slot.live.endSet(undefined, { dropTrailingInProgress });
   if (finalized === undefined) {
     return undefined;
@@ -1421,15 +1441,10 @@ async function updateStoredSet(
   state: ServerState,
   input: z.infer<typeof SetUpdateInput>,
 ): Promise<{ setId: string; lifter: string | null; exerciseId: string | null }> {
-  const stored = await state.store.getSet(input.setId);
-  if (stored === undefined) {
+  const updated = await state.store.patchSetLifter(input.setId, input.lifter);
+  if (updated === undefined) {
     throw new ToolError('SET_NOT_FOUND', `No set found with id ${JSON.stringify(input.setId)}.`);
   }
-  const updated: StoredSet = { ...stored };
-  if (input.lifter !== null) updated.lifter = input.lifter;
-  else delete updated.lifter;
-
-  await state.store.putSet(updated);
   await resyncOwnerBaseline(state, updated);
   return {
     setId: updated.id,
@@ -1641,5 +1656,18 @@ function buildSetCapture(
       : {}),
     ...settings,
     ...(settingsHash !== undefined ? { settingsHash } : {}),
+    ...(active.effortContext !== undefined
+      ? { effortContext: persistedEffortContext(active.effortContext, active.settingChangedAtRep) }
+      : {}),
+    // VW-544: only the effort cue writes a record; with the flag off the stored set is unchanged.
+    ...(state.config?.effortCue === 'on' ? { cueRecord: cueRecordFor(active, device) } : {}),
   };
+}
+
+/** The pinned context as stored: the set's first changed-setting rep rides inside it. */
+function persistedEffortContext(
+  context: JsonObject,
+  settingChangedAtRep: number | undefined,
+): JsonObject {
+  return settingChangedAtRep === undefined ? context : { ...context, settingChangedAtRep };
 }

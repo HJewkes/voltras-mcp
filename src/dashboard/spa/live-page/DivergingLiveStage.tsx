@@ -184,7 +184,7 @@ export function DivergingLiveStage({
     stop: live.fatigueStop,
     verdict: fatigueVerdict,
   });
-  const message = exertionMessage(live.velocityLossPct);
+  const message = exertionMessage(live.velocityLossPct, live.fatigueStop.pct);
 
   return (
     <LiveAuraFrame category={verdict} style={{ flex: 1, borderRadius: 0, borderWidth: 0 }}>

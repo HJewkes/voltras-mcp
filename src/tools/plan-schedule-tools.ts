@@ -39,8 +39,10 @@ import {
 } from '../schemas/plan.js';
 import type { ServerState } from '../state/server-state.js';
 import {
+  LOCAL_USER_ID,
   type AppendBlockScheduleInput,
   type BlockScheduleKind,
+  type ScheduledBlock,
   type StoredBlockSchedule,
   type StoredTrainingBlock,
   type StoredTrainingWeek,
@@ -68,7 +70,8 @@ const PLAN_BLOCK_UPDATE_DESCRIPTION =
   'the start never moves here (that is plan.block.schedule). Refused on a block that has ' +
   'ended, when a current block would be shortened below the week it is in, and when the ' +
   'longer block would overlap another dated block (the error names it; move that block ' +
-  'first). An undated block just takes the edit. `warnings[]` carries the ' +
+  'first). An undated block just takes the edit. `targetsAffected` lists the goal targets whose ' +
+  'end moved with a resize. `warnings[]` carries the ' +
   '`meso_length_grew_mid_block` advisory when a block grows after its weeks were built.';
 
 const PLAN_BLOCK_SCHEDULE_DESCRIPTION =
@@ -82,7 +85,9 @@ const PLAN_BLOCK_SCHEDULE_DESCRIPTION =
   'overlap another dated block (in any active program) is refused and the error names that ' +
   'block. Dates must follow the program order: block 2 cannot start before block 1. ' +
   'Setting the date it already has writes nothing. Returns every row written with the dates ' +
-  'it moved from and to. Goal targets set for a block follow its dates.';
+  'it moved from and to. Goal targets set for a moved block follow its dates, and ' +
+  '`targetsAffected` lists them (`blockId`, `targetId`, `metric`, `exerciseId`); their committed ' +
+  'and stretch numbers do not change.';
 
 const PLAN_BLOCK_SCHEDULE_HISTORY_DESCRIPTION =
   "Every schedule change a block has had, oldest first: each row's kind (planned, moved, " +
@@ -117,7 +122,8 @@ const PLAN_WEEK_SKIP_DESCRIPTION =
   'Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the ' +
   'lifter. Refused for a block that ' +
   'is not current, for a week that has not started, for a week already skipped, and for an ' +
-  'extend that would run into the next dated block (the error names it).';
+  'extend that would run into the next dated block (the error names it). After an extend, ' +
+  '`targetsAffected` lists the goal targets whose end moved; a hold moves none.';
 
 export function registerPlanScheduleTools(
   _server: McpServer,
@@ -280,16 +286,30 @@ async function isArchived(
   return cache.get(programId) === true;
 }
 
+/** {@link placedBlocks} over a schedule derive's view, in the same order. */
+export function placedIn(world: readonly ScheduledBlock[]): PlacedBlock[] {
+  return world
+    .filter((entry) => !entry.programArchived && isDated(entry.live))
+    .map((entry) => placed(entry.block, entry.live as DatedRow))
+    .sort((a, b) => a.startsOn.localeCompare(b.startsOn) || a.blockId.localeCompare(b.blockId));
+}
+
+/** One block and its live row in a schedule derive's view. */
+export function scheduledBlock(world: readonly ScheduledBlock[], blockId: string): ScheduledBlock {
+  const found = world.find((entry) => entry.block.id === blockId);
+  if (found === undefined) {
+    throw new ToolError('NOT_FOUND', `No training block with id "${blockId}" exists.`);
+  }
+  return found;
+}
+
 /** I2 and I7 over the world as it would be once `proposed` is written. */
-async function assertPlacement(
-  state: ServerState,
+function assertPlacement(
+  placements: readonly PlacedBlock[],
   proposed: readonly PlacedBlock[],
-): Promise<void> {
+): void {
   const changed = new Set(proposed.map((block) => block.blockId));
-  const world = [
-    ...(await placedBlocks(state)).filter((b) => !changed.has(b.blockId)),
-    ...proposed,
-  ];
+  const world = [...placements.filter((b) => !changed.has(b.blockId)), ...proposed];
   const conflict = placementConflict(world, changed);
   if (conflict === null) return;
   const { block, other } = conflict;
@@ -333,6 +353,34 @@ function rowView(row: StoredBlockSchedule): { seq: number; kind: string; changed
   return { seq: row.seq, kind: row.kind, changedBy: row.changedBy };
 }
 
+/** A live goal target set for a block whose dates a write just changed (VW-477). */
+interface AffectedTarget {
+  blockId: string;
+  targetId: string;
+  metric: string;
+  exerciseId: string | null;
+}
+
+/**
+ * The live targets set for these blocks. Their weeks, deloads and end follow the block's live
+ * schedule, so they moved with it; their committed and stretch numbers did not.
+ */
+async function targetsAffected(
+  state: ServerState,
+  blockIds: readonly string[],
+): Promise<AffectedTarget[]> {
+  if (blockIds.length === 0) return [];
+  const moved = new Set(blockIds);
+  return (await state.store.listGoalTargets({ userId: LOCAL_USER_ID }))
+    .filter((target) => target.blockId !== undefined && moved.has(target.blockId))
+    .map((target) => ({
+      blockId: target.blockId as string,
+      targetId: target.id,
+      metric: target.metric,
+      exerciseId: target.exerciseId ?? null,
+    }));
+}
+
 // --- dating a block (plan.block.create and plan.block.schedule) ---
 
 /**
@@ -346,6 +394,16 @@ export async function datingRow(
   today: string,
   reason?: string,
 ): Promise<AppendBlockScheduleInput> {
+  return datingRowIn(await placedBlocks(state), block, startsOn, today, reason);
+}
+
+function datingRowIn(
+  placements: readonly PlacedBlock[],
+  block: StoredTrainingBlock,
+  startsOn: string,
+  today: string,
+  reason: string | undefined,
+): AppendBlockScheduleInput {
   assertMonday(startsOn);
   const row = newRow(block.id, {
     startsOn,
@@ -360,7 +418,7 @@ export async function datingRow(
       `Starting on ${startsOn}, "${block.name}" would already be over.`,
     );
   }
-  await assertPlacement(state, [placed(block, asDated(row))]);
+  assertPlacement(placements, [placed(block, asDated(row))]);
   return row;
 }
 
@@ -407,20 +465,17 @@ async function updateBlock(
   warnings: PlanWarning[];
   calendar: BlockCalendar;
   scheduleRow: ReturnType<typeof rowView> | null;
+  targetsAffected: AffectedTarget[];
 }> {
-  const previous = await requireBlock(state, input.blockId);
-  const block: StoredTrainingBlock = {
-    ...previous,
-    ...(input.name !== undefined ? { name: input.name } : {}),
-    ...(input.focus !== undefined ? { focus: input.focus } : {}),
-    ...(input.notes !== undefined ? { notes: input.notes } : {}),
-    ...(input.weeksCount !== undefined ? { weeksCount: input.weeksCount } : {}),
-  };
   const today = todayLocal();
-  const resize = await resizeRow(state, previous, block, today, input.reason);
-  const written =
-    resize === null ? null : await state.store.putTrainingBlockWithSchedule(block, resize);
-  if (resize === null) await state.store.putTrainingBlock(block);
+  const { rows, result } = await state.store.deriveBlockSchedules((world) => {
+    const { block: previous, live } = scheduledBlock(world, input.blockId);
+    const block = patchedBlock(previous, input);
+    const resize = resizeRow(world, { previous, block, live }, today, input.reason);
+    return { block, rows: resize === null ? [] : [resize], result: { previous, block } };
+  });
+  const { previous, block } = result;
+  const written = rows[0] ?? null;
   const weeks = await state.store.getTrainingWeeksForBlock(block.id);
   return {
     block,
@@ -431,18 +486,36 @@ async function updateBlock(
     }),
     calendar: await calendarOf(state, block.id, today),
     scheduleRow: written === null ? null : rowView(written),
+    targetsAffected: await targetsAffected(state, written === null ? [] : [block.id]),
   };
 }
 
-/** The 'resized' row a length change on a dated block needs (I6), or null when none is. */
-async function resizeRow(
-  state: ServerState,
+function patchedBlock(
   previous: StoredTrainingBlock,
-  block: StoredTrainingBlock,
+  input: z.infer<typeof PlanBlockUpdateInput>,
+): StoredTrainingBlock {
+  return {
+    ...previous,
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.focus !== undefined ? { focus: input.focus } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.weeksCount !== undefined ? { weeksCount: input.weeksCount } : {}),
+  };
+}
+
+interface BlockEdit {
+  previous: StoredTrainingBlock;
+  block: StoredTrainingBlock;
+  live: StoredBlockSchedule | undefined;
+}
+
+/** The 'resized' row a length change on a dated block needs (I6), or null when none is. */
+function resizeRow(
+  world: readonly ScheduledBlock[],
+  { previous, block, live }: BlockEdit,
   today: string,
   reason: string | undefined,
-): Promise<AppendBlockScheduleInput | null> {
-  const live = await state.store.getLiveBlockSchedule(block.id);
+): AppendBlockScheduleInput | null {
   if (!isDated(live) || previous.weeksCount === block.weeksCount) return null;
   const calendar = blockCalendar(live, [], today);
   if (calendar.state === 'ended') throw endedError(block);
@@ -460,7 +533,7 @@ async function resizeRow(
     kind: 'resized',
     ...(reason !== undefined ? { reason } : {}),
   });
-  await assertPlacement(state, [placed(block, asDated(row))]);
+  assertPlacement(placedIn(world), [placed(block, asDated(row))]);
   return row;
 }
 
@@ -487,12 +560,15 @@ async function scheduleBlock(
   block: StoredTrainingBlock;
   calendar: BlockCalendar;
   rows: { blockId: string; seq: number; kind: string; from: DateRange; to: DateRange }[];
+  targetsAffected: AffectedTarget[];
 }> {
-  const block = await requireBlock(state, input.blockId);
   const today = todayLocal();
-  const changes = await scheduleChanges(state, block, input, today);
-  const written =
-    changes.length === 0 ? [] : await state.store.appendBlockSchedules(changes.map((c) => c.next));
+  const { rows: written, result } = await state.store.deriveBlockSchedules((world) => {
+    const { block, live } = scheduledBlock(world, input.blockId);
+    const changes = scheduleChanges(world, { block, live }, input, today);
+    return { rows: changes.map((c) => c.next), result: { block, changes } };
+  });
+  const { block, changes } = result;
   const rows = written.map((row, index) => ({
     blockId: row.blockId,
     seq: row.seq,
@@ -500,20 +576,27 @@ async function scheduleBlock(
     from: rangeOf(changes[index].previous),
     to: rangeOf(row),
   }));
-  return { block, calendar: await calendarOf(state, block.id, today), rows };
+  return {
+    block,
+    calendar: await calendarOf(state, block.id, today),
+    rows,
+    targetsAffected: await targetsAffected(
+      state,
+      written.map((row) => row.blockId),
+    ),
+  };
 }
 
 function rangeOf(row: StoredBlockSchedule | undefined): DateRange {
   return row === undefined ? null : scheduleRange(row);
 }
 
-async function scheduleChanges(
-  state: ServerState,
-  block: StoredTrainingBlock,
+function scheduleChanges(
+  world: readonly ScheduledBlock[],
+  { block, live }: Omit<ScheduledBlock, 'programArchived'>,
   input: z.infer<typeof PlanBlockScheduleInput>,
   today: string,
-): Promise<ScheduleChange[]> {
-  const live = await state.store.getLiveBlockSchedule(block.id);
+): ScheduleChange[] {
   const reason = input.reason !== undefined ? { reason: input.reason } : {};
   if (isDated(live)) assertUpcoming(block, live, today);
   if (input.startsOn === null) {
@@ -527,24 +610,22 @@ async function scheduleChanges(
     return [{ previous: live, next }];
   }
   if (!isDated(live)) {
-    return [
-      { previous: live, next: await datingRow(state, block, input.startsOn, today, input.reason) },
-    ];
+    const next = datingRowIn(placedIn(world), block, input.startsOn, today, input.reason);
+    return [{ previous: live, next }];
   }
   if (live.startsOn === input.startsOn) return [];
-  return moveChanges(state, block, live, { ...input, startsOn: input.startsOn }, today);
+  return moveChanges(world, { block, live }, { ...input, startsOn: input.startsOn }, today);
 }
 
-async function moveChanges(
-  state: ServerState,
-  block: StoredTrainingBlock,
-  live: DatedRow,
+function moveChanges(
+  world: readonly ScheduledBlock[],
+  { block, live }: { block: StoredTrainingBlock; live: DatedRow },
   input: z.infer<typeof PlanBlockScheduleInput> & { startsOn: string },
   today: string,
-): Promise<ScheduleChange[]> {
+): ScheduleChange[] {
   assertMonday(input.startsOn);
   const shiftDays = Math.round((Date.parse(input.startsOn) - Date.parse(live.startsOn)) / DAY_MS);
-  const later = input.cascade === 'later_blocks' ? await laterDatedBlocks(state, block) : [];
+  const later = input.cascade === 'later_blocks' ? laterDatedBlocks(world, block) : [];
   const moves = [{ block, live }, ...later];
   const changes = moves.map(({ block: moving, live: row }) => {
     assertUpcoming(moving, row, today);
@@ -563,22 +644,22 @@ async function moveChanges(
     }
     return { previous: row, next, moving };
   });
-  await assertPlacement(
-    state,
+  assertPlacement(
+    placedIn(world),
     changes.map((change) => placed(change.moving, asDated(change.next))),
   );
   return changes.map(({ previous, next }) => ({ previous, next }));
 }
 
 /** The dated blocks after `block` in its program, in program order. */
-async function laterDatedBlocks(
-  state: ServerState,
+function laterDatedBlocks(
+  world: readonly ScheduledBlock[],
   block: StoredTrainingBlock,
-): Promise<{ block: StoredTrainingBlock; live: DatedRow }[]> {
+): { block: StoredTrainingBlock; live: DatedRow }[] {
   const out: { block: StoredTrainingBlock; live: DatedRow }[] = [];
-  for (const other of await state.store.getTrainingBlocksForProgram(block.programId)) {
+  for (const { block: other, live } of world) {
+    if (other.programId !== block.programId) continue;
     if (other.orderIndex <= block.orderIndex || other.id === block.id) continue;
-    const live = await state.store.getLiveBlockSchedule(other.id);
     if (isDated(live)) out.push({ block: other, live });
   }
   return out;
@@ -651,7 +732,7 @@ export async function trainingDaysBetween(
 ): Promise<string[]> {
   if (startsOn === null || endsOn === null) return [];
   // A session is filed by the local date it ENDED on; widen the start-time window by a day each side.
-  const ends = await state.store.listSessionEndTimes({
+  const ends = await state.store.listTrainingDayInstants({
     from: new Date(Date.parse(startsOn) - DAY_MS).toISOString(),
     to: new Date(Date.parse(endsOn) + 2 * DAY_MS).toISOString(),
   });
@@ -690,13 +771,32 @@ async function skipWeek(
 ): Promise<{
   weekOf: string;
   calendar: BlockCalendar;
+  targetsAffected: AffectedTarget[];
   scheduleRow: ReturnType<typeof rowView>;
 }> {
-  const block = await requireBlock(state, input.blockId);
   const today = todayLocal();
-  const live = await state.store.getLiveBlockSchedule(block.id);
-  const week = skippableWeek(block, live, input.week, today);
-  const next = newRow(block.id, {
+  const { rows, result: weekOf } = await state.store.deriveBlockSchedules((world) => {
+    const { block, live } = scheduledBlock(world, input.blockId);
+    const week = skippableWeek(block, live, input.week, today);
+    const next = skipRow(block.id, week, input);
+    if (input.mode === 'extend') assertPlacement(placedIn(world), [placed(block, asDated(next))]);
+    return { rows: [next], result: week.startsOn };
+  });
+  return {
+    weekOf,
+    calendar: await calendarOf(state, input.blockId, today),
+    scheduleRow: rowView(rows[0]),
+    // A hold keeps every week where it was; an extend moves the block's end.
+    targetsAffected: await targetsAffected(state, input.mode === 'extend' ? [input.blockId] : []),
+  };
+}
+
+function skipRow(
+  blockId: string,
+  week: CalendarWeek & { live: DatedRow },
+  input: z.infer<typeof PlanWeekSkipInput>,
+): AppendBlockScheduleInput {
+  return newRow(blockId, {
     startsOn: week.live.startsOn,
     weeksCount: week.live.weeksCount,
     skips: [
@@ -711,13 +811,6 @@ async function skipWeek(
     changedBy: input.mode === undefined ? 'coach-default' : 'user',
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
   });
-  if (input.mode === 'extend') await assertPlacement(state, [placed(block, asDated(next))]);
-  const written = await state.store.appendBlockSchedule(next);
-  return {
-    weekOf: week.startsOn,
-    calendar: await calendarOf(state, block.id, today),
-    scheduleRow: rowView(written),
-  };
 }
 
 function skippableWeek(

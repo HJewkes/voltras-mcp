@@ -48,6 +48,9 @@ function makeSession(overrides: Partial<StoredSession> = {}): StoredSession {
     startedAt: '2025-01-01T00:00:00.000Z',
     exerciseId: 'squat',
     exerciseName: 'Back Squat',
+    // VW-489: the store's reads are training-only by default, so a fixture
+    // meaning "the owner's real history" has to say so.
+    kind: 'training',
     ...overrides,
   };
 }
@@ -141,8 +144,10 @@ describe('SqliteSessionStore', () => {
       // `source` comes back even though the write omitted it: the v7 column is
       // NOT NULL DEFAULT 'local', so every row genuinely has a provenance. That
       // is the point of the column — an unmarked row is what let mock-adapter
-      // sets pass as real hardware.
-      expect(fetched).toEqual({ ...set, source: 'local' });
+      // sets pass as real hardware. `kind` comes back for the same reason from
+      // the other direction (VW-489): `putSet` stamps it from the session, so a
+      // set can never disagree with the session it belongs to.
+      expect(fetched).toEqual({ ...set, source: 'local', kind: 'training' });
     });
 
     it('returns undefined from getSet when id is missing', async () => {
@@ -410,7 +415,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     // `/var/folders/...` paths nearly always contain a '3') while failing on
     // CI's short `/tmp/...`. It had also gone stale before: SCHEMA_VERSION is 22.
     expect(e.message).toContain('user_version=99');
-    expect(e.message).toMatch(/expected 34\b/);
+    expect(e.message).toMatch(/expected 41\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -452,7 +457,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(34);
+      expect(version.user_version).toBe(41);
     } finally {
       await store.close();
     }
@@ -489,7 +494,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       );
       expect(names).toContain('is_warmup');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(34);
+      expect(version.user_version).toBe(41);
       // The pre-flag row backfills as a working set (no isWarmup key on read).
       expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
@@ -545,7 +550,7 @@ describe('SqliteSessionStore.open() error paths', () => {
   it('opens an existing DB with matching user_version', async () => {
     const dbPath = join(workdir, 'reopen.sqlite');
     const a = SqliteSessionStore.open(dbPath);
-    await a.putSession({ id: 'sess-r', startedAt: '2025-01-01T00:00:00.000Z' });
+    await a.putSession({ kind: 'training', id: 'sess-r', startedAt: '2025-01-01T00:00:00.000Z' });
     await a.close();
 
     const b = SqliteSessionStore.open(dbPath);
@@ -660,7 +665,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
       // A v4 DB runs the whole forward chain in one open, so it lands on the
       // CURRENT version, not on v5. v5 is a waypoint, never a resting state.
-      expect(version.user_version).toBe(34);
+      expect(version.user_version).toBe(41);
     } finally {
       await store.close();
     }
@@ -1030,7 +1035,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       expect(tables).toContain('isometric_measurements');
       expect(tables).toContain('isometric_trials');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(34);
+      expect(version.user_version).toBe(41);
     } finally {
       await store.close();
     }

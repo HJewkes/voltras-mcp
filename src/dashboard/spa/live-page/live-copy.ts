@@ -20,9 +20,10 @@
  * message — one athlete, one verdict — and two copies of a format string is how one
  * of them ends up stale.
  */
-export function exertionMessage(velocityLossPct: number | null): string {
+export function exertionMessage(velocityLossPct: number | null, stopPct: number): string {
   if (velocityLossPct === null) return 'warming up — velocity loss needs a second rep';
-  return `VL${Math.round(velocityLossPct)}% · approaching threshold — 1–2 productive reps left`;
+  // Loss only: a reps-left claim read off velocity loss is the conversion VW-302 forbids (VW-485).
+  return `VL${Math.round(velocityLossPct)}% · stop at VL${Math.round(stopPct)}%`;
 }
 
 /**

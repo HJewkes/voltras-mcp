@@ -35,6 +35,7 @@ function exerciseView(overrides: Partial<PlanExerciseView> = {}): PlanExerciseVi
     name: 'Cable Row',
     orderIndex: 0,
     targetSets: 3,
+    restLearning: true,
     ...overrides,
   };
 }
@@ -194,7 +195,6 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
     bestRepVelocity: 0.82,
     maxVelocityLossPct: 18.4,
     verdict: null,
-    fatigue: null,
     verdictSetIndex: null,
     sets: [],
     progression: progression(),

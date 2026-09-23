@@ -89,6 +89,8 @@ export interface GoalReachRead {
 
 export interface MesoMilestoneInput {
   target: StoredGoalTarget;
+  /** Where the target's week 1 starts: its block's start, else its measured start (VW-477). */
+  weekOneAt: string;
   band: GoalBand;
   weeks: readonly GoalBandWeek[];
   readings: readonly BlockReading[];
@@ -176,12 +178,12 @@ export function aheadOfEdge(stretchEdge: number, value: number, band: GoalBand):
 
 /** Matched readings taken inside the block, oldest first, each with the week it fell in. */
 export function blockReadingsOf(
-  target: StoredGoalTarget,
+  weekOneAt: string,
   weeks: readonly GoalBandWeek[],
   matched: readonly { ts: string; value: number }[],
 ): BlockReading[] {
   return matched.flatMap((actual) => {
-    const position = blockWeekAt(target.startMeasuredAt, actual.ts) - 1;
+    const position = blockWeekAt(weekOneAt, actual.ts) - 1;
     return position >= 0 && position < weeks.length ? [{ value: actual.value, position }] : [];
   });
 }
@@ -262,7 +264,7 @@ function atPrecision(metric: StoredGoalMetric, value: number): number {
 export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
   const { target, band, weeks, readings } = input;
   const weekCount = weeks.length;
-  const currentWeek = Math.max(1, blockWeekAt(target.startMeasuredAt, input.now));
+  const currentWeek = Math.max(1, blockWeekAt(input.weekOneAt, input.now));
   const last = readings[readings.length - 1];
   const ended = currentWeek > weekCount;
   return {

@@ -122,7 +122,7 @@ describe('mrvguard.check', () => {
   beforeEach(async () => {
     h = setup();
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
-      await h.store.putSession({ id: s, startedAt: new Date().toISOString() });
+      await h.store.putSession({ kind: 'training', id: s, startedAt: new Date().toISOString() });
     }
   });
 

@@ -101,6 +101,15 @@ function addToolVocabulary(tool: ToolLike, into: Set<string>): void {
  */
 export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'active_mode',
+  // VW-489: the lists `session.mark_kind` returns, and the count a real range must
+  // declare. Separating what was newly classified from what was FLIPPED is the whole
+  // safety of a bulk day or range mark.
+  'alreadyThisKind',
+  'newlyClassified',
+  'reclassified',
+  'skippedAlreadyMarked',
+  'rederiveFailed',
+  'expectSessions',
   'adoptedReps',
   'analytics_count',
   'anchorSelection',
@@ -124,6 +133,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'dashboardAvailable',
   'dashboardDisabledReason',
   'dashboardUrl',
+  // VW-505: when the lifter declared the commitment `accountability.state` reports.
+  'declaredAt',
   'disconnect_notice',
   'diveBomb',
   'diveBombCount',
@@ -134,6 +145,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'echoedAfterMs',
   // VW-294: the warm-up ramp's own field, on `isometric.measure_max`'s `warmup`.
   'effortLevel',
+  // VW-544: `server.health` reports which rule decides the mid-set ending cue.
+  'effortCue',
   'event_type',
   // VW-296: the joint-angle gate on `isometric.measure_hold`'s `jointAngleGate`.
   'jointAngleGate',
@@ -532,14 +545,31 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'endsOn',
   'planning.due',
   'planning.prompt',
+  // VW-477: the goal targets whose block dates a schedule write moved.
+  'targetsAffected',
+  // VW-478: report.weekly's adherence over the dated weeks, and what changed
+  // about a block's dates inside the range.
+  'adherence.weeks',
+  'touched_weeks',
+  'scheduleChanges',
+  // VW-479: the two refusals a dated TrueCoach import can return.
+  'BLOCK_STARTED',
+  'SCHEDULE_OVERLAP',
+  // VW-503: result fields the coach skill's generated inventory cites. The
+  // dotted three are members whose owner is already listed, and a dotted name
+  // is not derivable from its owner — normalization collapses the whole token.
+  'dbPath',
+  'blockBoundary.realignment',
+  'history.fact',
+  'recompReAsk.proposal',
 ];
 
 /**
  * The `pipeline` selector on `metrics.compute`. Its schema declares a bare
- * string — the seventeen accepted literals exist only in the description — so
+ * string — the eighteen accepted literals exist only in the description — so
  * these cannot be harvested and are listed instead.
  *
- * All seventeen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
+ * All eighteen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
  * `src/__tests__/docs/check-docs.test.ts`. Nine were missing, which mattered
  * once `scripts/check-docs.mjs` started reading this list: seven of the
  * sixteen open with a tool namespace (`session.`), so a partial list makes a
@@ -560,6 +590,7 @@ export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
   'session.readiness',
   'session.strength',
   'session.volume',
+  'strength.e1rm',
   'vbt.profile',
   'vbt.rir',
   'vbt.set',

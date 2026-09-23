@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type Config } from '../../config.js';
 import { ExerciseService } from '../../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
@@ -274,3 +274,199 @@ async function rowCounts(): Promise<{ templates: number; exercises: number }> {
   }
   return { templates, exercises };
 }
+
+// VW-537: the import is the third write path. Written rests stay fixed (OWNER).
+describe('truecoach.import_week goal and rest', () => {
+  const byExternalId = (item: number) => `tc:item:${item}`;
+
+  async function plannedRow(item: number) {
+    const [block] = await store.getTrainingBlocksForProgram('prog-1');
+    for (const week of await store.getTrainingWeeksForBlock(block!.id)) {
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        const rows = await store.getPlannedExercisesForTemplate(template.id);
+        const found = rows.find((r) => r.externalId === byExternalId(item));
+        if (found !== undefined) return found;
+      }
+    }
+    throw new Error(`no planned row for item ${item}`);
+  }
+
+  function withInfo(item: number, info: string): RawWorkoutsPage {
+    const page = JSON.parse(JSON.stringify(fixture('workouts-page-basic'))) as RawWorkoutsPage;
+    const row = (page.workout_items as { id: number; info: string }[]).find((i) => i.id === item);
+    row!.info = info;
+    return page;
+  }
+
+  it('fixes a written rest and learns a missing one on a new row', async () => {
+    await importWeek(state, { ...RANGE }, { fetchPages: pages(fixture('workouts-page-basic')) });
+
+    expect(await plannedRow(700001)).toMatchObject({
+      goalKind: 'rep_range',
+      restSec: 90,
+      restLearning: false,
+    });
+    const amrap = await plannedRow(700003);
+    expect(amrap.goalKind).toBeUndefined();
+    expect(amrap.restSec).toBeUndefined();
+    expect(amrap.restLearning).toBe(true);
+  });
+
+  it('keeps a local goal and learning flag through a re-import', async () => {
+    const fetchPages = pages(fixture('workouts-page-basic'));
+    await importWeek(state, { ...RANGE }, { fetchPages });
+    const row = await plannedRow(700001);
+    await store.putPlannedExercise({
+      ...row,
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restLearning: true,
+    });
+
+    await importWeek(state, { ...RANGE }, { fetchPages });
+
+    expect(await plannedRow(700001)).toMatchObject({
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 90,
+      restLearning: true,
+    });
+  });
+
+  it('turns learning on when the coach removes the rest of a fixed-rest row', async () => {
+    await importWeek(state, { ...RANGE }, { fetchPages: pages(fixture('workouts-page-basic')) });
+    expect((await plannedRow(700001)).restLearning).toBe(false);
+
+    await importWeek(
+      state,
+      { ...RANGE },
+      { fetchPages: pages(withInfo(700001, '3 x 8-10 @ 135lb')) },
+    );
+
+    const row = await plannedRow(700001);
+    expect(row.restSec).toBeUndefined();
+    expect(row.restLearning).toBe(true);
+  });
+
+  it('refuses the whole import before any write when a row breaks the shared rules', async () => {
+    await expect(
+      importWeek(state, { ...RANGE }, { fetchPages: pages(withInfo(700001, '3 x 12-8')) }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+      message:
+        'TrueCoach exercise in "Upper A": The top of the rep range (8) must be at least the ' +
+        'bottom (12).',
+      field: 'targetRepsHigh',
+    });
+    expect(await store.getTrainingBlocksForProgram('prog-1')).toEqual([]);
+  });
+});
+
+describe('truecoach.import_week dates its block (VW-479)', () => {
+  const W36: RawWorkoutsPage = {
+    workouts: [{ id: 11, title: 'Upper A', due: '2026-08-31' }],
+    workout_items: [{ id: 21, workout_id: 11, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W38: RawWorkoutsPage = {
+    workouts: [{ id: 12, title: 'Upper B', due: '2026-09-14' }],
+    workout_items: [{ id: 22, workout_id: 12, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W39: RawWorkoutsPage = {
+    workouts: [{ id: 13, title: 'Upper C', due: '2026-09-21' }],
+    workout_items: [{ id: 23, workout_id: 13, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+
+  const WIDE = { from: '2026-08-31', to: '2026-09-27' };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-19T18:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function importBlock() {
+    const [block] = await store.getTrainingBlocksForProgram('prog-1');
+    return block!;
+  }
+
+  it('plans the block at the earliest imported Monday, with an empty row for the missing week', async () => {
+    const result = (await importWeek(state, WIDE, { fetchPages: pages(W36, W38) })) as {
+      schedule: { seq: number; kind: string };
+    };
+
+    const block = await importBlock();
+    expect(result.schedule).toEqual({ seq: 1, kind: 'planned' });
+    expect(await store.getLiveBlockSchedule(block.id)).toMatchObject({
+      startsOn: '2026-08-31',
+      weeksCount: 3,
+      changedBy: 'import',
+    });
+    const weeks = await store.getTrainingWeeksForBlock(block.id);
+    expect(weeks.map((week) => week.name)).toEqual(['2026-W36', '2026-W37', '2026-W38']);
+    expect(await store.getWorkoutTemplatesForWeek(weeks[1]!.id)).toEqual([]);
+    expect((await store.getWorkoutTemplatesForWeek(weeks[2]!.id)).map((t) => t.name)).toEqual([
+      'Upper B',
+    ]);
+  });
+
+  it('writes no schedule row when the same range is imported again', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W36, W38) });
+
+    const again = (await importWeek(state, WIDE, { fetchPages: pages(W36, W38) })) as {
+      schedule: null;
+    };
+
+    expect(again.schedule).toBeNull();
+    expect(await store.listBlockScheduleHistory((await importBlock()).id)).toHaveLength(1);
+  });
+
+  it('resizes the block when a later week is imported', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W36, W38) });
+
+    const grown = (await importWeek(state, WIDE, { fetchPages: pages(W39) })) as {
+      schedule: { seq: number; kind: string };
+    };
+
+    const block = await importBlock();
+    expect(grown.schedule).toEqual({ seq: 2, kind: 'resized' });
+    expect(await store.getLiveBlockSchedule(block.id)).toMatchObject({ weeksCount: 4 });
+    expect(block.weeksCount).toBe(4);
+  });
+
+  it('refuses to re-date a block that has already started', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W38) });
+
+    await expect(importWeek(state, WIDE, { fetchPages: pages(W36) })).rejects.toMatchObject({
+      code: 'BLOCK_STARTED',
+    });
+    expect(await store.listBlockScheduleHistory((await importBlock()).id)).toHaveLength(1);
+  });
+
+  it('refuses an import that would overlap another dated block, and names it', async () => {
+    await store.putTrainingBlock({
+      id: 'other',
+      programId: 'prog-1',
+      orderIndex: 5,
+      name: 'Block 2 — Orientation',
+      weeksCount: 2,
+    });
+    await store.appendBlockSchedule({
+      blockId: 'other',
+      startsOn: '2026-09-07',
+      weeksCount: 2,
+      skips: [],
+      kind: 'planned',
+      changedBy: 'user',
+      declaredAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    await expect(importWeek(state, WIDE, { fetchPages: pages(W36, W38) })).rejects.toMatchObject({
+      code: 'SCHEDULE_OVERLAP',
+      message: expect.stringContaining('Block 2 — Orientation') as unknown as string,
+    });
+    expect(await store.getTrainingWeeksForBlock((await importBlock()).id)).toEqual([]);
+  });
+});

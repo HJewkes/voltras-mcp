@@ -147,7 +147,13 @@ async function seedLiftHistory(
   for (let index = 0; index < options.sessionCount; index += 1) {
     const at = daysAgo((options.sessionCount - index) * 7);
     const sessionId = `${exerciseId}-sess-${String(index)}`;
-    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    await store.putSession({
+      kind: 'training',
+      id: sessionId,
+      startedAt: at,
+      endedAt: at,
+      exerciseId,
+    });
     for (const suffix of ['a', 'b']) {
       lastSetId = `${exerciseId}-set-${String(index)}${suffix}`;
       const set: StoredSet = {
@@ -377,6 +383,28 @@ describe('goal.propose_targets', () => {
   let harness: Harness;
   beforeEach(() => {
     harness = setup();
+  });
+
+  // VW-489: a cold proposal on a store full of unreviewed history is not the same
+  // thing as a cold proposal on an empty one, and the coach has to be able to tell.
+  it('says how many past days are waiting on a review beside the proposal', async () => {
+    const at = '2026-09-10T15:00:00.000Z';
+    await harness.store.putSession({ id: 'unreviewed', startedAt: at, endedAt: at });
+    await harness.store.putSet({
+      id: 'unreviewed-set',
+      sessionId: 'unreviewed',
+      startedAt: at,
+      endedAt: at,
+      partial: false,
+      reps: [],
+    });
+
+    const proposed = await harness.invoke('goal.propose_targets', {
+      priorityId: await declareLift(harness),
+    });
+
+    expect(proposed.unreviewedDays).toBe(1);
+    expect(proposed.unreviewedDayList).toEqual(['2026-09-10']);
   });
 
   it('bands a lift with two matched sessions as a ramp, from a start value read out of history', async () => {

@@ -132,6 +132,8 @@ function makeStore(): SessionStore & {
   getAssignmentsForSession: ReturnType<typeof vi.fn>;
   getAssignmentsForTemplate: ReturnType<typeof vi.fn>;
 } {
+  const putProgramAssignment = vi.fn(async () => {});
+  const getAssignmentsForSession = vi.fn(async (): Promise<StoredProgramAssignment[]> => []);
   return {
     putSession: vi.fn(async () => {}),
     putSet: vi.fn(async () => {}),
@@ -149,7 +151,8 @@ function makeStore(): SessionStore & {
     // profile row plus the session aggregates. Defaults model a fresh user
     // (no declared tier, no history) — i.e. tier 'beginner', source 'default'.
     getTrainingProfile: vi.fn(async () => undefined),
-    listSessionEndTimes: vi.fn(async () => []),
+    listTrainingDayInstants: vi.fn(async () => []),
+    listSessionReviewRows: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
@@ -168,8 +171,18 @@ function makeStore(): SessionStore & {
     getWorkoutTemplatesForWeek: vi.fn(async () => []),
     putPlannedExercise: vi.fn(async () => {}),
     getPlannedExercisesForTemplate: vi.fn(async () => []),
-    putProgramAssignment: vi.fn(async () => {}),
-    getAssignmentsForSession: vi.fn(async () => []),
+    putProgramAssignment,
+    getAssignmentsForSession,
+    // VW-536: the store's one-transaction check-then-insert, as the two calls it replaces.
+    putProgramAssignmentIfAbsent: vi.fn(async (a: StoredProgramAssignment) => {
+      const prior = (await getAssignmentsForSession(a.sessionId)).find((row) =>
+        a.plannedExerciseId !== undefined
+          ? row.plannedExerciseId === a.plannedExerciseId
+          : row.workoutTemplateId === a.workoutTemplateId,
+      );
+      if (prior === undefined) await putProgramAssignment(a);
+      return { assignment: prior ?? a, created: prior === undefined };
+    }),
     getAssignmentsForTemplate: vi.fn(async () => []),
     // VW-277: suggest_progression reads the declared diet phase. `undefined`
     // models a lifter who has declared none, which is the pre-VW-277 case —

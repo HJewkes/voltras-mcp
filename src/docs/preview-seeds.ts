@@ -36,6 +36,8 @@ import {
   type GoalInfoLevel,
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
+import { localDate } from '../analytics/training-days.js';
+import { addDays } from '../plan/block-calendar.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
@@ -136,6 +138,9 @@ export const GOAL_PREVIEW_ANCHOR_REPS = 8;
 
 /** Weeks in the previewed mesocycle horizon. */
 export const GOAL_PREVIEW_HORIZON_WEEKS = 8;
+
+/** Which week of the previewed block `now` falls in, so the header reads mid-block. */
+export const GOAL_PREVIEW_BLOCK_WEEK = 5;
 
 /** Working sets per seeded session. Three is over `minShapeSets`, so the baseline establishes. */
 const SETS_PER_SESSION = 3;
@@ -291,6 +296,10 @@ export function goalPreviewState(name: string): GoalPreviewState {
 /** The store slice the seed writes through. Every write is a public store method. */
 export type GoalPreviewStore = Pick<
   SessionStore,
+  | 'putTrainingProgram'
+  | 'putTrainingBlock'
+  | 'putTrainingWeek'
+  | 'appendBlockSchedule'
   | 'putSession'
   | 'putSet'
   | 'putPriority'
@@ -335,6 +344,7 @@ export async function seedGoalPreview(
     history: state,
   };
   const seeded = await seedLift(store, lead, now);
+  await seedDatedBlock(store, now);
   if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, seeded.target, now);
   if (options.companions === true) {
     for (const [index, companion] of GOAL_PREVIEW_COMPANIONS.entries()) {
@@ -436,6 +446,9 @@ async function seedSessions(
       endedAt: at,
       exerciseId: lift.exercise.id,
       exerciseName: lift.exercise.name,
+      // VW-489: these stand in for the lifter's own training, so the wall shows
+      // them. An unmarked seed would render an empty page.
+      kind: 'training',
     });
     const newest = index === weeks - 1;
     const planned = sessionSets(history, load, newest);
@@ -599,6 +612,53 @@ function targetRow(
     derivedAt: startMeasuredAt,
     endsAt: blockEndsAt(startMeasuredAt, GOAL_PREVIEW_HORIZON_WEEKS),
   };
+}
+
+/**
+ * One dated block for the goals header (VW-480, VW-466): a real mesocycle the page is IN, so
+ * the capture can show "Week n of N" and a date range. The seeded priority and target stay
+ * unbound to it, so every previewed goal state keeps its own pinned status.
+ */
+async function seedDatedBlock(store: GoalPreviewStore, now: Date): Promise<void> {
+  const startsOn = mondayOf(seededAt(now, GOAL_PREVIEW_BLOCK_WEEK - 1));
+  await store.putTrainingProgram({
+    id: 'preview-program',
+    name: 'Voltra Return — 2026',
+    createdAt: seededAt(now, GOAL_PREVIEW_HORIZON_WEEKS),
+  });
+  await store.putTrainingBlock({
+    id: 'preview-block',
+    programId: 'preview-program',
+    orderIndex: 0,
+    name: 'Block 2 — Orientation',
+    focus: 'Load discovery — re-establish current working weights before periodizing',
+    weeksCount: GOAL_PREVIEW_HORIZON_WEEKS,
+  });
+  for (let week = 1; week <= GOAL_PREVIEW_HORIZON_WEEKS; week++) {
+    await store.putTrainingWeek({
+      id: `preview-week-${String(week)}`,
+      blockId: 'preview-block',
+      orderIndex: week - 1,
+      name: week === GOAL_PREVIEW_HORIZON_WEEKS ? 'Deload' : `Week ${String(week)}`,
+      isDeload: week === GOAL_PREVIEW_HORIZON_WEEKS,
+    });
+  }
+  await store.appendBlockSchedule({
+    blockId: 'preview-block',
+    startsOn,
+    weeksCount: GOAL_PREVIEW_HORIZON_WEEKS,
+    skips: [],
+    kind: 'planned',
+    changedBy: 'user',
+    declaredAt: seededAt(now, GOAL_PREVIEW_BLOCK_WEEK),
+  });
+}
+
+/** The Monday of the local calendar week an instant falls in. */
+function mondayOf(iso: string): string {
+  const date = localDate(iso);
+  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  return addDays(date, -((weekday + 6) % 7));
 }
 
 /** The load of the target's own start week: where its band is anchored (VW-449). */

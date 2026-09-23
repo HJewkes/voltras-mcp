@@ -72,7 +72,7 @@ List the blocks belonging to one program (takes programId).
 
 Edit a block (mesocycle): name, focus, notes or length in weeks (weeksCount).
 
-On a DATED block a length change records a 'resized' schedule row and moves the block's end date; the start never moves here (that is plan.block.schedule). Refused on a block that has ended, when a current block would be shortened below the week it is in, and when the longer block would overlap another dated block (the error names it; move that block first). An undated block just takes the edit. `warnings[]` carries the `meso_length_grew_mid_block` advisory when a block grows after its weeks were built.
+On a DATED block a length change records a 'resized' schedule row and moves the block's end date; the start never moves here (that is plan.block.schedule). Refused on a block that has ended, when a current block would be shortened below the week it is in, and when the longer block would overlap another dated block (the error names it; move that block first). An undated block just takes the edit. `targetsAffected` lists the goal targets whose end moved with a resize. `warnings[]` carries the `meso_length_grew_mid_block` advisory when a block grows after its weeks were built.
 
 **Parameters**
 
@@ -87,7 +87,7 @@ On a DATED block a length change records a 'resized' schedule row and moves the 
 
 Date, move or un-date a block.
 
-`startsOn` is a local calendar date on a Monday; the block ends on the Sunday of its last week. The first date given records a planned row; a new date for a block that has not started records a 'moved' row; `startsOn: null` un-dates an upcoming block and keeps the dates it had in its history. A block that has started or ended can never move: offer plan.week.skip for a missed week, or plan.block.update to change its length. `cascade: 'later_blocks'` moves every later dated block of the same program by the same number of weeks, all in one write. Without it, a date that would overlap another dated block (in any active program) is refused and the error names that block. Dates must follow the program order: block 2 cannot start before block 1. Setting the date it already has writes nothing. Returns every row written with the dates it moved from and to. Goal targets set for a block follow its dates.
+`startsOn` is a local calendar date on a Monday; the block ends on the Sunday of its last week. The first date given records a planned row; a new date for a block that has not started records a 'moved' row; `startsOn: null` un-dates an upcoming block and keeps the dates it had in its history. A block that has started or ended can never move: offer plan.week.skip for a missed week, or plan.block.update to change its length. `cascade: 'later_blocks'` moves every later dated block of the same program by the same number of weeks, all in one write. Without it, a date that would overlap another dated block (in any active program) is refused and the error names that block. Dates must follow the program order: block 2 cannot start before block 1. Setting the date it already has writes nothing. Returns every row written with the dates it moved from and to. Goal targets set for a moved block follow its dates, and `targetsAffected` lists them (`blockId`, `targetId`, `metric`, `exerciseId`); their committed and stretch numbers do not change.
 
 **Parameters**
 
@@ -159,7 +159,7 @@ The week keeps its place in the block; its dates come from the block schedule, n
 
 Record a missed week in the CURRENT block.
 
-ASK THE LIFTER EACH TIME which they want, and never infer it from a quiet week: `hold` keeps the calendar (the week is marked held, its plan week is not re-run, and the block still ends on its planned date); `extend` inserts an off week there, so that plan week and every later one run a week later and the block ends a week later. Pass `mode` with their answer. Omit `mode` only when the lifter did not choose: the calendar holds, recorded as the coach's default rather than their choice. `week` is the calendar week number plan.block.calendar shows; the result echoes the Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the lifter. Refused for a block that is not current, for a week that has not started, for a week already skipped, and for an extend that would run into the next dated block (the error names it).
+ASK THE LIFTER EACH TIME which they want, and never infer it from a quiet week: `hold` keeps the calendar (the week is marked held, its plan week is not re-run, and the block still ends on its planned date); `extend` inserts an off week there, so that plan week and every later one run a week later and the block ends a week later. Pass `mode` with their answer. Omit `mode` only when the lifter did not choose: the calendar holds, recorded as the coach's default rather than their choice. `week` is the calendar week number plan.block.calendar shows; the result echoes the Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the lifter. Refused for a block that is not current, for a week that has not started, for a week already skipped, and for an extend that would run into the next dated block (the error names it). After an extend, `targetsAffected` lists the goal targets whose end moved; a hold moves none.
 
 **Parameters**
 
@@ -203,7 +203,7 @@ List the workout templates belonging to one week (takes weekId).
 
 Add a planned exercise to a workout template — takes the parent workoutTemplateId.
 
-This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect.
+This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect. `goalKind` (VW-537) is `rep_range`, `target_rpe` or `velocity_loss`; omit it and a loss target gives `velocity_loss`, else a rep range gives `rep_range` (an RPE on the same row is its effort cap), else an RPE gives `target_rpe`, else no goal. `targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a `velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets the system learn the rest; false makes `restSec` a fixed rest and then requires it. A row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and nothing is written; this is the only refusal, since warnings never block. Nothing reads `goalKind` or `restLearning` during a set yet.
 
 **Parameters**
 
@@ -220,6 +220,9 @@ This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps
 - `notes` — `string`, optional.
 - `targetTempo` — `object`, optional.
 - `trainingIntent` — `strength` | `hypertrophy` | `power`, optional.
+- `goalKind` — `rep_range` | `target_rpe` | `velocity_loss`, optional.
+- `targetVelocityLossPct` — `number` (1–95), optional.
+- `restLearning` — `boolean`, optional.
 
 ## `plan.exercise.list_for_template`
 

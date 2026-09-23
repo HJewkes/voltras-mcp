@@ -583,7 +583,11 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
       phase: 'gain',
       startedAt: '2026-01-01T00:00:00.000Z',
     });
-    await h.store.putSession({ id: 'sess-1', startedAt: '2026-02-01T00:00:00.000Z' });
+    await h.store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2026-02-01T00:00:00.000Z',
+    });
 
     expect(await h.store.getSessionDietPhase('sess-1')).toBe('gain');
   });
@@ -607,7 +611,11 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
     const body = parseResult(r) as DietPhaseBody;
     expect(body.declared.phase).toBe('recomposition');
 
-    await h.store.putSession({ id: 'sess-1', startedAt: '2026-02-01T00:00:00.000Z' });
+    await h.store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2026-02-01T00:00:00.000Z',
+    });
     expect(await h.store.getSessionDietPhase('sess-1')).toBe('recomposition');
   });
 

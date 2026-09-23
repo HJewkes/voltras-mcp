@@ -77,7 +77,7 @@
 //                          comparable session. No recovery window is computed.
 //
 //   ── Goal coach (VW-352, G5 of the goal-coach plan) ──────────────────────
-//   GET  /api/goals       — `{ priorities: [{ priority, targets, rollup }] }`. Every
+//   GET  /api/goals       — `{ priorities: [{ priority, targets, rollup }], mesocycle }`. Every
 //                          declared priority (`goal.declare_priorities`), its ACCEPTED
 //                          targets, and the `buildPriorityRollup` verdict across them
 //                          (`null` when none are accepted yet).
@@ -93,6 +93,20 @@
 //   DELETE /api/plan/exercises/:id               — unplan one exercise and close
 //                          the gap it leaves in the template's order (VW-121).
 //
+//                          All six carry the SAME guards — a loopback `Host`,
+//                          a matching `Origin`, a JSON content type and the
+//                          per-boot write token (VW-500, `write-guard.ts`).
+//                          The guard runs before route matching, so a seventh
+//                          write route cannot be added unguarded. None of the
+//                          six needs the single-writer device lease: every one
+//                          is a sqlite plan write through `plan-api.ts` with
+//                          no device I/O. See `README.md` for the table.
+//
+//   GET /api/bootstrap    — `{ token, version }`. The SPA's recovery path for
+//                          the write token when its page predates a restart.
+//                          Same-origin only, and unreadable cross-origin
+//                          because the sidecar sends no CORS headers.
+//
 //   ── Session completion (VW-120) ─────────────────────────────────────────
 //   GET /api/session-summary/:sessionId — per-exercise VBT rollup + progression
 //                          recommendation for a finished session. `:sessionId`
@@ -103,9 +117,17 @@
 //                          best e1RM, 12-week slope, PR flag and a
 //                          multi-exercise agreement flag. One row per side.
 //
+//   ── Banners (VW-504, coach stage 1.5) ───────────────────────────────────
+//   GET /api/banners      — `{ banner: BannerRecord | null }`: the single
+//                          highest-priority banner that currently holds, or
+//                          `null`. A store without the planning reads answers
+//                          200 `{ banner: null }` — nothing to say is a valid
+//                          answer here, unlike the plan routes' 501.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,6 +143,8 @@ import {
   buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
+  recordWithEffort,
+  withEffort,
   resolveSummarySessionId,
   startOfCalendarWeekIso,
   type DashboardSessionStore,
@@ -132,6 +156,8 @@ import {
   type PrescriptionView,
   type SessionPaceView,
   type SessionPlanRows,
+  type SnapshotCompletedSet,
+  type SnapshotSet,
   type SnapshotResponse,
 } from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
@@ -148,10 +174,34 @@ import {
 } from './plan-api.js';
 import { fetchMuscleStrength, type MuscleStrengthStore } from './muscle-strength-api.js';
 import {
+  bootstrapFetchSiteAllowed,
+  checkWriteRequest,
+  injectWriteToken,
+  mintWriteToken,
+  WRITE_TOKEN_HEADER,
+} from './write-guard.js';
+import type { CapturedTools } from '../actions/capture-handlers.js';
+import type { UiActionSurface } from '../store/types.js';
+import {
+  isUiActionDeviceId,
+  UI_ACTION_DEVICE_ID_MAX_LENGTH,
+} from '../store/ui-action-device-id.js';
+import {
+  executeAction,
+  executeAudited,
+  hashInput,
+  type ActionOutcome,
+  type ActionRequest,
+  type ActionStore,
+  type HandlerOutcome,
+} from '../actions/execute.js';
+
+import {
   fetchGoalPriorityRows,
   fetchGoalProgressViews,
   type GoalProgressStore,
 } from './goal-progress-api.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -181,8 +231,10 @@ import {
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
-import { todayLocal } from '../analytics/training-days.js';
+import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
+import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
+import { readTopBanner, type BannerStore } from './read-models/banners.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -270,6 +322,9 @@ export interface DashboardServerState {
     ): Promise<StoredDietPhase | undefined>;
     /** Self-reported training background, read for the early-phase flag (VW-330). */
     getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
+    /** The action audit trail (VW-502). Optional for the same reason the rest are. */
+    claimUiAction?: ActionStore['claimUiAction'];
+    completeUiAction?: ActionStore['completeUiAction'];
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore> &
     Partial<GoalProgressStore>;
@@ -308,6 +363,12 @@ export interface DashboardServerState {
    * serves a valid, heartbeat-only `text/event-stream` in that case.
    */
   liveSignals?: LiveSignalHub;
+  /**
+   * Tool schemas and handlers for `POST /api/actions/:name` (VW-502), captured
+   * once at boot. Optional so every existing test fake and the preview harness
+   * keep working — the action route answers 501 without it, rather than 500.
+   */
+  actionTools?: CapturedTools;
 }
 
 /** Default `?limit=` for `/api/exercises`; the seed catalog is ~30 entries. */
@@ -316,6 +377,13 @@ export const CATALOG_DEFAULT_LIMIT = 200;
 export interface DashboardServerHandle {
   /** The port the server actually bound to (resolved from `port: 0`). */
   readonly port: number;
+  /**
+   * The per-boot token every non-GET route requires (VW-500). Minted once per
+   * `startDashboardServer` call, so the EADDRINUSE ephemeral-port retry keeps
+   * the same one. The SPA reads it from the served `index.html` or from
+   * `GET /api/bootstrap`; tests and non-browser callers read it here.
+   */
+  readonly writeToken: string;
   /** Stop accepting connections and free the port. Idempotent. */
   close(): Promise<void>;
 }
@@ -332,16 +400,28 @@ export async function startDashboardServer(
 ): Promise<DashboardServerHandle> {
   const port = opts.port ?? DEFAULT_DASHBOARD_PORT;
   const host = opts.host ?? DEFAULT_DASHBOARD_HOST;
+  // Minted before the bind so the ephemeral-port retry below reuses it: a
+  // browser tab that survives the fallback must not need a new token.
+  const runtime: DashboardRuntime = { startedAt: Date.now(), writeToken: mintWriteToken() };
   try {
-    return await listenOnPort(port, host, opts.state);
+    return await listenOnPort(port, host, opts.state, runtime);
   } catch (err) {
     const retryable =
       opts.fallbackToEphemeralPort === true && isAddressInUse(err) && port !== EPHEMERAL_PORT;
     if (!retryable) throw err;
-    const handle = await listenOnPort(EPHEMERAL_PORT, host, opts.state);
+    const handle = await listenOnPort(EPHEMERAL_PORT, host, opts.state, runtime);
     log.warn(dashboardPortFallbackMessage(port, handle.port, host));
     return handle;
   }
+}
+
+/**
+ * Per-boot facts the request handler needs beyond the live state: the uptime
+ * clock and the write token. One object so the handler's arity stops growing.
+ */
+interface DashboardRuntime {
+  readonly startedAt: number;
+  readonly writeToken: string;
 }
 
 /** One bind attempt: a fresh `http.Server` listening on exactly `port`. */
@@ -349,11 +429,10 @@ function listenOnPort(
   port: number,
   host: string,
   state: DashboardServerState,
+  runtime: DashboardRuntime,
 ): Promise<DashboardServerHandle> {
-  const startedAt = Date.now();
-
   const server = createServer((req, res) => {
-    handleRequest(req, res, state, startedAt).catch((err) => {
+    handleRequest(req, res, state, runtime).catch((err) => {
       log.warn('dashboard: handler threw', err);
       if (!res.headersSent) {
         sendJson(res, 500, { error: 'internal_error' });
@@ -372,7 +451,7 @@ function listenOnPort(
       server.removeListener('error', onListenError);
       const address = server.address();
       const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-      resolve(makeHandle(server, boundPort));
+      resolve(makeHandle(server, boundPort, runtime.writeToken));
     };
     server.once('error', onListenError);
     server.once('listening', onListening);
@@ -434,10 +513,11 @@ export function dashboardPortInUseMessage(port: number, host: string): string {
   );
 }
 
-function makeHandle(server: Server, port: number): DashboardServerHandle {
+function makeHandle(server: Server, port: number, writeToken: string): DashboardServerHandle {
   let closed = false;
   return {
     port,
+    writeToken,
     close(): Promise<void> {
       if (closed) {
         return Promise.resolve();
@@ -461,7 +541,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   state: DashboardServerState,
-  startedAt: number,
+  runtime: DashboardRuntime,
 ): Promise<void> {
   const method = req.method ?? 'GET';
   if (method !== 'GET' && method !== 'POST' && method !== 'PATCH' && method !== 'DELETE') {
@@ -478,6 +558,26 @@ async function handleRequest(
   // Mutating plan routes are handled first: they are the only non-GET surface,
   // so everything below can assume a read.
   if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
+    // Every write passes the same guard before any route matching, so a new
+    // write route cannot be added unguarded (VW-500).
+    const rejection = checkWriteRequest(
+      {
+        host: req.headers.host,
+        origin: headerValue(req.headers.origin),
+        contentType: req.headers['content-type'],
+        token: headerValue(req.headers[WRITE_TOKEN_HEADER]),
+      },
+      runtime.writeToken,
+    );
+    if (rejection !== null) {
+      sendJson(res, rejection.status, { error: rejection.error, message: rejection.message });
+      return;
+    }
+    const actionMatch = /^\/api\/actions\/([^/]+)$/.exec(pathname);
+    if (actionMatch !== null) {
+      await handleAction(req, res, state, method, decodeURIComponent(actionMatch[1]));
+      return;
+    }
     await handlePlanMutation(req, res, state, method, pathname);
     return;
   }
@@ -494,7 +594,7 @@ async function handleRequest(
   // React SPA (VMCP-01.44), served read-only under `/app` from the vite-built
   // bundle in `dist/spa` — the sole dashboard surface.
   if (pathname === DASHBOARD_SPA_PATH || pathname === `${DASHBOARD_SPA_PATH}/`) {
-    serveSpaIndex(res);
+    serveSpaIndex(res, runtime.writeToken);
     return;
   }
   if (pathname.startsWith(`${DASHBOARD_SPA_PATH}/`)) {
@@ -505,8 +605,21 @@ async function handleRequest(
     sendJson(res, 200, {
       ok: true,
       version: VMCP_VERSION,
-      uptimeMs: Date.now() - startedAt,
+      uptimeMs: Date.now() - runtime.startedAt,
     });
+    return;
+  }
+  // The SPA's recovery path for its write token (VW-500): a tab left open
+  // across a server restart re-reads it here rather than making the human
+  // reload. A cross-origin page can SEND this request but cannot read the
+  // reply — the sidecar answers with no CORS headers — and `Sec-Fetch-Site`
+  // lets us refuse it outright when the browser says it is cross-site.
+  if (pathname === '/api/bootstrap') {
+    if (!bootstrapFetchSiteAllowed(headerValue(req.headers['sec-fetch-site']))) {
+      sendJson(res, 403, { error: 'foreign_origin', message: 'bootstrap is same-origin only' });
+      return;
+    }
+    sendJson(res, 200, { token: runtime.writeToken, version: VMCP_VERSION });
     return;
   }
   if (pathname === '/api/snapshot') {
@@ -557,6 +670,10 @@ async function handleRequest(
   }
   if (pathname === '/api/goal-progress') {
     await serveGoalProgress(res, state, url);
+    return;
+  }
+  if (pathname === '/api/banners') {
+    await serveBanners(res, state);
     return;
   }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
@@ -887,12 +1004,12 @@ async function serveMuscleRecovery(
 /** @see hasPlanStore — same narrowing, for the goal-coach routes (VW-352). */
 function hasGoalStore(
   store: DashboardServerState['store'],
-): store is DashboardServerState['store'] & GoalProgressStore {
+): store is DashboardServerState['store'] & GoalProgressStore & MesocycleStore {
   return (
     typeof store.listPriorities === 'function' &&
     typeof store.listGoalTargets === 'function' &&
     typeof store.getTrainingProfile === 'function' &&
-    typeof store.listSessionEndTimes === 'function' &&
+    typeof store.listTrainingDayInstants === 'function' &&
     typeof store.getSessionDateSpan === 'function' &&
     typeof store.getTrainingWeeksForBlock === 'function' &&
     typeof store.getDietPhaseCovering === 'function' &&
@@ -901,7 +1018,11 @@ function hasGoalStore(
     typeof store.listBodyMetrics === 'function' &&
     typeof store.getSetsForExercise === 'function' &&
     typeof store.getBaseline === 'function' &&
-    typeof store.chapterStartedAt === 'function'
+    typeof store.chapterStartedAt === 'function' &&
+    typeof store.getLiveBlockSchedule === 'function' &&
+    typeof store.listTrainingPrograms === 'function' &&
+    typeof store.getWorkoutTemplatesForWeek === 'function' &&
+    typeof store.getAssignmentsForTemplate === 'function'
   );
 }
 
@@ -917,15 +1038,22 @@ async function findGoalPriority(
 /**
  * `GET /api/goals` (VW-352, G5 of the goal-coach plan): every declared
  * priority, its accepted targets, and the `buildPriorityRollup` verdict
- * across them.
+ * across them, plus `mesocycle`: the dated block the page is in (VW-480),
+ * `null` while no block has dates.
  */
 async function serveGoals(res: ServerResponse, state: DashboardServerState): Promise<void> {
   if (!hasGoalStore(state.store)) {
     sendJson(res, 501, { error: 'goal_store_unavailable' });
     return;
   }
-  const rows = await fetchGoalPriorityRows(state.store, new Date());
-  sendJson(res, 200, { priorities: rows });
+  const now = new Date();
+  const rows = await fetchGoalPriorityRows(state.store, now);
+  const mesocycle = await fetchMesocycle(state.store, localDate(now.toISOString()));
+  // VW-489: every count on this page excludes unreviewed history, so the page has
+  // to be able to say so rather than render an unexplained zero. Server field
+  // only — the goals SPA reads it in its own change (PR #454 owns that tree).
+  const review = await readUnreviewed(state.store);
+  sendJson(res, 200, { priorities: rows, mesocycle, review });
 }
 
 /**
@@ -953,6 +1081,36 @@ async function serveGoalProgress(
   }
   const targets = await fetchGoalProgressViews(state.store, priority, new Date());
   sendJson(res, 200, { targets });
+}
+
+/** @see hasPlanStore — same narrowing, for the banner read (VW-504). */
+function hasBannerStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & BannerStore {
+  return (
+    typeof store.listTrainingPrograms === 'function' &&
+    typeof store.getTrainingBlocksForProgram === 'function' &&
+    typeof store.getTrainingWeeksForBlock === 'function' &&
+    typeof store.getWorkoutTemplatesForWeek === 'function' &&
+    typeof store.getAssignmentsForTemplate === 'function' &&
+    typeof store.getLiveBlockSchedule === 'function' &&
+    typeof store.listTrainingDayInstants === 'function'
+  );
+}
+
+/**
+ * `GET /api/banners` (VW-504): the one banner the wall should show, or `null`.
+ * A store without the planning reads has nothing to raise, which is an answer
+ * rather than a failure, so this 200s with `null` instead of 501ing.
+ */
+async function serveBanners(res: ServerResponse, state: DashboardServerState): Promise<void> {
+  if (!hasBannerStore(state.store)) {
+    sendJson(res, 200, { banner: null });
+    return;
+  }
+  const now = new Date();
+  const banner = await readTopBanner(state.store, localDate(now.toISOString()), now.toISOString());
+  sendJson(res, 200, { banner });
 }
 
 async function serveSessionSummary(
@@ -1017,6 +1175,159 @@ async function serveMuscleStrength(
 const MAX_BODY_BYTES = 64 * 1024;
 
 /**
+ * `POST /api/actions/:name` — the action layer (VW-502).
+ *
+ * The body is `{ actionId, input, actor?, surface?, flowId?, flowStep? }`. The
+ * name is looked up in the allowlist, its tool's own schema validates `input`,
+ * and its own handler runs it. An unknown or non-allowlisted name answers 403,
+ * never 404: probing the layer reveals nothing about what exists.
+ *
+ * Only POST. A PATCH or DELETE to this path is a client that has misunderstood
+ * the layer, not an action, and it answers 405 rather than being coerced.
+ */
+async function handleAction(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: DashboardServerState,
+  method: PlanMutationMethod,
+  name: string,
+): Promise<void> {
+  if (method !== 'POST') {
+    sendJson(res, 405, { error: 'method_not_allowed', message: 'actions are POSTed' });
+    return;
+  }
+  if (state.actionTools === undefined || !hasActionStore(state.store)) {
+    sendJson(res, 501, { error: 'actions_unavailable' });
+    return;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid_input', message: (err as Error).message });
+    return;
+  }
+  const request = readActionRequest(name, body);
+  if ('error' in request) {
+    sendJson(res, 400, { error: 'invalid_input', message: request.error });
+    return;
+  }
+  const outcome = await executeAction(request, {
+    store: state.store,
+    tools: state.actionTools,
+    now: () => new Date(),
+  });
+  sendActionOutcome(res, outcome);
+}
+
+function sendActionOutcome(res: ServerResponse, outcome: ActionOutcome): void {
+  sendJson(res, outcome.status, outcome.body);
+}
+
+/**
+ * Surfaces a request over HTTP can honestly claim. Both are the human's own
+ * browser; `voice` and `telegram` do not reach the server this way.
+ *
+ * The surface is a LABEL, not an authorization input. It is the client's own
+ * assertion and the server cannot check it, so nothing may ever branch on it
+ * to decide what a request is allowed to do.
+ */
+const BROWSER_SURFACES = ['wall', 'phone'] as const;
+
+/** The claimed surface, or `null` when it is not one a browser can be. */
+function readBrowserSurface(claimed: unknown): UiActionSurface | null {
+  const surface = claimed ?? 'wall';
+  return isOneOf(surface, BROWSER_SURFACES) ? surface : null;
+}
+
+/**
+ * Which display sent this (VW-521). Absent is valid and is the common case: `surface` says
+ * `wall`, and more than one wall can stand in one house, so a client that wants its rows
+ * tellable apart names itself and one that does not is no worse off than before.
+ *
+ * A LABEL, exactly as `surface` is. The server cannot check the name and nothing branches
+ * on it; the only thing refused here is a string the audit trail could not usefully store.
+ */
+function readDeviceId(claimed: unknown): { deviceId?: string } | { error: string } {
+  if (claimed === undefined || claimed === null) return {};
+  if (!isUiActionDeviceId(claimed)) {
+    return {
+      error:
+        `deviceId is up to ${UI_ACTION_DEVICE_ID_MAX_LENGTH} characters of letters, digits, ` +
+        `'.', '_', ':' or '-', starting with a letter or digit`,
+    };
+  }
+  return { deviceId: claimed };
+}
+
+/**
+ * Read the envelope around an action's input. `actionId` is required and has
+ * no server-side default: a client that cannot produce one cannot have retry
+ * safety, and silently minting one here would hand it a guarantee it does not
+ * have.
+ *
+ * ── Why the actor is not the client's to assert ──────────────────────────
+ *
+ * A request reaching this route came from a page in a browser on this machine
+ * — that is what the VW-500 guard establishes. It is therefore a human tap, and
+ * the actor is `user`. The coach and the tick do not arrive this way: they run
+ * in-process and call `executeAudited` directly, stamping their own actor
+ * there. So a body claiming `actor: 'coach'` is either a confused client or one
+ * trying to file a human tap as an agent decision, and it is REFUSED rather
+ * than honoured or silently downgraded. Without this the audit trail's actor
+ * column would be forgeable by anyone holding the write token, which is a
+ * weaker claim than an audit trail should make.
+ *
+ * The surface stays the client's to say, narrowed to the two browser surfaces:
+ * wall and phone are both the owner's own browser and the server cannot tell
+ * them apart, so nothing is gained by refusing the distinction and a later
+ * read would lose it.
+ */
+function readActionRequest(
+  name: string,
+  body: Record<string, unknown>,
+): ActionRequest | { error: string } {
+  const actionId = body.actionId;
+  if (typeof actionId !== 'string' || actionId.trim() === '') {
+    return { error: 'actionId is required, and must be a non-empty string' };
+  }
+  if (body.actor !== undefined && body.actor !== 'user') {
+    return {
+      error: `an action over HTTP is a human tap and is recorded as 'user'; ${String(
+        body.actor,
+      )} cannot be claimed`,
+    };
+  }
+  const surface = readBrowserSurface(body.surface);
+  if (surface === null) {
+    return { error: `a browser action is 'wall' or 'phone', not ${String(body.surface)}` };
+  }
+  const device = readDeviceId(body.deviceId);
+  if ('error' in device) return device;
+  return {
+    name,
+    actionId,
+    actor: 'user',
+    surface,
+    ...device,
+    ...(typeof body.flowId === 'string' ? { flowId: body.flowId } : {}),
+    ...(typeof body.flowStep === 'string' ? { flowStep: body.flowStep } : {}),
+    input: body.input ?? {},
+  };
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
+/** @see hasPlanStore — same narrowing, for the action audit methods. */
+function hasActionStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & ActionStore {
+  return typeof store.claimUiAction === 'function' && typeof store.completeUiAction === 'function';
+}
+
+/**
  * Route the plan-builder writes. Every branch resolves to a `plan-api.ts` call;
  * `PlanApiError.code` maps onto the HTTP status (`invalid_input` → 400,
  * `not_found` → 404) so the handlers never hand-roll a response shape.
@@ -1045,37 +1356,112 @@ async function handlePlanMutation(
     return;
   }
   const { store } = state;
+  // `actionId` is the audit envelope's, never the plan payload's. Stripped so
+  // `plan-api.ts` sees exactly the body it saw before this route was audited.
+  const {
+    actionId: submittedId,
+    surface: submittedSurface,
+    deviceId: submittedDeviceId,
+    ...payload
+  } = body;
+  const surface = readBrowserSurface(submittedSurface);
+  if (surface === null) {
+    sendJson(res, 400, {
+      error: 'invalid_input',
+      message: `a browser action is 'wall' or 'phone', not ${String(submittedSurface)}`,
+    });
+    return;
+  }
+  const device = readDeviceId(submittedDeviceId);
+  if ('error' in device) {
+    sendJson(res, 400, { error: 'invalid_input', message: device.error });
+    return;
+  }
+  const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
+  if (!hasActionStore(store)) {
+    // No audit table (a test fake, an older store): the write still happens.
+    // Degrading to an unaudited write is better than refusing the plan builder,
+    // and every real store has the methods.
+    sendPlanOutcome(res, await run());
+    return;
+  }
+  const outcome = await executeAudited(
+    {
+      actionName: PLAN_ROUTE_ACTION_NAMES[route.kind],
+      // A client that sends no id gets a minted one, which records the write
+      // but buys NO retry safety: a retry mints another id and runs again.
+      // The SPA sends its own; see `spa/api-client.ts`.
+      actionId: typeof submittedId === 'string' ? submittedId : randomUUID(),
+      // Forced, never read from the body: see `readActionRequest`.
+      actor: 'user',
+      surface,
+      ...device,
+      inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
+      run,
+    },
+    { store, tools: state.actionTools ?? new Map(), now: () => new Date() },
+  );
+  // The plan routes keep their ORIGINAL response shape — the plan-api payload,
+  // not the action envelope — because the SPA reads it directly and this PR
+  // does not change what any route returns.
+  sendJson(res, outcome.status, outcome.body.result);
+}
+
+/** Audit names for the six plan routes. Not tools, so not in the allowlist. */
+const PLAN_ROUTE_ACTION_NAMES: Record<PlanRoute['kind'], string> = {
+  createProgram: 'plan.program.create',
+  createWorkout: 'plan.workout.create',
+  createExercise: 'plan.exercise.create',
+  reorderExercises: 'plan.exercise.reorder',
+  updateExercise: 'plan.exercise.update',
+  deleteExercise: 'plan.exercise.delete',
+};
+
+/** Run one plan route, mapping `PlanApiError` onto the status it always had. */
+async function runPlanRoute(
+  store: DashboardServerState['store'] & DashboardPlanStore,
+  route: PlanRoute,
+  body: Record<string, unknown>,
+): Promise<HandlerOutcome> {
   try {
     switch (route.kind) {
       case 'createProgram':
-        sendJson(res, 201, await createProgramWithScaffold(store, body));
-        return;
+        return created(await createProgramWithScaffold(store, body));
       case 'createWorkout':
-        sendJson(res, 201, await createWorkout(store, route.id, body));
-        return;
+        return created(await createWorkout(store, route.id, body));
       case 'createExercise':
-        sendJson(res, 201, await createPlannedExercise(store, route.id, body));
-        return;
+        return created(await createPlannedExercise(store, route.id, body));
       case 'reorderExercises':
-        sendJson(res, 200, await reorderPlannedExercises(store, route.id, body));
-        return;
+        return { ok: true, result: await reorderPlannedExercises(store, route.id, body) };
       case 'updateExercise':
-        sendJson(res, 200, await updatePlannedExercise(store, route.id, body));
-        return;
+        return { ok: true, result: await updatePlannedExercise(store, route.id, body) };
       case 'deleteExercise':
-        sendJson(res, 200, await deletePlannedExercise(store, route.id));
-        return;
+        return { ok: true, result: await deletePlannedExercise(store, route.id) };
     }
   } catch (err) {
     if (err instanceof PlanApiError) {
-      sendJson(res, err.code === 'not_found' ? 404 : 400, {
-        error: err.code,
-        message: err.message,
-      });
-      return;
+      return {
+        ok: false,
+        code: err.code,
+        result: {
+          error: err.code,
+          message: err.message,
+          ...(err.field !== undefined ? { field: err.field } : {}),
+        },
+        errorStatus: err.code === 'not_found' ? 404 : 400,
+      };
     }
     throw err;
   }
+}
+
+function created(result: unknown): HandlerOutcome {
+  return { ok: true, result, okStatus: 201 };
+}
+
+function sendPlanOutcome(res: ServerResponse, outcome: HandlerOutcome): void {
+  const status = outcome.ok ? (outcome.okStatus ?? 200) : (outcome.errorStatus ?? 400);
+  sendJson(res, status, outcome.result);
 }
 
 /** The HTTP verbs the plan-write surface answers. */
@@ -1226,8 +1612,8 @@ function pushSnapshot(res: ServerResponse, state: DashboardServerState): void {
 interface GatheredSnapshotState {
   devices: DeviceEntry[];
   session: ActiveSession | undefined;
-  activeSet: ActiveSet | undefined;
-  completedSets: CompletedSetRecord[];
+  activeSet: SnapshotSet | undefined;
+  completedSets: SnapshotCompletedSet[];
   activeExercise: ReturnType<NonNullable<DashboardServerState['exercises']>['getById']>;
   exerciseId: string | undefined;
 }
@@ -1241,20 +1627,20 @@ interface GatheredSnapshotState {
 function gatherSnapshotState(state: DashboardServerState): GatheredSnapshotState {
   const devices: DeviceEntry[] = [];
   let session: ActiveSession | undefined;
-  let activeSet: ActiveSet | undefined;
-  let completedSets: CompletedSetRecord[] = [];
+  let activeSet: SnapshotSet | undefined;
+  let completedSets: SnapshotCompletedSet[] = [];
   for (const [slotId, slot] of state.slots) {
     // Per-slot sets (VW-71): each slot's OWN active + completed sets ride on its
     // device entry so a bilateral (dual-Voltra) view reads per-limb telemetry. The
     // top-level `sets` below still reports the primary slot's for the single view.
-    const slotActive = slot.live.snapshotSet();
+    const device = slot.live.snapshotDevice();
+    const liveSet = slot.live.snapshotSet();
+    const slotActive = liveSet === undefined ? undefined : withEffort(liveSet, device);
+    const slotCompleted = (slot.live.snapshotCompletedSets?.() ?? []).map(recordWithEffort);
     devices.push({
       slotId,
-      device: slot.live.snapshotDevice(),
-      sets: {
-        active: slotActive ?? null,
-        completed: slot.live.snapshotCompletedSets?.() ?? [],
-      },
+      device,
+      sets: { active: slotActive ?? null, completed: slotCompleted },
     });
     // First slot wins for session/set — single-session contract today; if
     // a future slot has its own active session/set, the snapshot still
@@ -1266,7 +1652,7 @@ function gatherSnapshotState(state: DashboardServerState): GatheredSnapshotState
         // Completed sets belong to the session that owns them — read them from
         // the same slot (VW-70). Optional-chained so a minimal test fake without
         // the method degrades to no completed sets rather than throwing.
-        completedSets = slot.live.snapshotCompletedSets?.() ?? [];
+        completedSets = slotCompleted;
       }
     }
     if (activeSet === undefined) {
@@ -1566,12 +1952,20 @@ const SPA_NOT_BUILT_HTML =
   '<h1>Dashboard SPA not built</h1>' +
   '<p>Run <code>npm run build:dashboard</code> to generate <code>dist/spa</code>, then reload.</p>';
 
-function serveSpaIndex(res: ServerResponse): void {
+function serveSpaIndex(res: ServerResponse, writeToken: string): void {
   try {
-    sendHtml(res, 200, readFileSync(join(SPA_DIR, 'index.html'), 'utf8'));
+    const html = readFileSync(join(SPA_DIR, 'index.html'), 'utf8');
+    // `sendHtml` already sets `cache-control: no-store`, which is what keeps
+    // the token out of a shared cache or a saved page.
+    sendHtml(res, 200, injectWriteToken(html, writeToken));
   } catch {
     sendHtml(res, 503, SPA_NOT_BUILT_HTML);
   }
+}
+
+/** `node:http` types a repeated header as `string[]`; a repeat is never valid here. */
+function headerValue(raw: string | string[] | undefined): string | undefined {
+  return Array.isArray(raw) ? undefined : raw;
 }
 
 function serveSpaAsset(res: ServerResponse, pathname: string): void {

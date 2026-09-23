@@ -2,13 +2,13 @@
 
 # `accountability.*`
 
-2 tools in the `accountability` namespace.
+3 tools in the `accountability` namespace.
 
 ## `accountability.state`
 
 READ-ONLY.
 
-Report the coach accountability protocol state for the owner and the decision the protocol would make right now, without writing anything and without sending anything. Returns `protocolState` (planned / completed / missed / ghosting / realign_needed / holding), `enteredAt`, `consecutiveMisses`, `lastInboundAt`, `holdingUntil`, `ghostSendsThisEpisode`, `proactiveSendsInWindow` (the rolling 7-day count the 2-message ceiling is enforced against), `persisted` (false when no row exists yet and the defaults are being shown), `evaluatedAt` (the instant the dry run was evaluated at), plus `tick` (`sunday_anchor` on a Sunday, `thursday` on a Thursday, `none` on every other day), `adherenceTrend` read from `report.weekly`, and `decision` — `{action, kind, reason}` where `action` is `send` or `silent` and `reason` always says why, including why it is silent. Pass `at` to evaluate the dry run as of another instant. No device traffic, no network.
+Report the coach accountability protocol state for the owner and the decision the protocol would make right now, without writing anything and without sending anything. Returns `protocolState` (planned / completed / missed / ghosting / realign_needed / holding), `enteredAt`, `consecutiveMisses`, `lastInboundAt`, `holdingUntil`, `ghostSendsThisEpisode`, `proactiveSendsInWindow` (the rolling 7-day count the 2-message ceiling is enforced against), `persisted` (false when no row exists yet and the defaults are being shown), `evaluatedAt` (the instant the dry run was evaluated at), plus `tick` (`sunday_anchor` on a Sunday, `thursday` on a Thursday, `none` on every other day), `adherenceTrend` read from `report.weekly`, `decision` — `{action, kind, reason}` where `action` is `send` or `silent` and `reason` always says why, including why it is silent — and `commitment`, the lifter's own commitment standing over the week being committed to (`weekOf`, `revision`, `days`, `ifThen`, `wording`, `declaredAt`), or null when none is stored. Pass `at` to evaluate the dry run as of another instant. No device traffic, no network.
 
 **Parameters**
 
@@ -18,8 +18,21 @@ Report the coach accountability protocol state for the owner and the decision th
 
 READ-ONLY.
 
-Run the same dry evaluation as `accountability.state` and, when the decision is `send`, also render the coach message that decision would carry — from live reads (`report.weekly` adherence, `plan.next_workout`, the rolling 28-day training-day count), never from stored copy. Sends nothing and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, or null when the decision is silent), `text` (the rendered message, or null when silent or when the plan has nothing queued to render from), `inputsUsed` (the adherence, `rolling28DayTrainingDays` and next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass `at` to evaluate as of another instant.
+Run the same dry evaluation as `accountability.state` and, when the decision is `send`, also render the coach message that decision would carry — from live reads (`report.weekly` adherence, `plan.next_workout`, the rolling 28-day training-day count), never from stored copy. Sends nothing and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, or null when the decision is silent), `text` (the rendered message, or null when silent or when the plan has nothing queued to render from), `inputsUsed` (the adherence, `rolling28DayTrainingDays`, next-workout and `commitment` values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass `at` to evaluate as of another instant.
 
 **Parameters**
 
 - `at` — `string`, optional.
+
+## `accountability.declare_commitment`
+
+Record the lifter's own training commitment for one week: which days, the named fallback day for each, the if-then sentence, and the commitment in their own words.
+
+`ifThen` and `wording` are stored and rendered VERBATIM — never rewrite, tighten or paraphrase them, and never write your own words into them. `weekOf` is a local Monday and defaults to the week being committed to (a declaration made on a Sunday files against the next day). Declaring again for the same week is a CORRECTION: it appends the next `revision` and keeps the superseded wording; an identical declaration writes nothing and returns `unchanged: true`. Returns `weekOf`, `revision`, `days`, `ifThen`, `wording` and `unchanged`. This tool does NOT set how many sessions a week — that is the attendance goal target, via `goal.propose_targets` and `goal.accept_target`. Local write, no device traffic, no network.
+
+**Parameters**
+
+- `days` — `object[]`, **required**.
+- `ifThen` — `string`, **required**.
+- `wording` — `string`, **required**.
+- `weekOf` — `string`, optional.

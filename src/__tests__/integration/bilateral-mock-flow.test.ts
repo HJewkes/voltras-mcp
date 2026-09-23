@@ -219,6 +219,8 @@ const CORE_TOOL_NAMES = [
   'session.set_lifter',
   'session.list',
   'session.get',
+  'session.mark_kind',
+  'session.review_list',
   'set.start',
   'set.end',
   'set.live_metrics',

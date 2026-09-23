@@ -119,7 +119,7 @@ describe('sessions.diet_phase stamp', () => {
   it('stamps a new session from the range covering its start', async () => {
     const store = open();
     await declare(store, 'fat-loss', T.jan);
-    await store.putSession({ id: 'sess-1', startedAt: T.feb });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb });
 
     expect((await store.getSession('sess-1'))?.dietPhase).toBe('fat-loss');
     expect(await store.getSessionDietPhase('sess-1')).toBe('fat-loss');
@@ -128,7 +128,7 @@ describe('sessions.diet_phase stamp', () => {
   it('leaves the stamp absent when no phase covers the session', async () => {
     const store = open();
     await declare(store, 'fat-loss', T.mar);
-    await store.putSession({ id: 'sess-1', startedAt: T.jan });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.jan });
 
     expect((await store.getSession('sess-1'))?.dietPhase).toBeUndefined();
     expect(await store.getSessionDietPhase('sess-1')).toBeUndefined();
@@ -136,11 +136,11 @@ describe('sessions.diet_phase stamp', () => {
 
   it('re-stamps on the session.end re-put so a mid-session correction lands', async () => {
     const store = open();
-    await store.putSession({ id: 'sess-1', startedAt: T.feb });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb });
     expect((await store.getSession('sess-1'))?.dietPhase).toBeUndefined();
 
     await declare(store, 'gain', T.jan);
-    await store.putSession({ id: 'sess-1', startedAt: T.feb, endedAt: T.mar });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb, endedAt: T.mar });
 
     expect((await store.getSession('sess-1'))?.dietPhase).toBe('gain');
   });
@@ -148,7 +148,7 @@ describe('sessions.diet_phase stamp', () => {
   it('lets the TABLE win over a stale stamp on an older session', async () => {
     const store = open();
     await declare(store, 'gain', T.jan);
-    await store.putSession({ id: 'sess-1', startedAt: T.feb });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb });
     expect((await store.getSession('sess-1'))?.dietPhase).toBe('gain');
 
     // The lifter corrects history: February was actually a cut. The stored row
@@ -170,8 +170,13 @@ describe('guest lifters (VW-169)', () => {
   it('never stamps or resolves the owner phase onto a guest session', async () => {
     const store = open();
     await declare(store, 'fat-loss', T.jan);
-    await store.putSession({ id: 'guest-sess', startedAt: T.feb, lifter: 'Jordan' });
-    await store.putSession({ id: 'owner-sess', startedAt: T.feb });
+    await store.putSession({
+      kind: 'training',
+      id: 'guest-sess',
+      startedAt: T.feb,
+      lifter: 'Jordan',
+    });
+    await store.putSession({ kind: 'training', id: 'owner-sess', startedAt: T.feb });
 
     expect((await store.getSession('guest-sess'))?.dietPhase).toBeUndefined();
     expect(await store.getSessionDietPhase('guest-sess')).toBeUndefined();
@@ -239,7 +244,7 @@ describe('file-backed database', () => {
 
   it('writes into a database created before this change without moving user_version', async () => {
     const seeded = SqliteSessionStore.open(path);
-    await seeded.putSession({ id: 'old-sess', startedAt: T.feb });
+    await seeded.putSession({ kind: 'training', id: 'old-sess', startedAt: T.feb });
     seeded.close();
     const before = readUserVersion(path);
 
@@ -258,7 +263,7 @@ describe('file-backed database', () => {
 
     const after = readUserVersion(path);
     expect(after).toBe(before);
-    expect(after).toBe(34);
+    expect(after).toBe(41);
   });
 
   it('falls back to the stamp when no range covers the session any more', async () => {
@@ -269,7 +274,7 @@ describe('file-backed database', () => {
       startedAt: T.jan,
       declaredAt: DECLARED_AT,
     });
-    await store.putSession({ id: 'sess-1', startedAt: T.feb });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb });
     store.close();
 
     // A hand-edited timeline: the covering range is gone but the stamp remains.
@@ -306,7 +311,7 @@ describe('file-backed database', () => {
       startedAt: T.jan,
       declaredAt: DECLARED_AT,
     });
-    await store.putSession({ id: 'sess-1', startedAt: T.feb });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: T.feb });
     // The OBSERVED phase resolves, and disagrees with the prescribed one...
     expect(await store.getSessionDietPhase('sess-1')).toBe('fat-loss');
     store.close();

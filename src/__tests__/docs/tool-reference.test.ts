@@ -26,6 +26,10 @@ import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from '../../tool-registry.js';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const GENERATOR = join(REPO_ROOT, 'scripts/gen-tool-reference.mjs');
 const SITE_DIR = join(REPO_ROOT, 'site');
+const SKILL_INVENTORY = join(
+  REPO_ROOT,
+  'plugins/voltras-channel/skills/pt-session/references/15-tool-inventory.md',
+);
 
 // The generator builds `dist` when it is missing or stale — that dominates the
 // wall clock on a fresh checkout, and CI's `test` job never runs `npm run build`.
@@ -51,9 +55,23 @@ function listFiles(dir: string, prefix = ''): string[] {
   return found.sort();
 }
 
-function generateInto(outDir: string): GeneratorReport {
+/**
+ * The skill inventory goes to its own scratch path, not under `outDir`: the
+ * page-set assertions below compare `outDir` against the checked-in site, and
+ * the inventory is not a site page.
+ */
+function generateInto(outDir: string, inventoryPath: string): GeneratorReport {
   const reportPath = join(mkdtempSync(join(tmpdir(), 'vmcp-ref-report-')), 'report.json');
-  const result = spawnSync(process.execPath, [GENERATOR, '--out', outDir, '--report', reportPath], {
+  const args = [
+    GENERATOR,
+    '--out',
+    outDir,
+    '--report',
+    reportPath,
+    '--skill-inventory',
+    inventoryPath,
+  ];
+  const result = spawnSync(process.execPath, args, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
@@ -73,19 +91,21 @@ function sectionFor(markdown: string, toolName: string): string {
 
 let firstRun: string;
 let secondRun: string;
+let scratch: string;
 let report: GeneratorReport;
 const generated: string[] = [];
 
 beforeAll(() => {
   firstRun = mkdtempSync(join(tmpdir(), 'vmcp-ref-a-'));
   secondRun = mkdtempSync(join(tmpdir(), 'vmcp-ref-b-'));
-  report = generateInto(firstRun);
-  generateInto(secondRun);
+  scratch = mkdtempSync(join(tmpdir(), 'vmcp-ref-skill-'));
+  report = generateInto(firstRun, join(scratch, 'first.md'));
+  generateInto(secondRun, join(scratch, 'second.md'));
   generated.push(...listFiles(firstRun));
 }, GENERATE_TIMEOUT_MS);
 
 afterAll(() => {
-  for (const dir of [firstRun, secondRun]) rmSync(dir, { recursive: true, force: true });
+  for (const dir of [firstRun, secondRun, scratch]) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('generated capability reference', () => {
@@ -121,6 +141,34 @@ describe('generated capability reference', () => {
       [...CORE_TOOL_NAMES, ...MOCK_TOOL_NAMES].map((n) => n.split('.')[0]),
     );
     expect(report.pageCount).toBe(namespaces.size + 3);
+  });
+});
+
+// The coach skill ships in this repo so it cannot be older than the server
+// (VW-503). Its tool inventory is generated from the same boot as the site, so
+// these are the same currency and determinism assertions, one page wide.
+describe('the coach skill tool inventory', () => {
+  const fresh = (): string => readFileSync(join(scratch, 'first.md'), 'utf8');
+
+  it('reproduces the checked-in inventory byte for byte', () => {
+    expect(fresh(), 'run `npm run docs:reference` and commit the result').toEqual(
+      readFileSync(SKILL_INVENTORY, 'utf8'),
+    );
+  });
+
+  it('produces identical bytes on a second run with no source change', () => {
+    expect(readFileSync(join(scratch, 'second.md'), 'utf8')).toEqual(fresh());
+  });
+
+  it('gives every registered core tool a row', () => {
+    const page = fresh();
+    const missing = CORE_TOOL_NAMES.filter((name) => !page.includes(`| \`${name}\``));
+    expect(missing).toEqual([]);
+  });
+
+  it('lists no mock-only tool, which a coach session never has', () => {
+    const page = fresh();
+    expect(MOCK_TOOL_NAMES.filter((name) => page.includes(name))).toEqual([]);
   });
 });
 

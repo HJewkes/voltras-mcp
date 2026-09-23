@@ -9,6 +9,8 @@ import { log } from './logger.js';
 export interface MappedError {
   code: string;
   message: string;
+  /** The input field a refusal points at, when the thrower named one. */
+  field?: string;
 }
 
 // Own wording for both: the SDK's refusal message can carry a device status value.
@@ -56,7 +58,10 @@ export function mapSdkError(err: unknown): MappedError {
         ? (err as { code: string }).code
         : 'UNKNOWN';
     log.debug('unhandled error', err.message, err.stack);
-    return { code, message: err.message };
+    const field = (err as { field?: unknown }).field;
+    return typeof field === 'string'
+      ? { code, message: err.message, field }
+      : { code, message: err.message };
   }
   return { code: 'UNKNOWN', message: String(err) };
 }

@@ -75,6 +75,7 @@ describe('tool registry', () => {
       'plan.program.create',
       'plan.complete_workout',
       'plan.attach_to_session',
+      'session.mark_kind',
     ] as const;
     for (const name of mustBeWrite) {
       expect(toolAccess(name), `${name} must stay write`).toBe('write');
@@ -90,6 +91,7 @@ describe('tool registry', () => {
       'set.live_metrics',
       'set.get',
       'session.get',
+      'session.review_list',
       'session.list',
       'metrics.compute',
       'server.health',

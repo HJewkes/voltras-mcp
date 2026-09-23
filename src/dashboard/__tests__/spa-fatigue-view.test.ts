@@ -307,7 +307,7 @@ describe('mapStoreToFatigueModel', () => {
     expect(model!.romShortThresholdM).toBeNull();
   });
 
-  it('exposes RPE + reps-in-reserve, and passes the target tempo through', () => {
+  it('states no RPE or reps in reserve, and passes the target tempo through (VW-485)', () => {
     const reps = buildReps([
       { concVel: 500, rom: 100 },
       { concVel: 400, rom: 100 },
@@ -318,8 +318,8 @@ describe('mapStoreToFatigueModel', () => {
         prescription: { sets: 3, tempo: [3, 0, 1, 0] },
       }),
     );
-    expect(model!.rpe).not.toBeNull();
-    expect(model!.repsInReserve).toBeCloseTo(10 - model!.rpe!, 5);
+    expect(model!.rpe).toBeNull();
+    expect(model!.repsInReserve).toBeNull();
     expect(model!.targetTempoSeconds).toEqual([3, 0, 1, 0]);
     // tempoSeconds is the current-rep tuple [ecc, pauseBottom, con, pauseTop].
     expect(model!.tempoSeconds).toHaveLength(4);

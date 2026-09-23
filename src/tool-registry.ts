@@ -46,6 +46,10 @@ export const CORE_TOOL_NAMES = [
   'session.set_lifter',
   'session.list',
   'session.get',
+  // Say whether recorded work was training or a bench test, and list the days
+  // nobody has said yet (VW-489). See src/tools/session-kind-tools.ts.
+  'session.mark_kind',
+  'session.review_list',
   'set.start',
   'set.end',
   'set.live_metrics',
@@ -204,6 +208,10 @@ export const CORE_TOOL_NAMES = [
   // text a `send` decision would carry (VW-291). Read-only: it never sends
   // and never writes. See src/tools/accountability-tools.ts.
   'accountability.preview',
+  // The lifter's own commitment for one week: which days, the named fallback
+  // for each, the if-then sentence and the wording (VW-505). Append-only per
+  // revision. See src/tools/accountability-commitment.ts.
+  'accountability.declare_commitment',
   // Declared priorities and the coach's derived targets over them (VW-350).
   // The human states priorities; the coach picks the metrics, reads a start
   // value out of history and bands it. A target is FIXED once accepted.
@@ -294,6 +302,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'session.set_lifter': 'write',
   'session.list': 'read',
   'session.get': 'read',
+  'session.mark_kind': 'write',
+  'session.review_list': 'read',
 
   'set.start': 'write',
   'set.end': 'write',
@@ -437,6 +447,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // Same read as `accountability.state`, plus a plan/report read to render
   // text. Persists nothing and sends nothing.
   'accountability.preview': 'read',
+  // `write`: it appends a `commitments` revision. No device traffic.
+  'accountability.declare_commitment': 'write',
 
   // `write`: each of these upserts SQLite rows in `priorities`,
   // `goal_targets` or `advisory_decisions`.

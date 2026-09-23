@@ -6,8 +6,8 @@ Everything on this page is generated from a running server: the generator boots
 voltras-mcp against the mock adapter and reads `tools/list`, so a description here
 is the description a client actually sees.
 
-**125 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
-**127** in mock mode — the `mock.*` namespace is registered only when
+**128 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
+**130** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
 
 | Namespace                              | Tools | Availability      |
@@ -15,7 +15,7 @@ is the description a client actually sees.
 | [`device.*`](./device)                 | 24    | always registered |
 | [`bilateral.*`](./bilateral)           | 1     | always registered |
 | [`slot.*`](./slot)                     | 5     | always registered |
-| [`session.*`](./session)               | 7     | always registered |
+| [`session.*`](./session)               | 9     | always registered |
 | [`set.*`](./set)                       | 5     | always registered |
 | [`metrics.*`](./metrics)               | 1     | always registered |
 | [`exercise.*`](./exercise)             | 5     | always registered |
@@ -34,7 +34,7 @@ is the description a client actually sees.
 | [`coaching.*`](./coaching)             | 1     | always registered |
 | [`truecoach.*`](./truecoach)           | 1     | always registered |
 | [`report.*`](./report)                 | 2     | always registered |
-| [`accountability.*`](./accountability) | 2     | always registered |
+| [`accountability.*`](./accountability) | 3     | always registered |
 | [`goal.*`](./goal)                     | 7     | always registered |
 | [`mock.*`](./mock)                     | 2     | mock adapter only |
 

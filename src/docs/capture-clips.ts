@@ -226,8 +226,10 @@ export const CAPTURE_CLIPS: readonly CaptureClip[] = [
       // The last of the eight pinned reps: present only if the whole burst
       // landed on camera, which is what this clip is for.
       '0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40',
-      // The rest stage the end predicate waits for, as the page renders it.
-      'VOLUME 8 TONNAGE 0 lbs',
+      // The rest stage the end predicate waits for, as the page renders it: the 8
+      // pinned reps at the 140 lb the mock reports, through the rail tile's own
+      // formatter, which abbreviates a total of 1000 or more.
+      'VOLUME 8 TONNAGE 1.1k lbs',
     ],
     nominalSeconds: 33,
   },

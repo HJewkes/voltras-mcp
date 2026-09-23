@@ -7,7 +7,12 @@
 // boots the server over stdio against the MOCK adapter and asks it — descriptions
 // taken from `tools/list` cannot drift from what a client actually sees.
 //
+// The same boot also renders the coach skill's tool inventory (VW-503), so the
+// skill that ships beside the server cannot name a tool the server does not
+// have.
+//
 // Usage: node scripts/gen-tool-reference.mjs [--out site] [--report path.json]
+//                                            [--skill-inventory path.md]
 
 import { spawn, spawnSync } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -21,17 +26,26 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const PUSH_EVENTS_DOC = path.join(REPO_ROOT, 'docs/push-events.md');
 const DOCS_DIR = path.join(REPO_ROOT, 'docs');
+const SKILL_INVENTORY = path.join(
+  REPO_ROOT,
+  'plugins/voltras-channel/skills/pt-session/references/15-tool-inventory.md',
+);
 /** Files this generator copies text out of, and so must never harvest. */
 const RENDERED_SOURCES = new Set([PUSH_EVENTS_DOC]);
 const BOOT_SETTLE_MS = 2000;
 const REQUEST_TIMEOUT_MS = 20000;
 
 function parseArgs(argv) {
-  const args = { out: path.join(REPO_ROOT, 'site'), report: null };
+  const args = {
+    out: path.join(REPO_ROOT, 'site'),
+    report: null,
+    skillInventory: SKILL_INVENTORY,
+  };
   for (let i = 0; i < argv.length; i += 2) {
     const value = argv[i + 1];
     if (argv[i] === '--out') args.out = path.resolve(value);
     else if (argv[i] === '--report') args.report = path.resolve(value);
+    else if (argv[i] === '--skill-inventory') args.skillInventory = path.resolve(value);
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   return args;
@@ -236,10 +250,16 @@ async function writePages(outDir, pages, sidebar) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   ensureBuild();
-  const { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } = await import(
+  const { CORE_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
     path.join(REPO_ROOT, 'dist/tool-registry.js')
   );
   const { buildReference } = await import(path.join(REPO_ROOT, 'dist/docs/reference-pages.js'));
+  const { renderSkillInventory } = await import(
+    path.join(REPO_ROOT, 'dist/docs/skill-inventory.js')
+  );
+  const { SKILL_TOOL_JOBS, SKILL_TOOL_NOTES, SKILL_VERIFIED_LINE } = await import(
+    path.join(REPO_ROOT, 'dist/docs/skill-inventory-notes.js')
+  );
   const { createProtocolGuard } = await import(path.join(REPO_ROOT, 'dist/docs/protocol-guard.js'));
   const { derivePublicVocabulary } = await import(
     path.join(REPO_ROOT, 'dist/docs/public-vocabulary.js')
@@ -254,6 +274,10 @@ async function main() {
   }
   assertRegistryMatchesServer(surface.tools, CORE_TOOL_NAMES, MOCK_TOOL_NAMES);
 
+  const publishedEventNames = readPublishedEventNames();
+  const pushEvents = readPushEvents();
+  assertPushEventsArePublished(pushEvents, publishedEventNames);
+
   const guard = createProtocolGuard(
     derivePublicVocabulary({
       tools: surface.tools,
@@ -261,7 +285,7 @@ async function main() {
         ...surface.resources.map((resource) => resource.uri),
         ...surface.resourceTemplates.map((template) => template.uriTemplate),
       ],
-      publishedEventNames: readPublishedEventNames(),
+      publishedEventNames,
       publishedMarkdown: readPublishedMarkdown(),
     }),
   );
@@ -273,11 +297,21 @@ async function main() {
     tools: surface.tools,
     resources: surface.resources,
     resourceTemplates: surface.resourceTemplates,
-    pushEvents: readPushEvents(),
+    pushEvents,
   });
   assertPushEventsDocIsClean(reference.docRedactions);
   await writePages(args.out, reference.pages, reference.sidebar);
   assertNoProtocolDetail(args.out, reference.pages, guard);
+
+  const inventory = renderSkillInventory({
+    coreToolNames: CORE_TOOL_NAMES,
+    mockToolNames: MOCK_TOOL_NAMES,
+    access: TOOL_ACCESS,
+    notes: SKILL_TOOL_NOTES,
+    jobs: SKILL_TOOL_JOBS,
+    verifiedLine: SKILL_VERIFIED_LINE,
+  });
+  await writeSkillInventory(args.skillInventory, inventory, guard);
 
   const report = {
     pageCount: reference.pages.size,
@@ -291,6 +325,39 @@ async function main() {
   console.log(
     `[reference] ${report.pageCount} pages, ${report.coreToolCount} core tools, ` +
       `${report.coreToolCount + report.mockToolCount} in mock mode`,
+  );
+}
+
+/** The skill inventory is one page outside the site, so it writes on its own. */
+async function writeSkillInventory(target, body, guard) {
+  const config = (await prettier.resolveConfig(target)) ?? {};
+  const text = await formatWith(config, target, body);
+  // Line numbers, never the token: a build log is as public as the page it
+  // refused to write.
+  const offenders = [...guard.find(text)].map(
+    (match) => `line ${text.slice(0, match.start).split('\n').length}: ${match.kind}`,
+  );
+  if (offenders.length > 0) {
+    throw new Error(
+      `protocol detail reached the skill inventory (${offenders.length} hits): ${offenders.join('; ')}`,
+    );
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text);
+}
+
+// A push-events row naming an event nothing publishes is drift the reader
+// cannot see: the doc says the coach may wait for it, and it never arrives.
+// Both lists are already read here, so the check costs nothing (VW-513).
+function assertPushEventsArePublished(rows, publishedEventNames) {
+  const published = new Set(publishedEventNames);
+  const unpublished = rows
+    .map((row) => row.event.replace(/`/g, '').trim())
+    .filter((event) => !published.has(event));
+  if (unpublished.length === 0) return;
+  throw new Error(
+    `docs/push-events.md names ${unpublished.length} event(s) no publish site under src/state ` +
+      `emits: ${unpublished.join(', ')}`,
   );
 }
 

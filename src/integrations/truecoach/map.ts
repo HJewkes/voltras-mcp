@@ -249,3 +249,30 @@ export function isoWeekLabel(date: string): string {
   const week = 1 + Math.round((utc.getTime() - firstThursday.getTime()) / (7 * 86_400_000));
   return `${isoYear}-W${String(week).padStart(2, '0')}`;
 }
+
+/**
+ * The Monday of an ISO week label ('2026-W37'), as a 'YYYY-MM-DD' local calendar date. The
+ * inverse of {@link isoWeekLabel}, and the date a dated import block counts its weeks from.
+ */
+export function isoWeekMonday(label: string): string {
+  const [year, week] = label.split('-W').map((part) => Number.parseInt(part, 10));
+  const firstThursday = new Date(Date.UTC(year!, 0, 4));
+  const offset = (firstThursday.getUTCDay() + 6) % 7;
+  const firstMonday = firstThursday.getTime() - offset * 86_400_000;
+  return new Date(firstMonday + ((week ?? 1) - 1) * 7 * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Every ISO week label from `first` to `last` inclusive, including the weeks with no workout. */
+export function isoWeekLabelsBetween(first: string, last: string): string[] {
+  const labels: string[] = [];
+  for (
+    let monday = isoWeekMonday(first);
+    monday <= isoWeekMonday(last);
+    monday = new Date(Date.parse(`${monday}T00:00:00.000Z`) + 7 * 86_400_000)
+      .toISOString()
+      .slice(0, 10)
+  ) {
+    labels.push(isoWeekLabel(monday));
+  }
+  return labels;
+}

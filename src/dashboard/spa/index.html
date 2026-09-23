@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Voltras Dashboard (SPA)</title>
     <!--
+      Per-boot write token (VW-500). The server substitutes the real value at
+      serve time; this literal is never usable, and a bundle served without
+      substitution makes the SPA fall back to `GET /api/bootstrap`.
+    -->
+    <meta name="vmcp-write-token" content="__VMCP_WRITE_TOKEN__" />
+    <!--
       Bootstrap paint only. These two literals mirror titan's
       `--color-background-base` (#101010) and `--color-text-primary` (#f3f4f6)
       so the first frame matches the theme before the bundle loads

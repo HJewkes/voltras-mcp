@@ -9,6 +9,7 @@ import type { BlockCalendar, CalendarWeek } from '../../plan/block-calendar.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredTrainingBlock, StoredTrainingWeek } from '../../store/types.js';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -593,7 +594,8 @@ describe('plan.block.calendar', () => {
       scaffoldWeeks: true,
     });
     await ok('plan.template.create', { weekId: created.weeks[0].id, name: 'Day A', orderIndex: 0 });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's1',
       startedAt: '2026-09-16T17:00:00.000Z',
       endedAt: '2026-09-16T18:00:00.000Z',

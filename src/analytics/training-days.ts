@@ -8,11 +8,17 @@
 // goals read model, report.weekly, the accountability copy, the tier signal and
 // the check-in gate, so no two readers can count differently:
 //
-// - WINDOW: an ended session is in the window when its START instant is in
+// - KIND: only a session marked `kind = 'training'` counts (VW-489). An
+//   unreviewed session is not evidence of a training day, because the owner's
+//   account of this history is that most of it is bench testing.
+// - WORK: only a session holding at least one working set counts. An empty
+//   session that opened and closed is not a visit to the gym.
+// - WINDOW: a session is in the window when its START instant is in
 //   [now - 28 x 24 h, now]. The lower edge is inclusive.
 // - DAY: an in-window session belongs to the local calendar date of its END
 //   instant, read in the server process's timezone (`localDate`). That is the
-//   date `report.session_results` already files a workout under.
+//   date `report.session_results` already files a workout under. A session that
+//   was never ended uses the end of its LAST WORKING SET instead.
 // - COUNT: the number of distinct days. A day counts once however many
 //   sessions it holds.
 //
@@ -38,6 +44,32 @@ export function localDate(iso: string): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
+/**
+ * The instant's LOCAL wall-clock time written as if it were UTC (VW-477). A UTC-only grouper
+ * (workout-analytics' ISO-week buckets) then groups by local calendar days. Each instant uses
+ * its own offset, so DST is handled per instant. Under UTC it returns the instant unchanged.
+ */
+export function localWallClockIso(iso: string): string {
+  const d = new Date(iso);
+  return new Date(
+    Date.UTC(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      d.getHours(),
+      d.getMinutes(),
+      d.getSeconds(),
+      d.getMilliseconds(),
+    ),
+  ).toISOString();
+}
+
+/** The instant a local calendar date ('YYYY-MM-DD') starts at, in the process timezone. */
+export function localMidnightIso(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day).toISOString();
+}
+
 /** Today's local calendar date: the one clock every dated-block rule reads (VW-474). */
 export function todayLocal(): string {
   return localDate(new Date().toISOString());
@@ -48,9 +80,9 @@ export function sessionWindowFrom(nowIso: string): string {
   return new Date(Date.parse(nowIso) - SESSION_WINDOW_DAYS * DAY_MS).toISOString();
 }
 
-/** The distinct local days the given session end times fall on, oldest first. */
-export function trainingDaysOf(endTimes: readonly string[]): string[] {
-  return [...new Set(endTimes.map(localDate))].sort();
+/** The distinct local days the given training-day instants fall on, oldest first. */
+export function trainingDaysOf(instants: readonly string[]): string[] {
+  return [...new Set(instants.map(localDate))].sort();
 }
 
 /** A run of days with no training, and the training day that ended it. */
@@ -74,14 +106,14 @@ export function trainingGaps(days: readonly string[]): TrainingGap[] {
 }
 
 /** The store slice a training-day read needs. */
-export type TrainingDayStore = Pick<SessionStore, 'listSessionEndTimes'>;
+export type TrainingDayStore = Pick<SessionStore, 'listTrainingDayInstants'>;
 
-/** The training days of the ended sessions `filter` matches, oldest first. */
+/** The training days of the sessions `filter` matches, oldest first. */
 export async function readTrainingDaysMatching(
   store: TrainingDayStore,
   filter: SessionCountFilter,
 ): Promise<string[]> {
-  return trainingDaysOf(await store.listSessionEndTimes(filter));
+  return trainingDaysOf(await store.listTrainingDayInstants(filter));
 }
 
 /**

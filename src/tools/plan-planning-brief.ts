@@ -12,6 +12,7 @@ import { scheduleHistory, type ScheduleHistory } from '../plan/schedule-history.
 import type { ServerState } from '../state/server-state.js';
 import type { RecompMode } from '../store/diet-phase.js';
 import type { StoredTrainingBlock } from '../store/types.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
 import { calendarOf, placedBlocks, trainingDaysBetween } from './plan-schedule-tools.js';
@@ -25,6 +26,14 @@ export interface PlanningBrief {
   conflicts: string[];
   realignment: GoalRealignment | null;
   dietPhase: { phase: string; weeksInPhase: number | null; recompMode: RecompMode | null } | null;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are excluded
+   * from every count here, so a zero beside a non-zero `unreviewedDays` means the
+   * history is withheld pending review, not absent.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 interface FinishingBlock {
@@ -70,6 +79,7 @@ export async function buildPlanningBrief(
     realignment:
       finishingBlock === null ? null : await buildGoalRealignment(state, finishingBlock.id),
     dietPhase: await dietPhaseView(state),
+    ...(await readUnreviewed(state.store)),
   };
 }
 

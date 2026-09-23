@@ -23,6 +23,7 @@
 // takes by keying off `LOCAL_USER_ID`.
 
 import { readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
@@ -41,12 +42,24 @@ export type TierCeilingBasis = 'logged_history' | 'returner' | null;
  * tool path's `ServerState` still satisfies it structurally.
  */
 export interface TierSignalState {
-  store: Pick<SessionStore, 'getTrainingProfile' | 'listSessionEndTimes' | 'getSessionDateSpan'>;
+  store: Pick<
+    SessionStore,
+    | 'getTrainingProfile'
+    | 'listTrainingDayInstants'
+    | 'getSessionDateSpan'
+    | 'listSessionReviewRows'
+  >;
 }
 
 export interface TierSignalEvidence {
   /** Distinct local days with an ended session, all time (VW-462); one visit is one day however many rows it holds. */
   trainingDaysLogged: number;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are NOT in
+   * `trainingDaysLogged`, so a gate that reads unmet with this above zero is
+   * waiting on a review, not on training.
+   */
+  unreviewedDays: number;
   firstSessionAt: string | null;
   weeksSpanned: number;
   /** Whether the logged history alone clears the 24-day, 12-week gate. */
@@ -184,6 +197,7 @@ export async function getTierSignal(
   );
   const derivedCeiling: Tier = ceilingBasis === null ? 'beginner' : 'intermediate';
 
+  const unreviewed = await readUnreviewed(state.store);
   const declared = isTier(profile?.declaredTier) ? profile.declaredTier : null;
   const tier = minTier(declared ?? 'beginner', derivedCeiling);
   const source: TierSource =
@@ -198,6 +212,7 @@ export async function getTierSignal(
     declared,
     evidence: {
       trainingDaysLogged: days.length,
+      unreviewedDays: unreviewed.unreviewedDays,
       firstSessionAt: span.first,
       weeksSpanned,
       loggedHistoryMet,

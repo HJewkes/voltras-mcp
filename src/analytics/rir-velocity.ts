@@ -37,8 +37,13 @@
 
 import { getRepMeanVelocity, type Rep } from '@voltras/workout-analytics';
 
-/** Stamped onto every model this module fits. Bump on any change below. */
-export const RIR_VELOCITY_MODEL_VERSION = 'rir-velocity@1.0.0';
+import type { ResistanceFamily } from './resistance-family.js';
+
+/**
+ * Stamped onto every model this module fits. Bump on any change below: a model
+ * stamped with an older version is not trusted until it is refitted.
+ */
+export const RIR_VELOCITY_MODEL_VERSION = 'rir-velocity@1.2.0';
 
 declare const rirModelVelocityBrand: unique symbol;
 
@@ -52,6 +57,70 @@ export type RirModelVelocityMps = number & { readonly [rirModelVelocityBrand]: t
 /** The one velocity the curve is fitted on and read with (VW-483). */
 export function rirModelVelocity(rep: Rep): RirModelVelocityMps {
   return getRepMeanVelocity(rep) as RirModelVelocityMps;
+}
+
+/**
+ * The fit error, in reps in reserve, at or under which a curve is trusted to state
+ * effort. The owner's ruling (VW-448): tighter than Jukic 2024's under-2-rep figure,
+ * because a 95% range of about 4 reps either side is too wide for a cue at RPE 9.
+ */
+export const TRUSTED_RIR_ERROR_REPS = 1.5;
+
+/**
+ * Whether a stored curve is trusted to state reps in reserve or RPE (VW-485). The one
+ * trust gate: the effort resolver (VW-448) replaces this function, not its callers.
+ * A curve fitted under an older {@link RIR_VELOCITY_MODEL_VERSION} is not trusted.
+ */
+export function isTrustedRirModel(model: RirVelocityModel | undefined): model is RirVelocityModel {
+  return (
+    model !== undefined &&
+    model.version === RIR_VELOCITY_MODEL_VERSION &&
+    model.rirErrorReps <= TRUSTED_RIR_ERROR_REPS
+  );
+}
+
+/** Furthest the held-out set's anchor may be missed, in reps in reserve, inclusive. */
+export const HELD_OUT_MAX_ERROR_REPS = 1.5;
+
+/** Oldest the newest fitted set may be: one mesocycle plus a deload (engineering default). */
+export const PROFILE_FRESHNESS_DAYS = 42;
+
+/** Why a curve is not trusted to drive the effort cue, as a typed id. */
+export type TrustReason =
+  | 'stale_model_version'
+  | 'fit_error'
+  | 'no_failure_anchor'
+  | 'held_out_miss'
+  | 'stale'
+  | 'not_constant_load';
+
+export interface ProfileTrust {
+  trusted: boolean;
+  reason: TrustReason | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a curve may drive the effort cue at set start (VW-448 design s.3.4). The
+ * first gate that fails names the reason; a curve fitted under an older model version
+ * fails first, because its other fields may not mean what they mean now.
+ */
+export function profileTrust(model: RirVelocityModel, now: Date): ProfileTrust {
+  const reason = firstFailedTrustGate(model, now);
+  return { trusted: reason === null, reason };
+}
+
+function firstFailedTrustGate(model: RirVelocityModel, now: Date): TrustReason | null {
+  if (model.version !== RIR_VELOCITY_MODEL_VERSION) return 'stale_model_version';
+  if (model.rirErrorReps > TRUSTED_RIR_ERROR_REPS) return 'fit_error';
+  if (model.anchorSources.failure < 1) return 'no_failure_anchor';
+  const heldOut = model.heldOutErrorReps ?? null;
+  if (heldOut === null || heldOut > HELD_OUT_MAX_ERROR_REPS) return 'held_out_miss';
+  const ageMs = now.getTime() - Date.parse(model.observedTo);
+  if (ageMs > PROFILE_FRESHNESS_DAYS * DAY_MS) return 'stale';
+  if (model.resistanceFamily !== 'constant') return 'not_constant_load';
+  return null;
 }
 
 /** The source of a set's reps-in-reserve anchor. */
@@ -68,7 +137,9 @@ export interface RirVelocityPoint {
 /**
  * One candidate set, already reduced to points. `relativeIntensity` is the
  * set's load over the lifter's own reference 1RM for the exercise; the caller
- * computes it, because what counts as a reference is a store question.
+ * computes it, because what counts as a reference is a store question. The
+ * caller also passes constant-load sets only, which is what the fitted model
+ * records as its resistance family.
  */
 export interface RirVelocityObservation {
   setId: string;
@@ -183,6 +254,8 @@ export const GENERAL_MODEL_CAVEAT =
 export interface RirVelocityModel {
   form: 'linear';
   version: string;
+  /** The resistance the fitted sets met. Always constant load (VW-538). */
+  resistanceFamily: ResistanceFamily;
   /** Fitted velocity at RIR 0, m/s — the lifter's own terminal velocity. */
   interceptMps: number;
   /** Velocity gained per rep in reserve, m/s. Positive by construction. */
@@ -207,6 +280,11 @@ export interface RirVelocityModel {
   /** ISO-8601 of the earliest and latest qualifying set. */
   observedFrom: string;
   observedTo: string;
+  /**
+   * How far, in reps in reserve, a curve fitted without the newest qualifying set
+   * misses that set's anchor. Null when the curve without it does not stand.
+   */
+  heldOutErrorReps: number | null;
 }
 
 /** Counts behind a fit, reported whether or not a model came out of it. */
@@ -236,6 +314,27 @@ export interface RirVelocityFit {
 export function fitRirVelocityModel(
   observations: readonly RirVelocityObservation[],
 ): RirVelocityFit {
+  const fit = fitWithoutHoldOut(observations);
+  if (fit.model === null) return fit;
+  return { ...fit, model: { ...fit.model, heldOutErrorReps: heldOutError(observations) } };
+}
+
+/**
+ * The newest qualifying set's anchor as read by a curve fitted without that set:
+ * "within-session fit is not evidence" (VW-448 design s.3.4).
+ */
+function heldOutError(observations: readonly RirVelocityObservation[]): number | null {
+  const newest = observations
+    .filter(inBand)
+    .reduce((a, b) => (b.performedAt > a.performedAt ? b : a));
+  const without = fitWithoutHoldOut(observations.filter((o) => o !== newest)).model;
+  if (without === null) return null;
+  const anchor = newest.points.reduce((a, b) => (b.rir < a.rir ? b : a));
+  const predicted = (anchor.velocityMps - without.interceptMps) / without.slopeMpsPerRir;
+  return round2(Math.abs(predicted - anchor.rir));
+}
+
+function fitWithoutHoldOut(observations: readonly RirVelocityObservation[]): RirVelocityFit {
   const qualifying = observations.filter(inBand);
   const points = qualifying.flatMap((o) => o.points);
   const sessions = new Set(qualifying.map((o) => o.sessionId));
@@ -375,6 +474,7 @@ function buildModel(
   return {
     form: 'linear',
     version: RIR_VELOCITY_MODEL_VERSION,
+    resistanceFamily: 'constant',
     interceptMps: round3(line.intercept),
     slopeMpsPerRir: round3(line.slope),
     r2: round3(line.r2),
@@ -391,6 +491,7 @@ function buildModel(
     },
     observedFrom: times[0],
     observedTo: times[times.length - 1],
+    heldOutErrorReps: null,
   };
 }
 

@@ -166,7 +166,7 @@ describe('v24 -> v25 migration', () => {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(41);
         const row = db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number };
         expect(row.n).toBe(1);
       } finally {

@@ -130,6 +130,7 @@ function makeHarness(opts: HarnessOpts = {}) {
     server: { server: { sendResourceUpdated: vi.fn(() => Promise.resolve()) } },
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
+    setStartDeviceSnapshots: new Map(),
     slotBindings: opts.bindings,
     store: opts.omitStore === true ? undefined : { putIdleRep },
   };

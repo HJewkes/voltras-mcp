@@ -67,7 +67,11 @@ describe('SqliteSessionStore self-reports', () => {
   });
 
   it('filters by session, excluding rows from other sessions', async () => {
-    await store.putSession({ id: 'sess-2', startedAt: '2025-01-02T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-2',
+      startedAt: '2025-01-02T00:00:00.000Z',
+    });
     await store.putSelfReport(makeSelfReport({ id: 'a', sessionId: 'sess-1' }));
     await store.putSelfReport(makeSelfReport({ id: 'b', sessionId: 'sess-2' }));
 

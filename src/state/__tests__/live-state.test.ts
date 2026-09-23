@@ -114,6 +114,30 @@ describe('LiveState', () => {
       expect(live.snapshotSet()?.setId).toBe('set-1');
     });
 
+    it('snapshotSet hands back a context and cue record the caller cannot reach through', () => {
+      const live = new LiveState();
+      live.startSet(
+        makeSet({ effortContext: { goal: { kind: 'rep_range' } }, cueRecord: { fired: false } }),
+      );
+
+      const first = live.snapshotSet();
+      (first?.effortContext?.goal as { kind: string }).kind = 'velocity_loss';
+      first!.cueRecord!.fired = true;
+
+      expect(live.snapshotSet()?.effortContext).toEqual({ goal: { kind: 'rep_range' } });
+      expect(live.snapshotSet()?.cueRecord).toEqual({ fired: false });
+    });
+
+    it('snapshotSet adds no context or cue record to a set that has neither', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+
+      const set = live.snapshotSet();
+
+      expect(set).not.toHaveProperty('effortContext');
+      expect(set).not.toHaveProperty('cueRecord');
+    });
+
     it('startSet is a no-op when a set is already active', () => {
       const live = new LiveState();
       live.startSet(makeSet({ setId: 'first' }));

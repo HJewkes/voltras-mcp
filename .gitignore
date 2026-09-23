@@ -47,3 +47,18 @@ voice-listener/.venv/
 # Docs site build output (VitePress)
 site/.vitepress/dist/
 site/.vitepress/cache/
+
+# Scratch build for scripts/sim (npm run sim:rest)
+.sim-build/
+
+# Scratch copies for the read-only replay (npm run sim:rest -- --replay)
+.sim-scratch/
+
+# Scratch build for scripts/store (npm run store)
+.store-build/
+
+# Rehearsal scratch for the store export/import tool (VW-534)
+.store-scratch/
+
+# Scratch build for tools/truecoach-retro (npm run retro:truecoach)
+.retro-build/

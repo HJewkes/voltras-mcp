@@ -162,7 +162,13 @@ async function seedLiftHistory(store: SqliteSessionStore, exerciseId: string): P
   for (let index = 0; index < 3; index += 1) {
     const at = daysAgo((3 - index) * 7);
     const sessionId = `${exerciseId}-sess-${String(index)}`;
-    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    await store.putSession({
+      kind: 'training',
+      id: sessionId,
+      startedAt: at,
+      endedAt: at,
+      exerciseId,
+    });
     for (const suffix of ['a', 'b']) {
       const setId = `${exerciseId}-set-${String(index)}${suffix}`;
       const set: StoredSet = {
@@ -339,7 +345,7 @@ describe('plan.complete_workout block boundary', () => {
   beforeEach(async () => {
     h = setup();
     await seedPlanTree(h.store);
-    await h.store.putSession({ id: 'sess-1', startedAt: daysAgo(1) });
+    await h.store.putSession({ kind: 'training', id: 'sess-1', startedAt: daysAgo(1) });
   });
 
   it('carries the re-ask on the last template of a block', async () => {

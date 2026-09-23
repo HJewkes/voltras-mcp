@@ -161,7 +161,7 @@ function shapeOf(db: DatabaseSync): Shape {
 }
 
 const MIGRATED: Shape = {
-  version: 34,
+  version: 41,
   scheduleRows: 0,
   boundTargets: 0,
   trigger: true,

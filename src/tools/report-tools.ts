@@ -13,6 +13,8 @@
 // working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
 // not read as a light top set.
 
+import { resolveCurrentBlock } from '../plan/current-block.js';
+import { datedWeeksOverlapping, scheduleChangeLines } from './report-calendar.js';
 import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
@@ -20,6 +22,7 @@ import type { z } from 'zod';
 import { rirModelVelocity, type RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
 import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -299,7 +302,13 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'Sections, each omitted when empty: a header (lifter, range, `trainingDaysCompleted` in the ' +
   'range and `rolling28DayTrainingDays` — both count training days, the distinct local dates ' +
   'trained however many sessions one day holds, never a streak — and adherence `planned N / done M` against ' +
-  "the active program's touched week(s), plus a coarse trend vs the previous equal-length range); " +
+  'the dated weeks the range overlaps, plus a coarse trend vs the previous equal-length range. ' +
+  'A DATED WEEK COUNTS AS PLANNED WHETHER OR NOT IT WAS TRAINED (VW-478), so a week nobody ' +
+  'trained reads planned N, done 0 instead of vanishing; `adherence.weeks` carries each dated ' +
+  'week, and a week the lifter held or extended is marked. With no dated block the older rule ' +
+  'stands: only the weeks a session touched, reported as `basis: touched_weeks`. The header ' +
+  'also names the dated block and the week of it the range ends in, and `scheduleChanges` ' +
+  'carries one line per schedule change made inside the range); ' +
   'one block per session (date, template name, the self-reported `preSessionCarbs` line when the ' +
   'session has one, then the same `report.session_results` strings verbatim, ' +
   'plus an RIR line only when the rir-estimate baseline gate allows it — labelled `fitted` when ' +
@@ -327,6 +336,22 @@ export interface WeeklyAdherence {
   planned: number;
   done: number;
   trend: 'improving' | 'declining' | 'steady' | 'no-prior-data';
+  /**
+   * How `planned` was counted (VW-478). `dated_weeks`: every dated week the range overlaps,
+   * so a week nobody trained still counts. `touched_weeks`: the older rule, for a store with
+   * no dated block — only the weeks a session reached.
+   */
+  basis: 'dated_weeks' | 'touched_weeks';
+  /** One entry per dated week the range overlapped; empty under `touched_weeks`. */
+  weeks: WeeklyAdherenceWeek[];
+}
+
+/** One dated week's own planned-and-done count, and whether the lifter held it. */
+export interface WeeklyAdherenceWeek {
+  startsOn: string;
+  planned: number;
+  done: number;
+  skipped: 'hold' | 'extend' | null;
 }
 
 export interface WeeklyReportHeader {
@@ -337,7 +362,15 @@ export interface WeeklyReportHeader {
   trainingDaysCompleted: number;
   /** Training days in the 28 days ending at `to`, by the shared rule in `training-days.ts`. */
   rolling28DayTrainingDays: number;
+  /**
+   * Past local days holding a session nobody has marked training or test (VW-489).
+   * Those days are excluded from both counts above, so a low number with a
+   * non-zero `unreviewedDays` means history is withheld, not absent.
+   */
+  unreviewedDays: number;
   adherence: WeeklyAdherence | null;
+  /** The dated block the range ends in, and which week of it that was (VW-478). */
+  block: { name: string; week: number; weeks: number } | null;
 }
 
 export interface WeeklySessionExercise {
@@ -413,6 +446,8 @@ export interface WeeklyCheckIn {
 
 export interface WeeklyReport {
   header: WeeklyReportHeader;
+  /** One line per schedule row declared inside the range (VW-478). */
+  scheduleChanges: string[];
   sessions: WeeklySessionEntry[];
   progression: WeeklyProgressionLine[];
   flags: WeeklyFlags;
@@ -454,8 +489,11 @@ export async function buildWeeklyReport(
           ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
         })
       ).length,
+      unreviewedDays: (await readUnreviewed(state.store)).unreviewedDays,
       adherence: await computeAdherenceWithTrend(state, input.lifter, from, to, sessions),
+      block: await blockLine(state, to),
     },
+    scheduleChanges: await scheduleChangeLines(state.store, from, to),
     sessions: sessionEntries,
     progression: await buildProgressionLines(state, endedSessions),
     flags: await buildFlags(state, endedSessions),
@@ -761,7 +799,7 @@ async function computeAdherenceWithTrend(
   to: string,
   sessions: StoredSession[],
 ): Promise<WeeklyAdherence | null> {
-  const current = await computeAdherenceCount(state, sessions);
+  const current = await adherenceOver(state, sessions, from, to);
   if (current === null) return null;
 
   const rangeMs = new Date(to).getTime() - new Date(from).getTime();
@@ -773,9 +811,69 @@ async function computeAdherenceWithTrend(
     limit: MAX_SESSIONS_IN_RANGE,
     ...(lifter !== undefined ? { lifter } : {}),
   });
-  const previous = await computeAdherenceCount(state, previousSessions);
+  const previous = await adherenceOver(state, previousSessions, previousFrom, from);
 
   return { ...current, trend: adherenceTrend(current, previous) };
+}
+
+/**
+ * The dated weeks the range overlaps, else the weeks a session touched (VW-478). A dated week
+ * counts as planned whether or not anything was trained in it, so a week the lifter held reads
+ * planned N, done 0 rather than disappearing from the count.
+ */
+async function adherenceOver(
+  state: ServerState,
+  sessions: StoredSession[],
+  from: string,
+  to: string,
+): Promise<(AdherenceCount & Pick<WeeklyAdherence, 'basis' | 'weeks'>) | null> {
+  const dated = await datedWeeksOverlapping(state.store, from, to);
+  if (dated.length === 0) {
+    const touched = await computeAdherenceCount(state, sessions);
+    return touched === null ? null : { ...touched, basis: 'touched_weeks', weeks: [] };
+  }
+  const doneTemplates = await completedTemplateIds(state, sessions);
+  const weeks: WeeklyAdherenceWeek[] = [];
+  for (const week of dated) {
+    const templates =
+      week.weekRow === undefined
+        ? []
+        : await state.store.getWorkoutTemplatesForWeek(week.weekRow.id);
+    weeks.push({
+      startsOn: week.startsOn,
+      planned: templates.length,
+      done: templates.filter((template) => doneTemplates.has(template.id)).length,
+      skipped: week.skipped,
+    });
+  }
+  return {
+    planned: weeks.reduce((sum, week) => sum + week.planned, 0),
+    done: weeks.reduce((sum, week) => sum + week.done, 0),
+    basis: 'dated_weeks',
+    weeks,
+  };
+}
+
+/** Templates an ENDED session in the range was assigned to. */
+async function completedTemplateIds(
+  state: ServerState,
+  sessions: readonly StoredSession[],
+): Promise<Set<string>> {
+  const done = new Set<string>();
+  for (const session of sessions) {
+    if (session.endedAt === undefined) continue;
+    for (const assignment of await state.store.getAssignmentsForSession(session.id)) {
+      if (assignment.workoutTemplateId !== undefined) done.add(assignment.workoutTemplateId);
+    }
+  }
+  return done;
+}
+
+/** The dated block the range ends in, and which week of it that was. */
+async function blockLine(state: ServerState, to: string): Promise<WeeklyReportHeader['block']> {
+  const read = await resolveCurrentBlock(state.store, localDate(to));
+  if (read.block === null || read.week === null) return null;
+  return { name: read.block.name, week: read.week.n, weeks: read.week.of };
 }
 
 /**
@@ -851,9 +949,22 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
   lines.push('');
   lines.push(`Training days: ${report.header.trainingDaysCompleted}`);
   lines.push(`Last 28 days: ${report.header.rolling28DayTrainingDays} training days`);
+  if (report.header.block !== null) {
+    const block = report.header.block;
+    lines.push(`Block: ${block.name}, week ${block.week} of ${block.weeks}`);
+  }
   if (report.header.adherence !== null) {
     const a = report.header.adherence;
     lines.push(`Adherence: planned ${a.planned} / done ${a.done} (trend: ${a.trend})`);
+    for (const week of a.weeks.filter((entry) => entry.skipped !== null)) {
+      lines.push(
+        `- Week of ${week.startsOn}: planned ${week.planned} / done ${week.done} (${week.skipped})`,
+      );
+    }
+  }
+  if (report.scheduleChanges.length > 0) {
+    lines.push('', '## Schedule changes');
+    for (const change of report.scheduleChanges) lines.push(`- ${change}`);
   }
 
   if (report.sessions.length > 0) {

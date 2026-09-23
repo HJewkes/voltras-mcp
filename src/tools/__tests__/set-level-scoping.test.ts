@@ -101,6 +101,7 @@ const MIXED_SESSION_ID = 'sess-mixed';
 /** One session, two exercises: 2×8 @135 bench and 1×3 @325 squat. */
 async function seedMixedSession(store: SqliteSessionStore, startedAt: string): Promise<void> {
   await store.putSession({
+    kind: 'training',
     id: MIXED_SESSION_ID,
     startedAt,
     endedAt: startedAt,

@@ -14,12 +14,15 @@
 //
 // WRITTEN AGAINST SHAPES, the same choice `no-protocol-detail.mjs` made and
 // for the same reason: a rule that only recognises the instances it was
-// written against is a hardcoded list wearing a regex costume. Three shapes
-// are covered — a function whose name or return type names RIR and whose
-// params name velocity loss, a call into an RIR-named callee carrying a
-// velocity-loss argument, and a lookup table named for both — because those
-// are the shapes a direct conversion actually takes in this codebase (see
-// `estimateRIRWithProfile`, the tracked pre-existing hit below).
+// written against is a hardcoded list wearing a regex costume. Four shapes
+// are covered — a function whose name or return type names RIR or RPE and
+// whose params name velocity loss, a call into an RIR- or RPE-named callee
+// carrying a velocity-loss argument, a lookup table named for both, and an
+// import of one of workout-analytics' own velocity-loss-to-effort conversions
+// — because those are the shapes a direct conversion actually takes in this
+// codebase. The fourth exists because WA's conversions take a whole set
+// (`estimateSetRpe({ reps })`), so no argument names velocity loss and the
+// first three shapes never saw the wall's stated RPE (VW-485).
 //
 // It scans RAW TEXT, so it also sees a shape written inside a comment. That
 // is deliberate, not a bug to route around: the no-protocol-detail guard
@@ -46,11 +49,25 @@ const FIXTURE_PATH = join(SRC_ROOT, '__tests__/fixtures/direct-vl-to-rir.fixture
 /** A quantity naming velocity LOSS — the dial, never the target of a claim. */
 const VL_TOKEN = /velocityLoss|vlPct|vLossPct|velLossPct|vl_pct|velocity_loss/i;
 
-/** A quantity naming reps in reserve. */
-const RIR_TOKEN = /rir|reps[ _]?in[ _]?reserve/i;
+/** A quantity naming stated effort: reps in reserve, or RPE. */
+const RIR_TOKEN = /rir|rpe|reps[ _]?in[ _]?reserve/i;
+
+/**
+ * workout-analytics exports that turn velocity loss into a stated effort (RIR or
+ * RPE) through a fixed table or placeholder regression, whatever their arguments.
+ */
+const DENIED_ANALYTICS_EXPORTS = [
+  'estimateSetRpe',
+  'estimateSetRIR',
+  'estimatePerRepRIR',
+  'estimateRIRWithProfile',
+  'getSetFatigueSummary',
+  'DEFAULT_RIR_SCHEME',
+  'DEFAULT_VELOCITY_RIR_MAP',
+];
 
 interface Finding {
-  kind: 'call' | 'definition' | 'table';
+  kind: 'call' | 'definition' | 'table' | 'import';
   file: string;
   line: number;
   name: string;
@@ -143,6 +160,26 @@ function findVlToRirTables(text: string): Array<{ index: number; name: string }>
   return found;
 }
 
+const ANALYTICS_IMPORT_RE =
+  /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]@voltras\/workout-analytics[^'"]*['"]/g;
+const DENIED_MEMBER_RE = new RegExp(`\\.\\s*(${DENIED_ANALYTICS_EXPORTS.join('|')})\\b`, 'g');
+
+/** A named import of a denied export, or a namespace reach into one (`wa.estimateSetRpe`). */
+function findDeniedAnalyticsUses(text: string): Array<{ index: number; name: string }> {
+  const found: Array<{ index: number; name: string }> = [];
+  for (const m of text.matchAll(ANALYTICS_IMPORT_RE)) {
+    for (const specifier of m[1].split(',')) {
+      const name = specifier
+        .replace(/^\s*type\s+/, '')
+        .split(/\s+as\s+/)[0]
+        .trim();
+      if (DENIED_ANALYTICS_EXPORTS.includes(name)) found.push({ index: m.index, name });
+    }
+  }
+  for (const m of text.matchAll(DENIED_MEMBER_RE)) found.push({ index: m.index, name: m[1] });
+  return found;
+}
+
 function scanText(text: string, relPath: string): Finding[] {
   const findings: Finding[] = [];
   for (const { index, name } of findRirCallsWithVlArgs(text)) {
@@ -153,6 +190,9 @@ function scanText(text: string, relPath: string): Finding[] {
   }
   for (const { index, name } of findVlToRirTables(text)) {
     findings.push({ kind: 'table', file: relPath, line: lineOf(text, index), name });
+  }
+  for (const { index, name } of findDeniedAnalyticsUses(text)) {
+    findings.push({ kind: 'import', file: relPath, line: lineOf(text, index), name });
   }
   return findings.sort((a, b) => a.line - b.line);
 }
@@ -195,7 +235,14 @@ describe('positive control — the scanner is not blind', () => {
   it('catches the deliberately planted conversion in the fixture, in every shape', () => {
     const findings = scanFile(FIXTURE_PATH);
 
-    expect(findings.map((f) => f.kind).sort()).toEqual(['call', 'definition', 'table']);
+    expect(findings.map((f) => `${f.kind}:${f.name}`).sort()).toEqual([
+      'call:estimateRirFromVelocityLoss',
+      'definition:estimateRirFromVelocityLoss',
+      'definition:statedRpeFromVelocityLoss',
+      'import:estimateSetRpe',
+      'import:getSetFatigueSummary',
+      'table:VELOCITY_LOSS_TO_RIR_TABLE',
+    ]);
   });
 });
 

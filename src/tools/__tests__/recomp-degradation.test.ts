@@ -32,7 +32,12 @@ async function addBlock(orderIndex: number, finishedAt: string | null): Promise<
     orderIndex: 0,
   });
   if (finishedAt === null) return;
-  await store.putSession({ id: `${id}-s`, startedAt: finishedAt, lifter: 'primary' });
+  await store.putSession({
+    kind: 'training',
+    id: `${id}-s`,
+    startedAt: finishedAt,
+    lifter: 'primary',
+  });
   await store.putProgramAssignment({
     id: `${id}-a`,
     sessionId: `${id}-s`,

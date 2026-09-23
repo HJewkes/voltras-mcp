@@ -8,8 +8,10 @@
 // ── Where the numbers come from ───────────────────────────────────────────
 //
 //   * VBT: `@voltras/workout-analytics`'s `getSetVelocitySummary` /
-//     `getSetFatigueSummary` / `getSetFatigueVerdict`, adapted from `StoredSet`
-//     exactly the way `tools/metrics-tools.ts` does (`{ reps }`, no rep math here).
+//     `getSetFatigueVerdict`, adapted from `StoredSet` exactly the way
+//     `tools/metrics-tools.ts` does (`{ reps }`, no rep math here). No RIR or RPE:
+//     WA's set summary reads them off velocity loss through a fixed table, the
+//     conversion VW-302 forbids, so the card states none (VW-485).
 //   * Progression: `computeProgressionDelta`, imported from `tools/plan-tools.ts`
 //     — the SAME function `plan.suggest_progression` runs. The heuristic is not
 //     re-implemented; this module only resolves its three inputs (the planned
@@ -28,7 +30,6 @@
 import { todayLocal } from '../../analytics/training-days.js';
 import { resolveCurrentBlock } from '../../plan/current-block.js';
 import {
-  getSetFatigueSummary,
   getSetFatigueVerdict,
   getSetVelocitySummary,
   type Set as AnalyticsSet,
@@ -247,7 +248,6 @@ async function buildExerciseSummary(
     bestRepVelocity: bestVelocities.length > 0 ? Math.max(...bestVelocities) : null,
     maxVelocityLossPct: scored.maxVelocityLossPct,
     verdict: scored.set === undefined ? null : getSetFatigueVerdict(toAnalyticsSet(scored.set)),
-    fatigue: scored.set === undefined ? null : getSetFatigueSummary(toAnalyticsSet(scored.set)),
     verdictSetIndex: scored.setIndex,
     sets: setViews,
     progression,

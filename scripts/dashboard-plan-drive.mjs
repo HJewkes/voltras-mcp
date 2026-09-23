@@ -32,13 +32,11 @@
 // PRESCRIBED load varies across the run and the header + rail rows are driven
 // through a real range rather than one constant.
 //
-// The LIVE load does not vary, and cannot: `device.weightLbs` reaches the
-// snapshot from the settings cascade (cmd=0x10), which MockBLEAdapter never
-// emits — the mock's `weight` config is simulator input, not a cascade echo, so
-// no amount of driving makes it appear. `/api/snapshot` therefore reports a
-// device with no weight at all under mock. That is a real gap the wall has to
-// degrade around, and this driver renders that degradation honestly rather than
-// faking a cascade.
+// The LIVE load does not vary: every set runs at the one weight this driver
+// configures the mock with (the first planned exercise's 140 lb). Since the SDK
+// 0.15 adoption the mock reports that weight back, so `/api/snapshot` carries it
+// and the rail's tonnage is real. Before that it reported no weight at all, and
+// the wall degraded to a `—` load and a 0 tonnage.
 //
 // It boots with `mock-two-slot-preload.mjs` (used as-is) pinned to a SINGLE
 // device via `VMCP_MOCK_DEVICES`, because stock `VOLTRA_ADAPTER=mock` hardcodes
@@ -234,9 +232,8 @@ function summarize(snap, label) {
   const set = snap.sets?.active;
   const name = snap.session?.exerciseName ?? snap.session?.exerciseId ?? 'none';
   const reps = set ? (set.reps?.length ?? set.repCount ?? 0) : '—';
-  // `weightLbs` is absent under mock (no settings cascade) — printed so the run log
-  // states that plainly rather than leaving it looking unchecked.
-  const weight = snap.devices?.[0]?.device?.weightLbs ?? 'no-cascade';
+  // Printed so a run log states the load plainly rather than leaving it unchecked.
+  const weight = snap.devices?.[0]?.device?.weightLbs ?? 'not-reported';
   log(`${label} | rev=${snap.rev} session=${name} load=${weight} reps=${reps}`);
 }
 

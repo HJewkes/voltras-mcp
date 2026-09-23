@@ -28,6 +28,7 @@ import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import type { ActiveSet, IdleRepReclaim } from './live-state.js';
 import { isTailPairConsistent } from './rep-eligibility.js';
 import { getSlot, type ServerState } from './server-state.js';
+import { onSetStarted } from './set-start-seam.js';
 
 /**
  * Reps adopted when the rep before the trigger corroborates it: that rep, the
@@ -99,6 +100,7 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
   const reclaimed = slot.live.forgetIdleReps(adopt - ADOPTED_WITHOUT_CORROBORATION);
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
+  void onSetStarted(state, { slotId, setId });
   publishAutoArmed(state, slotId, setId, startedAt, session.sessionId, session.lifter);
   return { armed: true, setId, reclaimed };
 }

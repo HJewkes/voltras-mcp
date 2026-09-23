@@ -235,7 +235,9 @@ export function registerServerTools(
       'analytics-package versions, db path, log level, live spoken-cue settings ' +
       '(`cues`/`cuesMidSet` — the values `system.set_cues` last set, not just the env vars), ' +
       'whether the server auto-arms a set on the first idle rep of an open session (`autoArm`, ' +
-      'from VMCP_AUTO_ARM), ' +
+      'from VMCP_AUTO_ARM), which rule decides the mid-set ending cue (`effortCue`: `off` is ' +
+      "the watch's own triggers, `on` is the effort resolver's one cue per set, from " +
+      'VOLTRAS_EFFORT_CUE), ' +
       'push-channel status, device-lease ' +
       'status, voice-input readiness (`voiceReady.whisperCli`/`voiceReady.model` — false means ' +
       'speech will not transcribe, usually because `npm ci` wiped the compiled binary), ' +
@@ -262,6 +264,7 @@ export function registerServerTools(
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
         autoArm: state.config.autoArm,
+        effortCue: state.config.effortCue,
         ...resolveCueStatus(state),
         voiceReady: VOICE_READY,
         dashboardAvailable: state.dashboard?.available ?? false,

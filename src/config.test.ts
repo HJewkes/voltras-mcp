@@ -23,6 +23,7 @@ describe('loadConfig', () => {
       cues: 'off',
       cuesMidSet: 'off',
       autoArm: 'on',
+      effortCue: 'off',
       trueCoachOutbox: 'off',
       trueCoachOutboxDir: '/home/test/.voltras/truecoach-outbox',
       trueCoachSubmitOnEnd: 'off',
@@ -215,6 +216,15 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/on/);
+  });
+
+  it('defaults VOLTRAS_EFFORT_CUE to "off": the watch triggers decide until the bench (VW-544)', () => {
+    expect(loadConfig({ HOME: '/home/test' }).effortCue).toBe('off');
+  });
+
+  it('honors VOLTRAS_EFFORT_CUE="on", and refuses anything else by name', () => {
+    expect(loadConfig({ VOLTRAS_EFFORT_CUE: 'on', HOME: '/home/test' }).effortCue).toBe('on');
+    expect(() => loadConfig({ VOLTRAS_EFFORT_CUE: 'yes' })).toThrow(/VOLTRAS_EFFORT_CUE="yes"/);
   });
 
   it('defaults VMCP_MOUNT_RATING_LBS to undefined — unset means UNKNOWN, not unlimited (VW-274)', () => {
