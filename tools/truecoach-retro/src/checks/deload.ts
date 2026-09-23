@@ -1,7 +1,7 @@
 // Check 4: meso boundaries by the simple rule, and meso lengths against RP's 3:1 to 5:1.
 
 import type { Context } from '../context.js';
-import { addDays, isoWeekStart } from '../dates.js';
+import { addDays, daysBetween, isoWeekStart } from '../dates.js';
 import { pct, section, table } from '../markdown.js';
 import {
   classifyMesoLength,
@@ -11,6 +11,7 @@ import {
   mesosBetween,
   type MesoBoundary,
 } from '../meso.js';
+import type { BoundaryChoice } from '../segmentation.js';
 import { weeklyTopLoads } from '../series.js';
 
 const CITATION =
@@ -24,6 +25,33 @@ function topLoads(ctx: Context): Map<string, Map<string, number>> {
 
 export function boundariesOf(ctx: Context): MesoBoundary[] {
   return mesoBoundaries(ctx.days, topLoads(ctx));
+}
+
+export function choiceOf(ctx: Context, week: string): BoundaryChoice | null {
+  return ctx.decisions?.find((d) => d.week === week)?.choice ?? null;
+}
+
+/** The boundaries the mesos are cut at: every one the rule found, less those the human marked not a boundary. */
+export function confirmedBoundaries(ctx: Context): MesoBoundary[] {
+  return boundariesOf(ctx).filter((b) => choiceOf(ctx, b.week) !== 'not_a_boundary');
+}
+
+/** The human's marks as one finding line; `null` when no decisions file was read. */
+export function decisionsFinding(ctx: Context, boundaries: readonly MesoBoundary[]): string | null {
+  if (ctx.decisions === null) return null;
+  const tally = new Map<string, number>();
+  for (const b of boundaries) {
+    const choice = choiceOf(ctx, b.week) ?? 'unmarked';
+    tally.set(choice, (tally.get(choice) ?? 0) + 1);
+  }
+  const parts = [...tally].map(([choice, n]) => `${n} ${choice.replace(/_/g, ' ')}`).join(', ');
+  const planned = tally.get('planned_deload') ?? 0;
+  const months = Math.round(daysBetween(ctx.days[0]!, ctx.days.at(-1)!) / 30.44);
+  const verdict =
+    planned === 0
+      ? `The human marked zero planned deloads across ${months} months: that is the deload-cadence finding, where RP's 3:1 to 5:1 expects one every 4 to 6 weeks.`
+      : `${planned} planned deloads across ${months} months, against RP's one every 4 to 6 weeks.`;
+  return `The human marked all ${boundaries.length} boundaries (${parts}). ${verdict}`;
 }
 
 /** Weeks where only one main lift dropped: how close the load half of the rule came to firing. */
@@ -46,11 +74,13 @@ function missClustering(ctx: Context, boundaries: readonly MesoBoundary[]): stri
 
 export function deloadSection(ctx: Context): string {
   const boundaries = boundariesOf(ctx);
-  const mesos = mesosBetween(ctx.days, boundaries);
+  const mesos = mesosBetween(ctx.days, confirmedBoundaries(ctx));
   const classes = mesos.map((meso) => classifyMesoLength(meso.trainedWeeks));
   const count = (label: string) => classes.filter((c) => c === label).length;
   const byGap = boundaries.filter((b) => b.triggers.some((t) => t.startsWith('gap'))).length;
+  const marks = decisionsFinding(ctx, boundaries);
   const finding = [
+    ...(marks === null ? [] : [marks]),
     `The rule (a ${MESO_RULE.dropPct}% top-load drop on ${MESO_RULE.liftsDropping} main lifts in one week, or a ${MESO_RULE.gapDays}-day gap) finds ${boundaries.length} boundaries, ${byGap} of them gaps.`,
     `That makes ${mesos.length} mesos: ${count('short')} shorter than 4 trained weeks, ${count('within 3:1 to 5:1')} within 3:1 to 5:1, ${count('long')} longer than 6.`,
     missClustering(ctx, boundaries),
@@ -59,8 +89,12 @@ export function deloadSection(ctx: Context): string {
     `Every boundary found, for the human to sanity-check against memory. A load drop compares a lift's heaviest work load with its own previous trained week; ${singleDropWeeks(ctx)} further weeks had a drop on one main lift only, which the rule does not count.`,
     '',
     table(
-      ['boundary week', 'triggers'],
-      boundaries.map((b) => [b.week, b.triggers.join('; ')]),
+      ['boundary week', 'triggers', "human's mark"],
+      boundaries.map((b) => [
+        b.week,
+        b.triggers.join('; '),
+        choiceOf(ctx, b.week)?.replace(/_/g, ' ') ?? 'unmarked',
+      ]),
     ),
     '',
     table(

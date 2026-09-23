@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { addDays } from '../dates.js';
 import {
+  parseBoundaryDecisions,
   reportedExercisesByWeek,
   segmentWeeks,
   type BoundaryDecision,
@@ -131,6 +132,29 @@ describe('segmentWeeks', () => {
     const weeks = range(0, 5);
     const logged = reported(weeks).set(monday(2), 2);
     expect(labels(segment(weeks, { reported: logged }).weeks)[monday(2)]).toBe('sparse_logging');
+  });
+});
+
+describe('parseBoundaryDecisions', () => {
+  it('accepts every page choice, unplanned_drop and an unmarked null', () => {
+    const json = ['planned_deload', 'life_gap', 'unplanned_drop', 'not_a_boundary', null].map(
+      (choice, i) => ({ week: monday(i), choice, note: '' }),
+    );
+    expect(parseBoundaryDecisions(json)).toHaveLength(5);
+  });
+
+  it('rejects an unknown choice rather than reading it as unmarked', () => {
+    expect(() => parseBoundaryDecisions([{ week: monday(0), choice: 'deload' }])).toThrow(
+      /unknown entry/,
+    );
+  });
+
+  it('reads an unplanned drop as a real boundary that bridges no gap', () => {
+    const result = segment([0, 1, ...range(4, 9)], {
+      decisions: parseBoundaryDecisions([{ week: monday(4), choice: 'unplanned_drop' }]),
+    });
+    expect(result.gaps[0]).toMatchObject({ choice: 'unplanned_drop', breaksRun: true });
+    expect(labels(result.weeks)[monday(0)]).toBe('short_run');
   });
 });
 

@@ -15,7 +15,7 @@ import {
   type Segmentation,
 } from '../segmentation.js';
 
-import { boundariesOf } from './deload.js';
+import { confirmedBoundaries } from './deload.js';
 
 export interface Segmented {
   segmentation: Segmentation;
@@ -67,7 +67,7 @@ export interface MesoLabels {
 
 /** How the labels fall inside each meso the check-4 rule found. */
 export function mesoLabels(ctx: Context, segmentation: Segmentation): MesoLabels[] {
-  return mesosBetween(ctx.days, boundariesOf(ctx)).map((meso) => {
+  return mesosBetween(ctx.days, confirmedBoundaries(ctx)).map((meso) => {
     const inside = segmentation.weeks.filter(
       (w) => w.week >= meso.startWeek && w.week < meso.endWeek && w.label !== 'untrained',
     );
