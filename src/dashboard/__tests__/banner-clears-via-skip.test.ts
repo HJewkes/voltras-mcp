@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { localDate } from '../../analytics/training-days.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import { readTopBanner } from '../read-models/banners.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -34,7 +34,7 @@ const BLOCK_STARTS_ON = '2026-08-31';
 
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let callbacks: Map<string, Callback>;
 
 function register(): void {
@@ -64,7 +64,7 @@ async function skipWeekOne(mode: 'hold' | 'extend'): Promise<void> {
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
   await dateBlock(store, 'b1', BLOCK_STARTS_ON, 4);
   register();

@@ -16,9 +16,6 @@
 // the command previewed one status for all six names.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { CAPTURE_SCENARIOS } from '../../docs/capture-shots.js';
 import {
@@ -31,26 +28,20 @@ import {
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
+import { openTestStore, removeTestStoreDirs } from '../../store/__tests__/open-test-store.js';
 
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
 const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
 
-const scratchDirs: string[] = [];
-afterEach(() => {
-  while (scratchDirs.length > 0) {
-    rmSync(scratchDirs.pop()!, { recursive: true, force: true });
-  }
-});
+afterEach(removeTestStoreDirs);
 
 /** Seed one state into a throwaway store and project it exactly as the route does. */
 async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
-  scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+  const store = openTestStore({ tempPrefix: 'vmcp-preview-seeds-' });
   try {
     const now = new Date();
     await seedGoalPreview(store, state, now);
@@ -206,9 +197,7 @@ describe('dashboard:preview pages', () => {
 
 describe('dashboard:preview companion lifts (VW-467)', () => {
   it('seeds two accepted lifts beside the lead, which still lists first', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
-    scratchDirs.push(dir);
-    const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+    const store = openTestStore({ tempPrefix: 'vmcp-preview-seeds-' });
     try {
       const now = new Date();
       await seedGoalPreview(store, goalPreviewState('on_track'), now, { companions: true });

@@ -3,7 +3,7 @@
 // work left; the newer "MCP-Driven Test — Upper Body A" has its one workout done, which is why
 // "newest program" picked the wrong one (VW-469). Ids are short stand-ins for the real UUIDs.
 
-import type { SqliteSessionStore } from '../../../store/sqlite-store.js';
+import type { SessionStore } from '../../../store/types.js';
 import { seedTrainingDay } from '../../../__tests__/fixtures/training-day.js';
 
 export const RETURN_PROGRAM = 'Voltra Return — 2026';
@@ -13,7 +13,7 @@ export const RETURN_ONLY_EXERCISE = 'seated-row';
 
 const WEEK_2_TEMPLATES = ['Upper A', 'Lower A', 'Upper B', 'Lower B'];
 
-export async function seedOwnerShapedPlan(store: SqliteSessionStore): Promise<void> {
+export async function seedOwnerShapedPlan(store: SessionStore): Promise<void> {
   await store.putTrainingProgram({
     id: 'return',
     name: RETURN_PROGRAM,
@@ -28,7 +28,7 @@ export async function seedOwnerShapedPlan(store: SqliteSessionStore): Promise<vo
   await seedTestProgram(store);
 }
 
-async function seedReturnProgram(store: SqliteSessionStore): Promise<void> {
+async function seedReturnProgram(store: SessionStore): Promise<void> {
   await block(store, 'b1', 'return', 0, 'Block 1 — Re-acclimate', 4);
   await block(store, 'b2', 'return', 1, 'Block 2 — Orientation', 2);
   await store.putTrainingWeek({
@@ -72,7 +72,7 @@ async function seedReturnProgram(store: SqliteSessionStore): Promise<void> {
   await trained(store, 'day-b', 'sess-day-b', '2026-09-07T15:00:00.000Z');
 }
 
-async function seedTestProgram(store: SqliteSessionStore): Promise<void> {
+async function seedTestProgram(store: SessionStore): Promise<void> {
   await block(store, 'discovery', 'test', 0, 'Discovery Block', 1);
   await store.putTrainingWeek({
     id: 'dw1',
@@ -87,7 +87,7 @@ async function seedTestProgram(store: SqliteSessionStore): Promise<void> {
 }
 
 async function block(
-  store: SqliteSessionStore,
+  store: SessionStore,
   id: string,
   programId: string,
   orderIndex: number,
@@ -98,7 +98,7 @@ async function block(
 }
 
 async function template(
-  store: SqliteSessionStore,
+  store: SessionStore,
   id: string,
   weekId: string,
   orderIndex: number,
@@ -108,7 +108,7 @@ async function template(
 }
 
 async function trained(
-  store: SqliteSessionStore,
+  store: SessionStore,
   templateId: string,
   sessionId: string,
   startedAt: string,
@@ -125,7 +125,7 @@ async function trained(
 
 /** Date one block by appending a planned schedule row, as `plan.block.schedule` would. */
 export async function dateBlock(
-  store: SqliteSessionStore,
+  store: SessionStore,
   blockId: string,
   startsOn: string,
   weeksCount: number,

@@ -10,9 +10,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { MrvGuardVerdict, Phase } from '@voltras/workout-analytics';
 
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import { registerMrvGuardTools } from '../mrv-guard-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -73,12 +74,12 @@ function makeSet(id: string, sessionId: string, repCount: number): StoredSet {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (args: unknown) => Promise<ToolResult>;
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = { store } as unknown as ServerState;
   const placeholders = new Map<string, FakeRegisteredTool>();
   const tool: FakeRegisteredTool = {

@@ -14,8 +14,8 @@ import type { Phase } from '@voltras/workout-analytics';
 
 import { readTrainingDays } from '../../analytics/training-days.js';
 import { getTierSignal } from '../../tools/tier-signal.js';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type SessionKind, type StoredRep, type StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EXERCISE = 'row';
 const NOW = '2026-09-19T18:00:00.000Z';
@@ -85,7 +85,7 @@ function decaySet(id: string, sessionId: string, at: string, weightLbs: number):
  * dropped.
  */
 async function seedDay(
-  store: SqliteSessionStore,
+  store: SessionStore,
   id: string,
   kind: SessionKind,
   daysBack: number,
@@ -108,8 +108,8 @@ async function seedDay(
 }
 
 /** The owner's shape in miniature: one real training day, one bench test since. */
-async function openSeeded(): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+async function openSeeded(): Promise<SessionStore> {
+  const store = openTestStore();
   await seedDay(store, 'real', 'training', 5, 170);
   await seedDay(store, 'bench', 'test', 1, 250);
   return store;
@@ -134,7 +134,7 @@ describe('the shared test/training predicate, per reader (VW-489)', () => {
   });
 
   it('tier signal: reports unreviewed days rather than letting an empty count read as no history', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putSession({ id: 'unmarked', startedAt: daysAgo(3), endedAt: daysAgo(3) });
     await store.putSet(decaySet('unmarked-set', 'unmarked', daysAgo(3), 100));
 

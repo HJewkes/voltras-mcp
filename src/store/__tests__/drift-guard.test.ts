@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BaselineKey, Phase } from '@voltras/workout-analytics';
 
 import { checkDriftGuard } from '../drift-guard.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -77,7 +78,7 @@ function makeSet(
 }
 
 describe('checkDriftGuard', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   const check = async (): Promise<ReturnType<typeof checkDriftGuard>> =>
@@ -88,7 +89,7 @@ describe('checkDriftGuard', () => {
     });
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }

@@ -12,8 +12,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredIsometricMeasurement, StoredRep, StoredSession, StoredSet } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -74,7 +75,7 @@ describe('SqliteSessionStore', () => {
   let store: SqliteSessionStore;
 
   beforeEach(() => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
   });
 
   afterEach(async () => {
@@ -400,7 +401,7 @@ describe('SqliteSessionStore.open() error paths', () => {
 
     let caught: unknown;
     try {
-      SqliteSessionStore.open(dbPath);
+      openSqliteTestStore({ path: dbPath });
     } catch (err) {
       caught = err;
     }
@@ -438,7 +439,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     `);
     seed.close();
 
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const cols = raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>;
@@ -484,7 +485,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     `);
     seed.close();
 
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       // `table_xinfo`, not `table_info`: v6 made `is_warmup` a GENERATED column
@@ -504,7 +505,7 @@ describe('SqliteSessionStore.open() error paths', () => {
 
   it('a brand-new DB is created at the current schema version with no obsolete columns', async () => {
     const dbPath = join(workdir, 'fresh.sqlite');
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const cols = raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>;
@@ -520,7 +521,7 @@ describe('SqliteSessionStore.open() error paths', () => {
 
   it('throws lock error mentioning VMCP_DB_PATH and "already in use" (R8)', () => {
     const dbPath = join(workdir, 'lockme.sqlite');
-    const first = SqliteSessionStore.open(dbPath);
+    const first = openSqliteTestStore({ path: dbPath });
     try {
       // Hold an exclusive lock while a second open attempts the same path.
       // node:sqlite uses BEGIN EXCLUSIVE / write-lock semantics; an open
@@ -530,7 +531,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       try {
         let caught: unknown;
         try {
-          SqliteSessionStore.open(dbPath);
+          openSqliteTestStore({ path: dbPath });
         } catch (err) {
           caught = err;
         }
@@ -549,11 +550,11 @@ describe('SqliteSessionStore.open() error paths', () => {
 
   it('opens an existing DB with matching user_version', async () => {
     const dbPath = join(workdir, 'reopen.sqlite');
-    const a = SqliteSessionStore.open(dbPath);
+    const a = openSqliteTestStore({ path: dbPath });
     await a.putSession({ kind: 'training', id: 'sess-r', startedAt: '2025-01-01T00:00:00.000Z' });
     await a.close();
 
-    const b = SqliteSessionStore.open(dbPath);
+    const b = openSqliteTestStore({ path: dbPath });
     try {
       const fetched = await b.getSession('sess-r');
       expect(fetched?.id).toBe('sess-r');
@@ -654,7 +655,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('adds slot and device_id to sets and stamps the current user_version', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
@@ -672,7 +673,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('adds the nullable side column alongside slot and device_id', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const columns = raw.prepare('PRAGMA table_info(sets)').all() as Array<{
@@ -696,7 +697,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
     // `device_id` was discarded at write time on these rows, so there is
     // nothing left to resolve a side from. Inferring one (e.g. from set
     // ordering or alternation) would manufacture data that looks measured.
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const n = (
@@ -712,7 +713,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('accepts side-bearing writes into the migrated DB', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const base = {
         sessionId: 'old-sess-1',
@@ -748,7 +749,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('leaves every pre-v5 row intact and readable, with no slot attribution', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const count = (table: string) =>
@@ -799,7 +800,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('accepts slot-bearing writes into the migrated DB alongside the legacy rows', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       await store.putSet({
         id: 'new-set-left',
@@ -831,7 +832,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
     // Regression guard for the `INSERT OR REPLACE` class of bug (#79): the
     // force-end-then-re-end path re-puts the same set id, and a
     // delete-then-insert on the `reps` parent would drop the rep array.
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const base = {
         id: 'retried',
@@ -859,10 +860,10 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   });
 
   it('is idempotent — reopening an already-migrated DB is a no-op', async () => {
-    const first = SqliteSessionStore.open(dbPath);
+    const first = openSqliteTestStore({ path: dbPath });
     await first.close();
 
-    const second = SqliteSessionStore.open(dbPath);
+    const second = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (second as unknown as { db: DatabaseSync }).db;
       const slotCols = (
@@ -1024,7 +1025,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('adds the isometric tables and stamps the current user_version', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const tables = (
@@ -1053,7 +1054,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
     // this checks instead is the part that is still this migration's job: the
     // isometric tables exist, and the pre-existing `sets` columns all survived
     // the chain (see the v6→v7 suite for the rebuild's own guarantees).
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const tables = (
@@ -1089,7 +1090,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('leaves every pre-v6 row intact and readable, identity included', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const count = (table: string) =>
@@ -1136,7 +1137,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('round-trips an assessment written into the migrated DB', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const written = makeMeasurement('meas-1', '2025-08-03T10:30:00.000Z');
       await store.putIsometricMeasurement(written);
@@ -1167,7 +1168,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('round-trips the asymmetry equation, and leaves it absent when not given (VW-295)', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       await store.putIsometricMeasurement({
         ...makeMeasurement('meas-eq', '2025-08-04T10:30:00.000Z'),
@@ -1189,7 +1190,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('looks assessments up by device id, not by slot', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       await store.putIsometricMeasurement(makeMeasurement('meas-1', '2025-08-03T10:30:00.000Z'));
       await store.putIsometricMeasurement(makeMeasurement('meas-2', '2025-08-10T10:30:00.000Z'));
@@ -1217,7 +1218,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
 
   it('keeps a device-less side as a gap rather than a placeholder', async () => {
     // The mock adapter (and any close after the unit dropped) has no device id.
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const m = makeMeasurement('meas-anon', '2025-08-04T10:30:00.000Z');
       m.sides[1] = { side: 'right', slot: 'right', trials: m.sides[1].trials };
@@ -1240,7 +1241,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('lists recent measurements newest first, regardless of which unit recorded them', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       await store.putIsometricMeasurement(makeMeasurement('meas-a', '2025-08-01T10:30:00.000Z'));
       await store.putIsometricMeasurement(makeMeasurement('meas-c', '2025-08-09T10:30:00.000Z'));
@@ -1262,7 +1263,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
 
   // VW-280: before the keys existed every test on the rig fell into one series.
   it('keeps two lifters and two exercises out of each other series', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       await store.putIsometricMeasurement(keyed('own-row', 'local', 'seated-row'));
       await store.putIsometricMeasurement(keyed('own-press', 'local', 'overhead-press'));
@@ -1291,7 +1292,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('excludes pre-v21 rows from every filtered series and counts them', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       // No user_id: a row written before the keying, whose lifter was never
       // recorded. Attributing it to the owner would invent the missing fact.
@@ -1313,7 +1314,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
     // Regression guard for the `INSERT OR REPLACE` class of bug (#79):
     // `isometric_trials` references `isometric_measurements` ON DELETE CASCADE,
     // so a delete-then-insert on the parent would silently drop every trial.
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const first = makeMeasurement('meas-retry', '2025-08-05T10:30:00.000Z');
       await store.putIsometricMeasurement(first);
@@ -1334,11 +1335,11 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
   });
 
   it('is idempotent — reopening an already-migrated DB is a no-op', async () => {
-    const first = SqliteSessionStore.open(dbPath);
+    const first = openSqliteTestStore({ path: dbPath });
     await first.putIsometricMeasurement(makeMeasurement('meas-1', '2025-08-06T10:30:00.000Z'));
     await first.close();
 
-    const second = SqliteSessionStore.open(dbPath);
+    const second = openSqliteTestStore({ path: dbPath });
     try {
       expect((await second.getIsometricMeasurement('meas-1'))?.sides).toHaveLength(2);
       const raw = (second as unknown as { db: DatabaseSync }).db;

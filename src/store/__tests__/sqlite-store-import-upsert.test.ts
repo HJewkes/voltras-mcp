@@ -5,8 +5,8 @@
 // the code path with.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import type { PlanImportTemplate, StoredTrainingProgram } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 function makeProgram(overrides: Partial<StoredTrainingProgram> = {}): StoredTrainingProgram {
   return {
@@ -40,10 +40,10 @@ function makeImportTemplate(overrides: Partial<PlanImportTemplate> = {}): PlanIm
 }
 
 describe('SqliteSessionStore — importPlanTree upsert (VW-202)', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putTrainingProgram(makeProgram());
     await store.putTrainingBlock({
       id: 'block-1',

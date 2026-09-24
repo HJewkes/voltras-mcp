@@ -15,10 +15,10 @@ import { ExerciseService } from '../../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { FetchedPages } from '../../integrations/truecoach/client.js';
 import type { RawWorkoutsPage } from '../../integrations/truecoach/types.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import { importWeek, resolveRange } from '../truecoach-tools.js';
 import * as analytics from '@voltras/workout-analytics';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const RANGE = { from: '2026-09-07', to: '2026-09-13' };
 
@@ -41,7 +41,7 @@ function pages(...docs: RawWorkoutsPage[]): (refresh: boolean) => Promise<Fetche
 }
 
 let dir: string;
-let store: SqliteSessionStore;
+let store: SessionStore;
 let state: ServerState;
 
 async function seedProgram(): Promise<string> {
@@ -65,7 +65,7 @@ function makeState(config: Config): ServerState {
 beforeEach(async () => {
   (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(SEED_CABLE_EXERCISES);
   dir = mkdtempSync(join(tmpdir(), 'vmcp-tc-tool-'));
-  store = SqliteSessionStore.open(join(dir, 'tc.sqlite'));
+  store = openTestStore({ path: join(dir, 'tc.sqlite') });
   state = makeState(loadConfig({ HOME: dir, VOLTRA_ADAPTER: 'mock' }));
   await seedProgram();
 });

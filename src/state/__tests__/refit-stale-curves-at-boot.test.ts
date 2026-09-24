@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../../config.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { bootstrapState } from '../server-state.js';
+import { openSqliteTestStore } from '../../store/__tests__/open-test-store.js';
 
 const savedEnv = { ...process.env };
 let dbDir: string;
@@ -31,7 +31,7 @@ afterEach(() => {
 describe('bootstrapState', () => {
   it('refits a curve stored under an older model version, which removes one with no sets', async () => {
     // Arrange: a curve from an earlier release, and no sets left to back it.
-    const seed = SqliteSessionStore.open(dbPath);
+    const seed = openSqliteTestStore({ path: dbPath });
     (seed as unknown as { db: DatabaseSync }).db
       .prepare(
         `INSERT INTO rir_velocity_models

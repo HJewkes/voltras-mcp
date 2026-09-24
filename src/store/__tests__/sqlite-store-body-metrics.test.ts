@@ -18,10 +18,11 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 function open(): SqliteSessionStore {
-  return SqliteSessionStore.open(':memory:');
+  return openSqliteTestStore();
 }
 
 describe('putBodyMetric / listBodyMetrics', () => {
@@ -135,7 +136,7 @@ describe('migrateV25ToV26', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('lands a fresh DB at SCHEMA_VERSION 29 and enforces the natural key', async () => {
-    const store = SqliteSessionStore.open(path);
+    const store = openSqliteTestStore({ path });
     await store.putBodyMetric({
       userId: LOCAL_USER_ID,
       measuredAt: '2026-01-01T00:00:00.000Z',

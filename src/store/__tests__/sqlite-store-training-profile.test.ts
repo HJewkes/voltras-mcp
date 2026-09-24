@@ -17,8 +17,9 @@
 //     one layer up, in profile-tools.ts).
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredTrainingProfile } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 function makeProfile(overrides: Partial<StoredTrainingProfile> = {}): StoredTrainingProfile {
   return {
@@ -42,13 +43,13 @@ function makeProfile(overrides: Partial<StoredTrainingProfile> = {}): StoredTrai
 
 describe('SqliteSessionStore training_profile', () => {
   it('returns undefined before any write', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     expect(await store.getTrainingProfile(LOCAL_USER_ID)).toBeUndefined();
     await store.close();
   });
 
   it('round-trips every column, including booleans and provenance JSON', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     const profile = makeProfile();
     await store.putTrainingProfile(profile);
 
@@ -58,7 +59,7 @@ describe('SqliteSessionStore training_profile', () => {
   });
 
   it('omits optional fields entirely when they were never set', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
       updatedAt: '2026-07-30T00:00:00.000Z',
@@ -73,7 +74,7 @@ describe('SqliteSessionStore training_profile', () => {
   });
 
   it('upserts in place via ON CONFLICT DO UPDATE on a re-put', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     await store.putTrainingProfile(makeProfile());
     await store.putTrainingProfile(
       makeProfile({ declaredTier: 'advanced', updatedAt: '2026-08-01T00:00:00.000Z' }),
@@ -92,7 +93,7 @@ describe('SqliteSessionStore training_profile', () => {
   });
 
   it("does not touch a different user's row", async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     rawDb(store)
       .prepare(`INSERT INTO users (id, display_name, created_at, is_default) VALUES (?, ?, ?, 0)`)
       .run('other-user', 'Other', '2026-07-30T00:00:00.000Z');

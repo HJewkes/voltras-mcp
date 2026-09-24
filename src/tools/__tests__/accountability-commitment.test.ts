@@ -1,5 +1,5 @@
 // `accountability.declare_commitment` and what the Sunday anchor does with what it stores
-// (VW-505). A real `SqliteSessionStore.open(':memory:')`, so the table and the trigger under
+// (VW-505). A real `openTestStore()`, so the table and the trigger under
 // test are the shipped ones.
 //
 // `at` pins the instant, which is the only way to reach a Sunday without waiting for one.
@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AccountabilityState } from '../../accountability/types.js';
 import { AccountabilityDeclareCommitmentInput } from '../../schemas/accountability.js';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { declareCommitment } from '../accountability-commitment.js';
 import { wrapHandler } from '../helpers.js';
@@ -18,6 +17,7 @@ import {
   describeAccountabilityPreview,
   describeAccountabilityState,
 } from '../accountability-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 /** Local-time noon on days that are unambiguously that weekday in any timezone. */
 const SUNDAY_NOON = '2026-09-13T12:00:00';
@@ -35,7 +35,7 @@ const DAYS = [
 const IF_THEN = 'If the drive runs late, then Wednesday moves to Thursday.';
 const WORDING = 'Two lifts a week, and I show up for both.';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 function makeState(): ServerState {
   return {
@@ -80,7 +80,7 @@ function declare(overrides: Record<string, unknown> = {}, now = new Date(SUNDAY_
 }
 
 beforeEach(() => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
 });
 
 afterEach(() => {

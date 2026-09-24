@@ -12,9 +12,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { SessionStore } from '../../store/types.js';
 import { registerGoalTools } from '../goal-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const GOAL_TOOLS = [
   'goal.declare_priorities',
@@ -54,7 +55,7 @@ const opened: SessionStore[] = [];
 function storePair(connections: 1 | 2): [SessionStore, SessionStore] {
   dir ??= mkdtempSync(join(tmpdir(), 'vmcp-declare-'));
   const open = (): SessionStore => {
-    const store = SqliteSessionStore.open(join(dir!, 'store.sqlite'));
+    const store = openTestStore({ path: join(dir!, 'store.sqlite') });
     opened.push(store);
     return store;
   };

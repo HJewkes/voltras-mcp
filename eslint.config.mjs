@@ -10,6 +10,10 @@
 //   guard. Bans device values and private-tree provenance from source,
 //   comments and strings. Threshold is zero; the only exemptions are three
 //   inline directives in `uint8ArrayToHex`, pinned by a test.
+// - `no-restricted-syntax` (VW-532): a test file opens its store through
+//   `src/store/__tests__/open-test-store.ts`, never `SqliteSessionStore.open`, so the
+//   suite depends on the port rather than on one engine. The allow-list lives in
+//   `eslint-rules/store-constructor-allow-list.mjs`.
 // - VW-64: derived view-model metrics must come from
 //   `@voltras/workout-analytics/view`, not the package root (a `no-restricted-syntax`
 //   selector on named import specifiers) or a `dist/**` deep import
@@ -20,6 +24,37 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 import voltras from './eslint-rules/no-protocol-detail.mjs';
+import { STORE_CONSTRUCTOR_ALLOW_LIST } from './eslint-rules/store-constructor-allow-list.mjs';
+
+// NF-07: ban Buffer.* references inside any function whose identifier ends with `Handler`.
+// Handler returns must be JSON-typed.
+const NO_BUFFER_IN_HANDLERS = {
+  selector:
+    ':matches(FunctionDeclaration[id.name=/Handler$/], VariableDeclarator[id.name=/Handler$/]) MemberExpression[object.name="Buffer"]',
+  message:
+    'Tool handler functions must not reference Buffer directly (NF-07). Return JSON-typed values via textResult().',
+};
+
+// VW-64: restrict only the named view-model exports the root re-exports during the WA 2.x
+// deprecation window. A selector (not `no-restricted-imports` `importNames`) so a bare
+// `import * as analytics from '@voltras/workout-analytics'` (several test files, none of which
+// touch these names) is not flagged — `importNames` cannot statically tell what a namespace
+// import accesses and would flag every one of them regardless of use.
+const VIEW_MODEL_FROM_PACKAGE_ROOT = {
+  selector:
+    'ImportDeclaration[source.value="@voltras/workout-analytics"] > ImportSpecifier[imported.name=/^(estimateSetRpe|velocityLossVerdict|getSetRepPeakVelocities|getSetRepMeanVelocities|getSetTempoSeconds|bestE1RMAcrossSets|isNewE1RM|weightDeviationRatio|classifyWeeklyVolume|E1RMSetInput|VolumeLandmarks|VolumeStatusName|VelocityLossVerdict)$/]',
+  message:
+    'Import view-model metrics from "@voltras/workout-analytics/view", not the package root (VW-64).',
+};
+
+// VW-532: a test opens its store through the helper, so the suite depends on the port rather
+// than on one engine's constructor. The allow-list is the helper and the migration chain's
+// own tests.
+const STORE_CONSTRUCTOR_IN_TESTS = {
+  selector: 'MemberExpression[object.name="SqliteSessionStore"][property.name="open"]',
+  message:
+    'Open the store with openTestStore() from src/store/__tests__/open-test-store.ts, not SqliteSessionStore.open (VW-532).',
+};
 
 export default tseslint.config(
   {
@@ -74,29 +109,7 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-      // NF-07: ban Buffer.* references inside any function whose identifier
-      // ends with `Handler`. Handler returns must be JSON-typed.
-      // VW-64: restrict only the named view-model exports the root re-exports
-      // during the WA 2.x deprecation window. A selector (not `no-restricted-imports`
-      // `importNames`) so a bare `import * as analytics from '@voltras/workout-analytics'`
-      // (several test files, none of which touch these names) is not flagged —
-      // `importNames` cannot statically tell what a namespace import accesses and
-      // would flag every one of them regardless of use.
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector:
-            ':matches(FunctionDeclaration[id.name=/Handler$/], VariableDeclarator[id.name=/Handler$/]) MemberExpression[object.name="Buffer"]',
-          message:
-            'Tool handler functions must not reference Buffer directly (NF-07). Return JSON-typed values via textResult().',
-        },
-        {
-          selector:
-            'ImportDeclaration[source.value="@voltras/workout-analytics"] > ImportSpecifier[imported.name=/^(estimateSetRpe|velocityLossVerdict|getSetRepPeakVelocities|getSetRepMeanVelocities|getSetTempoSeconds|bestE1RMAcrossSets|isNewE1RM|weightDeviationRatio|classifyWeeklyVolume|E1RMSetInput|VolumeLandmarks|VolumeStatusName|VelocityLossVerdict)$/]',
-          message:
-            'Import view-model metrics from "@voltras/workout-analytics/view", not the package root (VW-64).',
-        },
-      ],
+      'no-restricted-syntax': ['error', NO_BUFFER_IN_HANDLERS, VIEW_MODEL_FROM_PACKAGE_ROOT],
       'no-restricted-imports': [
         'error',
         {
@@ -115,6 +128,20 @@ export default tseslint.config(
     files: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
     rules: {
       'no-console': 'off',
+    },
+  },
+  {
+    // The guard (VW-532). A later block replaces `no-restricted-syntax` outright rather than
+    // merging into it, so the two selectors above are repeated here on purpose.
+    files: ['src/**/__tests__/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    ignores: STORE_CONSTRUCTOR_ALLOW_LIST,
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        NO_BUFFER_IN_HANDLERS,
+        VIEW_MODEL_FROM_PACKAGE_ROOT,
+        STORE_CONSTRUCTOR_IN_TESTS,
+      ],
     },
   },
   {
