@@ -9,8 +9,8 @@
  * ── Layout ───────────────────────────────────────────────────────────────
  * The lead lift as titan's full `GoalCard` (title row, folded block-end
  * summary with its week cells, trajectory chart), then a grid of compact
- * `GoalCard`s, then a grid of `GoalMuscleCard`, then a whole-body panel with
- * the priority rail and the bodyweight tile, drawn only when a whole-body goal exists. Sections come from plan G8'/§4,
+ * `GoalCard`s, then a grid of `GoalMuscleCard`, then the whole-body cards and the
+ * priority index, drawn only when a whole-body goal exists (VW-455). Sections come from plan G8'/§4,
  * not invented here. The old header block is gone rather than restyled
  * (VW-385): the week, committed/stretch, next target and status basis each
  * read off something the card already draws.
@@ -32,25 +32,23 @@
 import React from 'react';
 import { Text } from 'react-native';
 import {
+  BodyweightGoalCard,
   EmptyState,
   GoalCard,
-  MetricTiles,
-  Pill,
+  GoalPriorityIndex,
+  SessionsGoalCard,
   Surface,
   Typography,
   useOnSurfaceColor,
-  type MetricTileData,
 } from '@titan-design/react-ui';
 import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
 
-import type { StoredPriorityLevel } from '../../../store/types.js';
-import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
+import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
 import { calibrationLine } from './calibration-copy.js';
 import {
-  bodyweightTarget,
   cardChart,
   cardMilestone,
   cardTrend,
@@ -59,12 +57,12 @@ import {
   muscleCardRows,
   priorityLabel,
   primaryTarget,
-  sessionsTarget,
   targetLabel,
   type GoalMuscleCardRow,
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
+import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
 export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   const { data } = props;
@@ -87,7 +85,7 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
       {primary !== null && <PrimaryGoalCard row={primary} />}
       <PerLiftGrid rows={liftRows(data)} narrow={narrow} />
       <MuscleGrid rows={muscleCardRows(data)} narrow={narrow} />
-      <WholeBodyPanel data={data} />
+      <WholeBodySection data={data} narrow={narrow} />
     </Surface>
   );
 }
@@ -231,65 +229,28 @@ function MuscleGrid(props: {
   );
 }
 
-/** Sessions commitment, bodyweight tile and priority rail; nothing without a whole-body goal (VW-454). */
-function WholeBodyPanel(props: { data: GoalsPageData }): React.JSX.Element | null {
-  const sessions = sessionsTarget(props.data);
-  const bodyweight = bodyweightTarget(props.data);
-  if (sessions === null && bodyweight === null) return null;
-  const tiles: MetricTileData[] = [];
-  if (sessions !== null) {
-    tiles.push({ label: 'Sessions (28d)', value: `${round1(sessions.view.committed)} committed` });
-  }
+/**
+ * Bodyweight and sessions as sibling cards in the page grid, then every declared
+ * priority on one line; nothing without a whole-body goal (VW-454, VW-455). The
+ * cards level their heights by filling the grid row.
+ */
+function WholeBodySection(props: {
+  data: GoalsPageData;
+  narrow: boolean;
+}): React.JSX.Element | null {
+  const cards = wholeBodyCards(props.data);
+  if (cards === null) return null;
   return (
-    <PanelCard title="Whole body">
-      {tiles.length > 0 && <MetricTiles metrics={tiles} gap={2} />}
-      {bodyweight !== null && <BodyweightTile row={bodyweight} />}
-      <div
-        style={{
-          display: 'flex',
-          gap: SPACE.xs,
-          flexWrap: 'wrap',
-          marginTop: SPACE.md,
-        }}
-      >
-        {props.data.priorities.map((row) => (
-          <Pill key={row.priority.id} tone={levelTone(row.priority.level)} size="sm">
-            {`${priorityLabel(row.priority)} · ${row.priority.level}`}
-          </Pill>
-        ))}
+    <PageSection title="Whole body">
+      <div style={cardGridStyle(props.narrow)}>
+        {cards.bodyweight !== null && (
+          <BodyweightGoalCard goal={cards.bodyweight} style={{ height: '100%' }} />
+        )}
+        {cards.sessions !== null && (
+          <SessionsGoalCard goal={cards.sessions} style={{ height: '100%' }} />
+        )}
       </div>
-    </PanelCard>
+      <GoalPriorityIndex priorities={priorityIndexEntries(props.data)} />
+    </PageSection>
   );
-}
-
-/** Renders NOTHING (not a placeholder) with no VW-327 bodyweight data — `bodyweightTarget` already gates that. */
-function BodyweightTile(props: { row: GoalTargetRow }): React.JSX.Element {
-  const { view } = props.row;
-  const latest = view.actuals[view.actuals.length - 1];
-  return (
-    <div style={{ marginTop: SPACE.md }}>
-      <MetricTiles
-        gap={2}
-        metrics={[
-          { label: 'Bodyweight', value: latest === undefined ? '—' : `${round1(latest.value)}` },
-          { label: 'Band', value: `${round1(view.committed)}–${round1(view.stretch)}` },
-        ]}
-      />
-    </div>
-  );
-}
-
-function levelTone(level: StoredPriorityLevel): 'brand' | 'neutral' | 'warning' {
-  switch (level) {
-    case 'specialize':
-      return 'brand';
-    case 'maintain':
-      return 'neutral';
-    case 'deprioritize':
-      return 'warning';
-  }
-}
-
-function round1(value: number): string {
-  return `${Math.round(value * 10) / 10}`;
 }

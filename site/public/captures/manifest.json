@@ -1,5 +1,5 @@
 {
-  "definitionHash": "7eb04d0f43616b2b96aa2325f7647f8722b0857ca05ba6d81c274227c07ad26b",
+  "definitionHash": "d79e30e20c190819a7e53639b8ff3050c9cabed87b030222683af2016ad0ba46",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -151,12 +151,19 @@
         "kind": "sessions-ended",
         "minSessions": 4
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT"],
+      "assertedText": [
+        "CABLE CHEST PRESS",
+        "Calibrating",
+        "to goal",
+        "PER-LIFT",
+        "WHOLE BODY",
+        "Rate:"
+      ],
       "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 88516,
-      "sha256": "706253eeccbd577ab092e7f24350bccfdb1a75a2d6cf832e09576f6d24258ae9"
+      "bytes": 90577,
+      "sha256": "4919de2416e83d27ce5a5b0ef3a5a9ec95b23568c99286cce2856ee6c105c4d6"
     },
     {
       "name": "goals-phone",
@@ -168,12 +175,53 @@
         "kind": "sessions-ended",
         "minSessions": 4
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT"],
+      "assertedText": [
+        "CABLE CHEST PRESS",
+        "Calibrating",
+        "to goal",
+        "PER-LIFT",
+        "WHOLE BODY",
+        "Rate:"
+      ],
       "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
       "width": 390,
       "height": 844,
       "bytes": 52329,
       "sha256": "86a866720ac1c77bf0ba3b6f0e09f197eeb9d8f9eca0ca4e13e4b2fdae8ebf18"
+    },
+    {
+      "name": "goals-whole-body",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "The Whole body cards on the goals page: the latest weigh-in against this week’s band during a cut, and training days in the last 28 days against the commitment.",
+      "file": "goals-whole-body.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 4
+      },
+      "assertedText": ["WHOLE BODY", "Rate:", "Training days", "MAINTAIN"],
+      "assertedValues": ["196.2"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 100032,
+      "sha256": "9bfff83853217d2c3a78fb435df392ed6cc4b623dfcd5603b133707de4c97d27"
+    },
+    {
+      "name": "goals-whole-body-phone",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "The Whole body cards at phone width, one card per row.",
+      "file": "goals-whole-body-phone.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 4
+      },
+      "assertedText": ["WHOLE BODY", "Rate:", "Training days", "MAINTAIN"],
+      "assertedValues": ["196.2"],
+      "width": 390,
+      "height": 844,
+      "bytes": 62052,
+      "sha256": "19948af172d4e6bb013c933389b855707dbf532c7586fe724839d4e7dd5a1b18"
     },
     {
       "name": "body-week",

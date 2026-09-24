@@ -276,15 +276,11 @@ export function sessionsTarget(data: GoalsPageData): GoalTargetRow | null {
 }
 
 /**
- * The bodyweight target view, or `null`. Absent whenever no `bodyweight`
- * target has been accepted OR it carries no readings yet — VW-327 (the
- * bodyweight writer) hasn't landed, so a target with the metric selected but
- * nothing logged is exactly the state the tile must render nothing for
- * (plan G8' done_when).
+ * The bodyweight target view, or `null`. An accepted target with no reading yet
+ * still counts: its card says "No weigh-in yet" (VW-455 Round 0, owner default).
  */
 export function bodyweightTarget(data: GoalsPageData): GoalTargetRow | null {
-  const row = allViews(data).find((r) => r.view.target.metric === 'bodyweight') ?? null;
-  return row !== null && row.view.actuals.length > 0 ? row : null;
+  return allViews(data).find((r) => r.view.target.metric === 'bodyweight') ?? null;
 }
 
 /**

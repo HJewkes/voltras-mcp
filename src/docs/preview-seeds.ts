@@ -36,7 +36,7 @@ import {
   type GoalInfoLevel,
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
-import { localDate } from '../analytics/training-days.js';
+import { localDate, readTrainingDays } from '../analytics/training-days.js';
 import { addDays } from '../plan/block-calendar.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
@@ -51,7 +51,9 @@ import {
   type StoredSet,
 } from '../store/types.js';
 import {
+  deriveTargetInFrame,
   readDerivationContext,
+  type DerivedTarget,
   type GoalDerivationContext,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
@@ -307,6 +309,8 @@ export type GoalPreviewStore = Pick<
   | 'reharvestExercise'
   | 'recalcBaseline'
   | 'putAdvisoryDecision'
+  | 'declareDietPhase'
+  | 'putBodyMetric'
 > &
   GoalDerivationState['store'];
 
@@ -320,18 +324,21 @@ export interface GoalPreviewSeedReport {
   sets: number;
   latestLoadLbs: number;
   baselineState: string;
+  /** The whole-body goals seeded beside the lifts, by metric. */
+  wholeBody: WholeBodyMetric[];
 }
 
 /**
  * Write one previewable goal state into `store`, which must be the ONLY holder
  * of its file — the server opens it afterwards, never alongside. With
- * `companions`, the {@link GOAL_PREVIEW_COMPANIONS} are seeded beside the lead.
+ * `companions`, the {@link GOAL_PREVIEW_COMPANIONS} are seeded beside the lead;
+ * with `wholeBody`, a cut with its weigh-ins and the two whole-body goals.
  */
 export async function seedGoalPreview(
   store: GoalPreviewStore,
   state: GoalPreviewState,
   now: Date,
-  options: { companions?: boolean } = {},
+  options: { companions?: boolean; wholeBody?: boolean } = {},
 ): Promise<GoalPreviewSeedReport> {
   // The tools derive with the catalog the server loads at boot; this seed runs before any
   // server exists, so it loads the same one, or every lift would ramp as the unknown class.
@@ -351,11 +358,13 @@ export async function seedGoalPreview(
       await seedLift(store, companionLift(companion, index), now);
     }
   }
+  const wholeBody = options.wholeBody === true ? await seedWholeBody(store, now) : [];
   return {
     priorityId: seeded.priorityId,
     targetId: seeded.target.id,
     ...seeded.written,
     baselineState: seeded.baselineState,
+    wholeBody,
   };
 }
 
@@ -695,4 +704,124 @@ export function acceptedBandOf(
     baselineState: cold ? 'COLD' : 'CALIBRATED',
     completedMesoCount: context.completedMesoCount,
   });
+}
+
+export type WholeBodyMetric = 'bodyweight' | 'sessions_28d';
+
+/**
+ * The whole-body goals (VW-455): a fat-loss phase declared five weeks ago, a
+ * weigh-in every other day since, losing {@link GOAL_PREVIEW_WEIGHT.lossPctPerWeek}
+ * a week, and a bodyweight goal and a 28-day session commitment taken on
+ * {@link GOAL_PREVIEW_WEIGHT.goalsDaysAgo} days ago, so both cards read mid-block.
+ */
+export const GOAL_PREVIEW_WEIGHT = {
+  phaseDaysAgo: 34,
+  goalsDaysAgo: 16,
+  startLbs: 202,
+  lossPctPerWeek: 0.6,
+} as const;
+
+async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeBodyMetric[]> {
+  await seedPreviewCut(store, now);
+  const seeded: WholeBodyMetric[] = [];
+  for (const metric of ['bodyweight', 'sessions_28d'] as const) {
+    if (await seedWholeBodyGoal(store, metric, now)) seeded.push(metric);
+  }
+  return seeded;
+}
+
+/**
+ * The fat-loss phase and its weigh-ins, without any goal. The goals capture
+ * (`scripts/dashboard-mock-drive.mjs`) writes these, then takes the goals on
+ * through the tools.
+ */
+export async function seedPreviewCut(
+  store: Pick<SessionStore, 'declareDietPhase' | 'putBodyMetric'>,
+  now: Date,
+): Promise<void> {
+  const daysAgo = (days: number): string => new Date(now.getTime() - days * DAY_MS).toISOString();
+  const { phaseDaysAgo } = GOAL_PREVIEW_WEIGHT;
+  await store.declareDietPhase({
+    userId: LOCAL_USER_ID,
+    phase: 'fat-loss',
+    startedAt: daysAgo(phaseDaysAgo),
+    declaredAt: daysAgo(phaseDaysAgo),
+  });
+  for (let day = phaseDaysAgo; day >= 0; day -= 2) {
+    await store.putBodyMetric({
+      userId: LOCAL_USER_ID,
+      measuredAt: daysAgo(day),
+      bodyweightLbs: previewWeightLbs(day),
+    });
+  }
+}
+
+/** The seeded weigh-in `daysAgo` days back, one decimal like a bathroom scale. */
+export function previewWeightLbs(daysAgo: number): number {
+  const { phaseDaysAgo, startLbs, lossPctPerWeek } = GOAL_PREVIEW_WEIGHT;
+  const weeks = (phaseDaysAgo - daysAgo) / 7;
+  return Math.round(startLbs * (1 - lossPctPerWeek / 100) ** weeks * 10) / 10;
+}
+
+/**
+ * One whole-body priority and its accepted target, framed where the lifter took
+ * it on: the weigh-in that day, or the training days in the window then. A
+ * state with no training days in that window gets no session goal.
+ */
+async function seedWholeBodyGoal(
+  store: GoalPreviewStore,
+  metric: WholeBodyMetric,
+  now: Date,
+): Promise<boolean> {
+  const { goalsDaysAgo } = GOAL_PREVIEW_WEIGHT;
+  const takenOn = new Date(now.getTime() - goalsDaysAgo * DAY_MS).toISOString();
+  const ref = metric === 'bodyweight' ? 'bodyweight' : 'sessions';
+  const startValue =
+    metric === 'bodyweight'
+      ? previewWeightLbs(goalsDaysAgo)
+      : (await readTrainingDays(store, takenOn)).length;
+  if (startValue === 0) return false;
+  const priority = await store.putPriority({
+    id: `preview-${ref}-priority`,
+    userId: LOCAL_USER_ID,
+    horizonWeeks: GOAL_PREVIEW_HORIZON_WEEKS,
+    kind: 'muscle',
+    ref,
+    level: 'maintain',
+    declaredAt: takenOn,
+    mesosHeld: 1,
+  });
+  const context = await readDerivationContext({ store }, priority);
+  const frame = { metric, startValue, startMeasuredAt: takenOn } as StoredGoalTarget;
+  const derived = await deriveTargetInFrame({ store }, context, frame);
+  if (!('band' in derived)) throw new Error(`preview ${metric} goal: ${derived.reason}`);
+  await store.putGoalTarget(wholeBodyTargetRow(priority.id, derived, context));
+  return true;
+}
+
+function wholeBodyTargetRow(
+  priorityId: string,
+  derived: DerivedTarget,
+  context: GoalDerivationContext,
+): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
+  return {
+    id: priorityId.replace(/-priority$/, '-target'),
+    priorityId,
+    metric: derived.metric,
+    startValue: derived.startValue,
+    startMeasuredAt: derived.startMeasuredAt,
+    bandLowPctPerWeek: derived.band.bandLowPctPerWeek,
+    bandHighPctPerWeek: derived.band.bandHighPctPerWeek,
+    committedValue: derived.band.committedValue,
+    stretchValue: derived.band.stretchValue,
+    basis: derived.band.basis,
+    infoLevel: derived.band.infoLevel,
+    tierUsed: context.tier,
+    tierProvisional: context.tierProvisional,
+    dietPhaseAtDerivation: context.dietState.phase,
+    acceptedBy: 'user',
+    acknowledgedStretch: false,
+    derivedAt: derived.startMeasuredAt,
+    endsAt: blockEndsAt(derived.startMeasuredAt, GOAL_PREVIEW_HORIZON_WEEKS),
+  };
 }

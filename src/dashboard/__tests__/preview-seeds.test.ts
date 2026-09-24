@@ -28,11 +28,14 @@ import {
   PREVIEW_PAGES,
   acceptedBandOf,
   goalPreviewState,
+  previewWeightLbs,
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
-import { fetchGoalProgressViews } from '../goal-progress-api.js';
+import { fetchGoalPriorityRows, fetchGoalProgressViews } from '../goal-progress-api.js';
+import { primaryTarget, type GoalsPageData } from '../spa/goals/goals-model.js';
+import { wholeBodyCards } from '../spa/goals/whole-body-cards.js';
 import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
 
@@ -244,5 +247,53 @@ describe('dashboard:preview companion lifts (VW-467)', () => {
     } finally {
       store.close();
     }
+  });
+});
+
+describe('dashboard:preview whole-body goals (VW-455)', () => {
+  async function seededPage(
+    stateName: string,
+  ): Promise<{ data: GoalsPageData; wholeBody: string[] }> {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+    try {
+      const now = new Date();
+      const report = await seedGoalPreview(store, goalPreviewState(stateName), now, {
+        wholeBody: true,
+      });
+      const rows = await fetchGoalPriorityRows(store, now);
+      const progress: GoalsPageData['progress'] = {};
+      for (const row of rows) {
+        progress[row.priority.id] = await fetchGoalProgressViews(store, row.priority, now);
+      }
+      return { data: { priorities: rows, progress }, wholeBody: report.wholeBody };
+    } finally {
+      store.close();
+    }
+  }
+
+  it('draws a cut with its rate and a session commitment beside the lead lift', async () => {
+    const { data, wholeBody } = await seededPage('on_track');
+    const cards = wholeBodyCards(data);
+
+    expect(wholeBody).toEqual(['bodyweight', 'sessions_28d']);
+    expect(primaryTarget(data)?.view.target.exerciseId).toBe(GOAL_PREVIEW_EXERCISE.id);
+    expect(cards?.bodyweight).toMatchObject({
+      direction: 'down',
+      phase: { name: 'fat-loss' },
+      latest: { value: previewWeightLbs(0) },
+      week: { index: 3 },
+    });
+    expect(cards?.bodyweight?.rate?.observedPctPerWeek).toBeLessThan(0);
+    expect(cards?.sessions?.committed).toBeGreaterThan(0);
+    expect(cards?.sessions?.counted).toBeGreaterThan(0);
+  });
+
+  it('leaves the session goal out when the lifter had not trained yet when taking it on', async () => {
+    const { data, wholeBody } = await seededPage('calibrating');
+
+    expect(wholeBody).toEqual(['bodyweight']);
+    expect(wholeBodyCards(data)?.sessions).toBeNull();
   });
 });
