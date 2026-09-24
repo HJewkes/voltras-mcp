@@ -95,7 +95,7 @@ async function seedGoals(dbDir, stateName) {
   const state = goalPreviewState(stateName);
   const store = SqliteSessionStore.open(scenarioDbPath(dbDir, 'goals'));
   try {
-    const report = await seedGoalPreview(store, state, new Date());
+    const report = await seedGoalPreview(store, state, new Date(), { companions: true });
     log(
       `seeded --state ${state.name}: ${report.sets} sets across ${report.sessions} session(s), ` +
         `top ${report.latestLoadLbs} lb, baseline ${report.baselineState}`,

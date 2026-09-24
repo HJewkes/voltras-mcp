@@ -22,14 +22,18 @@ import { join } from 'node:path';
 
 import { CAPTURE_SCENARIOS } from '../../docs/capture-shots.js';
 import {
+  GOAL_PREVIEW_COMPANIONS,
+  GOAL_PREVIEW_EXERCISE,
   GOAL_PREVIEW_STATES,
   PREVIEW_PAGES,
+  acceptedBandOf,
   goalPreviewState,
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
+import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
 
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
@@ -196,6 +200,49 @@ describe('dashboard:preview pages', () => {
     for (const page of PREVIEW_PAGES) {
       if (page.captureScenario === null) continue;
       expect(known).toContain(page.captureScenario);
+    }
+  });
+});
+
+describe('dashboard:preview companion lifts (VW-467)', () => {
+  it('seeds two accepted lifts beside the lead, which still lists first', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+    try {
+      const now = new Date();
+      await seedGoalPreview(store, goalPreviewState('on_track'), now, { companions: true });
+      const priorities = await store.listPriorities(LOCAL_USER_ID);
+
+      expect(priorities.map((p) => p.ref)).toEqual([
+        GOAL_PREVIEW_EXERCISE.id,
+        ...GOAL_PREVIEW_COMPANIONS.map((c) => c.exercise.id),
+      ]);
+      expect(priorities[0]!.level).toBe('specialize');
+      for (const priority of priorities) {
+        const views = await fetchGoalProgressViews(store, priority, now);
+        expect(views).toHaveLength(1);
+        // Derived like every seed: the stored numbers are the derivation's band ends.
+        expect(views[0]!.committed).toBe(views[0]!.target.committedValue);
+        expect(views[0]!.target.acceptedBy).toBe('user');
+      }
+      const lead = await fetchGoalProgressViews(store, priorities[0]!, now);
+      expect(lead[0]!.status).toBe('on_track');
+
+      // Each lift ramps at its own exercise class (VW-482): the isolation tricep extension's
+      // band is the isolation one, not the chest press's upper-compound one.
+      const tricep = priorities[2]!;
+      const [tricepView] = await fetchGoalProgressViews(store, tricep, now);
+      const context = await readDerivationContext({ store }, tricep);
+      const start = tricepView!.target.startValue;
+      expect(tricepView!.target.stretchValue).toBe(
+        acceptedBandOf(context, start, 'ramp', tricep.ref).stretchValue,
+      );
+      expect(tricepView!.target.stretchValue).toBeLessThan(
+        acceptedBandOf(context, start, 'ramp', GOAL_PREVIEW_EXERCISE.id).stretchValue,
+      );
+    } finally {
+      store.close();
     }
   });
 });

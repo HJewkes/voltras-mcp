@@ -59,6 +59,10 @@
 //   --goal-load=<lbs>       the seeded prior week's load, and the first set's
 //                           (default 100)
 //   --goal-pr-load=<lbs>    the heavier set's load (default `--goal-load` + 10)
+//   --goal-companions=<id:lbs,...>  more lifts declared at `maintain` beside the lead,
+//                           each with its own seeded prior week at that load and an
+//                           accepted target, so the page shows its Per-lift section
+//                           (the lead is never listed there, VW-467)
 //
 // ── DUAL-SLOT MODE (VMCP-04.02) ────────────────────────────────────────────
 // `--dual` drives TWO slots (`left` + `right`) concurrently through the same
@@ -167,6 +171,14 @@ const TRAINING_MODE = 'WeightTraining';
 const GOAL_EXERCISE_ID = flags.has('goal') ? flag('goal') : null;
 const GOAL_LOAD_LBS = Number(flag('goal-load', LOAD_LBS));
 const GOAL_PR_LOAD_LBS = Number(flag('goal-pr-load', GOAL_LOAD_LBS + 10));
+const GOAL_COMPANIONS = flags.has('goal-companions')
+  ? flag('goal-companions')
+      .split(',')
+      .map((entry) => {
+        const [id, lbs] = entry.split(':');
+        return { id, loadLbs: Number(lbs ?? GOAL_LOAD_LBS) };
+      })
+  : [];
 /** Reps on the seeded prior-week set — enough to anchor a matched-reps read. */
 const GOAL_SEED_REPS = 8;
 // Parallel-safe DB path so this never collides with a live session's sqlite.
@@ -228,7 +240,15 @@ async function seedPriorWeek(dbPath, exerciseId, weightLbs) {
   const setId = `${sessionId}-set`;
   const store = SqliteSessionStore.open(dbPath);
   try {
-    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    // VW-489: the lifter's own training, so the goal tools read it as history. An
+    // unmarked session is not, and `goal.propose_targets` then finds no start value.
+    await store.putSession({
+      id: sessionId,
+      startedAt: at,
+      endedAt: at,
+      exerciseId,
+      kind: 'training',
+    });
     await store.putSet({
       id: setId,
       sessionId,
@@ -256,6 +276,9 @@ async function seedPriorWeek(dbPath, exerciseId, weightLbs) {
 
 if (GOAL_EXERCISE_ID !== null) {
   await seedPriorWeek(DB_PATH, GOAL_EXERCISE_ID, GOAL_LOAD_LBS);
+  for (const companion of GOAL_COMPANIONS) {
+    await seedPriorWeek(DB_PATH, companion.id, companion.loadLbs);
+  }
 }
 
 const child = spawn(
@@ -587,14 +610,49 @@ async function runSingle() {
 async function runGoal() {
   await connectSingle();
 
-  const declared = await callTool('goal.declare_priorities', {
-    items: [{ kind: 'lift', ref: GOAL_EXERCISE_ID, level: 'specialize' }],
-  });
-  const priorityId = declared.priorities?.[0]?.id;
-  if (!priorityId)
-    throw new Error(`declare_priorities returned no priority for ${GOAL_EXERCISE_ID}`);
-  log(`priority declared: ${priorityId} (lift ${GOAL_EXERCISE_ID}, specialize)`);
+  // One call per lift, companions first in reverse: the page lists priorities
+  // newest-declared first, so the lead (declared last) leads and the companions
+  // follow in the order `--goal-companions` names them.
+  const lifts = [
+    ...[...GOAL_COMPANIONS]
+      .reverse()
+      .map((companion) => ({ ref: companion.id, level: 'maintain' })),
+    { ref: GOAL_EXERCISE_ID, level: 'specialize' },
+  ];
+  for (const { ref, level } of lifts) {
+    const declared = await callTool('goal.declare_priorities', {
+      items: [{ kind: 'lift', ref, level }],
+    });
+    const priorityId = (declared.priorities ?? []).find((p) => p.ref === ref)?.id;
+    if (!priorityId) throw new Error(`declare_priorities returned no priority for ${ref}`);
+    log(`priority declared: ${priorityId} (lift ${ref}, ${level})`);
+    await acceptProposedLiftTarget(priorityId);
+  }
 
+  const { sessionId } = await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
+  summarize(await snapshot(), 'session.start');
+
+  await applyLoad(GOAL_LOAD_LBS);
+  await runOneSet('working set', DWELL_MS);
+  await sleep(REST_MS);
+
+  await applyLoad(GOAL_PR_LOAD_LBS);
+  await runOneSet('PR set     ', DWELL_MS);
+
+  await callTool('session.end', {});
+  // VW-489: a mock-adapter session is stored as a test, which every goal read skips, so
+  // the page would never see the PR set. This scratch store's lifter marks it training,
+  // through the same review tool a lifter uses.
+  await callTool('session.mark_kind', { sessionId, kind: 'training' });
+  summarize(await snapshot(), 'session.end');
+  log(
+    `goal loop complete: ${GOAL_PR_LOAD_LBS} lb passes last week's ${GOAL_LOAD_LBS} lb — ` +
+      `the star is on http://127.0.0.1:${PORT}/app#/goals`,
+  );
+}
+
+/** Propose a priority's targets and accept its top-load one: the band is then fixed. */
+async function acceptProposedLiftTarget(priorityId) {
   const proposed = await callTool('goal.propose_targets', { priorityId });
   const lift = (proposed.targets ?? []).find((t) => t.metric === 'top_load_at_reps');
   if (!lift) {
@@ -607,23 +665,6 @@ async function runGoal() {
   );
   await callTool('goal.accept_target', { targetId: lift.targetId });
   log('target accepted — the band is now fixed');
-
-  await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
-  summarize(await snapshot(), 'session.start');
-
-  await applyLoad(GOAL_LOAD_LBS);
-  await runOneSet('working set', DWELL_MS);
-  await sleep(REST_MS);
-
-  await applyLoad(GOAL_PR_LOAD_LBS);
-  await runOneSet('PR set     ', DWELL_MS);
-
-  await callTool('session.end', {});
-  summarize(await snapshot(), 'session.end');
-  log(
-    `goal loop complete: ${GOAL_PR_LOAD_LBS} lb passes last week's ${GOAL_LOAD_LBS} lb — ` +
-      `the star is on http://127.0.0.1:${PORT}/app#/goals`,
-  );
 }
 
 function runChosen() {

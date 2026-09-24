@@ -102,6 +102,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The dashboard picks up `@titan-design/react-ui` 0.21.1. Goal charts drop their y-axis
+  labels and carry each gridline's value inside the plot. A calibrating chart moves its note
+  into an info tip in the plot's corner ("Why is there no band?"). Every week of a goal chart
+  opens a tip with that week's reading and band. On a phone, a goal card's Week / Best / Goal
+  lines sit together as one block. Velocity bars on the live page and the pinned strip now
+  colour by the exact loss from the set's best rep, not the loss rounded to a whole percent. The
+  dashboard now hands those bars unrounded velocities too, so a bar and the red or amber
+  background agree at a band edge. The rest recap's "Vel loss" and Fatigue tile read the same
+  exact loss as the live page, so they can shift by up to about a percent from before.
+
 - A fitted RIR-velocity curve now has to be tighter before its readings are called
   high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
   enough before. A curve with an error between 1.5 and 2 now reads medium, and its note
@@ -392,10 +402,10 @@ entry is written from the user's point of view is a review question, not a check
   lifter's local calendar day. Any accepted session-count goal made under the old count is
   retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
   one in days (VW-460, #455).
-- A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
-  session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
-  no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no
-  such note, keeps the sentence (VW-444).
+- A calibrating goal's chart now says what it is waiting on ("1 more comparable session to
+  calibrate.", or the set it needs), in full, in the chart's info tip, instead of titan's
+  generic "No band yet", so the full goal card no longer repeats it in a sentence underneath.
+  The compact per-lift card, whose chart has no such tip, keeps the sentence (VW-444).
 - The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
   colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
   thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and
@@ -502,6 +512,21 @@ entry is written from the user's point of view is a review question, not a check
   advice for any bodyweight goal behind its line now names intake and activity, not load
   and reps. A maintenance block is met when the latest weigh-in of its final week sits
   inside the corridor. It is never `beyond_goal` (VW-457, #463).
+- On a phone the per-lift goal cards on `#/goals` fit the screen again. They were about 80 px
+  wider than the page, so the right edge was cut off: a long lift name, the status mark and the
+  goal figure ran out of view. A long name now wraps inside the card. The "Per-lift" and
+  "Muscle priorities" titles now sit on the page background with their cards as the first
+  raised surface, instead of a panel around the cards, so each card is 40 px wider on a phone
+  and 10 px wider on the wall (VW-454, VW-435).
+- The lead lift on `#/goals`, which already has the large card at the top, is no longer
+  repeated in the Per-lift list. A page with only one lift shows the large card and no
+  Per-lift section (VW-467). `npm run dashboard:preview -- goals` now seeds two more accepted lifts
+  beside the lead (Cable Row and Cable Overhead Tricep Extension), so the previewed page has a
+  Per-lift section in every `--state`; the lead's state is unchanged.
+- The goals page drops its "Whole body" section, priority list included, when there is no
+  sessions or bodyweight goal. It used to draw the panel with nothing in it but the list of
+  priorities (VW-454).
+
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
   backwards. It now shows and judges the newest reading (VW-451).

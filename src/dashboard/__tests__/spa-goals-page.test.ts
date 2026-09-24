@@ -19,7 +19,13 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import { cardChart, cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
+import {
+  cardChart,
+  cardMilestone,
+  liftRows,
+  primaryTarget,
+  type GoalsPageData,
+} from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -290,16 +296,89 @@ describe('GoalsView (VW-355)', () => {
   });
 });
 
+describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
+  it('leaves the lead lift out of the per-lift rows', () => {
+    const { data } = baseData();
+    const leadId = primaryTarget(data)?.view.target.id;
+
+    expect(leadId).toBe('tgt-bench');
+    expect(liftRows(data).map((row) => row.view.target.id)).toEqual([
+      'tgt-curl',
+      'tgt-hammer-curl',
+    ]);
+  });
+
+  it('shows the lead card and no Per-lift section on a page with one lift', () => {
+    const { data, benchPriority } = baseData();
+    const onlyBench: GoalsPageData = {
+      priorities: [data.priorities[0]!],
+      progress: { [benchPriority.id]: data.progress[benchPriority.id]! },
+    };
+
+    const html = render(onlyBench);
+
+    expect(liftRows(onlyBench)).toEqual([]);
+    expect(html).toContain('BENCH PRESS');
+    expect(html).not.toContain('Per-lift');
+  });
+
+  it('removes nothing when no lift target leads', () => {
+    const { data, benchPriority } = baseData();
+    const sessionsOnly: GoalsPageData = {
+      priorities: [{ ...data.priorities[0]!, targets: [data.priorities[0]!.targets[1]!] }],
+      progress: { [benchPriority.id]: [data.progress[benchPriority.id]![1]!] },
+    };
+
+    expect(primaryTarget(sessionsOnly)).toBeNull();
+    expect(liftRows(sessionsOnly)).toEqual([]);
+  });
+});
+
+describe('the whole-body section needs a whole-body goal (VW-454 ruling)', () => {
+  it('drops the section and its priority rail when no sessions or bodyweight goal exists', () => {
+    const { data, benchPriority } = baseData();
+    data.priorities[0]!.targets.splice(1, 1);
+    data.progress[benchPriority.id]!.splice(1, 1);
+
+    const html = render(data);
+
+    expect(html).not.toContain('Whole body');
+    expect(html).not.toContain('BENCH PRESS · specialize');
+  });
+
+  it('keeps the section when a sessions goal exists', () => {
+    const html = render(baseData().data);
+
+    expect(html).toContain('Whole body');
+    expect(html).toContain('Sessions (28d)');
+    expect(html).toContain('BENCH PRESS · specialize');
+  });
+});
+
 describe('GoalsView phone layout (VW-356)', () => {
   it('stacks the card grids to one full-width column below the narrow breakpoint', () => {
     vi.mocked(useIsNarrowViewport).mockReturnValue(true);
     try {
       const html = render(baseData().data);
       expect(html).not.toContain('auto-fill');
-      expect(html.match(/grid-template-columns:1fr/g)?.length).toBe(2); // lift grid + muscle grid
+      // Lift grid + muscle grid. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the column
+      // at the card's min-content, which held it wider than a phone (VW-454). Only the
+      // captures prove the card then fits; this pins the rule that lets it.
+      expect(html.match(/grid-template-columns:minmax\(0, 1fr\)/g)?.length).toBe(2);
+      expect(html).not.toContain('grid-template-columns:1fr');
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
     }
+  });
+
+  it('titles the per-lift cards on the page background, not inside a panel (VW-435)', () => {
+    const html = render(baseData().data);
+    const section = /<section[^>]*>(.*?)<\/section>/s.exec(html)?.[1] ?? '';
+
+    expect(section).toContain('Per-lift');
+    expect(section).toContain('display:grid');
+    // All caps by style, like the full card's heading, never by rewriting the string.
+    expect(section).toMatch(/text-transform:uppercase[^>]*>Per-lift</);
   });
 
   it('lays the wall grids out as auto-fill columns', () => {
@@ -338,7 +417,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
   const SENTENCE =
     'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.';
 
-  it('says it once, under the compact card; the full card states the wait in its chart', () => {
+  it('states a calibrating lead lift only in its chart, since the lead is not repeated in Per-lift', () => {
     const { data, benchPriority } = baseData();
     const benchTarget = data.priorities[0]!.targets[0]!;
     const cold = view(
@@ -347,6 +426,25 @@ describe('a goal accepted while calibrating (VW-444)', () => {
       [actual(3, 174)],
     );
     data.progress[benchPriority.id] = [cold];
+
+    const html = render(data);
+
+    expect(cold.status).toBe('calibrating');
+    expect(primaryTarget(data)?.view.target.id).toBe('tgt-bench');
+    expect(html).not.toContain(SENTENCE);
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
+  });
+
+  it('says it once, under the compact card, for a calibrating lift that is not the lead', () => {
+    const { data } = baseData();
+    const arms = data.priorities[1]!;
+    const hammerTarget = arms.targets[1]!;
+    const cold = view(
+      arms.priority,
+      { ...hammerTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 29)],
+    );
+    data.progress[arms.priority.id] = [data.progress[arms.priority.id]![0]!, cold];
 
     const html = render(data);
 
@@ -368,7 +466,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     );
     const calibrated = data.progress[benchPriority.id]![0]!;
 
-    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
     expect(cardChart(calibrated)).not.toHaveProperty('calibratingNote');
   });
 });
@@ -392,11 +490,12 @@ describe('a calibrated starting ramp (VW-444 part 2)', () => {
     return data;
   }
 
-  it('says a target based on the lifts is ready under both cards', () => {
+  it('says a target based on the lifts is ready under the lead card', () => {
     const line =
       'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
-    // The full card keeps it: its chart has no in-plot note once the lift has calibrated.
-    expect(render(rampData(false)).split(line)).toHaveLength(3);
+    // Once: the lead card keeps it (its chart has no note once calibrated), and the lead
+    // is not repeated in Per-lift.
+    expect(render(rampData(false)).split(line)).toHaveLength(2);
   });
 
   it('shows no line at all once the lifter declined', () => {

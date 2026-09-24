@@ -1,14 +1,10 @@
 // What a calibrating goal says to the lifter (VW-444): one sentence for the
-// page, one short line for titan's `calibratingNote`, both built only from the
+// page, and the wait alone for titan's `calibratingNote` info tip, both built only from the
 // read model's structured calibration fields.
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  CHART_NOTE_MAX_CHARS,
-  RECALIBRATION_OFFERED_LINE,
-  calibrationCopy,
-} from '../spa/goals/calibration-copy.js';
+import { RECALIBRATION_OFFERED_LINE, calibrationCopy } from '../spa/goals/calibration-copy.js';
 import type { GoalCalibrationView } from '../read-models/index.js';
 
 function calibration(over: Partial<GoalCalibrationView>): GoalCalibrationView {
@@ -27,7 +23,7 @@ describe('calibrationCopy', () => {
     expect(calibrationCopy(calibration({}))).toEqual({
       sentence:
         'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.',
-      chartNote: '1 more comparable session',
+      chartNote: '1 more comparable session to calibrate.',
     });
   });
 
@@ -45,7 +41,7 @@ describe('calibrationCopy', () => {
     expect(copy).toEqual({
       sentence:
         'Starting ramp, not yet based on your lifts. Calibrates after a set taken near failure.',
-      chartNote: 'Needs a set near failure',
+      chartNote: 'Calibrates after a set taken near failure.',
     });
     expect(copy.sentence).not.toMatch(/\d/);
   });
@@ -69,7 +65,7 @@ describe('calibrationCopy', () => {
       sentence:
         'Starting ramp, not yet based on your lifts. Calibrates after 2 more comparable sessions ' +
         'and more working sets of this lift.',
-      chartNote: '2 sessions, more working sets',
+      chartNote: 'Calibrates after 2 more comparable sessions and more working sets of this lift.',
     });
   });
 
@@ -88,42 +84,37 @@ describe('the recalibration line (VW-444 part 2)', () => {
   });
 });
 
-describe('the in-plot chart note (fits one line at phone width)', () => {
+describe("the chart's info-tip note (titan 0.21.1 lays it out)", () => {
   it.each<[string, Partial<GoalCalibrationView>, string]>([
-    ['sessions', { sessionsNeeded: 1, blockedBy: 'sessions' }, '1 more comparable session'],
+    [
+      'sessions',
+      { sessionsNeeded: 1, blockedBy: 'sessions' },
+      '1 more comparable session to calibrate.',
+    ],
     [
       'a shape-only baseline',
       { sessionsNeeded: 0, blockedBy: 'baseline', baselineState: 'SHAPE_ONLY' },
-      'Needs a set near failure',
+      'Calibrates after a set taken near failure.',
     ],
     [
       'a cold baseline',
       { sessionsNeeded: 0, blockedBy: 'baseline', baselineState: 'COLD' },
-      'Needs more working sets',
+      'Calibrates after more working sets of this lift.',
     ],
     [
       'both',
       { sessionsNeeded: 1, blockedBy: 'both', baselineState: 'COLD' },
-      '1 session, more working sets',
+      'Calibrates after 1 more comparable session and more working sets of this lift.',
     ],
-  ])('names only the count or the blocker for %s', (_name, over, note) => {
-    expect(calibrationCopy(calibration(over)).chartNote).toBe(note);
-  });
+  ])(
+    'is the whole wait for %s, without the starting-ramp line the tip already carries',
+    (_name, over, note) => {
+      const copy = calibrationCopy(calibration(over));
 
-  // Measured at 360 wide: the note's line runs from x=34 to x=204 (170 px), and these notes
-  // average about 5.4 px a character, so 30 characters is about 162 px.
-  it(`never runs past ${CHART_NOTE_MAX_CHARS} characters for any single-digit count`, () => {
-    const blockers = ['sessions', 'baseline', 'both'] as const;
-    const baselines = ['COLD', 'SHAPE_ONLY'] as const;
-    for (let sessionsNeeded = 1; sessionsNeeded <= 9; sessionsNeeded++) {
-      for (const blockedBy of blockers) {
-        for (const baselineState of baselines) {
-          const { chartNote } = calibrationCopy(
-            calibration({ sessionsNeeded, blockedBy, baselineState }),
-          );
-          expect(chartNote.length, chartNote).toBeLessThanOrEqual(CHART_NOTE_MAX_CHARS);
-        }
-      }
-    }
-  });
+      expect(copy.chartNote).toBe(note);
+      expect(copy.sentence.endsWith(note)).toBe(true);
+      // titan warns when a note repeats the status pill's word.
+      expect(note.toLowerCase().startsWith('calibrating')).toBe(false);
+    },
+  );
 });

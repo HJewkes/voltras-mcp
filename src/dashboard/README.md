@@ -41,26 +41,26 @@ read a response to have happened. Every non-GET request now passes the same
 guard (`write-guard.ts`) BEFORE route matching, so a seventh write route cannot
 be added unguarded.
 
-| # | Route | Guards | Lease |
-| --- | --- | --- | --- |
-| 1 | `POST /api/plan/programs` | loopback Host, same `Origin`, JSON body, boot token | not needed — sqlite plan write, no device I/O |
-| 2 | `POST /api/plan/programs/:id/workouts` | same | same |
-| 3 | `POST /api/plan/templates/:id/exercises` | same | same |
-| 4 | `POST /api/plan/templates/:id/reorder` | same | same |
-| 5 | `PATCH /api/plan/exercises/:id` | same | same |
-| 6 | `DELETE /api/plan/exercises/:id` | same | same |
+| #   | Route                                    | Guards                                              | Lease                                         |
+| --- | ---------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| 1   | `POST /api/plan/programs`                | loopback Host, same `Origin`, JSON body, boot token | not needed — sqlite plan write, no device I/O |
+| 2   | `POST /api/plan/programs/:id/workouts`   | same                                                | same                                          |
+| 3   | `POST /api/plan/templates/:id/exercises` | same                                                | same                                          |
+| 4   | `POST /api/plan/templates/:id/reorder`   | same                                                | same                                          |
+| 5   | `PATCH /api/plan/exercises/:id`          | same                                                | same                                          |
+| 6   | `DELETE /api/plan/exercises/:id`         | same                                                | same                                          |
 
 None of the six touches the device, so none takes the single-writer lease. A
 route that ever does must take it under the dashboard's own client id.
 
 The four checks, in the order a refusal names them:
 
-| Check | Refusal | Why |
-| --- | --- | --- |
-| `Host` is `127.0.0.1`, `localhost` or `[::1]`, port optional | 403 `foreign_host` | Origin-vs-Host alone is defeated by DNS rebinding: a hostile domain resolving to 127.0.0.1 makes the two agree |
-| `Origin` present and equal to the request's own `Host` | 403 `origin_required` / `foreign_origin` | A page cannot forge `Origin`. Comparing against `Host` survives the ephemeral-port fallback and the `127.0.0.1`/`localhost` alias |
-| `content-type` is `application/json` | 415 `unsupported_media_type` | A cross-site `<form>` post can only send the three CORS-simple types, so it can never reach a handler |
-| `x-vmcp-dashboard-token` equals this boot's token | 403 `token_required` / `stale_token` | A custom header also forces a CORS preflight the sidecar never answers, so a cross-origin fetch dies before the request is sent |
+| Check                                                        | Refusal                                  | Why                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Host` is `127.0.0.1`, `localhost` or `[::1]`, port optional | 403 `foreign_host`                       | Origin-vs-Host alone is defeated by DNS rebinding: a hostile domain resolving to 127.0.0.1 makes the two agree                    |
+| `Origin` present and equal to the request's own `Host`       | 403 `origin_required` / `foreign_origin` | A page cannot forge `Origin`. Comparing against `Host` survives the ephemeral-port fallback and the `127.0.0.1`/`localhost` alias |
+| `content-type` is `application/json`                         | 415 `unsupported_media_type`             | A cross-site `<form>` post can only send the three CORS-simple types, so it can never reach a handler                             |
+| `x-vmcp-dashboard-token` equals this boot's token            | 403 `token_required` / `stale_token`     | A custom header also forces a CORS preflight the sidecar never answers, so a cross-origin fetch dies before the request is sent   |
 
 **A missing `Origin` is refused.** Per the Fetch spec a browser always sends it
 on a non-GET request, same-origin included, so requiring it costs the SPA
@@ -143,12 +143,12 @@ the read that separates two walls.
 
 The client sends one `actionId` per SUBMIT, reused across retries.
 
-| Case | Answer | Did the handler run? |
-| --- | --- | --- |
-| New id | the result | once |
-| Same id, same input | the STORED result, `replayed: true` | no |
-| Same id, different input | 409 `action_id_reused` | no |
-| Same id, row still `pending` | 409 `indeterminate` | no |
+| Case                         | Answer                              | Did the handler run? |
+| ---------------------------- | ----------------------------------- | -------------------- |
+| New id                       | the result                          | once                 |
+| Same id, same input          | the STORED result, `replayed: true` | no                   |
+| Same id, different input     | 409 `action_id_reused`              | no                   |
+| Same id, row still `pending` | 409 `indeterminate`                 | no                   |
 
 The input hash is sha256 over a key-sorted rendering taken AFTER the tool's own
 parse, so key order and absent-versus-undefined cannot split one submission

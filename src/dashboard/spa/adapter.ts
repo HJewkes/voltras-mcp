@@ -432,10 +432,11 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   // MEAN concentric velocity per rep (not peak): the VelocityStrip bars must
   // read the same metric as the velocity-loss %/FatigueMeter/StatusPill rendered
   // beside them, so the visible bar-drop and the stated loss %/verdict agree
-  // across the room (VW-58).
+  // across the room (VW-58). Unrounded: titan bands each bar on the exact loss and
+  // formats the number itself, so a bar and the aura agree at a band edge (titan 0.21.1).
   const velocitiesMps: number[] = [];
   for (const rep of reps) {
-    velocitiesMps.push(roundMps(repMeanVelocityMps(rep)) ?? 0);
+    velocitiesMps.push(repMeanVelocityMps(rep) ?? 0);
   }
 
   return {
