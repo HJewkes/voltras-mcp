@@ -102,6 +102,10 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The dashboard picks up `@titan-design/react-ui` 0.21.2. A calibrating goal chart's info tip
+  reads its explanation as one paragraph instead of two stacked lines (VW-559). On a phone, the
+  first tap on a goal card's status or info glyph now opens its tip; before, it took a second tap.
+
 - The dashboard picks up `@titan-design/react-ui` 0.21.1. Goal charts drop their y-axis
   labels and carry each gridline's value inside the plot. A calibrating chart moves its note
   into an info tip in the plot's corner ("Why is there no band?"). Every week of a goal chart
