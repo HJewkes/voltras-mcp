@@ -26,10 +26,17 @@ export function toTitanMuscles(muscle: string | null): TitanMuscleGroup[] {
   return mapCatalogMuscle(muscle);
 }
 
+/** The entry's primary muscles as titan groups, whether the map names one or several. */
+export function primaryTitanMuscles(entry: ExerciseMapEntry | undefined): TitanMuscleGroup[] {
+  const primary = entry?.primary_muscle ?? null;
+  const named = Array.isArray(primary) ? primary : [primary];
+  return [...new Set(named.flatMap(toTitanMuscles))];
+}
+
 function relatedPairs(entries: readonly ExerciseMapEntry[]): Set<string> {
   const pairs = new Set<string>();
   for (const entry of entries) {
-    const primaries = toTitanMuscles(entry.primary_muscle);
+    const primaries = primaryTitanMuscles(entry);
     const secondaries = (entry.secondary_muscles ?? []).flatMap(toTitanMuscles);
     const all = [...primaries, ...secondaries];
     for (const a of primaries) for (const b of all) pairs.add(`${a}|${b}`).add(`${b}|${a}`);
@@ -43,11 +50,11 @@ export function buildExerciseLookup(entries: readonly ExerciseMapEntry[]): Exerc
   const pairs = relatedPairs(entries);
   const entryOf = (name: string | null) => (name === null ? undefined : byName.get(name));
   return {
-    primaryMuscles: (name) => toTitanMuscles(entryOf(name)?.primary_muscle ?? null),
+    primaryMuscles: (name) => primaryTitanMuscles(entryOf(name)),
     family: (name) => entryOf(name)?.family ?? null,
     isMainLift: (name) => entryOf(name)?.main_lift === true,
     related: (a, b) => a === b || pairs.has(`${a}|${b}`),
-    isMapped: (name) => (entryOf(name)?.primary_muscle ?? null) !== null,
+    isMapped: (name) => primaryTitanMuscles(entryOf(name)).length > 0,
   };
 }
 

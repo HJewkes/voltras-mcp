@@ -55,6 +55,32 @@ describe('weekly rollups', () => {
     });
   });
 
+  it('counts a set in full toward each of several primaries and never toward a secondary', () => {
+    const hinge = buildExerciseLookup([
+      mapEntry({
+        log_name: 'Hinge',
+        primary_muscle: ['hamstrings', 'glutes'],
+        secondary_muscles: ['back'],
+      }),
+    ]);
+    const rows = [setRow({ exercise_name: 'Hinge', sets: 3 })];
+    const week = weeklySetsByMuscle(rows, hinge).get('2030-01-07')!;
+    expect(Object.fromEntries(week)).toEqual({ hamstrings: 3, glutes: 3 });
+  });
+
+  it('counts a hinge day toward the frequency of both its primaries', () => {
+    const hinge = buildExerciseLookup([
+      mapEntry({ log_name: 'Hinge', primary_muscle: ['hamstrings', 'glutes'] }),
+      mapEntry({ log_name: 'Curl', primary_muscle: 'hamstrings', secondary_muscles: [] }),
+    ]);
+    const rows = [
+      setRow({ exercise_name: 'Hinge' }),
+      setRow({ exercise_name: 'Curl', workout_due_date: '2030-01-09' }),
+    ];
+    const week = weeklyFrequencyByMuscle(rows, hinge).get('2030-01-07')!;
+    expect(Object.fromEntries(week)).toEqual({ hamstrings: 2, glutes: 1 });
+  });
+
   it('counts distinct days per muscle per week', () => {
     const rows = [setRow(), setRow({ set_index: 2 }), setRow({ workout_due_date: '2030-01-09' })];
     expect(weeklyFrequencyByMuscle(rows, lookup).get('2030-01-07')!.get('chest')).toBe(2);
@@ -80,6 +106,20 @@ describe('exercise lookup', () => {
     const lookup = buildExerciseLookup([mapEntry({ log_name: 'Cable', primary_muscle: null })]);
     expect(lookup.isMapped('Cable')).toBe(false);
     expect(lookup.isMapped('Never Seen')).toBe(false);
+  });
+
+  it('reads an empty primary list as unmapped', () => {
+    const lookup = buildExerciseLookup([mapEntry({ log_name: 'Cable', primary_muscle: [] })]);
+    expect(lookup.isMapped('Cable')).toBe(false);
+  });
+
+  it('relates two primaries of one entry to each other and to its secondaries', () => {
+    const lookup = buildExerciseLookup([
+      mapEntry({ primary_muscle: ['hamstrings', 'glutes'], secondary_muscles: ['back'] }),
+    ]);
+    expect(lookup.related('hamstrings', 'glutes')).toBe(true);
+    expect(lookup.related('glutes', 'upper_back')).toBe(true);
+    expect(lookup.related('lats', 'upper_back')).toBe(false);
   });
 
   it('relates a primary to its own secondary, and not to an unrelated muscle', () => {

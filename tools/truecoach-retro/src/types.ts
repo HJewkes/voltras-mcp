@@ -29,7 +29,8 @@ export interface CheckinRecord {
 /** One row of `exercise-map.json`, keyed by the name as the coach typed it. */
 export interface ExerciseMapEntry {
   log_name: string;
-  primary_muscle: string | null;
+  /** One muscle, or several each counted in full (a hinge names hamstrings and glutes). */
+  primary_muscle: string | string[] | null;
   secondary_muscles: string[];
   /** Groups variants of one movement ('bench', 'squat'); swaps are read inside a family. */
   family: string | null;
