@@ -26,7 +26,6 @@ vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerPlanTools } = await import('../plan-tools.js');
 const { ExerciseService } = await import('../../exercises/exercise-service.js');
-const { SqliteSessionStore } = await import('../../store/sqlite-store.js');
 
 import type { Exercise } from '../../exercises/exercise-service.js';
 import type { PlanWarning } from '../../plan/lint-plan.js';

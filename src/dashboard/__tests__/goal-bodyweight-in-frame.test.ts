@@ -8,9 +8,6 @@
 // maintenance corridor.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { GOAL_BAND_CONSTANTS, deriveGoalBand, type GoalBand } from '../../analytics/goal-band.js';
 import { blockEndsAt } from '../../analytics/goal-block-weeks.js';
@@ -19,7 +16,11 @@ import { deriveTarget, readDerivationContext, selectionOf } from '../../tools/go
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import { buildGoalProgressView, type GoalProgressView } from '../read-models/index.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
-import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+import {
+  openTestStore,
+  removeTestStoreDirs,
+  type SessionStore,
+} from '../../store/__tests__/open-test-store.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HORIZON_WEEKS = 8;
@@ -29,14 +30,13 @@ const SEED_TIMEOUT_MS = 20_000;
 /** A Wednesday, so the calendar week each reading lands in never depends on the day the suite runs. */
 const NOW = '2026-09-16T12:00:00.000Z';
 
-const scratchDirs: string[] = [];
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
 });
 afterEach(() => {
   vi.useRealTimers();
-  while (scratchDirs.length > 0) rmSync(scratchDirs.pop()!, { recursive: true, force: true });
+  removeTestStoreDirs();
 });
 
 interface BodyweightCase {
@@ -52,9 +52,7 @@ interface Compared {
 }
 
 async function compare(fixture: BodyweightCase): Promise<Compared> {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-bodyweight-frame-'));
-  scratchDirs.push(dir);
-  const store = openTestStore({ path: join(dir, 'goal.sqlite') });
+  const store = openTestStore({ tempPrefix: 'vmcp-bodyweight-frame-' });
   const now = new Date();
   const weeksBack = fixture.weeklyLbs.length - 1;
   const at = (week: number) => new Date(now.getTime() - (weeksBack - week) * 7 * DAY_MS - DAY_MS);
@@ -256,9 +254,7 @@ describe('a session-count band is anchored in the target frame (VW-451)', () => 
   it(
     'holds flat at the count the commitment was made at, not today’s count',
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'vmcp-sessions-frame-'));
-      scratchDirs.push(dir);
-      const store = openTestStore({ path: join(dir, 'goal.sqlite') });
+      const store = openTestStore({ tempPrefix: 'vmcp-sessions-frame-' });
       const now = new Date();
       for (let day = 1; day <= 5; day += 1) {
         const at = new Date(now.getTime() - day * 4 * DAY_MS).toISOString();

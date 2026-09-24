@@ -8,30 +8,20 @@
 // with the target started at the first seeded week.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { seedGoalPreview, type GoalPreviewState } from '../../docs/preview-seeds.js';
 import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
-import { openTestStore } from '../../store/__tests__/open-test-store.js';
+import { openTestStore, removeTestStoreDirs } from '../../store/__tests__/open-test-store.js';
 
-const scratchDirs: string[] = [];
-afterEach(() => {
-  while (scratchDirs.length > 0) {
-    rmSync(scratchDirs.pop()!, { recursive: true, force: true });
-  }
-});
+afterEach(removeTestStoreDirs);
 
 async function viewFor(
   weeklyLoadsLbs: number[],
   extra: Partial<GoalPreviewState> = {},
 ): Promise<GoalProgressView> {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-plateau-ramp-'));
-  scratchDirs.push(dir);
-  const store = openTestStore({ path: join(dir, 'goal.sqlite') });
+  const store = openTestStore({ tempPrefix: 'vmcp-plateau-ramp-' });
   try {
     const now = new Date();
     const state: GoalPreviewState = {
