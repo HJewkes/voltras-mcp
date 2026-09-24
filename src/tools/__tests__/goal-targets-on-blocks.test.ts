@@ -10,9 +10,10 @@ import { localMidnightIso } from '../../analytics/training-days.js';
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
 import { fetchGoalProgressViews } from '../../dashboard/goal-progress-api.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredPriority, StoredRep } from '../../store/types.js';
 import { computeHistoryTrend } from '../metrics-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -41,13 +42,13 @@ const SATURDAY = '2026-09-19T18:00:00.000Z';
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 type Body = Record<string, unknown>;
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let callbacks: Map<string, Callback>;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(SATURDAY));
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   const state = {
     config: { adapter: 'node' },
     store,

@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredIdleRep, StoredSession } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -56,10 +56,10 @@ const SESSION: StoredSession = {
 };
 
 describe('SqliteSessionStore idle reps', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putSession(SESSION);
   });
 

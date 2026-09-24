@@ -2,7 +2,6 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { PLANNING_PROMPT, resolveCurrentBlock } from '../current-block.js';
 import {
   RETURN_PROGRAM,
@@ -10,13 +9,14 @@ import {
   dateBlock,
   seedOwnerShapedPlan,
 } from './fixtures/owner-shaped-plan.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const TODAY = '2026-09-19';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
 });
 
@@ -40,7 +40,7 @@ describe('undated_only', () => {
   });
 
   it('falls back to the newest program when every program is finished', async () => {
-    const empty = SqliteSessionStore.open(':memory:');
+    const empty = openTestStore();
     await empty.putTrainingProgram({
       id: 'old',
       name: 'Old',
@@ -59,7 +59,7 @@ describe('undated_only', () => {
   });
 
   it('reports no program when none exists', async () => {
-    const empty = SqliteSessionStore.open(':memory:');
+    const empty = openTestStore();
 
     const read = await resolveCurrentBlock(empty, TODAY);
 

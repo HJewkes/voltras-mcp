@@ -1,12 +1,11 @@
 // Unit tests for `accountability.state` (src/tools/accountability-tools.ts).
 //
-// Uses a real `SqliteSessionStore.open(':memory:')` so the persisted row and
+// Uses a real `openTestStore()` so the persisted row and
 // the migration-created table are the ones under test, not a stub's idea of
 // them. `at` pins the dry-run instant, which is the only way to exercise the
 // Sunday and Thursday branches without waiting for a Sunday.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { AccountabilityState } from '../../accountability/types.js';
@@ -15,13 +14,14 @@ import {
   describeAccountabilityState,
 } from '../accountability-tools.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 /** Local-time noon on days that are unambiguously that weekday in any timezone. */
 const SUNDAY_NOON = '2026-09-13T12:00:00';
 const THURSDAY_NOON = '2026-09-17T12:00:00';
 const WEDNESDAY_NOON = '2026-09-16T12:00:00';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 function makeState(): ServerState {
   return {
@@ -46,7 +46,7 @@ function storedState(overrides: Partial<AccountabilityState> = {}): Accountabili
 }
 
 beforeEach(() => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
 });
 
 afterEach(() => {

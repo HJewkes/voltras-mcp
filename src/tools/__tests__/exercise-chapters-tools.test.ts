@@ -17,11 +17,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { toExerciseIsPR } from '../../dashboard/spa/panels/exercise-hero-view.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import { registerExerciseTools } from '../exercise-tools.js';
 import { registerMetricsTools } from '../metrics-tools.js';
 import { registerProgressionTools } from '../progression-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const EXERCISE_ID = 'back-squat';
 const CATALOG = [{ id: EXERCISE_ID, muscleGroups: ['quads'], name: 'Back Squat' }];
@@ -44,7 +45,7 @@ interface FakeRegisteredTool {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (name: string, args?: unknown) => Promise<Record<string, unknown>>;
   expectError: (name: string, args?: unknown) => Promise<{ code: string; message: string }>;
 }
@@ -77,7 +78,7 @@ function makeReps(setId: string, count: number): StoredRep[] {
 
 /** One session of two working sets at `weightLbs`, `daysBack` days ago. */
 async function seedSession(
-  store: SqliteSessionStore,
+  store: SessionStore,
   id: string,
   daysBack: number,
   weightLbs: number,
@@ -109,7 +110,7 @@ async function seedSession(
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = {
     store,
     exercises: {

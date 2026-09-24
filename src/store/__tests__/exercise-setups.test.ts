@@ -27,8 +27,9 @@ import {
   setupRowId,
   type SetRomObservation,
 } from '../exercise-setups.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { StoredRep, StoredSet, StoredSide } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -187,7 +188,7 @@ describe('setupRowId', () => {
 });
 
 describe('inferExerciseSetups over the store', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   async function seed(sets: StoredSet[]): Promise<void> {
@@ -200,7 +201,7 @@ describe('inferExerciseSetups over the store', () => {
   }
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2'])
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(10) });
   });
@@ -367,11 +368,11 @@ describe('inferExerciseSetups over the store', () => {
 });
 
 describe('setup-keyed baselines', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putSession({ kind: 'training', id: 'sess-1', startedAt: daysAgo(10) });
   });
 

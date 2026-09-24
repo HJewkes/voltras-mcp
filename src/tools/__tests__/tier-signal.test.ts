@@ -10,12 +10,12 @@
 //     clamps down to 'beginner', confidence stays 'provisional'.
 import { describe, expect, it } from 'vitest';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredSession, StoredTrainingProfile } from '../../store/types.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { getTierSignal } from '../tier-signal.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
-function makeState(store: SqliteSessionStore): ServerState {
+function makeState(store: SessionStore): ServerState {
   return { store } as unknown as ServerState;
 }
 
@@ -34,7 +34,7 @@ function endedSession(id: string, daysOffset: number): StoredSession {
  * working set is never a training day, so a fixture that means "he trained"
  * has to record work.
  */
-async function seedTrainingDay(store: SqliteSessionStore, session: StoredSession): Promise<void> {
+async function seedTrainingDay(store: SessionStore, session: StoredSession): Promise<void> {
   await store.putSession(session);
   await store.putSet({
     id: `set-${session.id}`,
@@ -46,11 +46,7 @@ async function seedTrainingDay(store: SqliteSessionStore, session: StoredSession
   });
 }
 
-async function seedSessions(
-  store: SqliteSessionStore,
-  count: number,
-  spanDays: number,
-): Promise<void> {
+async function seedSessions(store: SessionStore, count: number, spanDays: number): Promise<void> {
   for (let i = 0; i < count; i++) {
     // Spread sessions evenly across the requested span so weeksSpanned is
     // driven by the first/last offsets, not by count.
@@ -61,7 +57,7 @@ async function seedSessions(
 
 describe('getTierSignal', () => {
   it('defaults to beginner/provisional/default when no profile row exists', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
 
     expect(signal).toEqual({
@@ -88,7 +84,7 @@ describe('getTierSignal', () => {
   });
 
   it('crosses the ceiling to intermediate/confident when all three conditions hold', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 24, 90); // 90 days ~= 12+ weeks
     const profile: StoredTrainingProfile = {
       userId: LOCAL_USER_ID,
@@ -110,7 +106,7 @@ describe('getTierSignal', () => {
   });
 
   it('stays beginner/provisional when only two of the three conditions hold (sessions short)', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 23, 90); // one short of the 24-session floor
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
@@ -127,7 +123,7 @@ describe('getTierSignal', () => {
   });
 
   it('counts twelve sessions on one day as one training day toward the 24 (VW-462)', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 23, 90);
     for (let i = 0; i < 12; i++) {
       const extra = endedSession(`extra${i}`, 0);
@@ -153,7 +149,7 @@ describe('getTierSignal', () => {
   });
 
   it('stays beginner/provisional when sessions span too few weeks', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 30, 30); // plenty of sessions, span under 12 weeks
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
@@ -169,7 +165,7 @@ describe('getTierSignal', () => {
   });
 
   it('stays beginner, confidently, when the history is there but no plateau was reported', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 24, 90);
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
@@ -186,7 +182,7 @@ describe('getTierSignal', () => {
   });
 
   it('clamps a declared advanced tier down to the beginner ceiling, provisional', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     // No sessions logged at all -> ceiling stays at the safe default.
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
@@ -205,7 +201,7 @@ describe('getTierSignal', () => {
   });
 
   it('honours a declared tier that does not exceed the ceiling', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
       declaredTier: 'beginner',
@@ -226,8 +222,8 @@ describe('the returner path (VW-462)', () => {
     days: number,
     spanDays: number,
     profile: Partial<StoredTrainingProfile> = {},
-  ): Promise<SqliteSessionStore> {
-    const store = SqliteSessionStore.open(':memory:');
+  ): Promise<SessionStore> {
+    const store = openTestStore();
     await seedSessions(store, days, spanDays);
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
@@ -240,7 +236,7 @@ describe('the returner path (VW-462)', () => {
     return store;
   }
 
-  async function signalOf(store: SqliteSessionStore) {
+  async function signalOf(store: SessionStore) {
     const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
     await store.close();
     return signal;

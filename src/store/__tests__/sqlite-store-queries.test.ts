@@ -19,8 +19,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Phase, Rep } from '@voltras/workout-analytics';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -68,7 +69,7 @@ describe('SqliteSessionStore.countSessions', () => {
   let store: SqliteSessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     await store.putSession({ kind: 'training', id: 's1', startedAt: '2025-01-01T00:00:00.000Z' });
     await store.putSession({
       kind: 'training',
@@ -144,7 +145,7 @@ describe('SqliteSessionStore planning-tree by-id getters', () => {
   let store: SqliteSessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     await store.putTrainingProgram({
       id: 'prog-1',
       name: 'Base',
@@ -221,7 +222,7 @@ describe('SqliteSessionStore.countSets', () => {
   let store: SqliteSessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     await store.putSession({
       kind: 'training',
       id: 'sess-1',
@@ -292,7 +293,7 @@ describe('SqliteSessionStore.getSetsForExercise', () => {
   let store: SqliteSessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     await store.putSession({
       kind: 'training',
       id: 'sess-1',
@@ -449,7 +450,7 @@ describe('SqliteSessionStore.getMostRecentSessionIdForExercise (VMCP-01.72b S5)'
   let store: SqliteSessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     await store.putSession({
       kind: 'training',
       id: 'sess-1',

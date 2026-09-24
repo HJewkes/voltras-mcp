@@ -18,10 +18,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredPriority, StoredRep, StoredSet } from '../../store/types.js';
 import { buildGoalRealignment } from '../goal-realignment.js';
 import { registerPlanTools } from '../plan-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const CATALOG = [
   { id: 'bench-press', muscleGroups: ['chest'], name: 'Bench Press' },
@@ -61,13 +62,13 @@ interface FakeRegisteredTool {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   state: ServerState;
   invoke: (name: string, args?: unknown) => Promise<Record<string, unknown>>;
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = {
     store,
     slots: new Map(),
@@ -101,7 +102,7 @@ function setup(): Harness {
 }
 
 /** Two blocks of one week each; the finished block's only template is `tmpl-1`. */
-async function seedPlanTree(store: SqliteSessionStore): Promise<void> {
+async function seedPlanTree(store: SessionStore): Promise<void> {
   await store.putTrainingProgram({
     id: 'prog-a',
     name: 'Program A',
@@ -158,7 +159,7 @@ function makeReps(setId: string, count: number): StoredRep[] {
 }
 
 /** Enough matched history for a lift leg to read a start value out of it. */
-async function seedLiftHistory(store: SqliteSessionStore, exerciseId: string): Promise<void> {
+async function seedLiftHistory(store: SessionStore, exerciseId: string): Promise<void> {
   for (let index = 0; index < 3; index += 1) {
     const at = daysAgo((3 - index) * 7);
     const sessionId = `${exerciseId}-sess-${String(index)}`;
@@ -189,7 +190,7 @@ async function seedLiftHistory(store: SqliteSessionStore, exerciseId: string): P
 }
 
 async function declare(
-  store: SqliteSessionStore,
+  store: SessionStore,
   overrides: Partial<StoredPriority> = {},
 ): Promise<StoredPriority> {
   return store.putPriority({

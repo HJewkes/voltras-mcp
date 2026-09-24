@@ -8,9 +8,9 @@ process.env.TZ = 'America/Denver';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredBlockSchedule } from '../../store/types.js';
 import { blockCalendar, isMonday, weekOfInstant } from '../block-calendar.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 afterAll(() => {
   if (ORIGINAL_TZ === undefined) delete process.env.TZ;
@@ -32,7 +32,7 @@ describe('a start date is a Monday in local time (I5)', () => {
   });
 
   it('lets the store accept the Monday and refuse the Sunday', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putTrainingProgram({ id: 'prog', name: 'Return', createdAt: AT });
     await store.putTrainingBlock({
       id: 'blk',

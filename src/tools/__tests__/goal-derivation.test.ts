@@ -2,15 +2,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredPriority } from '../../store/types.js';
 import { UNDATED_MESO_WEEKS } from '../../analytics/goal-horizon.js';
 import { readDerivationContext } from '../goal-derivation.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
-let store: SqliteSessionStore;
+
+let store: SessionStore;
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await store.putTrainingProgram({ id: 'p', name: 'Program', createdAt: '2026-09-01T00:00:00Z' });
 });
 

@@ -14,11 +14,12 @@ import { join } from 'node:path';
 
 import { GOAL_BAND_CONSTANTS, deriveGoalBand, type GoalBand } from '../../analytics/goal-band.js';
 import { blockEndsAt } from '../../analytics/goal-block-weeks.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { deriveTarget, readDerivationContext, selectionOf } from '../../tools/goal-derivation.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import { buildGoalProgressView, type GoalProgressView } from '../read-models/index.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HORIZON_WEEKS = 8;
@@ -53,7 +54,7 @@ interface Compared {
 async function compare(fixture: BodyweightCase): Promise<Compared> {
   const dir = mkdtempSync(join(tmpdir(), 'vmcp-bodyweight-frame-'));
   scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'goal.sqlite'));
+  const store = openTestStore({ path: join(dir, 'goal.sqlite') });
   const now = new Date();
   const weeksBack = fixture.weeklyLbs.length - 1;
   const at = (week: number) => new Date(now.getTime() - (weeksBack - week) * 7 * DAY_MS - DAY_MS);
@@ -132,7 +133,7 @@ function acceptedBand(
 
 /** What the route drew before VW-451: the band re-derived from today's 30-day mean. */
 async function viewFromTodaysBand(
-  store: SqliteSessionStore,
+  store: SessionStore,
   context: Awaited<ReturnType<typeof readDerivationContext>>,
   after: GoalProgressView,
   now: Date,
@@ -257,7 +258,7 @@ describe('a session-count band is anchored in the target frame (VW-451)', () => 
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'vmcp-sessions-frame-'));
       scratchDirs.push(dir);
-      const store = SqliteSessionStore.open(join(dir, 'goal.sqlite'));
+      const store = openTestStore({ path: join(dir, 'goal.sqlite') });
       const now = new Date();
       for (let day = 1; day <= 5; day += 1) {
         const at = new Date(now.getTime() - day * 4 * DAY_MS).toISOString();

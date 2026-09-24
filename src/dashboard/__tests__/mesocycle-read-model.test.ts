@@ -4,16 +4,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { goalPreviewState, seedGoalPreview } from '../../docs/preview-seeds.js';
 import { fetchMesocycle } from '../read-models/mesocycle.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const TODAY = '2026-09-19';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
 });
 
@@ -129,7 +129,7 @@ describe('fetchMesocycle', () => {
   });
 
   it('reads the goals preview seed as a block in progress (VW-480)', async () => {
-    const seeded = SqliteSessionStore.open(':memory:');
+    const seeded = openTestStore();
     const now = new Date('2026-09-19T18:00:00.000Z');
     await seedGoalPreview(seeded, goalPreviewState('on_track'), now);
 

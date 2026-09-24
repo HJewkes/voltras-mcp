@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockCalendar, CalendarWeek } from '../../plan/block-calendar.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredTrainingBlock, StoredTrainingWeek } from '../../store/types.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -50,7 +50,7 @@ interface ToolBody {
 
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let callbacks: Map<string, Callback>;
 
 function register(): void {
@@ -114,7 +114,7 @@ async function history(blockId: string): Promise<Row[]> {
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(TODAY));
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   register();
   await program('p1');
 });

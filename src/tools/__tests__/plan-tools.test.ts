@@ -29,7 +29,7 @@ import type {
   StoredTrainingWeek,
   StoredWorkoutTemplate,
 } from '../../store/types.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -680,7 +680,7 @@ describe('plan.exercise.list_for_template', () => {
 // underlying `node:sqlite` handle.
 describe('plan deletion cascade (schema-level guarantee)', () => {
   it('deleting a program removes its blocks/weeks/templates/exercises', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     try {
       await store.putTrainingProgram({
         id: 'p1',

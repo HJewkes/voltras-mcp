@@ -16,6 +16,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { Exercise, ExerciseService } from '../../exercises/exercise-service.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -134,7 +135,7 @@ function makeRep(n: number): Rep {
 interface Harness {
   state: ServerState;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
-  store: InstanceType<typeof SqliteSessionStore>;
+  store: SessionStore;
   live: LiveStateType;
   published: { content: string; meta: Record<string, string> }[];
   cleanup: () => void;
@@ -142,7 +143,7 @@ interface Harness {
 
 function setup(): Harness {
   const live = new LiveState();
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const client = {
     startRecording: vi.fn().mockResolvedValue(undefined),
     endSet: vi.fn().mockResolvedValue(undefined),
