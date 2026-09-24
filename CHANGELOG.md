@@ -55,6 +55,10 @@ entry is written from the user's point of view is a review question, not a check
   loss percent now gets one event, not two: whichever is met first, with a tie going to the
   rep count. The set also stores what the cue decided. `server.health` reports the setting as
   `effortCue`. With it off, nothing changes (VW-544).
+- TrueCoach retro map entries may name more than one primary muscle (VW-560).
+  `primary_muscle` takes one muscle or a list, and every muscle in the list counts a set in
+  full toward weekly sets and frequency, so a deadlift can count toward hamstrings and glutes
+  together. Secondary muscles still never count.
 
 ### Fixed
 

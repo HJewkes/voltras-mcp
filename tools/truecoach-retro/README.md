@@ -14,6 +14,11 @@ fails the run). Without it every gap over 10 days ends a run of regular weeks, a
 `not_a_boundary` removes a boundary from the mesos; `unplanned_drop` is a real boundary that is
 neither a deload nor a gap, so it bridges nothing.
 
+A map entry's `primary_muscle` is one muscle or a list of them (VW-560). Every primary counts a
+set in full toward weekly sets and frequency; `secondary_muscles` only feed `related()`, the pairing
+the systemic-week rule reads, and never add sets (B47, target-only). The workspace
+`exercise-map-review.md` records which entries take two primaries and why.
+
 `--json` also writes every number the report computed, unrounded, for the visual walkthrough.
 Its keys are listed in `RETRO_DATA_KEYS` (`src/data.ts`); `retro-data.schema.md` beside the
 output describes each one.
