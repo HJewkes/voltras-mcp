@@ -102,6 +102,17 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The goals page's Whole body section is two cards now, not two bare numbers and a row of
+  pills. The Bodyweight card shows your latest weigh-in and the day you logged it. It shows the
+  diet phase, this week's rate ("Rate: -0.6%/wk", or "Rate: N/A" before there is one) and where
+  the weigh-in sits in this week's band. A bodyweight goal with no weigh-in yet now shows "No
+  weigh-in yet" instead of vanishing. The Training days card counts your training days in the
+  last 28 days against your commitment. It marks how many are due by now, and its tip says how
+  many leave the window this week. The two cards sit in the same grid as the lift cards. Below
+  them, one line lists every declared priority by level and names any priority nothing tracks.
+  The old panel, with its Sessions (28d) and Bodyweight tiles and its pill for every priority,
+  is gone. With no bodyweight or session goal the section still does not render (VW-455).
+
 - The dashboard picks up `@titan-design/react-ui` 0.21.2. A calibrating goal chart's info tip
   reads its explanation as one paragraph instead of two stacked lines (VW-559). On a phone, the
   first tap on a goal card's status or info glyph now opens its tip; before, it took a second tap.

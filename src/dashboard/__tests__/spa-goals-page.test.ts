@@ -5,7 +5,7 @@
 // function `/api/goal-progress` calls) over literal bands, so the fixtures are
 // exactly the shape the route returns — then renders `GoalsView` with
 // `renderToStaticMarkup`, same technique as `spa-session-summary-e1rm-toggle.test.ts`.
-// Asserts the sections plan G8' names and the hidden bodyweight tile.
+// Asserts the sections plan G8' names and the whole-body cards (VW-455).
 //
 // `useIsNarrowViewport` is mocked rather than driven by a real `matchMedia`:
 // the suite runs under vitest's `node` environment (no `window`), so the real
@@ -216,7 +216,7 @@ describe('GoalsView (VW-355)', () => {
     expect(html).toContain('Per-lift');
     expect(html).toContain('Muscle priorities');
     expect(html).toContain('Whole body');
-    expect(html).toContain('Sessions (28d)');
+    expect(html).toContain('aria-label="Training days goal"');
   });
 
   it('renders one lift card per exercise-tracked target, with its block-end target', () => {
@@ -249,12 +249,12 @@ describe('GoalsView (VW-355)', () => {
     expect(card).toContain('HAMMER CURL');
   });
 
-  it('hides the bodyweight tile with no bodyweight target at all (VW-327 not landed)', () => {
+  it('draws no bodyweight card with no bodyweight target', () => {
     const html = render(baseData().data);
     expect(html).not.toContain('Bodyweight');
   });
 
-  it('hides the bodyweight tile when a bodyweight target exists but has no readings yet', () => {
+  it('says "No weigh-in yet" for an accepted bodyweight target with no reading (VW-455)', () => {
     const { data, benchPriority } = baseData();
     const bwTarget = target({
       id: 'tgt-bw',
@@ -269,10 +269,12 @@ describe('GoalsView (VW-355)', () => {
     data.priorities[0]!.targets.push(bwTarget);
     data.progress[benchPriority.id]!.push(bwView);
 
-    expect(render(data)).not.toContain('Bodyweight');
+    const html = render(data);
+    expect(html).toContain('aria-label="Bodyweight goal"');
+    expect(html).toContain('No weigh-in yet');
   });
 
-  it('shows the bodyweight tile once a bodyweight target has a reading', () => {
+  it('shows the latest weigh-in on the bodyweight card once there is one', () => {
     const { data, benchPriority } = baseData();
     const bwTarget = target({
       id: 'tgt-bw',
@@ -287,7 +289,11 @@ describe('GoalsView (VW-355)', () => {
     data.priorities[0]!.targets.push(bwTarget);
     data.progress[benchPriority.id]!.push(bwView);
 
-    expect(render(data)).toContain('Bodyweight');
+    const html = render(data);
+    expect(html).toContain('aria-label="Bodyweight goal"');
+    expect(html).toContain('192.0');
+    // No diet phase on this fixture, so the review has no rate to judge.
+    expect(html).toContain('N/A');
   });
 
   it('renders an empty state with no priorities declared', () => {
@@ -335,7 +341,7 @@ describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
 });
 
 describe('the whole-body section needs a whole-body goal (VW-454 ruling)', () => {
-  it('drops the section and its priority rail when no sessions or bodyweight goal exists', () => {
+  it('drops the section and its priority index when no sessions or bodyweight goal exists', () => {
     const { data, benchPriority } = baseData();
     data.priorities[0]!.targets.splice(1, 1);
     data.progress[benchPriority.id]!.splice(1, 1);
@@ -343,15 +349,25 @@ describe('the whole-body section needs a whole-body goal (VW-454 ruling)', () =>
     const html = render(data);
 
     expect(html).not.toContain('Whole body');
-    expect(html).not.toContain('BENCH PRESS · specialize');
+    expect(html).not.toContain('data-testid="goal-priority-index"');
   });
 
   it('keeps the section when a sessions goal exists', () => {
     const html = render(baseData().data);
 
     expect(html).toContain('Whole body');
-    expect(html).toContain('Sessions (28d)');
-    expect(html).toContain('BENCH PRESS · specialize');
+    expect(html).toContain('aria-label="Training days goal"');
+    expect(html).toContain('data-testid="goal-priority-index"');
+    expect(html).toContain('Bench press');
+  });
+
+  it('titles the whole-body cards on the page background, in the grid the lift cards use', () => {
+    const html = render(baseData().data);
+    const sections = [...html.matchAll(/<section[^>]*>(.*?)<\/section>/gs)].map((m) => m[1]!);
+    const wholeBody = sections.find((section) => section.includes('Whole body')) ?? '';
+
+    expect(wholeBody).toMatch(/text-transform:uppercase[^>]*>Whole body</);
+    expect(wholeBody).toContain('repeat(auto-fill, minmax(420px, 1fr))');
   });
 });
 
@@ -361,10 +377,10 @@ describe('GoalsView phone layout (VW-356)', () => {
     try {
       const html = render(baseData().data);
       expect(html).not.toContain('auto-fill');
-      // Lift grid + muscle grid. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the column
+      // Lift grid, muscle grid and whole-body grid. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the column
       // at the card's min-content, which held it wider than a phone (VW-454). Only the
       // captures prove the card then fits; this pins the rule that lets it.
-      expect(html.match(/grid-template-columns:minmax\(0, 1fr\)/g)?.length).toBe(2);
+      expect(html.match(/grid-template-columns:minmax\(0, 1fr\)/g)?.length).toBe(3);
       expect(html).not.toContain('grid-template-columns:1fr');
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
@@ -383,7 +399,7 @@ describe('GoalsView phone layout (VW-356)', () => {
 
   it('lays the wall grids out as auto-fill columns', () => {
     const html = render(baseData().data);
-    expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(2);
+    expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(3);
   });
 });
 
