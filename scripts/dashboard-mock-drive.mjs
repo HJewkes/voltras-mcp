@@ -63,6 +63,10 @@
 //                           each with its own seeded prior week at that load and an
 //                           accepted target, so the page shows its Per-lift section
 //                           (the lead is never listed there, VW-467)
+//   --goal-whole-body       also a fat-loss phase with five weeks of weigh-ins,
+//                           seeded like the prior week, and a bodyweight goal and
+//                           a 28-day session commitment taken on through the goal
+//                           tools, so the page shows its Whole body cards (VW-455)
 //
 // ── DUAL-SLOT MODE (VMCP-04.02) ────────────────────────────────────────────
 // `--dual` drives TWO slots (`left` + `right`) concurrently through the same
@@ -179,6 +183,7 @@ const GOAL_COMPANIONS = flags.has('goal-companions')
         return { id, loadLbs: Number(lbs ?? GOAL_LOAD_LBS) };
       })
   : [];
+const GOAL_WHOLE_BODY = flags.has('goal-whole-body');
 /** Reps on the seeded prior-week set — enough to anchor a matched-reps read. */
 const GOAL_SEED_REPS = 8;
 // Parallel-safe DB path so this never collides with a live session's sqlite.
@@ -274,11 +279,29 @@ async function seedPriorWeek(dbPath, exerciseId, weightLbs) {
   log(`seeded last week: ${weightLbs} lb x ${GOAL_SEED_REPS} on ${exerciseId} (${at})`);
 }
 
+/**
+ * The weigh-ins a bodyweight goal starts from, written before the server opens
+ * the file for the same reason as the prior week: the goal tools derive from
+ * history, and five weeks of scale readings cannot be driven in a capture run.
+ */
+async function seedCut(dbPath) {
+  const { SqliteSessionStore } = await import('../dist/store/sqlite-store.js');
+  const { seedPreviewCut } = await import('../dist/docs/preview-seeds.js');
+  const store = SqliteSessionStore.open(dbPath);
+  try {
+    await seedPreviewCut(store, new Date());
+  } finally {
+    await store.close();
+  }
+  log('seeded a fat-loss phase with five weeks of weigh-ins');
+}
+
 if (GOAL_EXERCISE_ID !== null) {
   await seedPriorWeek(DB_PATH, GOAL_EXERCISE_ID, GOAL_LOAD_LBS);
   for (const companion of GOAL_COMPANIONS) {
     await seedPriorWeek(DB_PATH, companion.id, companion.loadLbs);
   }
+  if (GOAL_WHOLE_BODY) await seedCut(DB_PATH);
 }
 
 const child = spawn(
@@ -628,6 +651,7 @@ async function runGoal() {
     log(`priority declared: ${priorityId} (lift ${ref}, ${level})`);
     await acceptProposedLiftTarget(priorityId);
   }
+  if (GOAL_WHOLE_BODY) await acceptWholeBodyGoals();
 
   const { sessionId } = await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
   summarize(await snapshot(), 'session.start');
@@ -665,6 +689,24 @@ async function acceptProposedLiftTarget(priorityId) {
   );
   await callTool('goal.accept_target', { targetId: lift.targetId });
   log('target accepted — the band is now fixed');
+}
+
+/** Declare bodyweight and sessions as priorities and accept the coach's target for each. */
+async function acceptWholeBodyGoals() {
+  for (const ref of ['bodyweight', 'sessions']) {
+    const declared = await callTool('goal.declare_priorities', {
+      items: [{ kind: 'muscle', ref, level: 'maintain' }],
+    });
+    const priorityId = (declared.priorities ?? []).find((p) => p.ref === ref)?.id;
+    if (!priorityId) throw new Error(`declare_priorities returned no priority for ${ref}`);
+    const proposed = await callTool('goal.propose_targets', { priorityId });
+    const [target] = proposed.targets ?? [];
+    if (!target) throw new Error(`no ${ref} target proposed: ${JSON.stringify(proposed.skipped)}`);
+    await callTool('goal.accept_target', { targetId: target.targetId });
+    log(
+      `${ref} goal accepted: committed ${target.committedValue} / stretch ${target.stretchValue}`,
+    );
+  }
 }
 
 function runChosen() {

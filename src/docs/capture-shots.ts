@@ -138,10 +138,12 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // page's PR badge and trajectory chart need (VW-389).
     // Two companion lifts at `maintain` give the page its Per-lift section, which
     // never lists the lead (VW-467). The tricep extension lists first so its long
-    // name wraps inside the phone shot's viewport.
+    // name wraps inside the phone shot's viewport. A cut with its weigh-ins and a
+    // session commitment give the page its Whole body cards (VW-455).
     args: [
       '--goal=cable-chest-press',
       '--goal-companions=cable-overhead-tricep-extension:40,cable-row:100',
+      '--goal-whole-body',
       '--port={port}',
       '--control-port={controlPort}',
     ],
@@ -239,6 +241,12 @@ export interface CaptureShot {
   readonly holdsPageOpen: boolean;
   /** Overrides {@link CAPTURE_VIEWPORT} for this shot alone. @see viewportFor */
   readonly viewport?: CaptureViewport;
+  /**
+   * A heading, matched whole and case-insensitively, that the shot scrolls to the
+   * top of the frame before capturing: a section below the fold gets its own shot
+   * without the page's lead shots losing theirs (VW-455).
+   */
+  readonly scrollTo?: string;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -250,6 +258,12 @@ export function viewportFor(shot: CaptureShot): CaptureViewport {
  * The goals scenario's computed numbers, shared by its wall and phone shots:
  * both read the same pipeline state, so a wrong number fails both.
  */
+/**
+ * The goals scenario's whole-body numbers. The latest weigh-in is a fixed point of
+ * the seeded cut (`seedPreviewCut`), whose readings sit at fixed offsets from now.
+ */
+const WHOLE_BODY_VALUES: readonly string[] = ['196.2'];
+
 const GOALS_VALUES: readonly string[] = [
   // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
   // and the coach's own proposal. Never asserted as a raw number elsewhere,
@@ -400,7 +414,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // `goal.declare_priorities` ever ran — the shot opened on an empty
     // "No priorities declared" page (VW-389). The fourth is the driven session.
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'WHOLE BODY', 'Rate:'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
@@ -414,8 +428,34 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // and content rather than re-deriving one.
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
     viewport: PHONE_VIEWPORT,
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'WHOLE BODY', 'Rate:'],
     expectValues: GOALS_VALUES,
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals-whole-body',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption:
+      'The Whole body cards on the goals page: the latest weigh-in against this week’s band ' +
+      'during a cut, and training days in the last 28 days against the commitment.',
+    // Same run as `goals`, scrolled to the section the lead card pushes below the fold.
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    scrollTo: 'Whole body',
+    expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
+    expectValues: WHOLE_BODY_VALUES,
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals-whole-body-phone',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption: 'The Whole body cards at phone width, one card per row.',
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    viewport: PHONE_VIEWPORT,
+    scrollTo: 'Whole body',
+    expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
+    expectValues: WHOLE_BODY_VALUES,
     holdsPageOpen: false,
   },
   {

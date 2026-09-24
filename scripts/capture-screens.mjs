@@ -350,6 +350,20 @@ async function settlePaint(page) {
   });
 }
 
+/** Scroll the heading whose whole text is `heading` to the top of the frame, then let it paint. */
+async function scrollToHeading(page, heading, shotName) {
+  const found = await page.evaluate((wanted) => {
+    const match = [...document.querySelectorAll('body *')].find(
+      (el) =>
+        el.childElementCount === 0 && el.textContent.trim().toLowerCase() === wanted.toLowerCase(),
+    );
+    match?.scrollIntoView({ block: 'start' });
+    return match !== undefined;
+  }, heading);
+  if (!found) throw new Error(`${shotName}: no heading "${heading}" to scroll to`);
+  await settlePaint(page);
+}
+
 /** How far apart two stability samples are taken. */
 const STABILITY_SAMPLE_MS = 150;
 /** Consecutive identical samples required before the page counts as settled. */
@@ -431,6 +445,7 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
   if (!shot.holdsPageOpen) await open();
   await waitForText(page, expected, shot.name);
   await settlePaint(page);
+  if (shot.scrollTo !== undefined) await scrollToHeading(page, shot.scrollTo, shot.name);
 
   const file = path.join(outDir, `${shot.name}.png`);
   // `animations: 'disabled'` is Playwright's own belt to installShotDeterminism's

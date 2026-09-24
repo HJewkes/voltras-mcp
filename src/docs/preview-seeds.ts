@@ -722,6 +722,23 @@ export const GOAL_PREVIEW_WEIGHT = {
 } as const;
 
 async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeBodyMetric[]> {
+  await seedPreviewCut(store, now);
+  const seeded: WholeBodyMetric[] = [];
+  for (const metric of ['bodyweight', 'sessions_28d'] as const) {
+    if (await seedWholeBodyGoal(store, metric, now)) seeded.push(metric);
+  }
+  return seeded;
+}
+
+/**
+ * The fat-loss phase and its weigh-ins, without any goal. The goals capture
+ * (`scripts/dashboard-mock-drive.mjs`) writes these, then takes the goals on
+ * through the tools.
+ */
+export async function seedPreviewCut(
+  store: Pick<SessionStore, 'declareDietPhase' | 'putBodyMetric'>,
+  now: Date,
+): Promise<void> {
   const daysAgo = (days: number): string => new Date(now.getTime() - days * DAY_MS).toISOString();
   const { phaseDaysAgo } = GOAL_PREVIEW_WEIGHT;
   await store.declareDietPhase({
@@ -737,11 +754,6 @@ async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeB
       bodyweightLbs: previewWeightLbs(day),
     });
   }
-  const seeded: WholeBodyMetric[] = [];
-  for (const metric of ['bodyweight', 'sessions_28d'] as const) {
-    if (await seedWholeBodyGoal(store, metric, now)) seeded.push(metric);
-  }
-  return seeded;
 }
 
 /** The seeded weigh-in `daysAgo` days back, one decimal like a bathroom scale. */
