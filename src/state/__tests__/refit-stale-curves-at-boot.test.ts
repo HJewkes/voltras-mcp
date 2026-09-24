@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../../config.js';
-import type { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { bootstrapState } from '../server-state.js';
 import { openSqliteTestStore } from '../../store/__tests__/open-test-store.js';

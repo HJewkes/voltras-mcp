@@ -7,9 +7,6 @@
 // uses, so the band asserted is the one the page draws.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   GOAL_PREVIEW_STATES,
@@ -27,22 +24,19 @@ import {
 } from '../../tools/goal-derivation.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
-import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+import {
+  openTestStore,
+  removeTestStoreDirs,
+  type SessionStore,
+} from '../../store/__tests__/open-test-store.js';
 
 /** Each case seeds a real sqlite store; a loaded CI runner needs more than 5 s. */
 const SEED_TIMEOUT_MS = 20_000;
 
-const scratchDirs: string[] = [];
-afterEach(() => {
-  while (scratchDirs.length > 0) {
-    rmSync(scratchDirs.pop()!, { recursive: true, force: true });
-  }
-});
+afterEach(removeTestStoreDirs);
 
 function openStore(): SessionStore {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-band-in-frame-'));
-  scratchDirs.push(dir);
-  return openTestStore({ path: join(dir, 'goal.sqlite') });
+  return openTestStore({ tempPrefix: 'vmcp-band-in-frame-' });
 }
 
 async function viewFor(store: SessionStore, now: Date): Promise<GoalProgressView> {

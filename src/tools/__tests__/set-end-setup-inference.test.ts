@@ -43,7 +43,6 @@ const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 const { SlotBindingsStore } = await import('../../state/slot-bindings.js');
-const { SqliteSessionStore } = await import('../../store/sqlite-store.js');
 const { registerSessionTools } = await import('../session-tools.js');
 const { registerSetTools } = await import('../set-tools.js');
 
