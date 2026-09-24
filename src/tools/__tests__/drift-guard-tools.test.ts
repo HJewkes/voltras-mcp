@@ -9,9 +9,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BaselineKey, DriftGuardVerdict, Phase } from '@voltras/workout-analytics';
 
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import { registerDriftGuardTools } from '../drift-guard-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -71,12 +72,12 @@ function makeSet(id: string, sessionId: string, romM: number): StoredSet {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (args: unknown) => Promise<ToolResult>;
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = { store } as unknown as ServerState;
   const placeholders = new Map<string, FakeRegisteredTool>();
   const tool: FakeRegisteredTool = {
@@ -108,7 +109,7 @@ function parseResult(r: ToolResult): unknown {
   return JSON.parse(r.content[0].text);
 }
 
-async function seedSessions(store: SqliteSessionStore, baselineRom: number, currentRom: number) {
+async function seedSessions(store: SessionStore, baselineRom: number, currentRom: number) {
   const now = new Date().toISOString();
   await store.putSession({ kind: 'training', id: 'sess-1', startedAt: now });
   await store.putSession({ kind: 'training', id: 'sess-2', startedAt: now });

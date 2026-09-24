@@ -4,9 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
 
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { cueRecordFor } from '../effort-cue.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 const DEVICE: DeviceSnapshot = { connected: true, weightLbs: 100, trainingMode: 'Weight Training' };
 
@@ -61,7 +61,7 @@ describe('cueRecordFor', () => {
 
   it('round-trips through the store unchanged', async () => {
     const record = cueRecordFor(SET, DEVICE);
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
 
     await store.putSet({
       id: 'set-1',

@@ -22,8 +22,8 @@ import type { Phase } from '@voltras/workout-analytics';
 
 import { selectSetupAnchors, type AnchorObservation } from '../exercise-baselines.js';
 import { inferExerciseSetups } from '../exercise-setups.js';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -156,10 +156,10 @@ describe('selectSetupAnchors', () => {
 });
 
 describe('anchor selection over the store', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putSession({ kind: 'training', id: 'sess-1', startedAt: daysAgo(9) });
     await store.putSession({ kind: 'training', id: 'sess-2', startedAt: daysAgo(2) });
   });
@@ -313,7 +313,7 @@ interface AnchorRow {
   setup_id: string | null;
 }
 
-function rawAnchors(store: SqliteSessionStore): AnchorRow[] {
+function rawAnchors(store: SessionStore): AnchorRow[] {
   return query<AnchorRow>(
     store,
     `SELECT set_id, setup_id FROM failure_anchors ORDER BY observed_at`,
@@ -321,7 +321,7 @@ function rawAnchors(store: SqliteSessionStore): AnchorRow[] {
 }
 
 /** The counting anchors one `where` clause selects, in selection order. */
-function anchorTuples(store: SqliteSessionStore, where: string): unknown[] {
+function anchorTuples(store: SessionStore, where: string): unknown[] {
   return query(
     store,
     `SELECT fa.set_id, fa.observed_at, fa.terminal_velocity_mps
@@ -331,7 +331,7 @@ function anchorTuples(store: SqliteSessionStore, where: string): unknown[] {
   );
 }
 
-function query<T>(store: SqliteSessionStore, sql: string): T[] {
+function query<T>(store: SessionStore, sql: string): T[] {
   const db = (store as unknown as { db: { prepare(s: string): { all(): unknown[] } } }).db;
   return db.prepare(sql).all() as T[];
 }

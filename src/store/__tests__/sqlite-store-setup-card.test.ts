@@ -8,11 +8,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredExerciseSetup } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 function open(): SqliteSessionStore {
-  return SqliteSessionStore.open(':memory:');
+  return openSqliteTestStore();
 }
 
 function detectedSetup(overrides: Partial<StoredExerciseSetup> = {}): StoredExerciseSetup {
@@ -131,7 +132,7 @@ describe('v18 -> v19 migration', () => {
   });
 
   it('adds the setup-card columns and stamps user_version 19, leaving the pre-existing row cardless', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
 
     const preExisting = await store.getExerciseSetup('pre-v19');
     expect(preExisting?.card).toBeUndefined();
@@ -143,7 +144,7 @@ describe('v18 -> v19 migration', () => {
   });
 
   it('can write a card to the migrated table', async () => {
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     await store.putExerciseSetup({
       id: 'pre-v19',
       userId: LOCAL_USER_ID,

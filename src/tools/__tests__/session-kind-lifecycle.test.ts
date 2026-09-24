@@ -14,8 +14,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { readTrainingDays } from '../../analytics/training-days.js';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { Exercise, ExerciseService } from '../../exercises/exercise-service.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: class extends Error {},
@@ -55,13 +55,13 @@ interface FakeTool {
 
 interface Harness {
   state: ServerState;
-  store: SqliteSessionStore;
+  store: SessionStore;
   live: InstanceType<typeof LiveState>;
   invoke: (name: string, args: unknown) => Promise<{ isError?: boolean }>;
 }
 
 function setup(adapter: 'node' | 'mock' = 'node'): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const live = new LiveState();
   const slots = new Map();
   slots.set('primary', {

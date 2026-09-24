@@ -9,19 +9,19 @@ import { describe, expect, it } from 'vitest';
 import { reviewDays } from '../../analytics/session-review.js';
 import { readTrainingDays } from '../../analytics/training-days.js';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { listSessionReview, markSessionKind } from '../session-kind-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const NOW = '2026-09-19T18:00:00.000Z';
 
-function makeState(store: SqliteSessionStore): ServerState {
+function makeState(store: SessionStore): ServerState {
   return { store } as unknown as ServerState;
 }
 
 /** One unreviewed session of one exercise, with one working set on it. */
 async function seedUnreviewed(
-  store: SqliteSessionStore,
+  store: SessionStore,
   id: string,
   startedAt: string,
   over: { exerciseId?: string; ended?: boolean } = {},
@@ -45,8 +45,8 @@ async function seedUnreviewed(
   });
 }
 
-async function openSeeded(): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+async function openSeeded(): Promise<SessionStore> {
+  const store = openTestStore();
   // Two rows on one day, as the owner's store holds: one session per exercise.
   await seedUnreviewed(store, 'day1-a', '2026-09-07T15:00:00.000Z', { exerciseId: 'row' });
   await seedUnreviewed(store, 'day1-b', '2026-09-07T16:00:00.000Z', { exerciseId: 'bench-press' });
@@ -250,7 +250,7 @@ describe('session.mark_kind', () => {
       setSessionKind: store.setSessionKind.bind(store),
       recalcBaseline: () => Promise.reject(new Error('baseline recalc blew up')),
       refitRirVelocityModel: store.refitRirVelocityModel.bind(store),
-    } as unknown as SqliteSessionStore;
+    } as unknown as SessionStore;
 
     const result = await markSessionKind(makeState(failing), {
       kind: 'training',
@@ -295,8 +295,8 @@ describe('the day an evening session belongs to', () => {
   const LATE = '2026-09-14T23:30:00.000Z';
   const AFTER_MIDNIGHT = '2026-09-15T00:20:00.000Z';
 
-  async function openLateSession(ended: boolean): Promise<SqliteSessionStore> {
-    const store = SqliteSessionStore.open(':memory:');
+  async function openLateSession(ended: boolean): Promise<SessionStore> {
+    const store = openTestStore();
     await store.putSession({
       id: 'late',
       startedAt: LATE,
@@ -399,7 +399,7 @@ describe('session.review_list', () => {
   });
 
   it('marks an unended day open, and dates it by its last set', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedUnreviewed(store, 'open', '2026-09-12T15:00:00.000Z', { ended: false });
 
     const result = await listSessionReview(makeState(store), {});

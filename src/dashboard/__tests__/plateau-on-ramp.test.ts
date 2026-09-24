@@ -13,9 +13,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { seedGoalPreview, type GoalPreviewState } from '../../docs/preview-seeds.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 const scratchDirs: string[] = [];
 afterEach(() => {
@@ -30,7 +31,7 @@ async function viewFor(
 ): Promise<GoalProgressView> {
   const dir = mkdtempSync(join(tmpdir(), 'vmcp-plateau-ramp-'));
   scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'goal.sqlite'));
+  const store = openTestStore({ path: join(dir, 'goal.sqlite') });
   try {
     const now = new Date();
     const state: GoalPreviewState = {

@@ -32,6 +32,7 @@ import type { Exercise } from '../../exercises/exercise-service.js';
 import type { PlanWarning } from '../../plan/lint-plan.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredPlannedExercise } from '../../store/types.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown) => Promise<unknown>;
@@ -108,12 +109,12 @@ const CATALOG: Record<string, Exercise> = {
 };
 
 interface Harness {
-  store: InstanceType<typeof SqliteSessionStore>;
+  store: SessionStore;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const exercises = new ExerciseService();
   exercises.getById = ((id: string) => CATALOG[id]) as ExerciseService['getById'];
   const state = { store, exercises } as unknown as ServerState;

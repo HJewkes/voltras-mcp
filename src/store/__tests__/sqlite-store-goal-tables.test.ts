@@ -24,11 +24,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredGoalTarget, StoredPriority } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 function open(): SqliteSessionStore {
-  return SqliteSessionStore.open(':memory:');
+  return openSqliteTestStore();
 }
 
 function priority(overrides: Partial<StoredPriority> = {}): StoredPriority {
@@ -348,7 +349,7 @@ describe('goal_targets foreign key', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vmcp-goal-fk-'));
     const path = join(dir, 'goals.sqlite');
     try {
-      const store = SqliteSessionStore.open(path);
+      const store = openSqliteTestStore({ path });
       await store.putPriority(priority());
       await store.putGoalTarget(target());
       await store.close();

@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BaselineKey, Phase } from '@voltras/workout-analytics';
 
 import { checkMrvGuard, checkMrvUnderperformance } from '../mrv-guard.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -90,7 +91,7 @@ function makeSet(
 }
 
 describe('checkMrvUnderperformance', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   const check = async (): Promise<ReturnType<typeof checkMrvUnderperformance>> =>
@@ -101,7 +102,7 @@ describe('checkMrvUnderperformance', () => {
     });
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
@@ -286,11 +287,11 @@ describe('checkMrvUnderperformance', () => {
 });
 
 describe('checkMrvGuard', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }

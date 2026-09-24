@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clampToChapter } from '../exercise-chapters.js';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 describe('clampToChapter', () => {
   it('passes the window through when no chapter is declared', () => {
@@ -30,11 +30,11 @@ describe('clampToChapter', () => {
 
 describe('SqliteSessionStore exercise chapters', () => {
   let dir: string;
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'vmcp-chapters-'));
-    store = SqliteSessionStore.open(join(dir, 'store.sqlite'));
+    store = openTestStore({ path: join(dir, 'store.sqlite') });
   });
 
   afterEach(async () => {

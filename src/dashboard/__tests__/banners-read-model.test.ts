@@ -10,7 +10,6 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { BlockCalendar } from '../../plan/block-calendar.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import {
   BANNER_PRIORITY,
   readTopBanner,
@@ -18,14 +17,15 @@ import {
   unrecordedWeeks,
   type BannerRecord,
 } from '../read-models/banners.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const TODAY = '2026-09-19';
 const NOW = '2026-09-19T18:00:00.000Z';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
 });
 
