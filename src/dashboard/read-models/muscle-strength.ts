@@ -97,7 +97,7 @@ export interface MuscleStrengthTrend {
 export interface MuscleStrengthExerciseInput {
   exerciseId: string;
   name: string;
-  /** Titan slugs this exercise's PRIMARY catalog muscles map to (VW-328). */
+  /** Titan slugs this exercise targets, from the attribution table (VW-561). */
   primaryMuscles: readonly TitanMuscleGroup[];
   sets: readonly MuscleStrengthSetRow[];
   /** Each fit is scoped to that side's own sets — never a pooled one. */

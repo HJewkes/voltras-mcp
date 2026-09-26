@@ -248,6 +248,34 @@ plain, human-meaningful value (a weight, a mode string, a muscle name); if you
 find yourself reaching for a raw command code or frame byte to answer a
 dashboard need, that's a signal the field belongs somewhere else.
 
+### The `/api/muscle-week` contract (VW-329, VW-561)
+
+```ts
+{
+  weekStart: string; // Monday 00:00 UTC
+  muscleMapVersion: string; // exercises/muscle-map.ts MUSCLE_MAP_VERSION
+  landmarkBasis: 'population-default';
+  muscles: Array<{
+    muscle: TitanMuscleGroup; // all 15 slugs, always
+    sets: number; // landmark read: working sets of exercises that TARGET this muscle
+    status: 'under' | 'maintenance' | 'productive' | 'over' | null; // null = no verdict (glutes)
+    landmarks: { mev: number; mav: number; mrv: number };
+    sessions: number; // UTC days with a working set of an exercise that targets this muscle
+    dose: { sets: number; sessions: number }; // dose read: weighted sets, fractional days
+    lastTrainedAt: string | null;
+  }>;
+}
+```
+
+Every per-muscle read model attributes a set through one table,
+`exercises/seed-attribution.ts`: each exercise gives each muscle a weight of 1, 0.5
+or 0 and a target flag, and the delts are split by head. `sets`, `status` and
+`sessions` read targets only (B47). `dose` adds the weights (Pelland et al. 2025)
+and counts a day that hit the muscle only through a weighted row as half a
+session; it is a comparison and is never classified against a landmark. Glutes
+carry `status: null` until RP's glute landmarks are verified, and the body page
+paints them with the neutral fill.
+
 ### The `/api/muscle-strength` contract (VW-330)
 
 ```ts

@@ -15,6 +15,7 @@ import {
   type MuscleWeekRows,
 } from '../read-models/muscle-week.js';
 import { MUSCLE_MAP_VERSION, TITAN_MUSCLE_GROUPS } from '../../exercises/muscle-map.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 
 const MONDAY = '2026-07-06T00:00:00.000Z';
@@ -179,6 +180,61 @@ describe('buildMuscleWeekView', () => {
     const view = build([noExercise, set('unknown-exercise', '2026-07-07T11:00:00.000Z')]);
 
     expect(view.muscles.every((m) => m.sets === 0)).toBe(true);
+  });
+});
+
+describe('buildMuscleWeekView: landmark and dose reads (VW-561)', () => {
+  const seedCatalog: MuscleWeekRows['catalog'] = (id) =>
+    SEED_CABLE_EXERCISES.find((exercise) => exercise.id === id);
+  const seeded = (sets: StoredSet[]) =>
+    buildMuscleWeekView({ sets, catalog: seedCatalog, now: NOW });
+  const MON = '2026-07-06T10:00:00.000Z';
+  const THU = '2026-07-09T10:00:00.000Z';
+
+  it('counts a shoulder press toward front delts only in the landmark read (Q4)', () => {
+    const view = seeded([set('cable-shoulder-press', MON), set('cable-shoulder-press', MON)]);
+
+    expect(muscle(view, 'front_delts')).toMatchObject({ sets: 2, dose: { sets: 2 } });
+    expect(muscle(view, 'side_delts')).toMatchObject({ sets: 0, dose: { sets: 1 } });
+    expect(muscle(view, 'rear_delts')).toMatchObject({ sets: 0, dose: { sets: 0 } });
+  });
+
+  it('classifies the landmark sets whatever the dose adds (R5)', () => {
+    const sets = Array.from({ length: 4 }, () => set('cable-chest-press', MON));
+    const view = seeded(sets);
+
+    expect(muscle(view, 'triceps')).toMatchObject({ sets: 0, status: 'under', dose: { sets: 2 } });
+  });
+
+  it('draws no verdict for glutes at any set count (R8c)', () => {
+    const none = seeded([]);
+    const many = seeded(Array.from({ length: 20 }, () => set('cable-glute-kickback', MON)));
+
+    expect(muscle(none, 'glutes')?.status).toBeNull();
+    expect(muscle(many, 'glutes')).toMatchObject({ sets: 20, status: null });
+  });
+
+  it('counts a day toward frequency only for the muscles its exercises target (Q5)', () => {
+    const view = seeded([
+      set('cable-romanian-deadlift', MON),
+      set('cable-romanian-deadlift', MON),
+      set('cable-squat', THU),
+    ]);
+
+    expect(muscle(view, 'hamstrings')).toMatchObject({ sessions: 1, dose: { sessions: 1 } });
+    expect(muscle(view, 'glutes')).toMatchObject({ sessions: 0, dose: { sessions: 1 } });
+    expect(muscle(view, 'quads')).toMatchObject({ sessions: 1, dose: { sessions: 1 } });
+  });
+
+  it('keeps a set outside the week out of both reads and both frequencies', () => {
+    const view = seeded([set('cable-romanian-deadlift', '2026-06-30T10:00:00.000Z')]);
+
+    expect(muscle(view, 'hamstrings')).toMatchObject({
+      sets: 0,
+      sessions: 0,
+      dose: { sets: 0, sessions: 0 },
+      lastTrainedAt: '2026-06-30T10:00:00.000Z',
+    });
   });
 });
 

@@ -10,8 +10,8 @@
 
 import { log } from '../logger.js';
 
-/** Bump whenever a mapping row below changes. Stamped onto every new session. */
-export const MUSCLE_MAP_VERSION = '2026-09-13.1';
+/** Bump whenever a mapping row below or a row of `seed-attribution.ts` changes. Stamped onto every new session. */
+export const MUSCLE_MAP_VERSION = '2026-09-26.1';
 
 /**
  * The 15 titan body-map slugs (titan-design `MuscleGroup` enum,

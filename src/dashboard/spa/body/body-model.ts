@@ -67,9 +67,14 @@ export function intensityOf(muscle: MuscleWeekMuscleView): number {
   return Math.min(1, muscle.sets / muscle.landmarks.mrv);
 }
 
-/** The UI status a muscle's week reads as, including the untrained case. */
+/**
+ * The UI status a muscle's week reads as, including the untrained case. Titan
+ * has no "no verdict" status, so a withheld verdict (VW-561) paints the neutral
+ * `ontrack` fill; the THIS WEEK tiles still leave it out.
+ */
 export function statusOf(muscle: MuscleWeekMuscleView): TitanVolumeStatus {
   if (muscle.sets === 0) return 'untrained';
+  if (muscle.status === null) return 'ontrack';
   return landmarkZoneToStatus(muscle.status, intensityOf(muscle));
 }
 
