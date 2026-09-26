@@ -195,6 +195,7 @@ class FakeStore {
       ? []
       : [{ id: 'blk', programId: 'prog', orderIndex: 0, name: 'Block 2', weeksCount: 2 }];
   getLiveBlockSchedule = async () => this.dated;
+  listLiveBlockSchedules = async () => (this.dated === undefined ? [] : [this.dated]);
   getWorkoutTemplatesForWeek = async () => [];
   getAssignmentsForTemplate = async () => [];
   listBodyMetrics = async () => [];
