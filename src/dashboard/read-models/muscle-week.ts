@@ -6,13 +6,13 @@
 // (`dashboard/server.ts`'s `serveMuscleWeek`) owns the store reads, this module
 // owns the output shape — the same split `read-models/plan-tree.ts` uses.
 //
-// TARGET-ONLY (B47, VMCP-06.05): a set counts toward its exercise's PRIMARY
-// catalog muscle group ONLY, mapped to titan slug(s) through `mapCatalogMuscle`
-// (VW-328). Secondary groups never contribute, at any weight — the retired
-// `muscle-volume.ts` counted them at half a set, which the B47 decision
-// recorded later reversed. A coarse catalog group (e.g. `shoulders`) maps to
-// more than one titan slug, and a set against it counts in full toward each;
-// there is no way to split it further from the data recorded.
+// TARGET-ONLY (B47, VMCP-06.05): `sets`, `status` and `sessions` count a set
+// toward its exercise's TARGET muscles only, from the attribution table
+// (`exercises/seed-attribution.ts`, VW-561), which splits the delts by head.
+// Secondary muscles never reach those fields, at any weight.
+//
+// DOSE (VW-561): `dose` sums each muscle's weight (1, 0.5 or 0; Pelland et al.
+// 2025) as a comparison. It is never classified against a landmark.
 //
 // LANDMARKS ARE POPULATION DEFAULTS. They are looked up, not discovered, so
 // `landmarkBasis` is the literal `'population-default'` and nothing here may
@@ -28,11 +28,12 @@ import {
   type TitanMuscleGroup,
 } from '../../exercises/muscle-map.js';
 import type { StoredSet } from '../../store/types.js';
+import { dayFrequencyCredit, type SlugAttribution } from '../../exercises/muscle-attribution.js';
 import {
+  attributionFor,
   endOfCalendarWeekIso,
   isEligibleWorkingSet,
   startOfCalendarWeekIso,
-  titanMusclesFor,
   type MuscleCatalogLookup,
 } from './muscle-set-scope.js';
 
@@ -111,13 +112,25 @@ export function classifyWeeklyVolume(
   return 'productive';
 }
 
+/** The dose read for one muscle's week: a comparison, never a verdict. */
+export interface MuscleWeekDose {
+  /** Eligible working sets times each set's weight for this muscle. */
+  sets: number;
+  /** 1 per day with a target set, 0.5 per day that hit the muscle only through a weighted row. */
+  sessions: number;
+}
+
 /** One titan muscle group's weekly volume state. */
 export interface MuscleWeekMuscleView {
   muscle: TitanMuscleGroup;
-  /** Eligible working sets attributed to this muscle inside the week. */
+  /** Eligible working sets of exercises that target this muscle, inside the week. */
   sets: number;
-  status: VolumeStatus;
+  /** The landmark band of `sets`; `null` where the landmark is unverified (glutes, lats, upper back). */
+  status: VolumeStatus | null;
   landmarks: VolumeLandmarks;
+  /** UTC days this week holding an eligible set of an exercise that targets this muscle (Q5). */
+  sessions: number;
+  dose: MuscleWeekDose;
   /**
    * `startedAt` of the most recent eligible set for this muscle at or before
    * the week's end — which may predate `weekStart`, so the figure can dim a
@@ -162,28 +175,71 @@ const BEFORE_ANY_SET = '';
 
 interface MuscleTallies {
   sets: Map<TitanMuscleGroup, number>;
+  dose: Map<TitanMuscleGroup, number>;
   lastTrainedAt: Map<TitanMuscleGroup, string>;
+  /** The attribution of every exercise trained on each UTC day of the week. */
+  days: Map<string, SlugAttribution[][]>;
+}
+
+const add = (map: Map<TitanMuscleGroup, number>, muscle: TitanMuscleGroup, n: number) =>
+  map.set(muscle, (map.get(muscle) ?? 0) + n);
+
+function countInWeek(tallies: MuscleTallies, set: StoredSet, rows: SlugAttribution[]): void {
+  for (const row of rows) {
+    if (row.target) add(tallies.sets, row.muscle, 1);
+    if (row.weight > 0) add(tallies.dose, row.muscle, row.weight);
+  }
+  const day = set.startedAt.slice(0, 10);
+  tallies.days.set(day, [...(tallies.days.get(day) ?? []), rows]);
 }
 
 /**
- * One pass over the candidate sets: count the ones inside the week, and track
- * the latest eligible set at or before the week's end for `lastTrainedAt`.
+ * One pass over the candidate sets: count the ones inside the week in both
+ * reads, and track the latest target set at or before the week's end.
  */
 function tally(rows: MuscleWeekRows, weekStart: string, weekEnd: string): MuscleTallies {
-  const tallies: MuscleTallies = { sets: new Map(), lastTrainedAt: new Map() };
+  const tallies: MuscleTallies = {
+    sets: new Map(),
+    dose: new Map(),
+    lastTrainedAt: new Map(),
+    days: new Map(),
+  };
   for (const set of rows.sets) {
     if (set.exerciseId === undefined) continue;
     if (!isEligibleWorkingSet(set, BEFORE_ANY_SET, weekEnd)) continue;
-    const inWeek = set.startedAt >= weekStart;
-    for (const muscle of titanMusclesFor(set.exerciseId, rows.catalog)) {
-      if (inWeek) tallies.sets.set(muscle, (tallies.sets.get(muscle) ?? 0) + 1);
-      const latest = tallies.lastTrainedAt.get(muscle);
+    const attribution = attributionFor(set.exerciseId, rows.catalog);
+    if (set.startedAt >= weekStart) countInWeek(tallies, set, attribution);
+    for (const row of attribution) {
+      if (!row.target) continue;
+      const latest = tallies.lastTrainedAt.get(row.muscle);
       if (latest === undefined || set.startedAt > latest) {
-        tallies.lastTrainedAt.set(muscle, set.startedAt);
+        tallies.lastTrainedAt.set(row.muscle, set.startedAt);
       }
     }
   }
   return tallies;
+}
+
+/** Landmark sessions (credit 1 only) and dose sessions (every credit) per muscle. */
+function sessionCounts(days: MuscleTallies['days']) {
+  const landmark = new Map<TitanMuscleGroup, number>();
+  const dose = new Map<TitanMuscleGroup, number>();
+  for (const exercises of days.values()) {
+    for (const [muscle, credit] of dayFrequencyCredit(exercises)) {
+      if (credit === 1) add(landmark, muscle, 1);
+      add(dose, muscle, credit);
+    }
+  }
+  return { landmark, dose };
+}
+
+/** The landmark band, withheld where the landmark is unverified (VW-561 R8c). */
+function statusOf(
+  muscle: TitanMuscleGroup,
+  sets: number,
+  landmarks: VolumeLandmarks,
+): VolumeStatus | null {
+  return LANDMARK_VERDICT_WITHHELD.has(muscle) ? null : classifyWeeklyVolume(sets, landmarks);
 }
 
 /**
@@ -195,14 +251,20 @@ export function buildMuscleWeekView(rows: MuscleWeekRows): MuscleWeekView {
   const weekEnd = endOfCalendarWeekIso(weekStart);
   const landmarks = rows.landmarks ?? POPULATION_VOLUME_LANDMARKS;
   const tallies = tally(rows, weekStart, weekEnd);
+  const sessions = sessionCounts(tallies.days);
 
   const muscles: MuscleWeekMuscleView[] = TITAN_MUSCLE_GROUPS.map((muscle) => {
     const sets = tallies.sets.get(muscle) ?? 0;
     return {
       muscle,
       sets,
-      status: classifyWeeklyVolume(sets, landmarks[muscle]),
+      status: statusOf(muscle, sets, landmarks[muscle]),
       landmarks: landmarks[muscle],
+      sessions: sessions.landmark.get(muscle) ?? 0,
+      dose: {
+        sets: tallies.dose.get(muscle) ?? 0,
+        sessions: sessions.dose.get(muscle) ?? 0,
+      },
       lastTrainedAt: tallies.lastTrainedAt.get(muscle) ?? null,
     };
   });

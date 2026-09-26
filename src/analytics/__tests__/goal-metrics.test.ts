@@ -117,6 +117,16 @@ describe('a muscle priority', () => {
     ).toBeUndefined();
   });
 
+  it('reads a lift weekly sets from its target muscles only (VW-561)', () => {
+    const dose = doseOf(
+      selectGoalMetrics(
+        { kind: 'lift', ref: 'cable-shoulder-press', level: 'deprioritize' },
+        CATALOG,
+      ),
+    );
+    expect(dose).toMatchObject({ exerciseId: 'cable-shoulder-press', muscles: ['front_delts'] });
+  });
+
   it('fans a shoulders ref out to all three deltoid heads', () => {
     const dose = doseOf(
       selectGoalMetrics({ kind: 'muscle', ref: 'shoulders', level: 'specialize' }, CATALOG),

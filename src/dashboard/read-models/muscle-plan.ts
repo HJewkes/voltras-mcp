@@ -9,13 +9,11 @@
 // `read-models/session-plan.ts` use.
 //
 // TARGET-ONLY (B47, VMCP-06.05): a planned or completed set counts toward its
-// exercise's PRIMARY catalog muscle group ONLY, mapped to titan slug(s) through
-// `mapCatalogMuscle` (VW-328) — secondary muscle groups never contribute, at any
-// weight. A coarse catalog group (e.g. `shoulders`) maps to more than one titan
-// slug, and a set against it counts in full toward each — there is no way to
-// split it further from the data recorded.
+// exercise's TARGET muscles ONLY, from the attribution table
+// (`exercises/seed-attribution.ts`, VW-561), which splits the delts by head.
+// Secondary muscles never contribute, at any weight.
 //
-// The week boundary, set eligibility and primary-group attribution live in
+// The week boundary, set eligibility and target attribution live in
 // `muscle-set-scope.ts` (VW-329), shared with every other per-muscle read model
 // so the body-map figure cannot contradict itself between panels.
 //

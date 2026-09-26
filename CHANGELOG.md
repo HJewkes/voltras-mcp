@@ -70,6 +70,16 @@ entry is written from the user's point of view is a review question, not a check
   frequency only when one of its target exercises was trained that day. Glutes, lats and
   upper back show sets but no landmark verdict until RP's glute and back numbers are
   verified. Map entries written the old way still read as before.
+- The body page and every per-muscle panel now split the shoulders by head (VW-561, #514). A
+  shoulder press counts toward front delts only, a lateral raise toward side delts and a
+  rear-delt fly or face pull toward rear delts; a chest press no longer counts toward any
+  delt. A pulldown now counts toward lats only, and a Romanian deadlift toward hamstrings
+  only. Each muscle's week also reports how many days trained it directly (`sessions`) and a
+  labelled `dose` comparison (half a set for a secondary muscle), which is never read against
+  the landmarks. Glutes, lats and upper back show their sets with no MEV verdict until RP's
+  glute and back numbers are verified, and the "below MEV" tile no longer counts them. A lift
+  goal's weekly sets follow the same split. `session.volume`, `history.weekly_volume` and the
+  plan lint still count by catalog muscle group (`shoulders`).
 
 ### Fixed
 

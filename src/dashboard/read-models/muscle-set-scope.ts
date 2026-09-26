@@ -14,14 +14,22 @@
 //
 // Confidentiality: fitness metadata only — no protocol data (NF-07).
 
-import { mapCatalogMuscle, type TitanMuscleGroup } from '../../exercises/muscle-map.js';
+import {
+  doseWeights,
+  targetMuscles,
+  type SlugAttribution,
+} from '../../exercises/muscle-attribution.js';
+import type { TitanMuscleGroup } from '../../exercises/muscle-map.js';
+import { attributionOfExercise } from '../../exercises/seed-attribution.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import type { StoredSet } from '../../store/types.js';
 
-/** Narrow catalog lookup the per-muscle read models need — primary muscle group + name, nothing else. */
+/** Narrow catalog lookup the per-muscle read models need: muscle groups and name, nothing else. */
 export type MuscleCatalogLookup = (
   exerciseId: string,
-) => { name?: string; muscleGroups: readonly string[] } | undefined;
+) =>
+  | { name?: string; muscleGroups: readonly string[]; secondaryMuscleGroups?: readonly string[] }
+  | undefined;
 
 /** Monday 00:00:00.000 UTC of the ISO week containing `now`. */
 export function startOfCalendarWeekIso(now: Date): string {
@@ -57,17 +65,34 @@ export function isEligibleWorkingSet(set: StoredSet, fromIso: string, toIsoExcl:
 }
 
 /**
- * The titan slugs one exercise's PRIMARY catalog muscle group maps to
- * (`mapCatalogMuscle`, VW-328). Secondary groups are never consulted: that is
- * the target-only decision (B47), which the retired `muscle-volume.ts` predated
- * by weighting secondaries at half a set. Empty when the exercise or its group
- * is unknown.
+ * One exercise's attribution rows on titan slugs (VW-561): the seed table's
+ * rows, or the catalog entry's primary and secondaries for an id the table
+ * does not hold. Empty when the catalog does not know it.
+ */
+export function attributionFor(
+  exerciseId: string,
+  catalog: MuscleCatalogLookup,
+): SlugAttribution[] {
+  const entry = catalog(exerciseId);
+  return entry === undefined ? [] : attributionOfExercise({ ...entry, id: exerciseId });
+}
+
+/**
+ * The titan slugs a set of this exercise counts toward in the LANDMARK read:
+ * target rows only (B47). Secondaries never count here, at any weight; they
+ * reach only {@link doseWeightsFor}. Empty when the exercise is unknown.
  */
 export function titanMusclesFor(
   exerciseId: string,
   catalog: MuscleCatalogLookup,
 ): TitanMuscleGroup[] {
-  const primary = catalog(exerciseId)?.muscleGroups[0];
-  if (primary === undefined) return [];
-  return mapCatalogMuscle(primary);
+  return targetMuscles(attributionFor(exerciseId, catalog));
+}
+
+/** The DOSE read's per-muscle weights for one exercise: never compared with a landmark. */
+export function doseWeightsFor(
+  exerciseId: string,
+  catalog: MuscleCatalogLookup,
+): Map<TitanMuscleGroup, number> {
+  return doseWeights(attributionFor(exerciseId, catalog));
 }

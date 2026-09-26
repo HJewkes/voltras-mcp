@@ -206,14 +206,26 @@ describe('the body page model', () => {
   it('counts sets per muscle, so a lift training two muscles counts in both', () => {
     // 16 chest sets + 3 back sets, and `back` maps to BOTH lats and upper_back,
     // so the set total is 16 + 3 + 3. `under` includes the untrained muscles,
-    // minus abs and obliques, whose mev of 0 nothing can fall below.
+    // minus abs and obliques, whose mev of 0 nothing can fall below, and glutes,
+    // lats and upper back, whose landmarks draw no verdict (VW-561).
     expect(weekSummary(weekView())).toEqual({
       totalSets: 22,
       trainedMuscles: 3,
       productive: 1,
-      under: 12,
+      under: 9,
       over: 0,
     });
+  });
+
+  it('paints a trained muscle with a withheld verdict in the neutral fill (VW-561)', () => {
+    const week = weekView();
+    const withGlutes = {
+      ...week,
+      muscles: week.muscles.map((m) => (m.muscle === 'glutes' ? { ...m, sets: 5 } : m)),
+    };
+    const glutes = bodyMapData(withGlutes).find((d) => d.muscleGroup === 'glutes');
+    expect(glutes?.volumeStatus).toBe('ontrack');
+    expect(weekSummary(withGlutes)).toMatchObject({ productive: 1, under: 9, over: 0 });
   });
 
   it('folds one planned lift owed to several muscles into a single next-up row', () => {
@@ -243,7 +255,7 @@ describe('the body page render', () => {
     expect(rendered).toContain('Sets 22');
     expect(rendered).toContain('Muscles 3');
     expect(rendered).toContain('Productive 1');
-    expect(rendered).toContain('Below MEV 12');
+    expect(rendered).toContain('Below MEV 9');
     expect(rendered).toContain('Over MRV 0');
   });
 

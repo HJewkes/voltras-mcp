@@ -67,9 +67,14 @@ export function intensityOf(muscle: MuscleWeekMuscleView): number {
   return Math.min(1, muscle.sets / muscle.landmarks.mrv);
 }
 
-/** The UI status a muscle's week reads as, including the untrained case. */
+/**
+ * The UI status a muscle's week reads as, including the untrained case. Titan
+ * has no "no verdict" status, so a withheld verdict (VW-561) paints the neutral
+ * `ontrack` fill; the THIS WEEK tiles still leave it out.
+ */
 export function statusOf(muscle: MuscleWeekMuscleView): TitanVolumeStatus {
   if (muscle.sets === 0) return 'untrained';
+  if (muscle.status === null) return 'ontrack';
   return landmarkZoneToStatus(muscle.status, intensityOf(muscle));
 }
 
@@ -130,7 +135,9 @@ export interface BodyWeekSummary {
   /**
    * Muscles below their MEV, WHICH INCLUDES the ones not trained at all: zero
    * sets is below every non-zero minimum. So this can exceed `trainedMuscles`,
-   * and the tile says "below MEV" rather than "under" for that reason.
+   * and the tile says "below MEV" rather than "under" for that reason. A muscle
+   * whose verdict is withheld (null status: glutes, lats, upper back) is never
+   * counted here, trained or not.
    */
   under: number;
   over: number;
