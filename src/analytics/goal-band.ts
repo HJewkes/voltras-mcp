@@ -155,6 +155,16 @@ export const GOAL_BAND_CONSTANTS = {
    * so the band and the coaching copy cannot drift apart.
    */
   e1rmSeePct: 9.8,
+  /**
+   * The most a later block's weekly rate may be, as a fraction of the class step (VW-510), and
+   * the later-block rate when no measured start-to-start slope exists.
+   *
+   * HUMAN DECISION (VW-510, design D6) for the two-slope shape: the class step for the block the
+   * horizon starts in, a slower rate after it, because a new block restarts below the last one's
+   * peak. The cap cites the detraining digest's rule 9 (later blocks at most half the class
+   * rate); the half is its shaped figure and an ENGINEERING DEFAULT as the no-history fallback.
+   */
+  laterBlockClassFraction: 0.5,
 } as const;
 
 /** What sets the programmed ramp's weekly percent: isolation, or a compound by body half (VW-482). */
@@ -198,6 +208,17 @@ export interface GoalDietState {
 export interface GoalBandWeek {
   index: number;
   isDeload: boolean;
+  /** 0 for the block the horizon starts in, 1 for the next, and so on; absent reads as 0. */
+  blockOrdinal?: number;
+}
+
+/** The weekly rate a block after the first ramps at, before the class cap (VW-510). */
+export interface GoalLaterBlockRate {
+  /** Percent of the start value per week, the class step's own unit. */
+  value: number;
+  source: 'MEASURED' | 'ENGINEERING DEFAULT';
+  /** Sessions behind a measured value; 0 for the default. */
+  n: number;
 }
 
 /** A fitted per-lifter trend, from `history.trend`'s raw slope and fit. */
@@ -227,6 +248,8 @@ export interface GoalBandInput {
   baselineState: BaselineState;
   completedMesoCount: number;
   ownSlope?: GoalOwnSlope;
+  /** Absent reads as the class-cap default; ignored while every week is in block 0. */
+  laterBlockPctPerWeek?: GoalLaterBlockRate;
 }
 
 export interface GoalBandExpectation {
@@ -674,7 +697,8 @@ function recompositionLiftShape(shape: BandShape, notes: string[]): BandShape {
 /**
  * Walk the weeks. Week 1 sits at the start value; every later non-deload week
  * advances one step; a deload week repeats the week before it, which is what
- * "a deload week flattens the band" means.
+ * "a deload week flattens the band" means. A week in a later block advances by
+ * the later-block share of the step (VW-510).
  */
 function projectRate(
   input: GoalBandInput,
@@ -690,6 +714,7 @@ function projectRate(
         '(rp:rp-s7-early-strength-gains-not-pure-muscle-signal).',
     );
   }
+  const laterShare = laterBlockShare(input, shape, notes);
   const expected: GoalBandExpectation[] = [];
   let low = input.startValue;
   let high = input.startValue;
@@ -697,12 +722,50 @@ function projectRate(
   for (const [position, week] of input.weeks.entries()) {
     if (position > 0 && !week.isDeload) {
       advanced += 1;
-      low += lowStep;
-      high += highStep * frontLoadFactor(input.layoff, shape.basis, advanced);
+      const share = (week.blockOrdinal ?? 0) > 0 ? laterShare : 1;
+      low += lowStep * share;
+      high += highStep * frontLoadFactor(input.layoff, shape.basis, advanced) * share;
     }
     expected.push({ weekIndex: week.index, low: round(low), high: round(high) });
   }
   return expected;
+}
+
+/** Metrics whose weekly step is the class step, and so the ones a later block slows. */
+const CLASS_STEP_METRICS: readonly GoalMetric[] = ['top_load_at_reps', 'e1rm_trend'];
+
+/**
+ * What a later-block week advances, as a share of the first block's step: the measured rate or
+ * the default, never above `laterBlockClassFraction` of the class step and never below hold. `1`
+ * when nothing crosses a block or the band is not a rising class-step ramp.
+ */
+function laterBlockShare(input: GoalBandInput, shape: BandShape, notes: string[]): number {
+  const crosses = input.weeks.some((week) => (week.blockOrdinal ?? 0) > 0);
+  const rising = shape.highPctPerWeek > 0 && shape.lowPctPerWeek >= 0;
+  if (!crosses || !rising || shape.basis === 'own_slope') return 1;
+  if (!CLASS_STEP_METRICS.includes(input.metric)) return 1;
+  const capPct = shape.highPctPerWeek * C.laterBlockClassFraction;
+  const measured = input.laterBlockPctPerWeek;
+  const laterPct = measured === undefined ? capPct : Math.min(Math.max(measured.value, 0), capPct);
+  notes.push(laterBlockNote(laterPct, capPct, measured));
+  return laterPct / shape.highPctPerWeek;
+}
+
+function laterBlockNote(
+  laterPct: number,
+  capPct: number,
+  measured: GoalLaterBlockRate | undefined,
+): string {
+  const source =
+    measured === undefined
+      ? `half the class step (ENGINEERING DEFAULT)`
+      : `the ${measured.source} start-to-start class slope of ${round(measured.value)}%/wk ` +
+        `over ${measured.n} sessions${measured.value > capPct ? ', capped at half the class step' : ''}`;
+  return (
+    `Two slopes (VW-510): the class step holds for the block the horizon starts in, and later ` +
+    `blocks ramp at ${round(laterPct)}%/wk, ${source}. A new block restarts below the last ` +
+    'one’s peak, so the first block’s step is not projected across the boundary.'
+  );
 }
 
 function frontLoadFactor(layoff: boolean, basis: GoalBandBasis, advanced: number): number {
