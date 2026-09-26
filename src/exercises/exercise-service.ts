@@ -78,6 +78,14 @@ interface ExerciseCatalog {
 const catalog = analytics as unknown as ExerciseCatalog;
 
 /**
+ * History lifts (free weights, machines) sit in the catalog so `getById` can name
+ * them, but a live session must never pick one. Every list-shaped read drops them.
+ */
+function liveEntries(entries: Exercise[]): Exercise[] {
+  return entries.filter((entry) => entry.cableEquivalent);
+}
+
+/**
  * Thin facade over the analytics exercise catalog. Stateless: safe to share a
  * single instance across the server. All methods delegate 1:1 to the upstream
  * catalog functions and return results verbatim.
@@ -86,10 +94,11 @@ export class ExerciseService {
   /**
    * Free-text search the catalog. Forwards `query` unchanged to
    * `searchExercises`; the upstream package owns ranking and casing. Returns
-   * an empty array when no entries match.
+   * an empty array when no entries match. Entries that are not cable-equivalent
+   * (the history lifts) are left out.
    */
   search(query: string): Exercise[] {
-    return catalog.searchExercises(query);
+    return liveEntries(catalog.searchExercises(query));
   }
 
   /**
@@ -109,7 +118,7 @@ export class ExerciseService {
    * Verbatim and unordered, exactly as the catalog holds it.
    */
   list(): Exercise[] {
-    return catalog.getAllExercises();
+    return liveEntries(catalog.getAllExercises());
   }
 
   /**
@@ -117,6 +126,6 @@ export class ExerciseService {
    * to the upstream filter; the package owns what counts as a match.
    */
   byMuscleGroup(muscleGroup: string): Exercise[] {
-    return catalog.getExercisesByMuscleGroup(muscleGroup);
+    return liveEntries(catalog.getExercisesByMuscleGroup(muscleGroup));
   }
 }

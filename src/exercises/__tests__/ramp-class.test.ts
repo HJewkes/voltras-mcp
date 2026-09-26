@@ -2,6 +2,7 @@ import * as analytics from '@voltras/workout-analytics';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { rampClassForExerciseId, rampClassOf } from '../ramp-class.js';
+import { HISTORY_SEED_EXERCISES } from '../history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../seed-catalog.js';
 
 describe('rampClassOf', () => {
@@ -31,9 +32,10 @@ describe('rampClassOf', () => {
 
 describe('rampClassForExerciseId', () => {
   beforeEach(() => {
-    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(
-      SEED_CABLE_EXERCISES,
-    );
+    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog([
+      ...SEED_CABLE_EXERCISES,
+      ...HISTORY_SEED_EXERCISES,
+    ]);
   });
 
   it('places the seed catalog lifts', () => {
@@ -41,6 +43,17 @@ describe('rampClassForExerciseId', () => {
     expect(rampClassForExerciseId('cable-face-pull')).toBe('isolation');
     expect(rampClassForExerciseId('cable-chest-press')).toBe('upper_compound');
     expect(rampClassForExerciseId('cable-romanian-deadlift')).toBe('lower_compound');
+  });
+
+  it('places the history catalog lifts', () => {
+    expect(rampClassForExerciseId('barbell-back-squat')).toBe('lower_compound');
+    expect(rampClassForExerciseId('barbell-deadlift')).toBe('lower_compound');
+    expect(rampClassForExerciseId('machine-leg-press')).toBe('lower_compound');
+    expect(rampClassForExerciseId('barbell-bench-press')).toBe('upper_compound');
+    expect(rampClassForExerciseId('barbell-overhead-press')).toBe('upper_compound');
+    expect(rampClassForExerciseId('barbell-row')).toBe('upper_compound');
+    expect(rampClassForExerciseId('barbell-curl')).toBe('isolation');
+    expect(rampClassForExerciseId('machine-standing-calf-raise')).toBe('isolation');
   });
 
   it('reads an absent or uncatalogued id as the unknown-class default', () => {

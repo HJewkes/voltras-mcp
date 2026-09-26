@@ -39,6 +39,7 @@ import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import { localDate, readTrainingDays } from '../analytics/training-days.js';
 import { addDays } from '../plan/block-calendar.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
+import { HISTORY_SEED_EXERCISES } from '../exercises/history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
 import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
@@ -342,7 +343,7 @@ export async function seedGoalPreview(
 ): Promise<GoalPreviewSeedReport> {
   // The tools derive with the catalog the server loads at boot; this seed runs before any
   // server exists, so it loads the same one, or every lift would ramp as the unknown class.
-  setCatalog(SEED_CABLE_EXERCISES);
+  setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
   const lead: SeededLift = {
     key: 'goal',
     exercise: GOAL_PREVIEW_EXERCISE,

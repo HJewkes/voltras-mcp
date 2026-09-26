@@ -11,7 +11,7 @@
 import { log } from '../logger.js';
 
 /** Bump whenever a mapping row below or a row of `seed-attribution.ts` changes. Stamped onto every new session. */
-export const MUSCLE_MAP_VERSION = '2026-09-26.1';
+export const MUSCLE_MAP_VERSION = '2026-09-26.2';
 
 /**
  * The 15 titan body-map slugs (titan-design `MuscleGroup` enum,
@@ -55,6 +55,7 @@ const CATALOG_TO_TITAN: Record<string, TitanMuscleGroup[]> = {
   quads: ['quads'],
   hamstrings: ['hamstrings'],
   glutes: ['glutes'],
+  calves: ['calves'],
   // No dedicated adductor slug in the taxonomy; quads is the nearest leg proxy.
   adductors: ['quads'],
   // No dedicated abductor slug either; hip abduction is primarily glute

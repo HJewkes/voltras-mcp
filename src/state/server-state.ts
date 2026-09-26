@@ -50,6 +50,7 @@ import type { ResolvedWatchConfig } from '../schemas/set.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
+import { HISTORY_SEED_EXERCISES } from '../exercises/history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
@@ -449,7 +450,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // every search returns []. `setCatalog` is global module-state inside
     // the analytics package; calling once at boot is sufficient. When the
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
-    setCatalog(SEED_CABLE_EXERCISES);
+    setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
     await refitStaleRirVelocityModels(store);
     const client = new VoltraClient();
     const live = new LiveState();
