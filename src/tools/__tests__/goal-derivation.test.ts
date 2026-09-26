@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredPriority } from '../../store/types.js';
-import { readDerivationContext, UNDATED_MESO_WEEKS } from '../goal-derivation.js';
+import { UNDATED_MESO_WEEKS } from '../../analytics/goal-horizon.js';
+import { readDerivationContext } from '../goal-derivation.js';
 
 let store: SqliteSessionStore;
 

@@ -49,6 +49,7 @@
     "docs:check": "node scripts/check-docs.mjs",
     "sim:rest": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/adaptive-rest-sim.js",
     "sim:rest:replay": "npm run sim:rest -- --replay",
+    "sim:goal-ramp": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/goal-ramp-sim.js",
     "store": "tsc -p tsconfig.store.json && node .store-build/scripts/store/store-portable-cli.js",
     "retro:truecoach": "tsc -p tools/truecoach-retro/tsconfig.build.json && TZ=UTC node .retro-build/tools/truecoach-retro/src/main.js"
   },
