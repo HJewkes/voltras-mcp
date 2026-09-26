@@ -258,7 +258,7 @@ dashboard need, that's a signal the field belongs somewhere else.
   muscles: Array<{
     muscle: TitanMuscleGroup; // all 15 slugs, always
     sets: number; // landmark read: working sets of exercises that TARGET this muscle
-    status: 'under' | 'maintenance' | 'productive' | 'over' | null; // null = no verdict (glutes)
+    status: 'under' | 'maintenance' | 'productive' | 'over' | null; // null = no verdict (glutes, lats, upper_back)
     landmarks: { mev: number; mav: number; mrv: number };
     sessions: number; // UTC days with a working set of an exercise that targets this muscle
     dose: { sets: number; sessions: number }; // dose read: weighted sets, fractional days
@@ -272,9 +272,9 @@ Every per-muscle read model attributes a set through one table,
 or 0 and a target flag, and the delts are split by head. `sets`, `status` and
 `sessions` read targets only (B47). `dose` adds the weights (Pelland et al. 2025)
 and counts a day that hit the muscle only through a weighted row as half a
-session; it is a comparison and is never classified against a landmark. Glutes
-carry `status: null` until RP's glute landmarks are verified, and the body page
-paints them with the neutral fill.
+session; it is a comparison and is never classified against a landmark. Glutes,
+lats and upper back carry `status: null` until RP's glute and back landmarks are
+verified, and the body page paints them with the neutral fill.
 
 ### The `/api/muscle-strength` contract (VW-330)
 

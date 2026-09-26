@@ -206,12 +206,18 @@ describe('buildMuscleWeekView: landmark and dose reads (VW-561)', () => {
     expect(muscle(view, 'triceps')).toMatchObject({ sets: 0, status: 'under', dose: { sets: 2 } });
   });
 
-  it('draws no verdict for glutes at any set count (R8c)', () => {
+  it('draws no verdict for glutes, lats or upper back at any set count (R8c)', () => {
     const none = seeded([]);
-    const many = seeded(Array.from({ length: 20 }, () => set('cable-glute-kickback', MON)));
+    const many = seeded([
+      ...Array.from({ length: 20 }, () => set('cable-glute-kickback', MON)),
+      ...Array.from({ length: 20 }, () => set('cable-row', MON)),
+    ]);
 
-    expect(muscle(none, 'glutes')?.status).toBeNull();
-    expect(muscle(many, 'glutes')).toMatchObject({ sets: 20, status: null });
+    for (const slug of ['glutes', 'lats', 'upper_back']) {
+      expect(muscle(none, slug)?.status, slug).toBeNull();
+      expect(muscle(many, slug), slug).toMatchObject({ sets: 20, status: null });
+    }
+    expect(muscle(none, 'hamstrings')?.status).toBe('under');
   });
 
   it('counts a day toward frequency only for the muscles its exercises target (Q5)', () => {

@@ -125,7 +125,7 @@ export interface MuscleWeekMuscleView {
   muscle: TitanMuscleGroup;
   /** Eligible working sets of exercises that target this muscle, inside the week. */
   sets: number;
-  /** The landmark band of `sets`; `null` where the landmark is unverified (glutes). */
+  /** The landmark band of `sets`; `null` where the landmark is unverified (glutes, lats, upper back). */
   status: VolumeStatus | null;
   landmarks: VolumeLandmarks;
   /** UTC days this week holding an eligible set of an exercise that targets this muscle (Q5). */
