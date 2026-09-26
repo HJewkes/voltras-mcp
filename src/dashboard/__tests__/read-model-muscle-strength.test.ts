@@ -256,3 +256,60 @@ describe('buildMuscleStrengthView — early phase', () => {
     expect(undeclared.earlyPhaseBasis).toContain('no self-reported years of training');
   });
 });
+
+describe('buildMuscleStrengthView recency (VW-558)', () => {
+  const sessionSet = (side: 'left' | 'right', day: string, weightLbs: number) =>
+    set({ sessionId: `${side}-${day}`, startedAt: `${day}T12:00:00.000Z`, side, weightLbs });
+
+  const bilateral = exercise({
+    sets: [
+      sessionSet('left', '2026-06-01', 100),
+      sessionSet('left', '2026-06-29', 80),
+      sessionSet('right', '2026-06-01', 100),
+      sessionSet('right', '2026-06-29', 100),
+    ],
+    trendBySide: {},
+  });
+
+  it('keeps a separate relative index for each side, never a pooled one', () => {
+    const view = buildMuscleStrengthView({ exercises: [bilateral], yearsTraining: 5 });
+    const chest = muscleOf(view, 'chest');
+    const bySide = Object.fromEntries(chest.exercises.map((row) => [row.side, row.relativeIndex]));
+
+    expect(bySide.right).toBe(100);
+    expect(bySide.left).toBeLessThan(90);
+    expect(chest.relativeIndexBySide).toEqual({ left: bySide.left, right: 100 });
+  });
+
+  it('weighs the newer session more heavily in the current level', () => {
+    const view = buildMuscleStrengthView({ exercises: [bilateral], yearsTraining: 5 });
+    const left = muscleOf(view, 'chest').exercises.find((row) => row.side === 'left')!;
+    const oldBest = left.bestE1rm!.value;
+
+    expect(left.currentLevel!).toBeLessThan((oldBest + oldBest * 0.8) / 2);
+  });
+
+  it.each([
+    [0, 'current'],
+    [28, 'current'],
+    [29, 'fading'],
+    [200, 'no_current_read'],
+  ])('reads %i days since trained as %s', (days, recency) => {
+    const asOf = new Date(Date.parse('2026-06-29T12:00:00.000Z') + days * 86_400_000).toISOString();
+    const view = buildMuscleStrengthView({ exercises: [bilateral], yearsTraining: 5, asOf });
+    const chest = muscleOf(view, 'chest');
+
+    expect(chest.daysSinceTrained).toBe(days);
+    expect(chest.exercises.every((row) => row.recency === recency)).toBe(true);
+  });
+
+  it('reports no recency without an as-of instant', () => {
+    const chest = muscleOf(
+      buildMuscleStrengthView({ exercises: [bilateral], yearsTraining: 5 }),
+      'chest',
+    );
+
+    expect(chest.daysSinceTrained).toBeNull();
+    expect(chest.exercises.map((row) => row.recency)).toEqual([null, null]);
+  });
+});
