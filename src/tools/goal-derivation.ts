@@ -18,6 +18,7 @@ import { buildLiftSeries, slopeStandardError } from '@voltras/workout-analytics'
 import { bucketStartIso } from '../analytics/goal-block-weeks.js';
 import { deriveGoalBand, type GoalBand, type GoalBandInput } from '../analytics/goal-band.js';
 import { laterBlockRateOf } from '../analytics/goal-class-rate.js';
+import { horizonWeeksOf, UNDATED_MESO_WEEKS } from '../analytics/goal-horizon.js';
 import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-band.js';
 import { topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
@@ -87,13 +88,6 @@ const TRAINING_DAYS_PER_MESO = 12;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
-
-/**
- * The block length an undated stretch of the horizon is split into, so a later week ramps at the
- * later-block rate (VW-510). ENGINEERING DEFAULT, not an owner decision yet: the middle of RP's
- * 4-to-6-week accumulation run; the PR puts the 4, 5 and 6 week sim numbers to the owner.
- */
-export const UNDATED_MESO_WEEKS = 5;
 
 /** Everything a band needs that is the same for every metric of one priority. */
 export interface GoalDerivationContext {
@@ -178,18 +172,9 @@ async function readHorizonWeeks(
         'the band across it, and one that is programmed later will not be reflected here (VW-326).',
     );
   }
-  const weeks = blocks.flatMap((rows, blockOrdinal) =>
-    rows.map((isDeload) => ({ isDeload, blockOrdinal })),
-  );
-  const planned = Math.min(weeks.length, length);
+  const planned = blocks.reduce((sum, rows) => sum + rows.length, 0);
   if (planned < length) notes.push(undatedWeeksNote(planned, length));
-  for (let undated = 0; planned + undated < length; undated++) {
-    weeks.push({
-      isDeload: false,
-      blockOrdinal: blocks.length + Math.floor(undated / UNDATED_MESO_WEEKS),
-    });
-  }
-  return weeks.slice(0, length).map((week, index) => ({ index: index + 1, ...week }));
+  return horizonWeeksOf(blocks, length);
 }
 
 function undatedWeeksNote(planned: number, length: number): string {
