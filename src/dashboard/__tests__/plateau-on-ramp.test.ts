@@ -57,8 +57,8 @@ describe('the plateau rule on the goal card (VW-452)', () => {
     expect(view.status).toBe('on_track');
   });
 
-  it('reads a lifter on the full ramp, short of the goal, on_track', async () => {
-    const view = await viewFor([100, 102.5, 105, 107.5]);
+  it('reads a lifter climbing 2 lb a week, short of the goal, on_track', async () => {
+    const view = await viewFor([100, 102, 104, 106]);
 
     expect(view.status).toBe('on_track');
   });
@@ -97,7 +97,7 @@ describe('the plateau rule on the goal card (VW-452)', () => {
   });
 
   it('does not let one light week inside a climb read as stalled', async () => {
-    const view = await viewFor([100, 102.5, 105, 96, 107.5]);
+    const view = await viewFor([100, 102, 104, 96, 106]);
 
     expect(view.status).toBe('on_track');
   });

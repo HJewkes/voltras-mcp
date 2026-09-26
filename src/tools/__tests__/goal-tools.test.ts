@@ -438,9 +438,9 @@ describe('goal.propose_targets', () => {
     });
     const target = (proposed.targets as (ProposedTargetShape & { tierUsed: Tier })[])[0];
     const tier = target.tierUsed;
-    // Six weeks, cold: five full steps on both edges.
+    // Six weeks, cold: four full steps, then week 6 opens the second undated block at half a step.
     expect(target.committedValue).toBeCloseTo(
-      40 + 5 * programmedRampStepLbs(40, 'isolation', tier),
+      40 + 4.5 * programmedRampStepLbs(40, 'isolation', tier),
       6,
     );
   });
