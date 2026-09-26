@@ -60,6 +60,7 @@ const ALLOWED_TOKENS = new Set([
   // A truncated example UUID in a sample `set_ended` payload. Bare hex runs are
   // flagged because a hex run and a truncated id are the same shape; this one
   // is an id the doc made up.
+  // eslint-disable-next-line voltras/no-protocol-detail -- a reviewed docs exception recorded as data, not a device value (VW-497)
   'docs/push-events.md:3f2a1b04',
 ]);
 
