@@ -3,7 +3,7 @@
 import { isoWeekStart } from './dates.js';
 import { buildExerciseLookup, type ExerciseLookup } from './exercise-map.js';
 import { groupBlocks, trainingDays } from './log-rules.js';
-import { judgeBlock, type BlockVerdict } from './missed-targets.js';
+import { judgeBlock, UNDIVIDED_WARMUP_LOAD_SHARE, type BlockVerdict } from './missed-targets.js';
 import { detectProgrammeSplit, periodsAround, type Period } from './periods.js';
 import type { BoundaryDecision } from './segmentation.js';
 import { buildSeries, loadedRowsBy, mainLiftRows, type LiftSeries } from './series.js';
@@ -27,6 +27,8 @@ export interface Context {
   lookup: ExerciseLookup;
   days: string[];
   judged: JudgedBlock[];
+  /** The share of the prescribed load under which an undivided row reads as a warm-up. */
+  warmupShare: number;
   periods: Period[];
   programmeSplit: { date: string | null; source: 'detected' | 'argument' };
   mainLifts: MainLift[];
@@ -50,11 +52,12 @@ function mainLiftsOf(rows: readonly SetRecord[], lookup: ExerciseLookup): MainLi
 }
 
 /** The row-derived parts of a context; periods and decisions carry over unchanged. */
-function fromRows(rows: SetRecord[], lookup: ExerciseLookup) {
+function fromRows(rows: SetRecord[], lookup: ExerciseLookup, warmupShare: number) {
   return {
     rows,
     days: trainingDays(rows),
-    judged: groupBlocks(rows).map((block) => ({ block, verdict: judgeBlock(block) })),
+    judged: groupBlocks(rows).map((block) => ({ block, verdict: judgeBlock(block, warmupShare) })),
+    warmupShare,
     mainLifts: mainLiftsOf(rows, lookup),
   };
 }
@@ -65,11 +68,12 @@ export function buildContext(
   map: readonly ExerciseMapEntry[],
   programmeSplitArg: string | null,
   decisions: BoundaryDecision[] | null = null,
+  warmupShare: number = UNDIVIDED_WARMUP_LOAD_SHARE,
 ): Context {
   const lookup = buildExerciseLookup(map);
   const split = programmeSplitArg ?? detectProgrammeSplit(rows);
   return {
-    ...fromRows(rows, lookup),
+    ...fromRows(rows, lookup, warmupShare),
     checkins,
     lookup,
     periods: periodsAround(split),
@@ -83,5 +87,5 @@ export function restrictToWeeks(ctx: Context, weeks: ReadonlySet<string>): Conte
   const rows = ctx.rows.filter(
     (row) => row.workout_due_date !== null && weeks.has(isoWeekStart(row.workout_due_date)),
   );
-  return { ...ctx, ...fromRows(rows, ctx.lookup) };
+  return { ...ctx, ...fromRows(rows, ctx.lookup, ctx.warmupShare) };
 }

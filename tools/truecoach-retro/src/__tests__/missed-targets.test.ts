@@ -56,3 +56,19 @@ describe('judgeBlock', () => {
     expect(judgeBlock(block(['3 Sets:'], [{}])).verdict).toBe('no-target');
   });
 });
+
+describe('judgeBlock warm-up share', () => {
+  const rows = [
+    { is_warmup: null, load: 88, reps: 3 },
+    ...[1, 2, 3].map(() => ({ is_warmup: null })),
+  ];
+
+  it('reads a row just under the default share as a warm-up', () => {
+    expect(judgeBlock(block(['100 @ 3 x 5'], rows)).verdict).toBe('hit');
+  });
+
+  it('keeps that row as a short set when the share is lowered under its load', () => {
+    const verdict = judgeBlock(block(['100 @ 3 x 5'], rows), 0.85);
+    expect(verdict).toMatchObject({ verdict: 'miss', repMisses: 1, reportedSets: 4 });
+  });
+});
