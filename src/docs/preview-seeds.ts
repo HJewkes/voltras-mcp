@@ -216,7 +216,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_offered',
     expectedStatus: 'on_track',
     summary:
-      'A starting ramp accepted cold (committed 121, where the ramp ends), and five weeks of ' +
+      'A starting ramp accepted cold (committed 116.5, where the ramp ends), and five weeks of ' +
       'history since, inside the band: calibrated, so a target based on the lifts is on offer.',
     weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
@@ -234,15 +234,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'on_track',
     expectedStatus: 'on_track',
-    summary: 'Top loads climbing 2 lb a week from 100, inside the band anchored at 100.',
-    weeklyLoadsLbs: [100, 102, 104, 106, 108],
+    summary: 'Top loads climbing 1.5 lb a week from 100, inside the band anchored at 100.',
+    weeklyLoadsLbs: [100, 101.5, 103, 104.5, 106],
     targetStartWeeksAgo: 4,
   },
   {
     name: 'fast_climb',
     expectedStatus: 'beyond_goal',
     summary:
-      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 110.5 goal by ' +
+      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 108.25 goal by ' +
       'week 4, and a met goal outranks pace, so it reads beyond_goal rather than ahead.',
     weeklyLoadsLbs: [100, 104, 108, 113, 118],
     targetStartWeeksAgo: 4,
@@ -275,7 +275,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 102, 104, 106, 110.5],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108.25],
     targetStartWeeksAgo: 4,
   },
   {

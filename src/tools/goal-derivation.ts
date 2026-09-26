@@ -13,14 +13,19 @@
 // which already carries its own target, so banding the rollup would commit the
 // lifter twice to the same work.
 
+import { buildLiftSeries, slopeStandardError } from '@voltras/workout-analytics';
+
 import { bucketStartIso } from '../analytics/goal-block-weeks.js';
 import { deriveGoalBand, type GoalBand, type GoalBandInput } from '../analytics/goal-band.js';
+import { laterBlockRateOf } from '../analytics/goal-class-rate.js';
+import { horizonWeeksOf, UNDATED_MESO_WEEKS } from '../analytics/goal-horizon.js';
 import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-band.js';
-import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
+import { topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
 import {
   SESSION_WINDOW_DAYS,
+  localDate,
   readTrainingDays,
   readTrainingDaysMatching,
   trainingGaps,
@@ -33,11 +38,13 @@ import {
   type StoredGoalTarget,
   type StoredPriority,
   type StoredSet,
+  type StoredTrainingBlock,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { computeHistoryTrend } from './metrics-tools.js';
 import { getTierSignal, type Tier } from './tier-signal.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
+import { blockCalendar } from '../plan/block-calendar.js';
 
 /**
  * The store slice this module reads. Declared narrow (rather than
@@ -56,6 +63,8 @@ export interface GoalDerivationState {
     | 'getDietPhaseCovering'
     | 'getTrainingBlock'
     | 'getTrainingBlocksForProgram'
+    | 'getLiveBlockSchedule'
+    | 'listLiveBlockSchedules'
     | 'listBodyMetrics'
     | 'getSetsForExercise'
     | 'getBaseline'
@@ -146,30 +155,71 @@ export async function readDerivationContext(
 }
 
 /**
- * The horizon's weeks, with the deloads in them. A named block's own weeks are
- * authoritative; without one the horizon is a flat run of training weeks and
- * the note says the deloads in it are unknown rather than absent.
+ * The horizon's weeks, with the deloads and block ordinals in them. The named block's weeks come
+ * first, then the program's later dated blocks, then undated weeks split into
+ * {@link UNDATED_MESO_WEEKS}-week blocks whose deloads are unknown rather than absent.
  */
 async function readHorizonWeeks(
   state: GoalDerivationState,
   priority: StoredPriority,
   notes: string[],
 ): Promise<GoalBandWeek[]> {
-  const planned =
-    priority.blockId === undefined
-      ? []
-      : await state.store.getTrainingWeeksForBlock(priority.blockId);
-  if (planned.length > 0) {
-    return planned
-      .slice(0, priority.horizonWeeks)
-      .map((week, index) => ({ index: index + 1, isDeload: week.isDeload }));
-  }
   const length = priority.horizonWeeks > 0 ? priority.horizonWeeks : DEFAULT_HORIZON_WEEKS;
-  notes.push(
-    'No plan tree backs this horizon, so every week is banded as a training week. A deload flattens ' +
-      'the band across it, and one that is programmed later will not be reflected here (VW-326).',
+  const blocks = await plannedBlockWeeks(state, priority);
+  if (blocks.length === 0) {
+    notes.push(
+      'No plan tree backs this horizon, so every week is banded as a training week. A deload flattens ' +
+        'the band across it, and one that is programmed later will not be reflected here (VW-326).',
+    );
+  }
+  const planned = blocks.reduce((sum, rows) => sum + rows.length, 0);
+  if (planned < length) notes.push(undatedWeeksNote(planned, length));
+  return horizonWeeksOf(blocks, length);
+}
+
+function undatedWeeksNote(planned: number, length: number): string {
+  const span = planned === 0 ? 'The horizon' : `Weeks ${planned + 1} to ${length}`;
+  return (
+    `${span} sit past any dated block, so they are split into ${UNDATED_MESO_WEEKS}-week blocks ` +
+    '(ENGINEERING DEFAULT) and every block after the first ramps at the later-block rate (VW-510).'
   );
-  return Array.from({ length }, (_, index) => ({ index: index + 1, isDeload: false }));
+}
+
+/**
+ * The deload flags of the priority's block and each later block of its program that has a
+ * date, in order. The walk stops at the first undated block: past it the calendar is unknown.
+ */
+async function plannedBlockWeeks(
+  state: GoalDerivationState,
+  priority: StoredPriority,
+): Promise<boolean[][]> {
+  if (priority.blockId === undefined) return [];
+  const named = await state.store.getTrainingWeeksForBlock(priority.blockId);
+  if (named.length === 0) return [];
+  const blocks = [named.map((week) => week.isDeload)];
+  for (const later of await laterBlocksOf(state, priority.blockId)) {
+    const live = await state.store.getLiveBlockSchedule(later.id);
+    if (live?.startsOn === undefined) break;
+    const rows = await state.store.getTrainingWeeksForBlock(later.id);
+    blocks.push(
+      rows.length > 0
+        ? rows.map((week) => week.isDeload)
+        : Array.from({ length: live.weeksCount }, () => false),
+    );
+  }
+  return blocks;
+}
+
+async function laterBlocksOf(
+  state: GoalDerivationState,
+  blockId: string,
+): Promise<StoredTrainingBlock[]> {
+  const block = await state.store.getTrainingBlock(blockId);
+  if (block === undefined) return [];
+  const siblings = await state.store.getTrainingBlocksForProgram(block.programId);
+  return siblings
+    .filter((sibling) => sibling.orderIndex > block.orderIndex)
+    .sort((a, b) => a.orderIndex - b.orderIndex);
 }
 
 /**
@@ -286,6 +336,7 @@ interface StartMeasurement {
   baselineState: BaselineState;
   anchorReps?: number;
   ownSlope?: GoalBandInput['ownSlope'];
+  laterBlockPctPerWeek?: GoalBandInput['laterBlockPctPerWeek'];
 }
 
 /** A metric with nothing measured behind it, carrying what to say about it. */
@@ -304,9 +355,7 @@ async function deriveLiftTarget(
   }
   if (selection.metric === 'e1rm_trend')
     return deriveE1rmContext(state, context, selection, exerciseId);
-  const sets = repCountedSets(
-    await state.store.getSetsForExercise({ userId: LOCAL_USER_ID, exerciseId }),
-  );
+  const sets = await liftSets(state, exerciseId);
   const anchorReps = selection.anchorReps ?? modalRepCount(sets);
   const read = anchorReps === null ? null : topLoadAtReps(sets, anchorReps);
   if (read === null || anchorReps === null) {
@@ -324,7 +373,53 @@ async function deriveLiftTarget(
     baselineState: baseline?.state ?? 'COLD',
     anchorReps,
     ...(await readOwnSlope(state, exerciseId, read.value)),
+    ...(await readLaterBlockRate(state, context, selection, sets)),
   });
+}
+
+/**
+ * The later-block rate for a top-load leg (VW-510): this lift's start-to-start slope across the
+ * dated blocks when enough history spans them, else the labelled default. Only this lift's
+ * series is read, so "class" here is the class of one lift until history rows widen it.
+ */
+async function readLaterBlockRate(
+  state: GoalDerivationState,
+  context: GoalDerivationContext,
+  selection: GoalGainMetric,
+  sets: readonly RepCountedSet[],
+): Promise<Pick<StartMeasurement, 'laterBlockPctPerWeek'>> {
+  const exerciseId = selection.exerciseId;
+  if (selection.metric !== 'top_load_at_reps' || exerciseId === null) return {};
+  const series = buildLiftSeries(
+    sets.map((set) => ({ day: localDate(set.endedAt), load: set.weightLbs, reps: set.repCount })),
+  );
+  const points = series.points.map((point: { day: string; topLoadAtModal: number | null }) => ({
+    day: point.day,
+    value: point.topLoadAtModal,
+  }));
+  const rampClass = rampClassForExerciseId(exerciseId);
+  const rate = laterBlockRateOf({
+    series: [{ lift: exerciseId, points }],
+    blocks: await datedBlockRanges(state, localDate(context.derivedAt)),
+    classOf: () => rampClass,
+    rampClass,
+    tier: context.tier,
+  });
+  return { laterBlockPctPerWeek: rate };
+}
+
+/** Every live dated block's first and last day, oldest first. */
+async function datedBlockRanges(
+  state: GoalDerivationState,
+  today: string,
+): Promise<{ start: string; end: string }[]> {
+  const ranges: { start: string; end: string }[] = [];
+  for (const live of await state.store.listLiveBlockSchedules()) {
+    const calendar = blockCalendar(live, [], today);
+    if (calendar.startsOn === null || calendar.endsOn === null) continue;
+    ranges.push({ start: calendar.startsOn, end: calendar.endsOn });
+  }
+  return ranges.sort((a, b) => a.start.localeCompare(b.start));
 }
 
 /**
@@ -366,8 +461,8 @@ async function deriveE1rmContext(
  * The lifter's own fitted trend, as a percent of the start value per week.
  *
  * The fit is `history.trend`'s, not a second one: re-fitting to get a standard
- * error would let two slopes over one series disagree (see
- * `analytics/goal-history.ts`). A lift with no fittable history simply has no
+ * error would let two slopes over one series disagree, so WA's
+ * `slopeStandardError` derives it from that fit's own figures. A lift with no fittable history simply has no
  * own slope, which the band's own gate then reports as a downgrade.
  */
 async function readOwnSlope(
@@ -467,6 +562,15 @@ export async function deriveTargetInFrame(
     frame.exerciseId !== undefined && SLOPED_METRICS.includes(frame.metric)
       ? await readOwnSlope(state, frame.exerciseId, frame.startValue)
       : {};
+  const laterRate =
+    frame.exerciseId === undefined
+      ? {}
+      : await readLaterBlockRate(
+          state,
+          context,
+          selection,
+          await liftSets(state, frame.exerciseId),
+        );
   return bandFor(context, selection, {
     startValue: frame.startValue,
     startMeasuredAt: frame.startMeasuredAt,
@@ -474,7 +578,14 @@ export async function deriveTargetInFrame(
     baselineState: today.baselineState,
     ...(anchorReps === null ? {} : { anchorReps }),
     ...slope,
+    ...laterRate,
   });
+}
+
+async function liftSets(state: GoalDerivationState, exerciseId: string): Promise<RepCountedSet[]> {
+  return repCountedSets(
+    await state.store.getSetsForExercise({ userId: LOCAL_USER_ID, exerciseId }),
+  );
 }
 
 /**
@@ -514,6 +625,9 @@ function bandFor(
     baselineState: measurement.baselineState,
     completedMesoCount: context.completedMesoCount,
     ...(measurement.ownSlope !== undefined ? { ownSlope: measurement.ownSlope } : {}),
+    ...(measurement.laterBlockPctPerWeek !== undefined
+      ? { laterBlockPctPerWeek: measurement.laterBlockPctPerWeek }
+      : {}),
   });
   return {
     metric: selection.metric,
