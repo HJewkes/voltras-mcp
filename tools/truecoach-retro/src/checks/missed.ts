@@ -75,7 +75,7 @@ function caveats(ctx: Context): string {
   return (
     `${byConstruction} judged blocks took reps from the prescription (a bare load under a one-rep-count line), so their rep check cannot fail. ` +
     `${lowConfidence} judged blocks hold a row under ${LOW_CONFIDENCE} confidence (included). ` +
-    `${undivided} have no warm-up divider; there a row under 90% of the prescribed load is read as a warm-up.`
+    `${undivided} have no warm-up divider; there a row under ${Math.round(ctx.warmupShare * 100)}% of the prescribed load is read as a warm-up.`
   );
 }
 

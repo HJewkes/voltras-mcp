@@ -5,8 +5,11 @@ extraction and a hand-built exercise map, runs six checks, and writes one markdo
 Nothing here touches the store or a device.
 
 ```bash
-npm run retro:truecoach -- <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD] [--boundary-decisions <boundary-decisions.json>]
+npm run retro:truecoach -- <records.jsonl> <checkins.jsonl> <exercise-map.json> --out <report.md> [--json <data.json>] [--programme-split YYYY-MM-DD] [--boundary-decisions <boundary-decisions.json>] [--warmup-share <percent>]
 ```
+
+`--warmup-share` sets the share of the prescribed load under which a row in a block with no warm-up divider reads
+as a warm-up (missed-target verdicts only); it defaults to 90.
 
 `--boundary-decisions` reads the human's marks from the walkthrough page (`{week, choice, note}[]`,
 choice `planned_deload`, `life_gap`, `unplanned_drop`, `not_a_boundary` or `null`; any other value
