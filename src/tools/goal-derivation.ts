@@ -13,10 +13,12 @@
 // which already carries its own target, so banding the rollup would commit the
 // lifter twice to the same work.
 
+import { slopeStandardError } from '@voltras/workout-analytics';
+
 import { bucketStartIso } from '../analytics/goal-block-weeks.js';
 import { deriveGoalBand, type GoalBand, type GoalBandInput } from '../analytics/goal-band.js';
 import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-band.js';
-import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
+import { topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
 import {
@@ -425,8 +427,8 @@ async function deriveE1rmContext(
  * The lifter's own fitted trend, as a percent of the start value per week.
  *
  * The fit is `history.trend`'s, not a second one: re-fitting to get a standard
- * error would let two slopes over one series disagree (see
- * `analytics/goal-history.ts`). A lift with no fittable history simply has no
+ * error would let two slopes over one series disagree, so WA's
+ * `slopeStandardError` derives it from that fit's own figures. A lift with no fittable history simply has no
  * own slope, which the band's own gate then reports as a downgrade.
  */
 async function readOwnSlope(
