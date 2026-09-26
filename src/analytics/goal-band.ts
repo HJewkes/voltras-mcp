@@ -757,9 +757,9 @@ function laterBlockNote(
   measured: GoalLaterBlockRate | undefined,
 ): string {
   const source =
-    measured === undefined
-      ? `half the class step (ENGINEERING DEFAULT)`
-      : `the ${measured.source} start-to-start class slope of ${round(measured.value)}%/wk ` +
+    measured === undefined || measured.source === 'ENGINEERING DEFAULT'
+      ? 'half the class step (ENGINEERING DEFAULT)'
+      : `the MEASURED start-to-start class slope of ${round(measured.value)}%/wk ` +
         `over ${measured.n} sessions${measured.value > capPct ? ', capped at half the class step' : ''}`;
   return (
     `Two slopes (VW-510): the class step holds for the block the horizon starts in, and later ` +
