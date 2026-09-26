@@ -1022,11 +1022,17 @@ export interface SuggestionTier {
 }
 
 /**
- * Peak-to-last concentric velocity loss (%) for one set, using the same
- * peak-baseline definition as the `velocity_loss_exceeded` channel event
- * (baseline = highest peak concentric velocity in the set, which sidesteps the
- * rep-1 setup-pause artifact). Returns 0 when the set is too short or carries no
- * velocity telemetry to judge — i.e. "no fatigue signal", never a false override.
+ * Peak-to-last concentric velocity loss (%) for one set (baseline = highest
+ * peak concentric velocity in the set, which sidesteps the rep-1 setup-pause
+ * artifact).
+ *
+ * ON PEAKS, WHERE THE STOP GATE IS NOW ON MEANS (VW-484). The two answer
+ * different questions — when to stop a live set, and whether to add load next
+ * time — and moving this one changes load suggestions, so it moves under its
+ * own task with its own evidence. Until then this figure is not the gate's.
+ *
+ * Returns 0 when the set is too short or carries no velocity telemetry to
+ * judge — i.e. "no fatigue signal", never a false override.
  *
  * Deliberately NOT routed through `normaliseVelocityToMps` (VW-160): both terms
  * come from the same set, so the ratio is scale-invariant and a device-native

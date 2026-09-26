@@ -9,7 +9,12 @@ import type { Rep } from '@voltras/workout-analytics';
 
 import { velocityLossIsValidFor } from '../exercises/movement-class.js';
 
-import { buildVelocityLossWatchSuppressedPayload } from './channel-payloads.js';
+import { getPhaseMeanVelocity } from '@voltras/workout-analytics';
+
+import {
+  buildVelocityLossWatchSuppressedPayload,
+  velocityLossBaseline,
+} from './channel-payloads.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import type { ActiveSet, DeviceSnapshot } from './live-state.js';
 import {
@@ -82,5 +87,52 @@ export function velocityLossWindow(
   return {
     reps: reps.slice(leadInReps),
     exclusion: { leadInReps, reason: 'eccentric_overload' },
+  };
+}
+
+/**
+ * One rep's velocity-loss reading: what the gate compares against a threshold.
+ *
+ * MEAN concentric velocity throughout (VW-484). The thresholds come from
+ * studies that measure mean or mean-propulsive velocity, and the wall, the
+ * analytics library and the fitted RIR curve all read the mean, so a gate on
+ * peaks was measuring one thing and comparing it against another.
+ *
+ * `lossPct` is null when there is nothing to compare: no baseline yet (an
+ * empty window under an eccentric-overload lead-in), or a rep at or above the
+ * baseline, which is a new fastest rep rather than a loss. Null never fires.
+ */
+export interface VelocityLossReading {
+  /** Highest mean concentric velocity over the eligible reps of the window, m/s. */
+  baseline: number;
+  /** The finalized rep's mean concentric velocity, m/s. */
+  current: number;
+  lossPct: number | null;
+  /** The set's own rep number for the rep the baseline came from. */
+  baselineRepNumber: number;
+  exclusion: VelocityLossExclusion;
+}
+
+/**
+ * Read the loss at the just-finalized rep, over the reps finalized so far.
+ *
+ * `finalizedReps` INCLUDES the just-finalized rep, so a new fastest rep folds
+ * itself into its own baseline and reads no loss.
+ */
+export function velocityLossReading(
+  finalizedReps: readonly Rep[],
+  finalizedRep: Rep,
+  device: DeviceSnapshot,
+): VelocityLossReading {
+  const window = velocityLossWindow(finalizedReps, device);
+  const { velocity: baseline, repNumber } = velocityLossBaseline(window.reps);
+  const current = getPhaseMeanVelocity(finalizedRep.concentric);
+  const comparable = baseline > 0 && current < baseline;
+  return {
+    baseline,
+    current,
+    lossPct: comparable ? (100 * (baseline - current)) / baseline : null,
+    baselineRepNumber: repNumber,
+    exclusion: window.exclusion,
   };
 }
