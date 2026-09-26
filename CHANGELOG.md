@@ -63,7 +63,7 @@ entry is written from the user's point of view is a review question, not a check
 ### Changed
 
 - The TrueCoach retro map now gives each exercise a weight table: every muscle it trains gets a
-  weight of 1, 0.5 or 0 and a target flag (VW-561). Weekly sets, frequency, the
+  weight of 1, 0.5 or 0 and a target flag (VW-561, #513). Weekly sets, frequency, the
   MEV/MAV/MRV bands and the missed-session runs count target muscles only, as before. A new
   "dose" column beside them adds the weights (half a set for a secondary muscle) for
   comparison and is never read against a landmark. A day now counts toward a muscle's
