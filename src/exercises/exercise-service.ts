@@ -112,10 +112,10 @@ export class ExerciseService {
   }
 
   /**
-   * The whole catalog, as loaded at boot (`setCatalog(SEED_CABLE_EXERCISES)`).
-   * Added for the dashboard's plan-builder catalog browser (VW-120), which needs
-   * a "show me everything" view that `search` — requiring a query — can't answer.
-   * Verbatim and unordered, exactly as the catalog holds it.
+   * Every cable-equivalent entry of the catalog loaded at boot; the history lifts
+   * are left out, as in `search`. Added for the dashboard's plan-builder catalog
+   * browser (VW-120), which needs a "show me everything" view that `search`
+   * — requiring a query — can't answer. Unordered, as the catalog holds it.
    */
   list(): Exercise[] {
     return liveEntries(catalog.getAllExercises());
@@ -123,7 +123,8 @@ export class ExerciseService {
 
   /**
    * Catalog entries whose PRIMARY muscle groups include `muscleGroup`. Delegates
-   * to the upstream filter; the package owns what counts as a match.
+   * to the upstream filter; the package owns what counts as a match. Entries that
+   * are not cable-equivalent (the history lifts) are left out.
    */
   byMuscleGroup(muscleGroup: string): Exercise[] {
     return liveEntries(catalog.getExercisesByMuscleGroup(muscleGroup));

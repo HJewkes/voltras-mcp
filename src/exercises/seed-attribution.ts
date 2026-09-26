@@ -136,7 +136,7 @@ export const HISTORY_ATTRIBUTION: Readonly<Record<string, readonly Row[]>> = {
   'dumbbell-overhead-triceps-extension': [target('triceps')],
   'dumbbell-triceps-kickback': [target('triceps')],
   'dumbbell-lateral-raise': [target('side_delts')],
-  'dumbbell-rear-delt-fly': REAR_DELT,
+  'machine-rear-delt-fly': REAR_DELT,
   'dumbbell-bent-over-upright-row': [target('side_delts'), half('upper_back')],
   'machine-overhead-press': OVERHEAD_PRESS,
   'machine-smith-incline-bench-press': PRESS,

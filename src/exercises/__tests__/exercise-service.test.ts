@@ -12,10 +12,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const searchExercisesSpy = vi.fn();
 const getExerciseByIdSpy = vi.fn();
+const getAllExercisesSpy = vi.fn();
+const getExercisesByMuscleGroupSpy = vi.fn();
 
 vi.mock('@voltras/workout-analytics', () => ({
   searchExercises: searchExercisesSpy,
   getExerciseById: getExerciseByIdSpy,
+  getAllExercises: getAllExercisesSpy,
+  getExercisesByMuscleGroup: getExercisesByMuscleGroupSpy,
 }));
 
 // Import after vi.mock so the mock is applied.
@@ -66,6 +70,8 @@ describe('ExerciseService', () => {
   beforeEach(() => {
     searchExercisesSpy.mockReset();
     getExerciseByIdSpy.mockReset();
+    getAllExercisesSpy.mockReset();
+    getExercisesByMuscleGroupSpy.mockReset();
   });
 
   describe('search', () => {
@@ -109,6 +115,21 @@ describe('ExerciseService', () => {
       searchExercisesSpy.mockReturnValue([barbellSquat, benchPress]);
 
       expect(new ExerciseService().search('squat')).toEqual([benchPress]);
+    });
+
+    it('leaves a non-cable entry out of list', () => {
+      getAllExercisesSpy.mockReturnValue([barbellSquat, benchPress, inclineBench]);
+
+      expect(new ExerciseService().list()).toEqual([benchPress, inclineBench]);
+    });
+
+    it('leaves a non-cable entry out of byMuscleGroup', () => {
+      getExercisesByMuscleGroupSpy.mockReturnValue([barbellSquat, benchPress]);
+
+      const result = new ExerciseService().byMuscleGroup('chest');
+
+      expect(getExercisesByMuscleGroupSpy).toHaveBeenCalledWith('chest');
+      expect(result).toEqual([benchPress]);
     });
 
     it('still resolves a non-cable entry by id', () => {
