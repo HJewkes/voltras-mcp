@@ -59,8 +59,21 @@ entry is written from the user's point of view is a review question, not a check
   `primary_muscle` takes one muscle or a list, and every muscle in the list counts a set in
   full toward weekly sets and frequency, so a deadlift can count toward hamstrings and glutes
   together. Secondary muscles still never count.
+- `plan.block.planning_brief` now carries `advisories` (VW-558): a declared main lift going into
+  the sitting on an open flatline gets a staleness note citing the swap-at-meso-end rule, and a
+  finishing block with no deload week, or more than five accumulation weeks before one, gets a
+  deload-cadence note with the program's own planned-deload count. Advisory only.
 
 ### Changed
+
+- A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
+  horizon now continues past the named block through the program's later dated blocks, and
+  undated weeks are split into 5-week blocks (a placeholder until the owner picks the length).
+  The first block keeps the class step; every later block ramps at the lifter's measured
+  block-to-block rate when 8 sessions across 2 blocks back it, never above half the class step,
+  and at half the class step otherwise. A 12-week goal for a 100 lb beginner chest press now
+  ends at 122.5 lb, not 133. Accepted targets keep their stored numbers; the band drawn beside
+  them is re-derived.
 
 - The TrueCoach retro map now gives each exercise a weight table: every muscle it trains gets a
   weight of 1, 0.5 or 0 and a target flag (VW-561, #513). Weekly sets, frequency, the
