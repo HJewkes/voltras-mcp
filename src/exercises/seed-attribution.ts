@@ -7,6 +7,8 @@
 // it (pinned by `seed-attribution.test.ts`). Groups follow §2 of the workspace
 // report `2026-09-24-muscle-attribution-compound-movements.md`.
 //
+// The history lifts' rows sit in `HISTORY_ATTRIBUTION` below.
+//
 // Any change here bumps `MUSCLE_MAP_VERSION` (A6, R17).
 
 import {
@@ -80,8 +82,82 @@ export const SEED_ATTRIBUTION: Readonly<Record<string, readonly Row[]>> = {
   'cable-side-bend': [target('obliques')],
 };
 
+const CLOSE_GRIP_PRESS: Row[] = [
+  target('chest'),
+  { muscle: 'triceps', weight: 1, target: false },
+  half('front_delts'),
+];
+const SQUAT: Row[] = [target('quads'), half('glutes'), none('hamstrings')];
+const HINGE_BACK_HALF: Row[] = [half('lats'), half('upper_back')];
+const HINGE_BACK_NONE: Row[] = [none('lats'), none('upper_back')];
+const PULLDOWN: Row[] = [target('lats'), half('biceps'), half('upper_back')];
+const CALF: Row[] = [target('calves')];
+
+/**
+ * The history catalog's rows (VW-558), copied from the owner-ruled `muscles` arrays
+ * of the retro exercise map. Each barbell, dumbbell and machine lift has its own
+ * id, so none shares a row with a cable lift.
+ */
+export const HISTORY_ATTRIBUTION: Readonly<Record<string, readonly Row[]>> = {
+  'barbell-overhead-press': OVERHEAD_PRESS,
+  'barbell-bench-press': PRESS,
+  'barbell-close-grip-bench-press': CLOSE_GRIP_PRESS,
+  'barbell-pin-bench-press': PRESS,
+  'barbell-row': ROW,
+  'barbell-back-squat': SQUAT,
+  'barbell-box-squat': SQUAT,
+  'barbell-front-squat': SQUAT,
+  'barbell-deadlift': [target('hamstrings'), half('glutes'), ...HINGE_BACK_HALF, half('quads')],
+  'barbell-stiff-legged-deadlift': [target('hamstrings'), half('glutes'), ...HINGE_BACK_NONE],
+  'barbell-romanian-deadlift': [target('hamstrings'), half('glutes'), ...HINGE_BACK_NONE],
+  'barbell-sumo-deadlift': [
+    target('glutes'),
+    half('hamstrings'),
+    half('quads'),
+    ...HINGE_BACK_HALF,
+  ],
+  'barbell-trap-bar-deadlift': [
+    target('hamstrings'),
+    half('quads'),
+    half('glutes'),
+    ...HINGE_BACK_HALF,
+  ],
+  'barbell-rack-pull': [target('hamstrings'), half('glutes'), ...HINGE_BACK_HALF],
+  'barbell-hip-thrust': [target('glutes'), none('hamstrings')],
+  'barbell-curl': CURL_WITH_FOREARMS,
+  'barbell-overhead-triceps-extension': [target('triceps')],
+  'barbell-lying-triceps-extension': [target('triceps')],
+  'dumbbell-shoulder-press': OVERHEAD_PRESS,
+  'dumbbell-curl': CURL_WITH_FOREARMS,
+  'dumbbell-incline-curl': CURL_WITH_FOREARMS,
+  'dumbbell-incline-fly': FLY,
+  'dumbbell-one-arm-row': ROW,
+  'dumbbell-lying-triceps-extension': [target('triceps')],
+  'dumbbell-overhead-triceps-extension': [target('triceps')],
+  'dumbbell-triceps-kickback': [target('triceps')],
+  'dumbbell-lateral-raise': [target('side_delts')],
+  'machine-rear-delt-fly': REAR_DELT,
+  'dumbbell-bent-over-upright-row': [target('side_delts'), half('upper_back')],
+  'machine-overhead-press': OVERHEAD_PRESS,
+  'machine-smith-incline-bench-press': PRESS,
+  'machine-chest-fly': FLY,
+  'machine-lat-pulldown': PULLDOWN,
+  'machine-v-grip-lat-pulldown': PULLDOWN,
+  'machine-flexion-row': ROW,
+  'machine-leg-press': SQUAT,
+  'machine-pendulum-squat': SQUAT,
+  'machine-knee-extension': [target('quads')],
+  'machine-lying-leg-curl': [target('hamstrings')],
+  'machine-standing-calf-raise': CALF,
+  'machine-seated-calf-raise': CALF,
+  'machine-donkey-calf-raise': CALF,
+  'machine-leg-press-calf-raise': CALF,
+};
+
 const RESOLVED_SEED = new Map(
-  Object.entries(SEED_ATTRIBUTION).map(([id, rows]) => [id, resolveAttribution(rows)]),
+  [...Object.entries(SEED_ATTRIBUTION), ...Object.entries(HISTORY_ATTRIBUTION)].map(
+    ([id, rows]) => [id, resolveAttribution(rows)],
+  ),
 );
 
 /** The catalog fields an exercise's attribution falls back on. */
