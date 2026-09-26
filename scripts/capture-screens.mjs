@@ -407,7 +407,8 @@ function pngDimensions(file) {
   } finally {
     fs.closeSync(fd);
   }
-  if (header.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+  const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (!header.subarray(0, 8).equals(pngSignature)) {
     throw new Error(`${file} is not a PNG`);
   }
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };

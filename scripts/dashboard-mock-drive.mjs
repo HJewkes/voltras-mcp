@@ -18,7 +18,7 @@
 // real reconciliation pipeline VMCP-03.04 shipped — validated here without
 // hardware.
 //
-// The mock never emits an `aa 85 5f` set-summary frame, so a set NEVER
+// The mock never emits a device-originated set-summary frame, so a set NEVER
 // auto-closes: `set.end` MUST be called explicitly (it is, below). Reps accrue
 // continuously into whatever MCP set is open, at the mock's default cadence
 // (~5 reps/cycle, 100 lb, WeightTraining) — the adapter config is not reachable
