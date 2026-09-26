@@ -1,45 +1,64 @@
-// Exercise-name lookups over the hand-built map: primary muscle as titan groups, main-lift family.
+// Exercise-name lookups over the hand-built map: attribution rows as titan groups, main-lift family.
 
 import {
-  TITAN_MUSCLE_GROUPS,
-  mapCatalogMuscle,
-  type TitanMuscleGroup,
-} from '../../../src/exercises/muscle-map.js';
+  attributionFromPrimaries,
+  doseWeights,
+  resolveAttribution,
+  targetMuscles,
+  type AttributionRow,
+  type SlugAttribution,
+} from '../../../src/exercises/muscle-attribution.js';
+import type { TitanMuscleGroup } from '../../../src/exercises/muscle-map.js';
 
 import type { ExerciseMapEntry } from './types.js';
 
 export interface ExerciseLookup {
-  primaryMuscles(name: string | null): TitanMuscleGroup[];
+  /** The landmark read's muscles (B47): target rows only. */
+  targets(name: string | null): TitanMuscleGroup[];
+  /** The dose read's weights: every row above 0. */
+  doseWeights(name: string | null): Map<TitanMuscleGroup, number>;
+  /** The entry's resolved rows, for a per-day frequency credit. */
+  attribution(name: string | null): SlugAttribution[];
+  /** A map entry marked as a warm-up: its rows count toward neither read (R8b). */
+  isWarmup(name: string | null): boolean;
   family(name: string | null): string | null;
   isMainLift(name: string | null): boolean;
-  /** Whether two muscles share a primary/secondary pairing in any mapped exercise. */
+  /** Whether two muscles share a target/weighted pairing in any mapped exercise (R19). */
   related(a: TitanMuscleGroup, b: TitanMuscleGroup): boolean;
-  /** A name with a primary muscle; a map row that names no movement is unmapped. */
+  /** A name with a target muscle; a map row that names no movement is unmapped. */
   isMapped(name: string | null): boolean;
 }
 
-/** A titan slug passes through; a workout-analytics group goes through the shared catalog map. */
-export function toTitanMuscles(muscle: string | null): TitanMuscleGroup[] {
-  if (muscle === null || muscle === '') return [];
-  if ((TITAN_MUSCLE_GROUPS as readonly string[]).includes(muscle))
-    return [muscle as TitanMuscleGroup];
-  return mapCatalogMuscle(muscle);
+function listOf(value: string | string[] | null | undefined): string[] {
+  if (value === null || value === undefined) return [];
+  return (Array.isArray(value) ? value : [value]).filter((muscle) => muscle !== '');
 }
 
-/** The entry's primary muscles as titan groups, whether the map names one or several. */
-export function primaryTitanMuscles(entry: ExerciseMapEntry | undefined): TitanMuscleGroup[] {
-  const primary = entry?.primary_muscle ?? null;
-  const named = Array.isArray(primary) ? primary : [primary];
-  return [...new Set(named.flatMap(toTitanMuscles))];
+/** The entry's rows: `muscles` when present, else derived from the pre-VW-561 primary/secondary fields. */
+export function entryRows(entry: ExerciseMapEntry): AttributionRow[] {
+  if (entry.muscles !== undefined) return entry.muscles;
+  return attributionFromPrimaries(listOf(entry.primary_muscle), listOf(entry.secondary_muscles));
 }
 
-function relatedPairs(entries: readonly ExerciseMapEntry[]): Set<string> {
+/** The entry's rows on titan slugs; a row that breaks R1 or R2 names the entry in the error. */
+export function resolvedRows(entry: ExerciseMapEntry | undefined): SlugAttribution[] {
+  if (entry === undefined) return [];
+  try {
+    return resolveAttribution(entryRows(entry));
+  } catch (error) {
+    throw new Error(`exercise map entry "${entry.log_name}": ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
+}
+
+function relatedPairs(resolved: readonly SlugAttribution[][]): Set<string> {
   const pairs = new Set<string>();
-  for (const entry of entries) {
-    const primaries = primaryTitanMuscles(entry);
-    const secondaries = (entry.secondary_muscles ?? []).flatMap(toTitanMuscles);
-    const all = [...primaries, ...secondaries];
-    for (const a of primaries) for (const b of all) pairs.add(`${a}|${b}`).add(`${b}|${a}`);
+  for (const rows of resolved) {
+    const weighted = rows.filter((row) => row.weight > 0).map((row) => row.muscle);
+    for (const a of targetMuscles(rows)) {
+      for (const b of weighted) pairs.add(`${a}|${b}`).add(`${b}|${a}`);
+    }
   }
   return pairs;
 }
@@ -47,14 +66,19 @@ function relatedPairs(entries: readonly ExerciseMapEntry[]): Set<string> {
 /** Exact-name lookup; an unmapped name has no muscle and no family. */
 export function buildExerciseLookup(entries: readonly ExerciseMapEntry[]): ExerciseLookup {
   const byName = new Map(entries.map((entry) => [entry.log_name, entry]));
-  const pairs = relatedPairs(entries);
+  const rowsByName = new Map(entries.map((entry) => [entry.log_name, resolvedRows(entry)]));
+  const pairs = relatedPairs([...rowsByName.values()]);
   const entryOf = (name: string | null) => (name === null ? undefined : byName.get(name));
+  const rowsOf = (name: string | null) => (name === null ? [] : (rowsByName.get(name) ?? []));
   return {
-    primaryMuscles: (name) => primaryTitanMuscles(entryOf(name)),
+    targets: (name) => targetMuscles(rowsOf(name)),
+    doseWeights: (name) => doseWeights(rowsOf(name)),
+    attribution: rowsOf,
+    isWarmup: (name) => entryOf(name)?.warmup === true,
     family: (name) => entryOf(name)?.family ?? null,
     isMainLift: (name) => entryOf(name)?.main_lift === true,
     related: (a, b) => a === b || pairs.has(`${a}|${b}`),
-    isMapped: (name) => primaryTitanMuscles(entryOf(name)).length > 0,
+    isMapped: (name) => targetMuscles(rowsOf(name)).length > 0,
   };
 }
 

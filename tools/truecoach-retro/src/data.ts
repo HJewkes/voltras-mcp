@@ -25,6 +25,8 @@ import {
   modalWeeklyCount,
   sessionsPerWeek,
   volumeStatus,
+  weeklyDoseByMuscle,
+  weeklyDoseFrequencyByMuscle,
   weeklyFrequencyByMuscle,
   weeklySetsByMuscle,
 } from './weekly.js';
@@ -174,8 +176,26 @@ function misses(ctx: Context) {
   };
 }
 
+/** One week's muscles in either read: landmark `sets` with its band (null for none or unverified), and the unbanded `dose`. */
+function weekMuscles(
+  sets: ReadonlyMap<TitanMuscleGroup, number>,
+  dose: ReadonlyMap<TitanMuscleGroup, number>,
+) {
+  const muscles = [...new Set([...sets.keys(), ...dose.keys()])];
+  return muscles.map((muscle) => {
+    const landmarkSets = sets.get(muscle) ?? 0;
+    return {
+      muscle,
+      sets: landmarkSets,
+      band: landmarkSets > 0 ? volumeStatus(muscle, landmarkSets) : null,
+      dose: dose.get(muscle) ?? 0,
+    };
+  });
+}
+
 function volume(ctx: Context) {
   const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
+  const dose = weeklyDoseByMuscle(ctx.rows, ctx.lookup);
   return {
     landmarks: POPULATION_VOLUME_LANDMARKS,
     landmarkBasis: 'population-default',
@@ -183,11 +203,7 @@ function volume(ctx: Context) {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([week, muscles]) => ({
         week,
-        muscles: [...muscles].map(([muscle, sets]) => ({
-          muscle,
-          sets,
-          band: volumeStatus(muscle, sets),
-        })),
+        muscles: weekMuscles(muscles, dose.get(week) ?? new Map()),
       })),
     systemicWeeks: [...systemicWeeks(ctx)].map(([week, muscles]) => ({ week, muscles })),
   };
@@ -217,15 +233,17 @@ function mesos(ctx: Context) {
 function adherence(ctx: Context) {
   const perWeek = sessionsPerWeek(ctx.days);
   const frequency = weeklyFrequencyByMuscle(ctx.rows, ctx.lookup);
-  const muscleDays = (week: string) =>
-    Object.fromEntries(frequency.get(week) ?? new Map<TitanMuscleGroup, number>());
+  const doseFrequency = weeklyDoseFrequencyByMuscle(ctx.rows, ctx.lookup);
+  const muscleDays = (read: typeof frequency, week: string) =>
+    Object.fromEntries(read.get(week) ?? new Map<TitanMuscleGroup, number>());
   return {
     trainingDays: ctx.days,
     modalSessionsPerWeek: modalWeeklyCount(perWeek.values()),
     weeks: [...perWeek].map(([week, sessions]) => ({
       week,
       sessions,
-      muscleSessions: muscleDays(week),
+      muscleSessions: muscleDays(frequency, week),
+      muscleDoseSessions: muscleDays(doseFrequency, week),
     })),
     gaps: trainingGaps(ctx.days)
       .filter((g) => g.days > MESO_RULE.gapDays)

@@ -14,10 +14,16 @@ fails the run). Without it every gap over 10 days ends a run of regular weeks, a
 `not_a_boundary` removes a boundary from the mesos; `unplanned_drop` is a real boundary that is
 neither a deload nor a gap, so it bridges nothing.
 
-A map entry's `primary_muscle` is one muscle or a list of them (VW-560). Every primary counts a
-set in full toward weekly sets and frequency; `secondary_muscles` only feed `related()`, the pairing
-the systemic-week rule reads, and never add sets (B47, target-only). The workspace
-`exercise-map-review.md` records which entries take two primaries and why.
+A map entry's `muscles` is its attribution table (VW-561): rows of `{ muscle, weight, target }`, weight
+1, 0.5 or 0, a target always at 1. `muscle` is a titan slug (`front_delts`) or a catalog string that
+fans out (`back` to lats and upper back). The report reads the table two ways. The **landmark read**
+counts a set 1 toward each target muscle and nothing else (B47); every MEV/MAV/MRV band, frequency
+count, missed-session run and systemic week reads it. The **dose read** adds each row's weight
+(Pelland et al. 2025) and appears only in columns labelled "dose", never against a landmark. Glutes,
+lats and upper back carry no band until RP's glute and back landmarks are verified. An entry with `warmup: true` counts in
+neither read. An entry without `muscles` is read the pre-VW-561 way: each `primary_muscle` a 1.0
+target, each `secondary_muscles` entry 0.5. The rules are in the workspace design note
+`2026-09-24-vw-561-attribution-amendment.md`.
 
 `--json` also writes every number the report computed, unrounded, for the visual walkthrough.
 Its keys are listed in `RETRO_DATA_KEYS` (`src/data.ts`); `retro-data.schema.md` beside the
@@ -46,6 +52,7 @@ Unlike `tools/truecoach-submit`, this directory is inside the package's gates: `
 | A prescription is fixed sets x reps with an optional load; lines add up per block                                                                     | `prescription.ts`     |
 | A block misses when it reports fewer sets than prescribed or a set under the rep floor                                                                | `missed-targets.ts`   |
 | Two consecutive missed sessions on one muscle is the MRV proxy                                                                                        | `underperformance.ts` |
+| A day counts toward a muscle's frequency only when one of its target exercises was trained; the dose column counts a secondary-only day 0.5            | `weekly.ts`           |
 | A 10% top-load drop on two main lifts in one week, or a 10-day gap, ends a meso                                                                       | `meso.ts`             |
 | A bodyweight phase ends at a slope sign change held 3 weeks or a 21-day check-in gap                                                                  | `bodyweight.ts`       |
 | The programme split is the first day of the first month written mostly load-first                                                                     | `periods.ts`          |
@@ -59,5 +66,6 @@ Unlike `tools/truecoach-submit`, this directory is inside the package's gates: `
 `slopeStandardError`), `analytics/target-verdict`, `analytics/training-days`
 (`trainingDaysOf`, `trainingGaps`), `analytics/bodyweight-trend` (the 0.25% edge),
 `analytics/cumulative-loss` (the diet-fatigue band), `dashboard/read-models/muscle-week`
-(`classifyWeeklyVolume`, `POPULATION_VOLUME_LANDMARKS`) and `exercises/muscle-map`. From
+(`classifyWeeklyVolume`, `POPULATION_VOLUME_LANDMARKS`, `LANDMARK_VERDICT_WITHHELD`),
+`exercises/muscle-attribution` and `exercises/muscle-map`. From
 workout-analytics: `analyzeTrend`, `detectPlateau`, `estimateE1RMFromReps`.
