@@ -33,6 +33,7 @@ import {
   type StoredGoalTarget,
   type StoredPriority,
   type StoredSet,
+  type StoredTrainingBlock,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { computeHistoryTrend } from './metrics-tools.js';
@@ -56,6 +57,7 @@ export interface GoalDerivationState {
     | 'getDietPhaseCovering'
     | 'getTrainingBlock'
     | 'getTrainingBlocksForProgram'
+    | 'getLiveBlockSchedule'
     | 'listBodyMetrics'
     | 'getSetsForExercise'
     | 'getBaseline'
@@ -79,6 +81,13 @@ const TRAINING_DAYS_PER_MESO = 12;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
+
+/**
+ * The block length an undated stretch of the horizon is split into, so a later week ramps at the
+ * later-block rate (VW-510). ENGINEERING DEFAULT, not an owner decision yet: the middle of RP's
+ * 4-to-6-week accumulation run; the PR puts the 4, 5 and 6 week sim numbers to the owner.
+ */
+export const UNDATED_MESO_WEEKS = 5;
 
 /** Everything a band needs that is the same for every metric of one priority. */
 export interface GoalDerivationContext {
@@ -146,30 +155,80 @@ export async function readDerivationContext(
 }
 
 /**
- * The horizon's weeks, with the deloads in them. A named block's own weeks are
- * authoritative; without one the horizon is a flat run of training weeks and
- * the note says the deloads in it are unknown rather than absent.
+ * The horizon's weeks, with the deloads and block ordinals in them. The named block's weeks come
+ * first, then the program's later dated blocks, then undated weeks split into
+ * {@link UNDATED_MESO_WEEKS}-week blocks whose deloads are unknown rather than absent.
  */
 async function readHorizonWeeks(
   state: GoalDerivationState,
   priority: StoredPriority,
   notes: string[],
 ): Promise<GoalBandWeek[]> {
-  const planned =
-    priority.blockId === undefined
-      ? []
-      : await state.store.getTrainingWeeksForBlock(priority.blockId);
-  if (planned.length > 0) {
-    return planned
-      .slice(0, priority.horizonWeeks)
-      .map((week, index) => ({ index: index + 1, isDeload: week.isDeload }));
-  }
   const length = priority.horizonWeeks > 0 ? priority.horizonWeeks : DEFAULT_HORIZON_WEEKS;
-  notes.push(
-    'No plan tree backs this horizon, so every week is banded as a training week. A deload flattens ' +
-      'the band across it, and one that is programmed later will not be reflected here (VW-326).',
+  const blocks = await plannedBlockWeeks(state, priority);
+  if (blocks.length === 0) {
+    notes.push(
+      'No plan tree backs this horizon, so every week is banded as a training week. A deload flattens ' +
+        'the band across it, and one that is programmed later will not be reflected here (VW-326).',
+    );
+  }
+  const weeks = blocks.flatMap((rows, blockOrdinal) =>
+    rows.map((isDeload) => ({ isDeload, blockOrdinal })),
   );
-  return Array.from({ length }, (_, index) => ({ index: index + 1, isDeload: false }));
+  const planned = Math.min(weeks.length, length);
+  if (planned < length) notes.push(undatedWeeksNote(planned, length));
+  for (let undated = 0; planned + undated < length; undated++) {
+    weeks.push({
+      isDeload: false,
+      blockOrdinal: blocks.length + Math.floor(undated / UNDATED_MESO_WEEKS),
+    });
+  }
+  return weeks.slice(0, length).map((week, index) => ({ index: index + 1, ...week }));
+}
+
+function undatedWeeksNote(planned: number, length: number): string {
+  const span = planned === 0 ? 'The horizon' : `Weeks ${planned + 1} to ${length}`;
+  return (
+    `${span} sit past any dated block, so they are split into ${UNDATED_MESO_WEEKS}-week blocks ` +
+    '(ENGINEERING DEFAULT) and every block after the first ramps at the later-block rate (VW-510).'
+  );
+}
+
+/**
+ * The deload flags of the priority's block and each later block of its program that has a
+ * date, in order. The walk stops at the first undated block: past it the calendar is unknown.
+ */
+async function plannedBlockWeeks(
+  state: GoalDerivationState,
+  priority: StoredPriority,
+): Promise<boolean[][]> {
+  if (priority.blockId === undefined) return [];
+  const named = await state.store.getTrainingWeeksForBlock(priority.blockId);
+  if (named.length === 0) return [];
+  const blocks = [named.map((week) => week.isDeload)];
+  for (const later of await laterBlocksOf(state, priority.blockId)) {
+    const live = await state.store.getLiveBlockSchedule(later.id);
+    if (live?.startsOn === undefined) break;
+    const rows = await state.store.getTrainingWeeksForBlock(later.id);
+    blocks.push(
+      rows.length > 0
+        ? rows.map((week) => week.isDeload)
+        : Array.from({ length: live.weeksCount }, () => false),
+    );
+  }
+  return blocks;
+}
+
+async function laterBlocksOf(
+  state: GoalDerivationState,
+  blockId: string,
+): Promise<StoredTrainingBlock[]> {
+  const block = await state.store.getTrainingBlock(blockId);
+  if (block === undefined) return [];
+  const siblings = await state.store.getTrainingBlocksForProgram(block.programId);
+  return siblings
+    .filter((sibling) => sibling.orderIndex > block.orderIndex)
+    .sort((a, b) => a.orderIndex - b.orderIndex);
 }
 
 /**
