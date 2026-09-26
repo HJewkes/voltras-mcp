@@ -63,6 +63,79 @@ export {
 export { buildHistoryView, type HistoryRows } from './history.js';
 
 export {
+  addDays,
+  daysBetween,
+  evidenceOf,
+  historyTrainingDays,
+  isoWeekStart,
+  type HistoryEvidence,
+  type HistoryEvidenceKind,
+  type HistorySetRow,
+} from './history-rows.js';
+
+export {
+  buildHistoryWeeksView,
+  LIVE_SEGMENT_RULE,
+  type HistorySource,
+  type HistoryWeekView,
+  type HistoryWeeksInput,
+  type HistoryWeeksView,
+} from './history-weeks.js';
+
+export {
+  blockLength,
+  blockSpans,
+  BOUNDARY_CHOICES,
+  bridgedGapWeeks,
+  buildHistoryBlocksView,
+  HISTORY_BLOCK_CONSTANTS,
+  progressionBlocks,
+  restartKind,
+  type BlockLength,
+  type BoundaryChoice,
+  type HistoryBlockSpan,
+  type HistoryBlockView,
+  type HistoryBlocksInput,
+  type HistoryBlocksView,
+  type HistoryBoundary,
+  type HistoryGapSpan,
+  type HistoryRestartRung,
+  type RestartKind,
+} from './history-blocks.js';
+
+export {
+  buildHistoryLiftsView,
+  HISTORY_LIFT_CONSTANTS,
+  plateauWindows,
+  trendRead,
+  type HistoryChapter,
+  type HistoryLiftChapterView,
+  type HistoryLiftPoint,
+  type HistoryLiftSlope,
+  type HistoryLiftsInput,
+  type HistoryLiftsView,
+  type HistoryPeriod,
+  type HistoryPlateauWindow,
+  type HistoryTrendRead,
+} from './history-lifts.js';
+
+export {
+  buildHistoryMuscleWeeksView,
+  HISTORY_MUSCLE_WEEK_CONSTANTS,
+  type HistoryMuscleWeek,
+  type HistoryMuscleWeekRow,
+  type HistoryMuscleWeeksInput,
+  type HistoryMuscleWeeksView,
+} from './history-muscle-weeks.js';
+
+export {
+  historyInputsFromRetroData,
+  type RetroData,
+  type RetroHistoryInputs,
+  type RetroLiftSeries,
+} from './history-fixtures.js';
+
+export {
   buildMuscleStrengthView,
   MUSCLE_STRENGTH_CONSTANTS,
   type MuscleStrengthAgreement,
@@ -71,6 +144,7 @@ export {
   type MuscleStrengthExerciseRow,
   type MuscleStrengthInput,
   type MuscleStrengthMuscle,
+  type MuscleStrengthRecency,
   type MuscleStrengthSetRow,
   type MuscleStrengthSide,
   type MuscleStrengthSideKey,
