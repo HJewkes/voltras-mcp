@@ -69,8 +69,7 @@ entry is written from the user's point of view is a review question, not a check
   comparison and is never read against a landmark. A day now counts toward a muscle's
   frequency only when one of its target exercises was trained that day. Glutes, lats and
   upper back show sets but no landmark verdict until RP's glute and back numbers are
-  verified. Map entries written the
-  old way still read as before.
+  verified. Map entries written the old way still read as before.
 
 ### Fixed
 

@@ -140,27 +140,37 @@ const HEADERS = [
 const NO_VERDICT = 'no verdict';
 const NOT_A_TARGET = 'not a target';
 
-/** Why a muscle has no band: an unverified landmark, or no target set in any week. */
-function bandlessReason(read: MuscleRead): string | null {
-  if (read.counts === null) return NO_VERDICT;
-  return read.trained === 0 ? NOT_A_TARGET : null;
+type Bands =
+  | { kind: 'none'; reason: string }
+  | { kind: 'counts'; counts: Record<VolumeStatus, number> };
+
+/** A muscle's band counts, or why it has none: an unverified landmark, or no target set in any week. */
+function bandsOf(read: MuscleRead): Bands {
+  if (read.counts === null) return { kind: 'none', reason: NO_VERDICT };
+  if (read.trained === 0) return { kind: 'none', reason: NOT_A_TARGET };
+  return { kind: 'counts', counts: read.counts };
 }
 
 function readRow(read: MuscleRead): (string | number)[] {
   const l = POPULATION_VOLUME_LANDMARKS[read.muscle];
-  const reason = bandlessReason(read);
-  const bands =
-    reason !== null || read.counts === null
-      ? Array<string>(4).fill(reason ?? NO_VERDICT)
-      : [read.counts.under, read.counts.maintenance, read.counts.productive, read.counts.over];
+  const bands = bandsOf(read);
+  const cells =
+    bands.kind === 'none'
+      ? Array<string>(4).fill(bands.reason)
+      : [bands.counts.under, bands.counts.maintenance, bands.counts.productive, bands.counts.over];
   return [
     read.muscle,
     read.counts === null ? 'unverified' : `${l.mev}/${l.mav}/${l.mrv}`,
     read.trained,
     num(read.median, 0),
-    ...bands,
+    ...cells,
     num(read.doseMedian, 1),
   ];
+}
+
+function belowMevCell(read: MuscleRead, weeks: number): string {
+  const bands = bandsOf(read);
+  return bands.kind === 'none' ? bands.reason : pct(bands.counts.under, weeks);
 }
 
 /** The figures check 3 compares between all weeks and regular weeks. */
@@ -169,7 +179,7 @@ export function volumeFigures(ctx: Context): Figure[] {
   const perMuscle = reads.map(
     (r): Figure => [
       `${r.muscle}: median sets/wk, weeks below MEV, median dose sets/wk`,
-      `${num(r.median, 0)}, ${bandlessReason(r) ?? pct(r.counts!.under, weeks.size)}, ${num(r.doseMedian, 1)}`,
+      `${num(r.median, 0)}, ${belowMevCell(r, weeks.size)}, ${num(r.doseMedian, 1)}`,
     ],
   );
   return [

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { AttributionRow } from '../../../../src/exercises/muscle-attribution.js';
 import { frequencyReads } from '../checks/adherence.js';
 import { muscleVerdicts } from '../checks/missed.js';
+import { volumeSection } from '../checks/volume.js';
 import { buildContext } from '../context.js';
 import { buildExerciseLookup } from '../exercise-map.js';
 import type { ExerciseMapEntry } from '../types.js';
@@ -180,5 +181,41 @@ describe('map validation (R1, R2)', () => {
   it('names the entry whose row breaks a rule', () => {
     const broken = entry('Odd Lift', [{ muscle: 'chest', weight: 0.5, target: true }]);
     expect(() => buildExerciseLookup([broken])).toThrow(/Odd Lift/);
+  });
+});
+
+describe('the volume table (R5, R8c)', () => {
+  const rows = [rowsOf('Bench', 3), rowsOf('Row', 2), rowsOf('Hip Thrust', 1)];
+  const map = [...MAP, entry('Row', [t('back'), w('biceps')])];
+  const section = volumeSection(buildContext(rows, [], map, null));
+  const cellsOf = (muscle: string) =>
+    section
+      .split('\n')
+      .find((line) => line.startsWith(`| ${muscle} |`))!
+      .split('|')
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+
+  it('renders glutes, lats and upper back as unverified with no verdict in every band column', () => {
+    for (const muscle of ['glutes', 'lats', 'upper_back']) {
+      const cells = cellsOf(muscle);
+      expect(cells[1], muscle).toBe('unverified');
+      expect(cells.slice(4, 8), muscle).toEqual(Array(4).fill('no verdict'));
+    }
+  });
+
+  it('keeps a dose-only muscle out of the band columns and shows its dose in the last one', () => {
+    expect(cellsOf('triceps')).toEqual([
+      'triceps',
+      '4/8/14',
+      '0',
+      '0',
+      ...Array<string>(4).fill('not a target'),
+      '1.5',
+    ]);
+  });
+
+  it('bands a target muscle on its landmark sets, never on its dose', () => {
+    expect(cellsOf('chest')).toEqual(['chest', '8/14/20', '1', '3', '1', '0', '0', '0', '3.0']);
   });
 });
