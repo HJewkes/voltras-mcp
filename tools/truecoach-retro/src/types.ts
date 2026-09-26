@@ -1,5 +1,7 @@
 // Row shapes of the truecoach-mbox extraction and the hand-built exercise map. Read-only inputs.
 
+import type { AttributionRow } from '../../../src/exercises/muscle-attribution.js';
+
 /** One reported set row of `records.jsonl`. */
 export interface SetRecord {
   message_id: string;
@@ -29,9 +31,14 @@ export interface CheckinRecord {
 /** One row of `exercise-map.json`, keyed by the name as the coach typed it. */
 export interface ExerciseMapEntry {
   log_name: string;
-  /** One muscle, or several each counted in full (a hinge names hamstrings and glutes). */
-  primary_muscle: string | string[] | null;
-  secondary_muscles: string[];
+  /** The attribution rows (VW-561); when absent they derive from the two fields below. */
+  muscles?: AttributionRow[];
+  /** Pre-VW-561: one muscle, or several, each read as a 1.0 target. */
+  primary_muscle?: string | string[] | null;
+  /** Pre-VW-561: each read as a 0.5 non-target row. */
+  secondary_muscles?: string[];
+  /** A warm-up entry: its rows count toward neither read. */
+  warmup?: boolean;
   /** Groups variants of one movement ('bench', 'squat'); swaps are read inside a family. */
   family: string | null;
   /** The exercise whose own series a main-lift check reads. */

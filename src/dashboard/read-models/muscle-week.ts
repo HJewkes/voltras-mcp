@@ -75,6 +75,12 @@ export const POPULATION_VOLUME_LANDMARKS: Readonly<Record<TitanMuscleGroup, Volu
   obliques: { mev: 0, mav: 6, mrv: 12 },
 };
 
+/**
+ * Muscles that show sets but no band: RP publishes their landmarks only as an
+ * image nobody has read yet, so no verdict is drawn from the defaults (VW-561 R8c).
+ */
+export const LANDMARK_VERDICT_WITHHELD: ReadonlySet<TitanMuscleGroup> = new Set(['glutes']);
+
 /** Weekly-volume status relative to the MEV/MAV/MRV landmarks (titan's `VolumeStatus`). */
 export type VolumeStatus = 'under' | 'maintenance' | 'productive' | 'over';
 

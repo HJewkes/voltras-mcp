@@ -60,6 +60,17 @@ entry is written from the user's point of view is a review question, not a check
   full toward weekly sets and frequency, so a deadlift can count toward hamstrings and glutes
   together. Secondary muscles still never count.
 
+### Changed
+
+- The TrueCoach retro map now gives each exercise a weight table: every muscle it trains gets a
+  weight of 1, 0.5 or 0 and a target flag (VW-561). Weekly sets, frequency, the
+  MEV/MAV/MRV bands and the missed-session runs count target muscles only, as before. A new
+  "dose" column beside them adds the weights (half a set for a secondary muscle) for
+  comparison and is never read against a landmark. A day now counts toward a muscle's
+  frequency only when one of its target exercises was trained that day. Glutes show sets
+  but no landmark verdict until RP's glute numbers are verified. Map entries written the
+  old way still read as before.
+
 ### Fixed
 
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations

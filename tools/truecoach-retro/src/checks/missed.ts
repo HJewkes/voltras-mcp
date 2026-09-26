@@ -35,9 +35,11 @@ function tallyBy(
 
 export function muscleVerdicts(ctx: Context): MuscleVerdict[] {
   return ctx.judged.flatMap(({ block, verdict }) =>
-    ctx.lookup
-      .primaryMuscles(block.exercise)
-      .map((muscle) => ({ muscle, date: block.date, verdict: verdict.verdict })),
+    ctx.lookup.isWarmup(block.exercise)
+      ? []
+      : ctx.lookup
+          .targets(block.exercise)
+          .map((muscle) => ({ muscle, date: block.date, verdict: verdict.verdict })),
   );
 }
 
