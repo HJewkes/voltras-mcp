@@ -15,6 +15,7 @@ import type { StoredTrainingBlock } from '../store/types.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
+import { readBriefAdvisories, type BriefAdvisory } from './plan-brief-advisories.js';
 import { calendarOf, placedBlocks, trainingDaysBetween } from './plan-schedule-tools.js';
 
 export interface PlanningBrief {
@@ -34,6 +35,8 @@ export interface PlanningBrief {
   unreviewedDays: number;
   /** Those days themselves, newest first, so a coach can name them. */
   unreviewedDayList: string[];
+  /** Staleness and deload-cadence notes for the sitting to weigh; never a block (VW-558). */
+  advisories: BriefAdvisory[];
 }
 
 interface FinishingBlock {
@@ -80,6 +83,7 @@ export async function buildPlanningBrief(
       finishingBlock === null ? null : await buildGoalRealignment(state, finishingBlock.id),
     dietPhase: await dietPhaseView(state),
     ...(await readUnreviewed(state.store)),
+    advisories: await readBriefAdvisories(state, finishingBlock),
   };
 }
 
