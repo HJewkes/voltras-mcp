@@ -4,7 +4,11 @@
 // Each gate stands for a configuration mistake that produces silence rather
 // than an error, so the assertions are about level (`fail` blocks the launch,
 // `warn` does not) and about the message naming the fix.
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   DASHBOARD_PORT,
@@ -12,13 +16,18 @@ import {
   exitCodeFor,
   isNodeTooOld,
   parseLsofListeners,
+  readSqliteUserVersion,
 } from '../../scripts/lib/preflight-gates.mjs';
+import { SCHEMA_VERSION } from '../store/sqlite-store.js';
 
 /** A snapshot where every gate passes; each test perturbs one field. */
 const HEALTHY = {
   whisperCliPresent: true,
   whisperModelPresent: true,
   nodeVersion: 'v22.5.0',
+  buildSchemaVersion: 41,
+  storeSchemaVersion: 41,
+  storePath: '/home/lifter/.voltras/vmcp.sqlite',
   env: { VMCP_CUES: 'on', VMCP_CUES_MIDSET: 'on' },
   portListeners: [],
   selfPid: 999,
@@ -58,6 +67,66 @@ describe('parseLsofListeners', () => {
 
   it('returns nothing for the empty output of a free port', () => {
     expect(parseLsofListeners('')).toEqual([]);
+  });
+});
+
+describe('readSqliteUserVersion', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'preflight-uv-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reads the version a store was stamped with', () => {
+    const path = join(dir, 'stamped.sqlite');
+    const db = new DatabaseSync(path);
+    db.exec('PRAGMA user_version = 37; CREATE TABLE t (x INTEGER)');
+    db.close();
+    expect(readSqliteUserVersion(path)).toBe(37);
+  });
+
+  it('returns null for a file that is absent', () => {
+    expect(readSqliteUserVersion(join(dir, 'absent.sqlite'))).toBeNull();
+  });
+
+  it('returns null for a file that is not a sqlite database', () => {
+    const path = join(dir, 'junk.sqlite');
+    writeFileSync(path, 'not a database, but longer than the header would need '.repeat(3));
+    expect(readSqliteUserVersion(path)).toBeNull();
+  });
+});
+
+describe('schema gate', () => {
+  it('exports a build version the gate can compare against', () => {
+    expect(Number.isInteger(SCHEMA_VERSION)).toBe(true);
+    expect(SCHEMA_VERSION).toBeGreaterThan(0);
+  });
+
+  it('passes when the store and the build are on the same version', () => {
+    expect(gate('schema').level).toBe('ok');
+  });
+
+  it('fails when the store is newer than the build, naming both versions', () => {
+    const found = gate('schema', { storeSchemaVersion: 42 });
+    expect(found.level).toBe('fail');
+    expect(found.message).toContain('42');
+    expect(found.message).toContain('41');
+    expect(exitCodeFor(evaluateGates({ ...HEALTHY, storeSchemaVersion: 42 }))).toBe(1);
+  });
+
+  it('warns, without blocking, when the build will migrate the store forward', () => {
+    const snapshot = { ...HEALTHY, storeSchemaVersion: 39 };
+    const found = evaluateGates(snapshot).find((g) => g.id === 'schema');
+    expect(found.level).toBe('warn');
+    expect(found.message).toContain('migrate');
+    expect(exitCodeFor(evaluateGates(snapshot))).toBe(0);
+  });
+
+  it('passes with a note when there is no store file yet', () => {
+    const found = gate('schema', { storeSchemaVersion: null });
+    expect(found.level).toBe('ok');
+    expect(found.message).toContain('/home/lifter/.voltras/vmcp.sqlite');
+  });
+
+  it('warns rather than passes when the build version cannot be read', () => {
+    expect(gate('schema', { buildSchemaVersion: null }).level).toBe('warn');
   });
 });
 

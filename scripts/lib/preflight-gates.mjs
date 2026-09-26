@@ -10,6 +10,8 @@
 // Split pure/impure on purpose: this module turns a snapshot of the world into
 // a list of findings, and the caller does the probing and the printing.
 
+import { closeSync, openSync, readSync } from 'node:fs';
+
 /** Dashboard sidecar default port (src/dashboard/server.ts DEFAULT_DASHBOARD_PORT). */
 export const DASHBOARD_PORT = 7723;
 
@@ -33,6 +35,67 @@ export function isNodeTooOld(version) {
   const [major, minor] = [Number(match[1]), Number(match[2])];
   if (major !== MIN_NODE.major) return major < MIN_NODE.major;
   return minor < MIN_NODE.minor;
+}
+
+const SQLITE_MAGIC = 'SQLite format 3\0';
+const USER_VERSION_OFFSET = 60;
+const SQLITE_HEADER_BYTES = 100;
+
+/**
+ * Read PRAGMA user_version straight from the file header, so the live store is
+ * never opened (opening runs migrations). Null when the file is absent or is
+ * not a sqlite database.
+ */
+export function readSqliteUserVersion(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const header = Buffer.alloc(SQLITE_HEADER_BYTES);
+    const read = readSync(fd, header, 0, SQLITE_HEADER_BYTES, 0);
+    if (read < SQLITE_HEADER_BYTES) return null;
+    if (header.toString('latin1', 0, SQLITE_MAGIC.length) !== SQLITE_MAGIC) return null;
+    return header.readUInt32BE(USER_VERSION_OFFSET);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function schemaGate({ buildSchemaVersion, storeSchemaVersion, storePath }) {
+  if (buildSchemaVersion === null || buildSchemaVersion === undefined) {
+    return {
+      id: 'schema',
+      level: 'warn',
+      message: 'Cannot read the build schema version (dist/ is missing); run `npm run build`.',
+    };
+  }
+  if (storeSchemaVersion === null || storeSchemaVersion === undefined) {
+    return {
+      id: 'schema',
+      level: 'ok',
+      message: `No store at ${storePath}; the build creates one at v${buildSchemaVersion}.`,
+    };
+  }
+  if (storeSchemaVersion > buildSchemaVersion) {
+    return {
+      id: 'schema',
+      level: 'fail',
+      message: `Store ${storePath} is at schema v${storeSchemaVersion}, newer than this build's v${buildSchemaVersion}. This build refuses to open it (the 2026-09-13 lost sitting). Rebuild from a newer checkout.`,
+    };
+  }
+  if (storeSchemaVersion < buildSchemaVersion) {
+    return {
+      id: 'schema',
+      level: 'warn',
+      message: `Store ${storePath} is at schema v${storeSchemaVersion}; this build will migrate it forward to v${buildSchemaVersion} on open. Back the file up first.`,
+    };
+  }
+  return {
+    id: 'schema',
+    level: 'ok',
+    message: `Store schema v${storeSchemaVersion} matches the build.`,
+  };
 }
 
 function whisperGate({ whisperCliPresent, whisperModelPresent }) {
@@ -119,10 +182,11 @@ export function evaluateGates(snapshot) {
     pushChannelGate(filled),
     cueGate(filled),
     dashboardPortGate(filled),
+    schemaGate(filled),
   ];
 }
 
-/** Only whisper and Node are hard blockers; everything else is advisory. */
+/** Only whisper, Node, and a store newer than the build are hard blockers; everything else is advisory. */
 export function exitCodeFor(gates) {
   return gates.some((gate) => gate.level === 'fail') ? 1 : 0;
 }

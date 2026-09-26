@@ -2,20 +2,23 @@
 // Loud bench pre-flight: one line per silent-failure gate, before the lifter
 // is under load. Called by scripts/voltra-pt; safe to run on its own.
 //
-// Exits 1 only for whisper-cli and Node — the two gates that make the session
-// worthless rather than merely degraded. Everything else prints WARN and the
-// launch continues.
+// Exits 1 only for whisper-cli, Node and a store newer than the build — the
+// gates that make the session worthless rather than merely degraded.
+// Everything else prints WARN and the launch continues.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   DASHBOARD_PORT,
   evaluateGates,
   exitCodeFor,
   parseLsofListeners,
+  readSqliteUserVersion,
 } from './lib/preflight-gates.mjs';
 import { whisperArtifactPaths } from './lib/whisper-paths.mjs';
 
@@ -41,8 +44,24 @@ function probePortListeners() {
   return parseLsofListeners(lsof.stdout);
 }
 
+// The build that launches is dist/, so that is where its schema version is read.
+async function probeBuildSchemaVersion() {
+  try {
+    const built = join(dirname(import.meta.dirname), 'dist', 'store', 'sqlite-store.js');
+    const { SCHEMA_VERSION } = await import(pathToFileURL(built).href);
+    return Number.isInteger(SCHEMA_VERSION) ? SCHEMA_VERSION : null;
+  } catch {
+    return null;
+  }
+}
+
+const storePath = process.env.VMCP_DB_PATH ?? join(homedir(), '.voltras', 'vmcp.sqlite');
+
 const gates = evaluateGates({
   ...probeWhisper(),
+  buildSchemaVersion: await probeBuildSchemaVersion(),
+  storePath,
+  storeSchemaVersion: readSqliteUserVersion(storePath),
   env: process.env,
   nodeVersion: process.version,
   portListeners: probePortListeners(),
