@@ -67,8 +67,9 @@ entry is written from the user's point of view is a review question, not a check
   MEV/MAV/MRV bands and the missed-session runs count target muscles only, as before. A new
   "dose" column beside them adds the weights (half a set for a secondary muscle) for
   comparison and is never read against a landmark. A day now counts toward a muscle's
-  frequency only when one of its target exercises was trained that day. Glutes show sets
-  but no landmark verdict until RP's glute numbers are verified. Map entries written the
+  frequency only when one of its target exercises was trained that day. Glutes, lats and
+  upper back show sets but no landmark verdict until RP's glute and back numbers are
+  verified. Map entries written the
   old way still read as before.
 
 ### Fixed

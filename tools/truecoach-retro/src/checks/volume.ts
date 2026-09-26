@@ -184,7 +184,7 @@ export function volumeSection(ctx: Context, regular: Context | null = null): str
   const { weeks, reads } = muscleReads(ctx);
   const systemic = systemicWeeks(ctx);
   const body = [
-    "Weeks counted are weeks with at least one training day. Sets are non-warm-up rows summed by their `sets` field. The bands read the landmark read (B47): a set counts 1 toward each target muscle of its map entry and nothing else. The last column is the dose read (Pelland et al. 2025): each set adds its entry's weight (1, 0.5 or 0) per muscle. It is a comparison only and is never banded against a landmark. Glutes carry no band until RP's glute landmarks are verified.",
+    "Weeks counted are weeks with at least one training day. Sets are non-warm-up rows summed by their `sets` field. The bands read the landmark read (B47): a set counts 1 toward each target muscle of its map entry and nothing else. The last column is the dose read (Pelland et al. 2025): each set adds its entry's weight (1, 0.5 or 0) per muscle. It is a comparison only and is never banded against a landmark. Glutes, lats and upper back carry no band until RP's glute and back landmarks are verified.",
     '',
     table(HEADERS, reads.map(readRow)),
     '',

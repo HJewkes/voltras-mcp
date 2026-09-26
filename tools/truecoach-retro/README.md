@@ -19,8 +19,8 @@ A map entry's `muscles` is its attribution table (VW-561): rows of `{ muscle, we
 fans out (`back` to lats and upper back). The report reads the table two ways. The **landmark read**
 counts a set 1 toward each target muscle and nothing else (B47); every MEV/MAV/MRV band, frequency
 count, missed-session run and systemic week reads it. The **dose read** adds each row's weight
-(Pelland et al. 2025) and appears only in columns labelled "dose", never against a landmark. Glutes
-carry no band until RP's glute landmarks are verified. An entry with `warmup: true` counts in
+(Pelland et al. 2025) and appears only in columns labelled "dose", never against a landmark. Glutes,
+lats and upper back carry no band until RP's glute and back landmarks are verified. An entry with `warmup: true` counts in
 neither read. An entry without `muscles` is read the pre-VW-561 way: each `primary_muscle` a 1.0
 target, each `secondary_muscles` entry 0.5. The rules are in the workspace design note
 `2026-09-24-vw-561-attribution-amendment.md`.

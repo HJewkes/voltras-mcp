@@ -92,10 +92,13 @@ describe('hinges and hip thrust (Q3, R7, R8)', () => {
     expect(muscleVerdicts(ctx)).toEqual([]);
   });
 
-  it('draws no landmark band for glutes, at any set count (R8c)', () => {
-    expect(volumeStatus('glutes', 0)).toBeNull();
-    expect(volumeStatus('glutes', 20)).toBeNull();
+  it('draws no landmark band for glutes, lats or upper back, at any set count (R8c)', () => {
+    for (const muscle of ['glutes', 'lats', 'upper_back'] as const) {
+      expect(volumeStatus(muscle, 0), muscle).toBeNull();
+      expect(volumeStatus(muscle, 20), muscle).toBeNull();
+    }
     expect(volumeStatus('hamstrings', 0)).toBe('under');
+    expect(volumeStatus('rear_delts', 0)).toBe('under');
   });
 });
 
