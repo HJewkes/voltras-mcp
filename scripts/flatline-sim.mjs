@@ -13,6 +13,7 @@
 //   npm run build && node scripts/flatline-sim.mjs            # markdown to stdout
 //   node scripts/flatline-sim.mjs --draws 4000 --json out.json
 //   node scripts/flatline-sim.mjs --ramp-class isolation   # or upper_compound, lower_compound
+//   node scripts/flatline-sim.mjs --measured-pct 0.5       # a measured slope in percent of load a week
 //
 // Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs. The
 // real `flatline()` from dist/ is checked read for read against the row named
@@ -53,10 +54,17 @@ function argument(name, fallback) {
 
 /** VW-482: `--ramp-class` swaps the stall rule's reference step for the goal ramp's intermediate step. */
 const RAMP_CLASS = argument('ramp-class', null);
-const stepAt =
-  RAMP_CLASS === null
-    ? plateauReferenceStepLbs
-    : (loadLbs) => programmedRampStepLbs(loadLbs, RAMP_CLASS, 'intermediate');
+/** VW-558 H4: `--measured-pct` judges against a lifter's own measured weekly slope, with no floor. */
+const MEASURED_PCT = argument('measured-pct', null);
+function chooseStep() {
+  if (MEASURED_PCT !== null) return (loadLbs) => (loadLbs * Number(MEASURED_PCT)) / 100;
+  if (RAMP_CLASS !== null)
+    return (loadLbs) => programmedRampStepLbs(loadLbs, RAMP_CLASS, 'intermediate');
+  return plateauReferenceStepLbs;
+}
+const stepAt = chooseStep();
+const STEP_LABEL =
+  MEASURED_PCT !== null ? `measured ${MEASURED_PCT}%/wk` : (RAMP_CLASS ?? 'plateau reference');
 
 function shippedVerdict(points, smoothing) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
@@ -282,7 +290,7 @@ function assertGateMatchesWa() {
 
 function report(results, draws) {
   const sections = [
-    `Step: ${RAMP_CLASS ?? 'plateau reference'}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
+    `Step: ${STEP_LABEL}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
       `The real flatline() matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
     baselineSection(),
     quietSection(),
