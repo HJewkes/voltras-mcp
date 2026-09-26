@@ -135,7 +135,9 @@ export interface BodyWeekSummary {
   /**
    * Muscles below their MEV, WHICH INCLUDES the ones not trained at all: zero
    * sets is below every non-zero minimum. So this can exceed `trainedMuscles`,
-   * and the tile says "below MEV" rather than "under" for that reason.
+   * and the tile says "below MEV" rather than "under" for that reason. A muscle
+   * whose verdict is withheld (null status: glutes, lats, upper back) is never
+   * counted here, trained or not.
    */
   under: number;
   over: number;
