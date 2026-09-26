@@ -1,9 +1,8 @@
 // Plateau windows along a whole history, and what the log did after each one.
 
-import { analyzeTrend, detectPlateau } from '@voltras/workout-analytics';
+import { analyzeTrend, detectPlateau, slopeStandardError } from '@voltras/workout-analytics';
 
 import { flatline, plateauReferenceStepLbs } from '../../../src/analytics/flatline.js';
-import { slopeStandardError } from '../../../src/analytics/goal-history.js';
 
 import { daysBetween, noonInstant } from './dates.js';
 import type { SessionPoint } from './series.js';
@@ -52,7 +51,7 @@ function median(values: readonly number[]): number {
   return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-/** A least-squares slope per week with its interval, from WA's fit and the goal-history identity. */
+/** A least-squares slope per week with its interval, from WA's fit and its standard-error identity. */
 export function trendOf(series: readonly { ts: string; value: number }[]): TrendRead | null {
   if (series.length < 2) return null;
   const fit = analyzeTrend([...series], { flatThresholdPerDay: 0 });
