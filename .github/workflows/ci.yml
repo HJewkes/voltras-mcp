@@ -48,6 +48,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run changelog:check
       - run: npm run docs:check
+      - run: npm run check:nul-bytes
 
   # Unit + integration tests
   test:

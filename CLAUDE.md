@@ -71,6 +71,7 @@ Describe the observable behaviour instead. Protocol-derived findings belong in `
 | `voltras/no-protocol-detail` (`eslint-rules/`) | encoded values and provenance in `src/**`: hex literals, byte sequences, bare hex runs, command codes, private-tree paths | `npm run lint`, CI                       |
 | NF-07 (`eslint.config.mjs`)                    | `Buffer.*` inside any `*Handler` function                                                                                 | `npm run lint`, CI                       |
 | `src/docs/protocol-guard.ts`                   | protocol-shaped tokens on generated documentation pages                                                                   | `npm run docs:reference`, `npm test`, CI |
+| `scripts/check-nul-bytes.mjs`                  | a literal NUL byte anywhere under `src/`, `scripts/`, `docs/`, `tools/` or `packages/` — the byte that hid VW-213's finding from `grep -r` in the first place | `npm run check:nul-bytes`, CI            |
 
 **Prose is not covered, and no rule will cover it.** A sentence that names a register and describes what writing to it does carries no value in any shape a pattern can match, and a partial redaction is worse than none: `[redacted]` next to an intact mechanism sentence reads as a decision someone already made rather than as an oversight (VW-220). So prose is a **review-checklist item**: when a change touches device behaviour, read the prose and ask whether a reader could reconstruct anything from it.
 
