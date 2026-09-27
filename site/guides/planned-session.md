@@ -31,8 +31,7 @@ exercises. Each level under [`plan.*`](/reference/plan) takes its parent's id �
 for one slot in one template.
 
 You can build a plan this way from scratch, or pull one in — see
-[TrueCoach (read-only pull)](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#truecoach-read-only-pull)
-in the README if you already track plans there.
+[Import a TrueCoach week](/coaches/import-a-truecoach-week) if you already track plans there.
 
 `plan.exercise.create` also takes an optional `targetTempo` coach override — a
 `{ ecc, pauseBottom, con, pauseTop }` tuple in seconds — that wins over the exercise's or
