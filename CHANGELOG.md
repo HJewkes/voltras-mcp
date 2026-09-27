@@ -48,6 +48,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- A **For coaches** section on the docs site, for a coach who reads a lifter's reports and
+  has never seen an MCP (VMCP-07.07): the onboarding model with a data-loop diagram, consent
+  and the data loop (with TrueCoach's terms quoted in full and the write-back marked
+  experimental), paired coach and lifter onboarding steps, importing a TrueCoach week, and a
+  glossary. The session-report and weekly-report guides moved there from Guides; their old
+  addresses keep a one-line pointer.
 - An opt-in effort cue, off by default: `VOLTRAS_EFFORT_CUE=on` hands the mid-set ending cue to
   the effort rule. A set then gets **at most one** ending event (`set_target_reached`,
   `velocity_loss_exceeded` or the new `effort_target_reached`), each saying which goal the set
