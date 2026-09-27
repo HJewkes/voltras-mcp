@@ -11,8 +11,22 @@ export default defineConfig({
     'An MCP server that turns a Voltra digital-resistance trainer into something Claude can drive.',
   base: '/voltras-mcp/',
   cleanUrls: true,
+  lastUpdated: true,
+  head: [['link', { rel: 'icon', href: '/voltras-mcp/favicon.svg', type: 'image/svg+xml' }]],
 
   themeConfig: {
+    logo: '/logo.svg',
+    search: { provider: 'local' },
+    lastUpdated: { text: 'Last updated' },
+    editLink: {
+      pattern: 'https://github.com/HJewkes/voltras-mcp/edit/main/site/:path',
+      text: 'Edit this page on GitHub',
+    },
+    footer: {
+      message: 'Released under the MIT License.',
+      copyright: 'Copyright © 2026 Henry Jewkes',
+    },
+
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Install and run', link: '/install-and-run' },
