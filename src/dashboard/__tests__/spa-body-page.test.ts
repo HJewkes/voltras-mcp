@@ -79,6 +79,15 @@ function bestE1rm(value: number, confidence: number): MuscleStrengthBestE1rm {
   return { value, band: e1rmBand(value, 'reps'), method: 'reps', confidence };
 }
 
+/** The recency fields (VW-558) this page does not read yet. */
+const NO_RECENCY = {
+  setCount: 0,
+  currentLevel: null,
+  relativeIndex: null,
+  daysSinceTrained: null,
+  recency: null,
+} as const;
+
 const STRENGTH: MuscleStrengthView = {
   muscleMapVersion: MUSCLE_MAP_VERSION,
   agreementBasis: 'two exercises trending the same way',
@@ -88,6 +97,8 @@ const STRENGTH: MuscleStrengthView = {
       muscle: 'chest',
       agreement: 'stronger',
       earlyPhase: false,
+      relativeIndexBySide: {},
+      daysSinceTrained: null,
       exercises: [
         {
           exerciseId: 'chest-press',
@@ -99,6 +110,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: true,
           priorBest: 175,
           plateau: 'none',
+          ...NO_RECENCY,
         },
       ],
     },
@@ -107,6 +119,8 @@ const STRENGTH: MuscleStrengthView = {
       muscle: 'lats',
       agreement: 'insufficient',
       earlyPhase: false,
+      relativeIndexBySide: {},
+      daysSinceTrained: null,
       exercises: [
         {
           exerciseId: 'chest-press',
@@ -118,6 +132,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: true,
           priorBest: 175,
           plateau: 'none',
+          ...NO_RECENCY,
         },
         {
           exerciseId: 'cable-row',
@@ -129,6 +144,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: false,
           priorBest: 165,
           plateau: 'none',
+          ...NO_RECENCY,
         },
       ],
     },

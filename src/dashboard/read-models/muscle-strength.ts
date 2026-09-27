@@ -68,6 +68,14 @@ export const MUSCLE_STRENGTH_CONSTANTS = {
    * as the corpus says to hold the inference.
    */
   earlyPhaseYears: 0.5,
+  /** ENGINEERING DEFAULT (design 4.4): the current level weighs the last this-many sessions. */
+  recencySessions: 6,
+  /** ENGINEERING DEFAULT (design 4.4): a session's weight halves every this-many days. */
+  recencyHalfLifeDays: 28,
+  /** Design 4.4: over this many days since trained, the body map draws the muscle at half opacity. */
+  fadingAfterDays: 28,
+  /** Design 4.4: over this many days, the body map outlines the muscle only, "no current read". */
+  noCurrentReadAfterDays: 183,
 } as const;
 
 /** Which limb a row covers. `null` means the sets recorded no side. */
@@ -108,6 +116,8 @@ export interface MuscleStrengthInput {
   exercises: readonly MuscleStrengthExerciseInput[];
   /** Self-reported years of training; `null` when never declared. */
   yearsTraining: number | null;
+  /** The instant recency is read at; without it `daysSinceTrained` and `recency` are `null`. */
+  asOf?: string;
 }
 
 /** The best e1RM in the window, with the band every e1RM here travels with. */
@@ -130,7 +140,17 @@ export interface MuscleStrengthExerciseRow {
   isPR: boolean;
   priorBest: number | null;
   plateau: 'plateau' | 'tolerated' | 'none' | null;
+  /** Recency-weighted mean of the last sessions' best e1RMs; `null` with no e1RM. */
+  /** Sets in this row: the weight its relative index carries in the muscle's mean. */
+  setCount: number;
+  currentLevel: number | null;
+  /** `currentLevel` over the best e1RM in these rows, 0 to 100 percent. Never pooled across sides. */
+  relativeIndex: number | null;
+  daysSinceTrained: number | null;
+  recency: MuscleStrengthRecency | null;
 }
+
+export type MuscleStrengthRecency = 'current' | 'fading' | 'no_current_read';
 
 export type MuscleStrengthAgreement = 'stronger' | 'weaker' | 'mixed' | 'insufficient';
 
@@ -140,6 +160,10 @@ export interface MuscleStrengthMuscle {
   agreement: MuscleStrengthAgreement;
   /** True while strength gains are not yet readable as muscle gains. */
   earlyPhase: boolean;
+  /** Set-weighted mean of the rows' relative indices, one per side group; sides never pool. */
+  relativeIndexBySide: Partial<Record<MuscleStrengthSideKey, number>>;
+  /** Days since any row of this muscle was trained; `null` without `asOf` or rows. */
+  daysSinceTrained: number | null;
 }
 
 export interface MuscleStrengthView {
@@ -237,11 +261,70 @@ function bestE1rmOf(sets: readonly MuscleStrengthSetRow[]): MuscleStrengthBestE1
   };
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Each session's best e1RM at its latest set, oldest first. */
+function sessionBests(sets: readonly MuscleStrengthSetRow[]): { at: number; e1rm: number }[] {
+  const bySession = new Map<string, { at: number; e1rm: number }>();
+  for (const set of sets) {
+    const estimate = estimateForSet(set);
+    if (estimate === null) continue;
+    const prior = bySession.get(set.sessionId);
+    const at = Math.max(Date.parse(set.startedAt), prior?.at ?? -Infinity);
+    bySession.set(set.sessionId, { at, e1rm: Math.max(estimate.e1RM, prior?.e1rm ?? 0) });
+  }
+  return [...bySession.values()].sort((a, b) => a.at - b.at);
+}
+
+/** The weighted mean of the last sessions' bests, each weight halving per half-life of age. */
+function currentLevelOf(sets: readonly MuscleStrengthSetRow[]): number | null {
+  const { recencySessions, recencyHalfLifeDays } = MUSCLE_STRENGTH_CONSTANTS;
+  const recent = sessionBests(sets).slice(-recencySessions);
+  const latest = recent.at(-1);
+  if (latest === undefined) return null;
+  let weighted = 0;
+  let totalWeight = 0;
+  for (const session of recent) {
+    const weight = 0.5 ** ((latest.at - session.at) / DAY_MS / recencyHalfLifeDays);
+    weighted += weight * session.e1rm;
+    totalWeight += weight;
+  }
+  return round2(weighted / totalWeight);
+}
+
+function daysSinceTrainedOf(sets: readonly MuscleStrengthSetRow[], asOf?: string): number | null {
+  if (asOf === undefined || sets.length === 0) return null;
+  const latest = Math.max(...sets.map((set) => Date.parse(set.startedAt)));
+  return Math.floor((Date.parse(asOf) - latest) / DAY_MS);
+}
+
+function recencyOf(days: number | null): MuscleStrengthRecency | null {
+  if (days === null) return null;
+  if (days > MUSCLE_STRENGTH_CONSTANTS.noCurrentReadAfterDays) return 'no_current_read';
+  return days > MUSCLE_STRENGTH_CONSTANTS.fadingAfterDays ? 'fading' : 'current';
+}
+
+/** Current level, its index against the rows' best, and how long ago they were trained. */
+function recencyFields(sets: readonly MuscleStrengthSetRow[], asOf?: string) {
+  const currentLevel = currentLevelOf(sets);
+  const best = bestEstimate(sets);
+  const daysSinceTrained = daysSinceTrainedOf(sets, asOf);
+  return {
+    setCount: sets.length,
+    currentLevel,
+    relativeIndex:
+      currentLevel === null || best === null ? null : round2((currentLevel / best.e1RM) * 100),
+    daysSinceTrained,
+    recency: recencyOf(daysSinceTrained),
+  };
+}
+
 /** One (exercise, side) row. `sets` are already scoped to that side. */
 function buildRow(
   exercise: MuscleStrengthExerciseInput,
   key: MuscleStrengthSideKey,
   sets: readonly MuscleStrengthSetRow[],
+  asOf?: string,
 ): MuscleStrengthExerciseRow {
   const fit = exercise.trendBySide[key];
   return {
@@ -253,6 +336,7 @@ function buildRow(
     rSquared: fit?.trend.rSquared ?? null,
     ...prForGroup(sets),
     plateau: fit?.plateau.verdict ?? null,
+    ...recencyFields(sets, asOf),
   };
 }
 
@@ -261,7 +345,10 @@ function buildRow(
  * window still yields a single side-unknown row, so a fit without stored sets
  * is visible rather than silently dropped.
  */
-function buildExerciseRows(exercise: MuscleStrengthExerciseInput): MuscleStrengthExerciseRow[] {
+function buildExerciseRows(
+  exercise: MuscleStrengthExerciseInput,
+  asOf?: string,
+): MuscleStrengthExerciseRow[] {
   const bySide = new Map<MuscleStrengthSideKey, MuscleStrengthSetRow[]>();
   for (const set of exercise.sets) {
     const key = sideKeyOf(set.side);
@@ -269,8 +356,8 @@ function buildExerciseRows(exercise: MuscleStrengthExerciseInput): MuscleStrengt
     if (group === undefined) bySide.set(key, [set]);
     else group.push(set);
   }
-  if (bySide.size === 0) return [buildRow(exercise, 'none', [])];
-  return [...bySide.entries()].map(([key, sets]) => buildRow(exercise, key, sets));
+  if (bySide.size === 0) return [buildRow(exercise, 'none', [], asOf)];
+  return [...bySide.entries()].map(([key, sets]) => buildRow(exercise, key, sets, asOf));
 }
 
 /**
@@ -308,6 +395,28 @@ function agreementOf(rows: readonly MuscleStrengthExerciseRow[]): MuscleStrength
   return 'mixed';
 }
 
+/** Per side group, the set-weighted mean of the rows' relative indices (design 4.4, P5). */
+function relativeIndexBySide(
+  rows: readonly MuscleStrengthExerciseRow[],
+): Partial<Record<MuscleStrengthSideKey, number>> {
+  const sums = new Map<MuscleStrengthSideKey, { weighted: number; sets: number }>();
+  for (const row of rows) {
+    if (row.relativeIndex === null || row.setCount === 0) continue;
+    const key = sideKeyOf(row.side);
+    const sum = sums.get(key) ?? { weighted: 0, sets: 0 };
+    sums.set(key, {
+      weighted: sum.weighted + row.relativeIndex * row.setCount,
+      sets: sum.sets + row.setCount,
+    });
+  }
+  return Object.fromEntries([...sums].map(([key, sum]) => [key, round2(sum.weighted / sum.sets)]));
+}
+
+function muscleDaysSinceTrained(rows: readonly MuscleStrengthExerciseRow[]): number | null {
+  const days = rows.flatMap((row) => (row.daysSinceTrained === null ? [] : [row.daysSinceTrained]));
+  return days.length === 0 ? null : Math.min(...days);
+}
+
 function earlyPhaseFrom(yearsTraining: number | null): boolean {
   return yearsTraining !== null && yearsTraining < MUSCLE_STRENGTH_CONSTANTS.earlyPhaseYears;
 }
@@ -331,14 +440,21 @@ function earlyPhaseBasisFor(yearsTraining: number | null): string {
  */
 export function buildMuscleStrengthView(input: MuscleStrengthInput): MuscleStrengthView {
   const rowsByExercise = input.exercises.map(
-    (exercise) => [exercise, buildExerciseRows(exercise)] as const,
+    (exercise) => [exercise, buildExerciseRows(exercise, input.asOf)] as const,
   );
   const earlyPhase = earlyPhaseFrom(input.yearsTraining);
   const muscles = TITAN_MUSCLE_GROUPS.map((muscle) => {
     const exercises = rowsByExercise
       .filter(([exercise]) => exercise.primaryMuscles.includes(muscle))
       .flatMap(([, rows]) => rows);
-    return { muscle, exercises, agreement: agreementOf(exercises), earlyPhase };
+    return {
+      muscle,
+      exercises,
+      agreement: agreementOf(exercises),
+      earlyPhase,
+      relativeIndexBySide: relativeIndexBySide(exercises),
+      daysSinceTrained: muscleDaysSinceTrained(exercises),
+    };
   });
   return {
     muscleMapVersion: MUSCLE_MAP_VERSION,
