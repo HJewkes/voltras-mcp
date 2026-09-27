@@ -47,7 +47,7 @@ per second. The fitted effort curve described below reads this number and no oth
 The per-set summary in [`metrics.compute`](/reference/metrics) reports it on mean velocity
 (`src/tools/metrics-tools.ts:2414`, `src/tools/metrics-tools.ts:2248-2249`). Some internal readings compare peak speeds instead. Those
 give a different percentage for the same set, and both are correct for their own question
-(`src/tools/metrics-tools.ts:2248-2251`).
+(`src/tools/metrics-tools.ts:2248-2252`).
 
 ## Why slowing down tracks effort
 
@@ -129,44 +129,55 @@ practice every curve rests on failure anchors.
 
 ## When the server will state a number
 
-The server is strict here, because an effort number is the claim most easily over-read.
+The server is strict here, because an effort number is the claim most easily over-read. It
+handles effort in three layers, and each layer behaves differently.
 
-[`rir_velocity.target`](/reference/rir_velocity) turns an RIR prescription into your own velocity
-target. With no fitted curve it returns no number. It returns a caveat instead, and says it will
-not substitute a group curve (`src/tools/rir-velocity-tools.ts:50-59`, `src/tools/rir-velocity-tools.ts:155-163`).
-With a curve, it also says whether the answer lies outside the range the curve was fitted over
-(`src/tools/rir-velocity-tools.ts:52-54`).
-
-A curve is **trusted** only when its error is 1.5 reps or less and it was fitted under the current
-model version (`src/analytics/rir-velocity.ts:62-80`). That limit is tighter than the study's
-two-rep figure on purpose (`src/analytics/rir-velocity.ts:62-66`).
-
-The optional effort cue asks for more. It uses a curve only if it also has a failure anchor,
-predicted a held-out set within 1.5 reps, was fitted in the last 42 days, and came from
-constant-load sets (`src/analytics/rir-velocity.ts:108-124`, `src/state/effort-context.ts:229-241`).
-That cue is off by default (`src/config.ts:299`).
-
-The per-set RIR reading in [`metrics.compute`](/reference/metrics) always answers, but it says
-which curve answered. With no fitted curve it uses a general formula, grades its model confidence
-low, and carries the same caveat (`src/tools/rir-velocity-tools.ts:216-240`,
+**The analytics compute an estimate.** The per-set RIR reading in
+[`metrics.compute`](/reference/metrics) returns a per-rep RIR for any recorded set with reps
+(`src/tools/metrics-tools.ts:308-312`). It always answers, and it says which curve answered. With
+no fitted curve it uses a general formula, grades its model confidence low, and carries a caveat
+that the reading is not a proximity-to-failure claim (`src/tools/rir-velocity-tools.ts:216-240`,
 `src/tools/metrics-tools.ts:2427-2440`). Read that as a rough direction, not a rep count.
 
 [`report.weekly`](/reference/report) includes a final-rep RIR line only when the RIR feature's
 baseline gate allows it. The line names its basis, for example "general model, not a
 proximity-to-failure read" (`src/tools/report-tools.ts:564-600`).
 
+**The velocity target waits for a fitted curve.** [`rir_velocity.target`](/reference/rir_velocity)
+turns an RIR prescription into your own velocity target. With no fitted curve it returns no
+number. It returns a caveat instead, and says it will not substitute a group curve
+(`src/tools/rir-velocity-tools.ts:50-59`, `src/tools/rir-velocity-tools.ts:148-175`). With a
+curve, it also says whether the answer lies outside the range the curve was fitted over
+(`src/tools/rir-velocity-tools.ts:52-54`).
+
+**The dashboard waits for a trusted curve.** A curve is **trusted** only when its error is 1.5
+reps or less and it was fitted under the current model version
+(`src/analytics/rir-velocity.ts:62-80`). That limit is tighter than the study's two-rep figure on
+purpose (`src/analytics/rir-velocity.ts:62-66`). The next section covers what the dashboard shows
+until then.
+
+The optional effort cue asks for more. It uses a curve only if it also has a failure anchor,
+predicted a held-out set within 1.5 reps, was fitted in the last 42 days, and came from
+constant-load sets (`src/analytics/rir-velocity.ts:108-124`, `src/state/effort-context.ts:229-241`).
+That cue is off by default (`src/config.ts:299`).
+
 ## What the dashboard shows today
 
 The live fatigue card shows velocity loss against your set's stop threshold
 (`src/dashboard/spa/panels/fatigue-view.ts:477`, `src/dashboard/spa/live-page/fatigue-state.ts:1-10`).
-It also shows a verdict built from velocity loss, range of motion and tempo
-(`src/dashboard/spa/panels/fatigue-view.ts:432-435`).
-It shows no RPE or RIR. Both are withheld until a trusted fitted profile reaches the wall
-(`src/dashboard/spa/panels/fatigue-view.ts:428-431`).
+It also shows a verdict word: good, slowing, grinding or form breakdown. That verdict comes from
+velocity loss, range of motion and tempo, not from an RIR estimate
+(`src/dashboard/spa/panels/fatigue-view.ts:432-435`, `src/tools/metrics-tools.ts:2419-2425`).
+
+It shows no RPE or RIR number yet. The card has a place for an RPE number, but the dashboard
+passes it no value, so it shows a dash. The RPE and RIR values are withheld until a trusted fitted profile reaches the wall (VW-485)
+(`src/dashboard/spa/panels/fatigue-view.ts:428-431`). This is a deliberate hold, not a missing
+calculation: the analytics above already compute an estimate.
 
 The session summary works the same way. It shows each exercise's fatigue verdict and velocity
-figures, and states no RIR or RPE (`src/dashboard/read-models/session-summary.ts:10-14`,
-`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`).
+figures, and passes no RPE or RIR to its verdict display (`src/dashboard/read-models/session-summary.ts:10-14`,
+`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`). The verdict display comes from the
+titan design library the dashboard depends on (`package.json:75`).
 
 ## Where the maths lives
 

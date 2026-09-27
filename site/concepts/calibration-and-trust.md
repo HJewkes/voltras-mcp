@@ -36,7 +36,9 @@ speed and range of motion are the closest thing to a measurement the server has.
 
 Almost everything else is derived. Velocity loss, the fatigue verdict, estimated 1RM (e1RM),
 readiness and reps in reserve are all calculations over recorded reps
-([`metrics.compute`](/reference/metrics), `src/tools/metrics-tools.ts:2411-2440`). A derived number can be no
+([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:2411-2440` for velocity loss,
+the fatigue verdict and RIR; `src/tools/metrics-tools.ts:503-504` for e1RM;
+`src/tools/metrics-tools.ts:2454-2456` for readiness). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
@@ -51,8 +53,8 @@ A consistent error cancels out when you compare two readings taken the same way.
 cancel when you read one number on its own.
 
 The server's own history shows this. Sets recorded before a units fix stored velocity on a
-different scale. Absolute speeds from those sets were wrong, but velocity loss, RIR estimates and
-fatigue verdicts were not, because they are ratios (`src/store/velocity-units.ts:10-13`).
+different scale. Absolute speeds from those sets were wrong, but velocity loss, estimates of reps in reserve
+([RIR](/concepts/velocity-and-effort#velocity-and-effort)) and fatigue verdicts were not, because they are ratios (`src/store/velocity-units.ts:10-13`).
 
 So when a figure is uncertain, compare it with yourself. This week against last month, or left
 side against right side, is a more reliable read than any single value. The
