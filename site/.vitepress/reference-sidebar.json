@@ -4,104 +4,140 @@
     "link": "/reference/"
   },
   {
-    "text": "device.*",
-    "link": "/reference/device"
+    "text": "Device and rig",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "device.*",
+        "link": "/reference/device"
+      },
+      {
+        "text": "slot.*",
+        "link": "/reference/slot"
+      },
+      {
+        "text": "bilateral.*",
+        "link": "/reference/bilateral"
+      }
+    ]
   },
   {
-    "text": "bilateral.*",
-    "link": "/reference/bilateral"
+    "text": "Recording",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "session.*",
+        "link": "/reference/session"
+      },
+      {
+        "text": "set.*",
+        "link": "/reference/set"
+      },
+      {
+        "text": "exercise.*",
+        "link": "/reference/exercise"
+      },
+      {
+        "text": "timer.*",
+        "link": "/reference/timer"
+      },
+      {
+        "text": "isometric.*",
+        "link": "/reference/isometric"
+      }
+    ]
   },
   {
-    "text": "slot.*",
-    "link": "/reference/slot"
+    "text": "Analytics",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "metrics.*",
+        "link": "/reference/metrics"
+      },
+      {
+        "text": "rir_velocity.*",
+        "link": "/reference/rir_velocity"
+      },
+      {
+        "text": "baselines.*",
+        "link": "/reference/baselines"
+      },
+      {
+        "text": "driftguard.*",
+        "link": "/reference/driftguard"
+      },
+      {
+        "text": "mrvguard.*",
+        "link": "/reference/mrvguard"
+      },
+      {
+        "text": "progression.*",
+        "link": "/reference/progression"
+      }
+    ]
   },
   {
-    "text": "session.*",
-    "link": "/reference/session"
+    "text": "Planning and goals",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "plan.*",
+        "link": "/reference/plan"
+      },
+      {
+        "text": "goal.*",
+        "link": "/reference/goal"
+      },
+      {
+        "text": "profile.*",
+        "link": "/reference/profile"
+      },
+      {
+        "text": "accountability.*",
+        "link": "/reference/accountability"
+      }
+    ]
   },
   {
-    "text": "set.*",
-    "link": "/reference/set"
+    "text": "Coaching and reports",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "coaching.*",
+        "link": "/reference/coaching"
+      },
+      {
+        "text": "report.*",
+        "link": "/reference/report"
+      },
+      {
+        "text": "truecoach.*",
+        "link": "/reference/truecoach"
+      }
+    ]
   },
   {
-    "text": "metrics.*",
-    "link": "/reference/metrics"
-  },
-  {
-    "text": "exercise.*",
-    "link": "/reference/exercise"
-  },
-  {
-    "text": "timer.*",
-    "link": "/reference/timer"
-  },
-  {
-    "text": "server.*",
-    "link": "/reference/server"
-  },
-  {
-    "text": "debug.*",
-    "link": "/reference/debug"
-  },
-  {
-    "text": "system.*",
-    "link": "/reference/system"
-  },
-  {
-    "text": "progression.*",
-    "link": "/reference/progression"
-  },
-  {
-    "text": "isometric.*",
-    "link": "/reference/isometric"
-  },
-  {
-    "text": "plan.*",
-    "link": "/reference/plan"
-  },
-  {
-    "text": "profile.*",
-    "link": "/reference/profile"
-  },
-  {
-    "text": "baselines.*",
-    "link": "/reference/baselines"
-  },
-  {
-    "text": "driftguard.*",
-    "link": "/reference/driftguard"
-  },
-  {
-    "text": "mrvguard.*",
-    "link": "/reference/mrvguard"
-  },
-  {
-    "text": "rir_velocity.*",
-    "link": "/reference/rir_velocity"
-  },
-  {
-    "text": "coaching.*",
-    "link": "/reference/coaching"
-  },
-  {
-    "text": "truecoach.*",
-    "link": "/reference/truecoach"
-  },
-  {
-    "text": "report.*",
-    "link": "/reference/report"
-  },
-  {
-    "text": "accountability.*",
-    "link": "/reference/accountability"
-  },
-  {
-    "text": "goal.*",
-    "link": "/reference/goal"
-  },
-  {
-    "text": "mock.*",
-    "link": "/reference/mock"
+    "text": "Server and diagnostics",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "server.*",
+        "link": "/reference/server"
+      },
+      {
+        "text": "system.*",
+        "link": "/reference/system"
+      },
+      {
+        "text": "debug.*",
+        "link": "/reference/debug"
+      },
+      {
+        "text": "mock.*",
+        "link": "/reference/mock"
+      }
+    ]
   },
   {
     "text": "Resources",
@@ -110,5 +146,13 @@
   {
     "text": "Push events",
     "link": "/reference/push-events"
+  },
+  {
+    "text": "Environment variables",
+    "link": "/reference/environment-variables"
+  },
+  {
+    "text": "Dashboard pages",
+    "link": "/reference/dashboard-pages"
   }
 ]
