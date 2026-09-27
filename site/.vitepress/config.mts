@@ -12,7 +12,10 @@ export default defineConfig({
   base: '/voltras-mcp/',
   cleanUrls: true,
   lastUpdated: true,
-  head: [['link', { rel: 'icon', href: '/voltras-mcp/favicon.svg', type: 'image/svg+xml' }]],
+  head: [
+    ['link', { rel: 'icon', href: '/voltras-mcp/favicon.svg', type: 'image/svg+xml' }],
+    ['link', { rel: 'icon', href: '/voltras-mcp/favicon.png', type: 'image/png', sizes: '32x32' }],
+  ],
 
   themeConfig: {
     logo: '/logo.svg',
