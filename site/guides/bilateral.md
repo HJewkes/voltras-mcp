@@ -25,7 +25,7 @@ one-device session uses (`README.md:210-212`). Everything downstream — telemet
 push events, the dashboard — keys off which slot a rep came from, so the two sides never
 get mixed into one stream.
 
-This assumes the [first-session guide](/guides/first-session) already; a bilateral
+This assumes the [first-session guide](/start/first-session) already; a bilateral
 session is the same `session.*`/`set.*` lifecycle running twice, once per slot.
 
 ## Connecting and identifying two units
@@ -119,7 +119,7 @@ to the single stage, because an ordinary one-device session running on `primary`
 otherwise draw an empty second column
 (`src/dashboard/spa/live-page/stage-variant.ts:10-20`). `?variant=live-dual` (or
 `?variant=live`) on the dashboard URL pins one or the other for testing
-(`README.md:280-281`). See the ["Two Voltras, one dashboard"](/guides/#two-voltras-one-dashboard)
+(`README.md:280-281`). See the ["Two Voltras, one dashboard"](/guides/dashboard-tour#two-voltras-one-dashboard)
 capture in the walkthrough for what the diverging stage actually looks like mid-set.
 
 Here it is moving. The right side starts late and finishes short, so the gap between the
@@ -229,7 +229,7 @@ dominance is consistent across sessions.
 
 ## What to read next
 
-- The [dashboard walkthrough](/guides/) for the diverging stage rendered live.
+- The [dashboard walkthrough](/guides/dashboard-tour) for the diverging stage rendered live.
 - [The isometric guide](/guides/isometric) for `isometric.measure_imbalance`, which runs
   the same left/right slot pairing to compare force between sides.
 - The [`bilateral.*`](/reference/bilateral), [`slot.*`](/reference/slot) and

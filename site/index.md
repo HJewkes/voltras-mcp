@@ -25,7 +25,7 @@ It speaks stdio only — one server process per Claude Code session.
 
 ## Where to start
 
-- **[Install and run](/install-and-run)** — clone, build, and register the server with
+- **[Get started](/start/)** — what you need, then install, build, and register the server with
   Claude Code.
 - **[Capability reference](/reference/)** — the tools, resources and push events the
   server exposes, generated from the registry itself.
