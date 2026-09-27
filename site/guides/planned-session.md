@@ -1,3 +1,16 @@
+---
+diataxis: how-to
+audience: [lifter, coach]
+status: available
+sources:
+  - src/tools/plan-tools.ts
+  - src/dashboard/read-models/session-plan.ts
+  - src/tools/session-tools.ts
+  - docs/screenshot-harness.md
+  - README.md
+lastVerified: 2026-09-13
+---
+
 # Running a planned session
 
 By the end of this you will have built (or imported) a training plan, attached it to a

@@ -1,3 +1,13 @@
+---
+diataxis: how-to
+audience: [developer]
+status: available
+sources:
+  - package.json
+  - scripts/check-docs.mjs
+lastVerified: 2026-09-09
+---
+
 # Contributing to the docs site
 
 ## The citation rule

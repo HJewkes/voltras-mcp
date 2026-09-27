@@ -1,3 +1,22 @@
+---
+diataxis: how-to
+audience: [lifter, coach]
+status: available
+sources:
+  - src/tools/slot-tools.ts
+  - src/tools/device-tools.ts
+  - src/state/bilateral-cascade.ts
+  - src/state/mode-revert-guard.ts
+  - src/tools/__tests__/bilateral-cascade.test.ts
+  - docs/push-events.md
+  - src/dashboard/spa/live-page/stage-variant.ts
+  - docs/screenshot-harness.md
+  - scripts/dashboard-mock-drive.mjs
+  - scripts/mock-two-slot-preload.mjs
+  - src/tools/isometric-tools.ts
+lastVerified: 2026-09-13
+---
+
 # Bilateral work
 
 A bilateral rig is two Voltras, one per side, tracked as independent
@@ -185,7 +204,7 @@ Two statements hold across every tool in this server, and neither is a style pre
 against bilateral training, unilateral training was clearly better for unilateral jump
 (ES 0.89, 95% CI 0.52-1.26) and worse for bilateral strength (ES -0.43, CI -0.71 to -0.14),
 while unilateral strength, bilateral jump, sprint and change of direction were all
-non-significant (Liao et al., *Biology of Sport* 2022). Unilateral work is goal-specific —
+non-significant (Liao et al., _Biology of Sport_ 2022). Unilateral work is goal-specific —
 prescribe it when single-limb capacity is the goal. The evidence that any method reduces
 asymmetry at all is thin: a seven-week bilateral back-squat block moved isometric peak-force
 asymmetry only in the subgroup that started weaker, and several combined and flywheel
@@ -201,7 +220,7 @@ plateau force, and both label it as such in the result itself, not only in the d
 as a predictor of dynamic cable loads, and no `plan.*` or `progression.*` path consumes one.
 Joint angle dominates what an isometric maximum predicts: an isometric squat predicted the
 full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum et
-al., *Sports* 2020), so the figure means something only when the hold was held at the angle
+al., _Sports_ 2020), so the figure means something only when the hold was held at the angle
 where the exercise peaks.
 
 There is **no published re-test cadence** for asymmetry, and this server invents none. The

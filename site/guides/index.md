@@ -1,3 +1,12 @@
+---
+diataxis: overview
+audience: [lifter, coach]
+status: available
+sources:
+  - src/tools/server-tools.ts
+lastVerified: 2026-09-19
+---
+
 # Guides
 
 - [Your first session](/guides/first-session) — open a session, run sets, and close out,

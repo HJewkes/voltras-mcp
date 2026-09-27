@@ -3,14 +3,18 @@
 // file, a line or a tool that exists on `main`, and no page may carry an
 // encoded device value.
 //
-// Four checks, over `site/**/*.md`, `docs/**/*.md`, the pt-session skill under
+// Five checks, over `site/**/*.md`, `docs/**/*.md`, the pt-session skill under
 // `plugins/`, `README.md`, `CLAUDE.md` and `CHANGELOG.md` (which
 // `site/changelog.md` now renders):
 //
-//   1. path      a cited repo path resolves                      FAILS
-//   2. line      a cited `file.ts:NNN` is within the file        FAILS
-//   3. tool      a cited `namespace.tool` is registered          FAILS
-//   4. protocol  an encoded device value reached a page          FAILS
+//   1. path         a cited repo path resolves                   FAILS
+//   2. line         a cited `file.ts:NNN` is within the file     FAILS
+//   3. tool         a cited `namespace.tool` is registered       FAILS
+//   4. protocol     an encoded device value reached a page       FAILS
+//   5. frontmatter  a hand-written site page declares its status,
+//                   audience, sources and verification date      FAILS
+//
+// Check 5 skips `site/reference/`, which `npm run docs:reference` generates.
 //
 // Check 3 runs in both directions over the pt-session skill, which ships in
 // this repo so it cannot be older than the server (VW-503): a name the skill
@@ -35,6 +39,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  checkPageFrontmatter,
   checkPathCitations,
   checkProtocolLeakage,
   checkToolCoverage,
@@ -72,6 +77,16 @@ const ALLOWED_TOKENS = new Set([
  */
 function historical(page) {
   return page === 'CHANGELOG.md';
+}
+
+/** A site page a person writes, as opposed to the generated capability reference. */
+function handWrittenSitePage(page) {
+  return page.startsWith('site/') && !page.startsWith('site/reference/');
+}
+
+function frontmatterFindings(page, text) {
+  if (!handWrittenSitePage(page)) return [];
+  return checkPageFrontmatter(text, (path) => existsSync(join(REPO_ROOT, path)));
 }
 
 function collectMarkdown(dir, found = []) {
@@ -252,6 +267,7 @@ async function main() {
       ...checkPathCitations(citations, resolveInRepo),
       ...(historical(page) ? [] : checkToolNames(text, registry, pipelines)),
       ...checkProtocolLeakage(text, { path: page, findEncodedValues, allowed: ALLOWED_TOKENS }),
+      ...frontmatterFindings(page, text),
     ];
     if (found.length > 0) failures.set(page, found);
     if (!staleLines) continue;

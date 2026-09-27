@@ -4,6 +4,12 @@ hero:
   name: voltras-mcp
   text: MCP server for the Voltra trainer
   tagline: Connect, load, record, and analyze a workout — driven from Claude.
+diataxis: overview
+audience: [lifter, coach, developer]
+status: available
+sources:
+  - README.md
+lastVerified: 2026-09-09
 ---
 
 # What this is

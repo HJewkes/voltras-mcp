@@ -209,3 +209,115 @@ export function checkProtocolLeakage(text, { path, findEncodedValues, allowed })
   }
   return findings;
 }
+
+/** The frontmatter vocabulary every hand-written site page declares (VMCP-07.02). */
+export const PAGE_STATUSES = ['available', 'experimental', 'coming-soon'];
+const DIATAXIS_KINDS = ['tutorial', 'how-to', 'reference', 'explanation', 'overview'];
+const AUDIENCES = ['lifter', 'coach', 'developer'];
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function unquote(value) {
+  return value.trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+function parseScalarOrList(value) {
+  if (!/^\[.*\]$/.test(value)) return unquote(value);
+  const inner = value.slice(1, -1).trim();
+  return inner === '' ? [] : inner.split(',').map(unquote);
+}
+
+/**
+ * The top-level keys of a page's YAML frontmatter, each with the line it sits
+ * on. Deliberately narrow: scalars, inline lists and block lists of scalars,
+ * which is all the schema uses. A nested map (the home page's `hero`) is kept
+ * as an empty list and never judged. Returns null when there is no block.
+ */
+export function parseFrontmatter(text) {
+  const block = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text);
+  if (block === null) return null;
+  const fields = new Map();
+  let listKey = null;
+  for (const [index, line] of block[1].split('\n').entries()) {
+    const item = /^\s+-\s+(.*)$/.exec(line);
+    if (item !== null && listKey !== null) {
+      fields.get(listKey).value.push(unquote(item[1]));
+      continue;
+    }
+    const pair = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
+    if (pair === null) continue;
+    const [, key, raw] = pair;
+    listKey = raw.trim() === '' ? key : null;
+    fields.set(key, { line: index + 2, value: listKey ? [] : parseScalarOrList(raw.trim()) });
+  }
+  return fields;
+}
+
+function isRealDate(value) {
+  const parts = ISO_DATE.exec(value);
+  if (parts === null) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+function enumFinding(field, key, allowed) {
+  if (field === undefined) return `${key}: missing`;
+  if (allowed.includes(field.value)) return null;
+  return `${key}: "${field.value}" is not one of ${allowed.join(', ')}`;
+}
+
+function audienceFinding(field) {
+  if (field === undefined) return 'audience: missing';
+  const values = Array.isArray(field.value) ? field.value : [field.value];
+  if (values.length === 0) return 'audience: names nobody';
+  const unknown = values.filter((value) => !AUDIENCES.includes(value));
+  if (unknown.length === 0) return null;
+  return `audience: "${unknown.join(', ')}" is not one of ${AUDIENCES.join(', ')}`;
+}
+
+function statusFindings(fields) {
+  const status = fields.get('status');
+  const problem = enumFinding(status, 'status', PAGE_STATUSES);
+  if (problem !== null) return [problem];
+  const findings = [];
+  if (status.value !== 'available' && !fields.get('statusNote')?.value) {
+    findings.push(`statusNote: required when status is ${status.value}`);
+  }
+  if (status.value === 'coming-soon' && !fields.get('tracking')?.value) {
+    findings.push('tracking: required when status is coming-soon');
+  }
+  return findings;
+}
+
+function sourcesFindings(field, exists) {
+  if (field === undefined) return ['sources: missing'];
+  if (!Array.isArray(field.value)) return ['sources: must be a list of repo paths'];
+  return field.value
+    .filter((path) => !exists(path))
+    .map((path) => `sources: no such path: ${path}`);
+}
+
+function lastVerifiedFinding(field) {
+  if (field === undefined) return 'lastVerified: missing';
+  if (isRealDate(String(field.value))) return null;
+  return `lastVerified: "${field.value}" is not a YYYY-MM-DD date`;
+}
+
+/**
+ * Findings for a hand-written site page's frontmatter. Each message opens with
+ * the field it is about; `exists` reports whether a repo path is on disk.
+ */
+export function checkPageFrontmatter(text, exists) {
+  const fields = parseFrontmatter(text) ?? new Map();
+  const messages = [
+    ...statusFindings(fields),
+    enumFinding(fields.get('diataxis'), 'diataxis', DIATAXIS_KINDS),
+    audienceFinding(fields.get('audience')),
+    ...sourcesFindings(fields.get('sources'), exists),
+    lastVerifiedFinding(fields.get('lastVerified')),
+  ].filter((message) => message !== null);
+  return messages.map((message) => ({
+    line: fields.get(message.split(':')[0])?.line ?? 1,
+    check: 'frontmatter',
+    message,
+  }));
+}

@@ -1,3 +1,20 @@
+---
+diataxis: tutorial
+audience: [lifter]
+status: available
+sources:
+  - src/tools/session-tools.ts
+  - src/tools/set-tools.ts
+  - src/schemas/session.ts
+  - src/schemas/set.ts
+  - src/state/event-bridge.ts
+  - src/dashboard/spa/live-page/ExerciseHeader.tsx
+  - scripts/dashboard-mock-drive.mjs
+  - docs/dashboard-drivers.md
+  - src/state/auto-arm.ts
+lastVerified: 2026-09-19
+---
+
 # Your first session
 
 By the end of this you will have opened a session, run at least one set, closed it, and

@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  checkPageFrontmatter,
   checkPathCitations,
   checkProtocolLeakage,
   checkToolCoverage,
@@ -216,5 +217,99 @@ describe('ANALYTICS_PIPELINE_IDS', () => {
       (match) => match[1],
     );
     expect([...ANALYTICS_PIPELINE_IDS].sort()).toEqual([...new Set(dispatched)].sort());
+  });
+});
+
+describe('checkPageFrontmatter', () => {
+  const EXISTING = new Set(['src/server.ts', 'README.md']);
+  const VALID = {
+    diataxis: 'how-to',
+    audience: '[lifter, coach]',
+    status: 'available',
+    sources: '\n  - src/server.ts\n  - README.md',
+    lastVerified: '2026-09-27',
+  };
+
+  function page(fields: Record<string, string | undefined>): string {
+    const lines = Object.entries({ ...VALID, ...fields })
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .map(([key, value]) => `${key}:${value.startsWith('\n') ? '' : ' '}${value}`);
+    return `---\n${lines.join('\n')}\n---\n\n# A scratch page\n`;
+  }
+
+  function messages(text: string): string[] {
+    return checkPageFrontmatter(text, (path: string) => EXISTING.has(path)).map(
+      (finding: { message: string }) => finding.message,
+    );
+  }
+
+  it('passes a complete available page', () => {
+    expect(messages(page({}))).toEqual([]);
+  });
+
+  it('passes a coming-soon page that carries a note and a tracking link', () => {
+    const text = page({
+      status: 'coming-soon',
+      statusNote: 'The tool is registered but does nothing yet.',
+      tracking: 'https://github.com/HJewkes/voltras-mcp/issues/1',
+    });
+    expect(messages(text)).toEqual([]);
+  });
+
+  it('names status when a page has no frontmatter at all', () => {
+    expect(messages('# A scratch page\n')).toContain('status: missing');
+  });
+
+  it('names status when the field is missing', () => {
+    expect(messages(page({ status: undefined }))).toEqual(['status: missing']);
+  });
+
+  it('names status when the value is outside the enum', () => {
+    expect(messages(page({ status: 'beta' }))).toEqual([
+      'status: "beta" is not one of available, experimental, coming-soon',
+    ]);
+  });
+
+  it('names statusNote on an experimental page without one', () => {
+    expect(messages(page({ status: 'experimental' }))).toEqual([
+      'statusNote: required when status is experimental',
+    ]);
+  });
+
+  it('names tracking on a coming-soon page without one', () => {
+    expect(messages(page({ status: 'coming-soon', statusNote: 'Not wired yet.' }))).toEqual([
+      'tracking: required when status is coming-soon',
+    ]);
+  });
+
+  it('names each sources path that does not exist', () => {
+    expect(messages(page({ sources: '\n  - src/server.ts\n  - src/gone.ts' }))).toEqual([
+      'sources: no such path: src/gone.ts',
+    ]);
+  });
+
+  it('names lastVerified when it is not a real calendar date', () => {
+    expect(messages(page({ lastVerified: '2026-02-30' }))).toEqual([
+      'lastVerified: "2026-02-30" is not a YYYY-MM-DD date',
+    ]);
+    expect(messages(page({ lastVerified: 'yesterday' }))).toEqual([
+      'lastVerified: "yesterday" is not a YYYY-MM-DD date',
+    ]);
+  });
+
+  it('names an audience outside the enum', () => {
+    expect(messages(page({ audience: '[lifter, investor]' }))).toEqual([
+      'audience: "investor" is not one of lifter, coach, developer',
+    ]);
+  });
+
+  it('reports the line the offending field sits on', () => {
+    const [finding] = checkPageFrontmatter(page({ status: 'beta' }), () => true);
+    expect(finding.line).toBe(4);
+  });
+
+  it('ignores a nested map such as the home page hero', () => {
+    const text = page({}).replace('---\n', '---\nhero:\n  name: voltras-mcp\n  text: A title\n');
+    expect(messages(text)).toEqual([]);
   });
 });

@@ -1,3 +1,18 @@
+---
+diataxis: how-to
+audience: [lifter, coach]
+status: available
+sources:
+  - src/state/isometric-protocol.ts
+  - src/tools/isometric-tools.ts
+  - src/schemas/device.ts
+  - src/schemas/isometric.ts
+  - docs/push-events.md
+  - src/dashboard/spa/live-page/IsometricWalkthrough.tsx
+  - src/state/live-signal.ts
+lastVerified: 2026-09-13
+---
+
 # Isometric assessment
 
 The `isometric.*` tools measure how hard someone can pull against the cable while holding
