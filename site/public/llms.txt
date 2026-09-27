@@ -1,0 +1,36 @@
+# voltras-mcp
+
+> A stdio MCP server that lets Claude drive a Voltra cable-resistance trainer: connect, set the load, record sets and reps, and report on the history. One server process per Claude Code session. Not published to npm; install from source. Training records stay in a local SQLite file, and the dashboard binds 127.0.0.1 only.
+
+## Get started
+
+- [Get started](https://hjewkes.github.io/voltras-mcp/start/): what you need, and the order to read the setup pages in
+- [Install](https://hjewkes.github.io/voltras-mcp/start/install): clone, build and register the server with Claude Code
+- [Your first session](https://hjewkes.github.io/voltras-mcp/start/first-session): connect, record a set and close the session
+- [Try it without a device](https://hjewkes.github.io/voltras-mcp/start/try-without-a-device): the mock adapter and the scripted dashboard drivers
+- [Launch options](https://hjewkes.github.io/voltras-mcp/start/launch-options): the voltra-pt plugin launcher versus plain registration
+
+## Reference
+
+- [Capability reference](https://hjewkes.github.io/voltras-mcp/reference/): every tool, resource and push event, generated from the tool registry
+- [Push events](https://hjewkes.github.io/voltras-mcp/reference/push-events): the events the server pushes into the conversation
+- [Page status](https://hjewkes.github.io/voltras-mcp/status): what Available, Experimental and Coming soon promise
+
+## Guides and concepts
+
+- [Guides](https://hjewkes.github.io/voltras-mcp/guides/): task guides for sessions, bilateral work, isometric tests and reports
+- [The wall dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard): the local dashboard, its pages and how to find its URL
+- [Understand your data](https://hjewkes.github.io/voltras-mcp/concepts/): what the numbers from a session mean
+- [Velocity and effort](https://hjewkes.github.io/voltras-mcp/concepts/velocity-and-effort): velocity loss, reps in reserve, and when the server states an effort number
+- [Calibration and trust](https://hjewkes.github.io/voltras-mcp/concepts/calibration-and-trust): which numbers are measured and which are derived
+
+## For coaches
+
+- [For coaches](https://hjewkes.github.io/voltras-mcp/coaches/): session and weekly reports, and the TrueCoach import
+- [Consent and the data loop](https://hjewkes.github.io/voltras-mcp/coaches/consent-and-data-loop): what is shared with a coach, and when
+
+## Optional
+
+- [Coming soon](https://hjewkes.github.io/voltras-mcp/coming-soon/): dashboard screens built in the code but not yet usable
+- [Roadmap](https://hjewkes.github.io/voltras-mcp/roadmap): what is present in the code but not finished
+- [Changelog](https://hjewkes.github.io/voltras-mcp/changelog): what changed between versions
