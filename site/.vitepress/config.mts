@@ -34,7 +34,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Install and run', link: '/install-and-run' },
+      { text: 'Get started', link: '/start/' },
       { text: 'Capability reference', link: '/reference/' },
       { text: 'Guides', link: '/guides/' },
       { text: 'Understand your data', link: '/concepts/' },
@@ -46,10 +46,30 @@ export default defineConfig({
 
     sidebar: [
       {
+        text: 'Get started',
+        items: [
+          { text: 'Overview', link: '/start/' },
+          { text: 'Install', link: '/start/install' },
+          { text: 'Your first session', link: '/start/first-session' },
+          { text: 'Try it without a device', link: '/start/try-without-a-device' },
+          { text: 'Launch options', link: '/start/launch-options' },
+        ],
+      },
+      {
+        text: 'Guides',
+        items: [
+          { text: 'Overview', link: '/guides/' },
+          { text: 'Running a planned session', link: '/guides/planned-session' },
+          { text: 'Bilateral work', link: '/guides/bilateral' },
+          { text: 'Isometric assessment', link: '/guides/isometric' },
+          { text: 'The wall dashboard', link: '/guides/dashboard' },
+          { text: 'The dashboard, stage by stage', link: '/guides/dashboard-tour' },
+          { text: 'Troubleshooting', link: '/guides/troubleshooting' },
+        ],
+      },
+      {
         text: 'Docs',
         items: [
-          { text: 'Install and run', link: '/install-and-run' },
-          { text: 'Guides', link: '/guides/' },
           { text: 'Roadmap', link: '/roadmap' },
           { text: 'Changelog', link: '/changelog' },
         ],

@@ -20,8 +20,8 @@ lastVerified: 2026-09-15
 
 This page is about the sidecar itself — what it is, how to find it, its four pages, and
 how it stays current. For what each page actually looks like mid-workout, see the
-[dashboard walkthrough](/guides/) on the guides index; that page carries the captures, this
-one doesn't repeat them.
+[dashboard tour](/guides/dashboard-tour); that page carries the captures, this one
+doesn't repeat them.
 
 ## What it is
 
@@ -245,7 +245,7 @@ a real plan attached). See
 [`docs/dashboard-drivers.md`](https://github.com/HJewkes/voltras-mcp/blob/main/docs/dashboard-drivers.md)
 for the full comparison table — what each one can and can't show for prescription,
 bilateral, and timers — rather than this page restating it. The
-[first-session guide](/guides/first-session#option-b-without-a-device) and the
+[first-session guide](/start/first-session#option-b-without-a-device) and the
 [bilateral guide](/guides/bilateral#no-hardware-or-only-one-device-the-dual-mock-path) both
 walk through running `dashboard-mock-drive.mjs` end to end.
 
@@ -271,7 +271,7 @@ second set is.
 
 ## What to read next
 
-- The [dashboard walkthrough](/guides/) for the captures — before connection, mid-set, the
+- The [dashboard walkthrough](/guides/dashboard-tour) for the captures — before connection, mid-set, the
   rest stage, session summary, the plan builder, and the bilateral diverging stage.
 - [`docs/dashboard-drivers.md`](https://github.com/HJewkes/voltras-mcp/blob/main/docs/dashboard-drivers.md)
   for the full driver comparison.

@@ -30,7 +30,7 @@ tell your coach before the first real submit (`README.md`, GATE 1).
 ## 2. Install and run a first session
 
 **[Lifter]** Install voltras-mcp and register it with Claude Code by following
-[Install and run](/install-and-run). Then follow [Your first session](/guides/first-session).
+[Install](/start/install). Then follow [Your first session](/start/first-session).
 It works with a Voltra or, for a rehearsal, with the mock adapter. Mock-adapter sets never
 appear in a report (`README.md`, "Coach results and the outbox").
 

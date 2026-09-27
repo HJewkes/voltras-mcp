@@ -30,7 +30,7 @@ one yourself.
 ## Roles
 
 **The lifter** owns the Voltra and the computer it connects to. They install voltras-mcp
-and talk to Claude during the workout ([Install and run](/install-and-run)). Every record
+and talk to Claude during the workout ([Install](/start/install)). Every record
 lives in one file on their machine, `~/.voltras/vmcp.sqlite` by default (`VMCP_DB_PATH`,
 `README.md`).
 

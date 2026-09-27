@@ -4,88 +4,48 @@ audience: [lifter, coach]
 status: available
 sources:
   - src/tools/server-tools.ts
-lastVerified: 2026-09-19
+  - src/tools/plan-tools.ts
+  - src/dashboard/README.md
+lastVerified: 2026-09-27
 ---
 
 # Guides
 
-- [Your first session](/guides/first-session) — open a session, run sets, and close out,
-  either with a Voltra or the mock adapter.
-- [Running a planned session](/guides/planned-session) — build or import a plan, attach
-  it to a live session, and run against its prescription.
-- [Bilateral work](/guides/bilateral) — connect and bind two Voltras, cascade settings
-  across both with `bilateral.cascade`, and read per-slot events.
-- [Isometric assessment](/guides/isometric) — the single-hold primitive versus the two
+The guides assume the server is installed and you have run one session. If not, start with
+[Get started](/start/), which ends with the [first-session tutorial](/start/first-session).
+Each guide below is a set of steps toward one goal. For every tool a guide names, the
+[capability reference](/reference/) has the full schema.
+
+## Training
+
+- [Running a planned session](/guides/planned-session): build or import a plan, attach it
+  to a live session, and run against its prescription.
+- [Bilateral work](/guides/bilateral): connect and bind two Voltras, cascade settings across
+  both with `bilateral.cascade`, and read per-slot events.
+- [Isometric assessment](/guides/isometric): the single-hold primitive versus the two
   blocking protocols, trial validity, and the calibration caveat on the force figures.
-- [For coaches](/coaches/) — reading a session report and the weekly report, the
-  TrueCoach import, and how a coach and a lifter share results. The two report guides
-  moved there.
-- [The wall dashboard](/guides/dashboard) — the sidecar itself: finding its URL, its three
-  pages, how it stays current, and driving it without hardware.
+
+## Planning
+
+Plans live in the [`plan.*`](/reference/plan) tools: programs, blocks, weeks, workout
+templates and the planned exercises in each template. The wall dashboard has a plan builder
+page at `/app#/plan` for browsing the exercise catalog and editing a workout by hand. See
+[the dashboard guide's page list](/guides/dashboard#the-four-pages) and the
+[plan builder capture](/guides/dashboard-tour#building-the-plan-behind-it).
+
+## The wall dashboard
+
+- [The wall dashboard](/guides/dashboard): the sidecar itself. How to find its URL, its
+  pages, how it stays current, and how to drive it without hardware.
+- [The dashboard, stage by stage](/guides/dashboard-tour): published captures of each stage,
+  from before a Voltra connects to the session summary and the two-device view.
+
+## Troubleshooting
+
+- [Troubleshooting](/guides/troubleshooting): the common failures and their fixes, how to
+  back up the training store, and how to rehearse a restore on a copy.
 
 For what the numbers mean rather than how to get them, see [Understand your data](/concepts/).
 
-## The wall dashboard, stage by stage
-
-voltras-mcp ships a local web dashboard alongside the MCP server, so a workout is
-something you can watch on a screen instead of only reading back through Claude.
-[`server.health`](/reference/server) reports whether one is running for the current
-session (`dashboardAvailable`/`dashboardUrl`) — it has no dedicated MCP resource of its
-own. The captures below are all driven through the real tool pipeline against the mock
-adapter (`VOLTRA_ADAPTER=mock`), never a real device, so the numbers on them are
-reproducible rather than a one-off recording. This walkthrough is the captures; for the
-sidecar itself — the URL, the three pages, how it stays current, driving it without
-hardware — see [the dashboard guide](/guides/dashboard).
-
-### Before a Voltra connects
-
-Nothing is bound yet: no [`device.connect`](/reference/device) has succeeded on this
-slot, so the dashboard has no telemetry to show and says so plainly instead of leaving a
-panel blank.
-
-![The wall dashboard before a Voltra is connected.](/captures/dashboard-cold.png)
-
-### Mid-set, with a plan attached
-
-Once [`session.start`](/reference/session) opens a session pinned to an exercise and
-[`plan.attach_to_session`](/reference/plan) has hung a prescription off it, the live
-page shows the target rep band and load next to what the set is actually doing —
-per-rep velocity, the fatigue verdict, and each rep's concentric/eccentric shape and
-tempo.
-
-![The live page mid-set, with the prescribed sets, reps, load and tempo attached.](/captures/live-mid-set.png)
-
-### Between sets
-
-Closing a set with [`set.end`](/reference/set) moves the dashboard into its rest stage:
-the set just finished, its verdict, and a countdown ring driven by the exercise's
-planned rest target — or, when no target is set, an honest count-up instead.
-
-![The rest stage between two sets of a planned exercise.](/captures/live-rest.png)
-
-### Session complete
-
-[`session.end`](/reference/session) closes the session — force-ending any set still
-open — and writes its final row. The summary page it produces reads back the totals,
-speaks the same fatigue-verdict language the live page used mid-set, and adds a load
-recommendation that only appears here. It states no RPE or RIR: those wait for a fitted
-effort profile the lifter can trust.
-
-![The session-completion screen for the session that just ended.](/captures/session-summary.png)
-
-### Building the plan behind it
-
-The prescriptions shown above come from the [`plan.*`](/reference/plan) namespace —
-programs, blocks, weeks, and the planned exercises attached to a workout template. The
-same dashboard exposes a builder view over that data.
-
-![The plan builder, showing a workout template with three planned exercises and a searchable exercise catalog.](/captures/plan-builder.png)
-
-### Two Voltras, one dashboard
-
-A bilateral rig runs two devices on the `left` and `right` [slots](/reference/slot),
-settable together with [`bilateral.cascade`](/reference/bilateral). The dashboard's
-diverging stage plots both sides' per-rep velocity against each other so an imbalance
-is visible mid-set, not just after the fact.
-
-![The diverging stage mid-set, with two Voltras bound to the left and right slots.](/captures/live-dual-mid-set.png)
+Coaches, and lifters who share results with one, start at [For coaches](/coaches/). The
+session report and weekly report guides moved there.

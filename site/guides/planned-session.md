@@ -17,7 +17,7 @@ By the end of this you will have built (or imported) a training plan, attached i
 live session, run the session against its prescription, and closed out the workout
 template it came from — plus know what to expect if you land on a block boundary.
 
-This assumes the [first-session guide](/guides/first-session) already, since a planned
+This assumes the [first-session guide](/start/first-session) already, since a planned
 session is the same `session.*`/`set.*` lifecycle with a prescription layered on top of
 it.
 
@@ -60,9 +60,9 @@ movement" (`src/tools/session-tools.ts`).
 
 ## Running the session
 
-From here it's the [first-session](/guides/first-session) flow — `set.start` /
+From here it's the [first-session](/start/first-session) flow — `set.start` /
 `set.end` per set — with the prescription visible on the
-[dashboard](/guides/#mid-set-with-a-plan-attached) alongside what the set is actually
+[dashboard](/guides/dashboard-tour#mid-set-with-a-plan-attached) alongside what the set is actually
 doing: target rep band and load next to per-rep velocity, fatigue verdict, and each rep's
 tempo. `set.start`'s `setPurpose` (`working` / `warmup` / `probe` / `technique`) still
 applies the same way it does off-plan.
@@ -113,9 +113,9 @@ automatically (`src/tools/plan-tools.ts`, VMCP-06.06 / B48).
 
 ## What to read next
 
-- [The first-session guide](/guides/first-session) for the base `session.*`/`set.*`
+- [The first-session guide](/start/first-session) for the base `session.*`/`set.*`
   lifecycle, auto-arm, and the header-weight rule.
-- The [dashboard walkthrough](/guides/) for what a planned session's prescription looks
+- The [dashboard walkthrough](/guides/dashboard-tour) for what a planned session's prescription looks
   like rendered live, and the "Building the plan behind it" section for the plan builder
   view.
 - The [`plan.*` reference](/reference/plan) for full schemas on every tool named above.

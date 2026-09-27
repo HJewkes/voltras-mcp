@@ -21,7 +21,7 @@ By the end of this you'll know what [`report.session_results`](/reference/report
 how to read the load labels on non-weight modes, what the TrueCoach outbox does and does
 not do, and where the write-back submitter lives and why it's a separate, gated tool.
 
-This assumes the [first-session guide](/guides/first-session) already — a report is built
+This assumes the [first-session guide](/start/first-session) already — a report is built
 from a session you've already run and ended.
 
 ## Reading a report
