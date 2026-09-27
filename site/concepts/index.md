@@ -7,6 +7,10 @@ status: available
 sources:
   - site/concepts/velocity-and-effort.md
   - site/concepts/calibration-and-trust.md
+  - site/concepts/fatigue-and-pacing.md
+  - site/concepts/technique-signals.md
+  - site/concepts/how-coaching-works.md
+  - site/concepts/privacy-and-local-data.md
 lastVerified: 2026-09-27
 ---
 
@@ -22,5 +26,12 @@ every tool.
 - [Calibration and trust](/concepts/calibration-and-trust): which numbers are measured and which
   are derived, why trends beat single readings, and where the defaults are not yours.
 
-Four more pages are planned: fatigue and pacing, technique signals, how coaching works, and privacy
-and local data.
+- [Fatigue and pacing](/concepts/fatigue-and-pacing): the fatigue verdict, when the live card says
+  stop, tempo targets, and the two different things called a rest timer.
+- [Technique signals](/concepts/technique-signals): range of motion, pauses, bounces, tempo and
+  left-right imbalance, and what a cable sensor cannot see.
+- [How coaching works](/concepts/how-coaching-works): who decides what gets said, automatic cues,
+  your experience tier, where `coaching.explain` gets its answers, and the limits of the spoken
+  stop.
+- [Privacy and local data](/concepts/privacy-and-local-data): where your record lives, who can
+  reach the dashboard, what leaves your machine, and backups.

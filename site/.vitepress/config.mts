@@ -80,6 +80,10 @@ export default defineConfig({
           { text: 'Overview', link: '/concepts/' },
           { text: 'Velocity and effort', link: '/concepts/velocity-and-effort' },
           { text: 'Calibration and trust', link: '/concepts/calibration-and-trust' },
+          { text: 'Fatigue and pacing', link: '/concepts/fatigue-and-pacing' },
+          { text: 'Technique signals', link: '/concepts/technique-signals' },
+          { text: 'How coaching works', link: '/concepts/how-coaching-works' },
+          { text: 'Privacy and local data', link: '/concepts/privacy-and-local-data' },
         ],
       },
       {
