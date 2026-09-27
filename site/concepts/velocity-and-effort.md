@@ -6,6 +6,7 @@ audience: [lifter, coach]
 status: available
 sources:
   - src/analytics/rir-velocity.ts
+  - src/state/event-bridge.ts
   - src/tools/rir-velocity-tools.ts
   - src/tools/metrics-tools.ts
   - src/tools/report-tools.ts
@@ -32,12 +33,12 @@ Three terms first.
 
 - **VBT** is velocity-based training: using how fast you move the load to guide training.
 - **RIR** is reps in reserve: how many more reps you could have done when you stopped.
-- **RPE** is rating of perceived exertion. On the lifting scale, RPE 10 means no reps left and
-  RPE 8 means about two left.
+- **RPE** is rating of perceived exertion: how hard a set felt.
 
 ## What the server measures
 
-The Voltra reports how fast the cable moves on every rep. The number this server leans on most is
+The Voltra streams readings of the cable as you move, and the server groups them into reps
+(`src/state/event-bridge.ts:22-25`). The number this server leans on most is
 **mean concentric velocity**. That is the average speed of the lifting part of a rep, in metres
 per second. The fitted effort curve described below reads this number and no other
 (`src/analytics/rir-velocity.ts:52-60`).
@@ -51,7 +52,10 @@ give a different percentage for the same set, and both are correct for their own
 ## Why slowing down tracks effort
 
 As a set goes on, fatigue builds and each rep gets slower. So a bigger velocity loss usually means
-you are closer to failure. The server uses this in two places.
+you are closer to failure. The server's failure check, for example, treats a 30% loss as the band
+where failure gets close
+([failure-anchor-harvest.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/failure-anchor-harvest.md#the-criterion-version-failure-harvest100)).
+The server uses velocity loss in two places.
 
 First, velocity loss is a stop signal during a set. The server treats the stopping point as a
 goal choice, not a fixed number. A strength set defaults to a 20% loss, a hypertrophy set to 30%

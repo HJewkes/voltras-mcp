@@ -30,11 +30,13 @@ worked out from those readings. This page explains which is which, and how far t
 ## Measured and derived
 
 The device streams readings while you move. The server groups them into reps as each lift-and-return
-cycle ends (`src/state/event-bridge.ts:22-25`). Per-rep speed and range of motion come from that
-stream. These are the closest thing to a measurement the server has.
+cycle ends (`src/state/event-bridge.ts:22-25`). Each reading carries the cable's position, speed and
+force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:652-672`). Per-rep
+speed and range of motion are the closest thing to a measurement the server has.
 
 Almost everything else is derived. Velocity loss, the fatigue verdict, estimated 1RM (e1RM),
-readiness and reps in reserve are all calculations over recorded reps. A derived number can be no
+readiness and reps in reserve are all calculations over recorded reps
+([`metrics.compute`](/reference/metrics), `src/tools/metrics-tools.ts:2411-2440`). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
@@ -53,7 +55,8 @@ different scale. Absolute speeds from those sets were wrong, but velocity loss, 
 fatigue verdicts were not, because they are ratios (`src/store/velocity-units.ts:10-13`).
 
 So when a figure is uncertain, compare it with yourself. This week against last month, or left
-side against right side, is a more reliable read than any single value.
+side against right side, is a more reliable read than any single value. The
+[isometric guide](/guides/isometric#the-calibration-caveat) makes the same point about force.
 
 ## Velocity units are tagged
 
@@ -108,7 +111,8 @@ lookup. Its own description says to treat numbers from a baseline below CALIBRAT
 exercise were comparable, for example after a change in range of motion, tempo or setup. It gives
 the same verdict the internal checks use (`src/tools/drift-guard-tools.ts:29-34`).
 
-Neither tool tells you what to do. They tell you how much the server knows.
+Neither tool tells you what to do. They tell you how much the server knows
+(`src/tools/drift-guard-tools.ts:35-36`, `src/tools/baseline-tools.ts:67-68`).
 
 ## Effort numbers
 
