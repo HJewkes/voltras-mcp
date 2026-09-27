@@ -448,3 +448,87 @@ describe('determinism', () => {
     expect(deriveGoalBand(rowInput())).toEqual(deriveGoalBand(rowInput()));
   });
 });
+
+/** `weeksOf` split into blocks of `blockWeeks`, each week carrying its block's ordinal. */
+function blockedWeeksOf(count: number, blockWeeks: number): GoalBandWeek[] {
+  return weeksOf(count).map((week) => ({
+    ...week,
+    blockOrdinal: Math.floor((week.index - 1) / blockWeeks),
+  }));
+}
+
+/** A 100 lb beginner chest press: a 3 lb class step (upper compound, 3% of 100). */
+function chestPressInput(overrides: Partial<GoalBandInput> = {}): GoalBandInput {
+  return rowInput({
+    startValue: 100,
+    tier: 'beginner',
+    horizonWeeks: 12,
+    weeks: weeksOf(12),
+    ...overrides,
+  });
+}
+
+describe('two slopes: later blocks ramp slower than the first (VW-510)', () => {
+  it('reproduces today’s band exactly when every week is in the first block', () => {
+    const inBlockZero = weeksOf(12, [4]).map((week) => ({ ...week, blockOrdinal: 0 }));
+    expect(deriveGoalBand(chestPressInput({ weeks: inBlockZero }))).toEqual(
+      deriveGoalBand(chestPressInput({ weeks: weeksOf(12, [4]) })),
+    );
+    expect(deriveGoalBand(chestPressInput()).stretchValue).toBe(133);
+  });
+
+  it('ends a 12-week chest press across three 4-week blocks well under 133', () => {
+    const band = deriveGoalBand(chestPressInput({ weeks: blockedWeeksOf(12, 4) }));
+    expect(band.stretchValue).toBe(121); // 3 steps of 3 lb, then 8 of 1.5 lb
+    expect(band.committedValue).toBe(110.5);
+    expect(band.notes.join(' ')).toContain('ENGINEERING DEFAULT');
+  });
+
+  it('keeps the class step for every week of the first block', () => {
+    const band = deriveGoalBand(chestPressInput({ weeks: blockedWeeksOf(12, 4) }));
+    expect(band.expected.slice(0, 5).map((week) => week.high)).toEqual([100, 103, 106, 109, 110.5]);
+  });
+
+  it('caps a measured later-block rate above half the class step at half', () => {
+    const measured = { value: 2.5, source: 'MEASURED', n: 12 } as const;
+    const band = deriveGoalBand(
+      chestPressInput({ weeks: blockedWeeksOf(12, 4), laterBlockPctPerWeek: measured }),
+    );
+    expect(band.stretchValue).toBe(121);
+    expect(band.notes.join(' ')).toContain('capped at half the class step');
+  });
+
+  it('uses a measured later-block rate below the cap as measured', () => {
+    const measured = { value: 0.6, source: 'MEASURED', n: 12 } as const;
+    const band = deriveGoalBand(
+      chestPressInput({ weeks: blockedWeeksOf(12, 4), laterBlockPctPerWeek: measured }),
+    );
+    expect(band.stretchValue).toBeCloseTo(113.8, 6); // 9 lb, then 8 steps of 0.6 lb
+    expect(band.notes.join(' ')).toContain('MEASURED start-to-start class slope of 0.6%/wk');
+  });
+
+  it('holds a later block flat when the measured slope is falling', () => {
+    const measured = { value: -1, source: 'MEASURED', n: 12 } as const;
+    const band = deriveGoalBand(
+      chestPressInput({ weeks: blockedWeeksOf(12, 4), laterBlockPctPerWeek: measured }),
+    );
+    expect(band.stretchValue).toBe(109);
+  });
+
+  it('leaves a fitted own slope and a rep goal on their single rate', () => {
+    const fitted = { pctPerWeek: 1.8, sePctPerWeek: 0.4, confidence: 'high' } as const;
+    const own = { infoLevel: 'own', ownSlope: fitted, completedMesoCount: 1 } as const;
+    const blocked = { weeks: blockedWeeksOf(12, 4) };
+    expect(deriveGoalBand(chestPressInput({ ...own, ...blocked })).expected).toEqual(
+      deriveGoalBand(chestPressInput(own)).expected,
+    );
+    const reps = { metric: 'reps_at_load', startValue: 10 } as const;
+    expect(deriveGoalBand(chestPressInput({ ...reps, ...blocked })).expected).toEqual(
+      deriveGoalBand(chestPressInput(reps)).expected,
+    );
+  });
+
+  it('pins the later-block cap at half the class step', () => {
+    expect(GOAL_BAND_CONSTANTS.laterBlockClassFraction).toBe(0.5);
+  });
+});

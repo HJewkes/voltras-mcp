@@ -11,12 +11,6 @@
 // same load is at least as strong a performance, so excluding it would throw
 // away the better evidence. The anchor itself is the low edge of the
 // exercise's own rep range, which `goal-metrics.ts` picks.
-//
-// WHY THE STANDARD ERROR IS DERIVED RATHER THAN FITTED. `history.trend`
-// already fits the series and reports a slope, an r-squared and a point count.
-// Re-fitting here to get a standard error would mean two fits over one series
-// that could disagree; the identity below gets the same number from the fit
-// that already ran.
 
 /** One working set, reduced to what a matched-reps read needs. */
 export interface RepCountedSet {
@@ -127,31 +121,4 @@ export function modalRepCount(sets: readonly RepCountedSet[]): number | null {
     }
   }
   return best;
-}
-
-/** Points below this leave the residual degrees of freedom at zero or less. */
-const MIN_POINTS_FOR_STANDARD_ERROR = 3;
-
-/**
- * The standard error of a fitted slope, from the fit's own slope, r-squared
- * and point count.
- *
- * For a simple linear regression, se(b)^2 = (SSE / (n - 2)) / Sxx and
- * r^2 = b^2 * Sxx / SST, which rearrange to se(b) = |b| * sqrt((1/r^2 - 1) /
- * (n - 2)). It is an identity, not an approximation: the same three figures
- * `history.trend` already reports determine it exactly.
- *
- * `null` when the fit cannot support one — under three points there are no
- * residual degrees of freedom, a zero r-squared makes the expression
- * unbounded, and a perfect fit of 1 would claim an error of zero from data
- * that has not earned it.
- */
-export function slopeStandardError(
-  slope: number,
-  rSquared: number,
-  pointCount: number,
-): number | null {
-  if (pointCount < MIN_POINTS_FOR_STANDARD_ERROR) return null;
-  if (!(rSquared > 0) || rSquared >= 1) return null;
-  return Math.abs(slope) * Math.sqrt((1 / rSquared - 1) / (pointCount - 2));
 }
