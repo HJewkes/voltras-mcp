@@ -26,15 +26,16 @@ hash route, so you open it by adding the route to that URL, for example
 `http://127.0.0.1:7723/app#/plan`. An unknown route opens the live page.
 
 The status words are the ones defined on the [page status](/status) page. A page marked
-Coming soon is built, but it is not usable end to end yet; the note in its row says why.
+Coming soon is built, but it is not usable end to end yet; its status word links to the page
+that says what does not work.
 
-| Status      | Route       | How to open it                                                                          | Read-model endpoints                                                              |
-| ----------- | ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Available   | `#/`        | The dashboard URL itself, or **live** in the nav rail.                                  | `/api/snapshot` (polled), `/api/stream` (server-sent events), `/api/session-plan` |
-| Available   | `#/plan`    | **program** in the nav rail.                                                            | `/api/plan-tree`, `/api/exercises`; edits go to `/api/plan/*`                     |
-| Available   | `#/summary` | **review** in the nav rail, for the latest session; `#/summary/:sessionId` for another. | `/api/session-summary/:sessionId`                                                 |
-| Coming soon | `#/goals`   | By URL only: the nav rail has no entry for it.                                          | `/api/goals`, `/api/goal-progress`                                                |
-| Coming soon | `#/body`    | **body** in the nav rail.                                                               | `/api/muscle-week`, `/api/muscle-strength`, `/api/muscle-plan`                    |
+| Status                                 | Route       | How to open it                                                                          | Read-model endpoints                                                              |
+| -------------------------------------- | ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Available                              | `#/`        | The dashboard URL itself, or **live** in the nav rail.                                  | `/api/snapshot` (polled), `/api/stream` (server-sent events), `/api/session-plan` |
+| Available                              | `#/plan`    | **program** in the nav rail.                                                            | `/api/plan-tree`, `/api/exercises`; edits go to `/api/plan/*`                     |
+| Available                              | `#/summary` | **review** in the nav rail, for the latest session; `#/summary/:sessionId` for another. | `/api/session-summary/:sessionId`                                                 |
+| [Coming soon](/coming-soon/goals-page) | `#/goals`   | By URL only: the nav rail has no entry for it.                                          | `/api/goals`, `/api/goal-progress`                                                |
+| [Coming soon](/coming-soon/body-map)   | `#/body`    | **body** in the nav rail.                                                               | `/api/muscle-week`, `/api/muscle-strength`, `/api/muscle-plan`                    |
 
 ## What each page shows
 
