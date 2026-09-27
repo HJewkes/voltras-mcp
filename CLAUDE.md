@@ -78,3 +78,22 @@ Describe the observable behaviour instead. Protocol-derived findings belong in `
 **Three lint exemption directives exist**, all in `uint8ArrayToHex` (`src/tools/device-tools.ts`), all inline with a stated reason, and the full set is pinned by `src/__tests__/lint/no-protocol-detail.test.ts`. Adding a third means editing that pin and saying why. `reportUnusedDisableDirectives` is `error`, so a directive left behind after its line changed fails the build.
 
 The 15 test files under `src/**/__tests__/` still hold protocol fixtures and are exempt by path (w5-13). The exemption is a path glob in `eslint.config.mjs`; it governs what is fixed, never what is counted.
+
+## Gotchas
+
+- `ci.yml` runs only on PRs whose base is `main`: a stacked PR gets no checks, and retargeting it to `main` does not start them (close and reopen does).
+- PRs are squash-merged, so after a parent PR lands, rebase a stacked branch with `git rebase --onto origin/main <old-parent-sha>` and check `git diff --name-only origin/main...HEAD`.
+- `pages.yml` runs `docs:build` on PRs only when `site/**` changes, but the site includes the root `CHANGELOG.md`; run `npm run docs:build` for any docs or CHANGELOG change, and write CHANGELOG links site-relative (`/guides/x`), not as repo paths. `docs:check` does not catch dead links.
+- The docs protocol guard (`src/docs/protocol-guard.ts`) rewrites any ALL-CAPS-HYPHENATED token to `[redacted]` in generated pages while `docs:check` still passes; avoid that emphasis in tool descriptions and grep the regenerated `site/reference/` diff for `[redacted]`.
+- `security-audit` blocks only on critical vulns (`--audit-level=critical`), and they sit in the production tree (`@modelcontextprotocol/sdk`, `onnxruntime-node`), so `--omit=dev` does not help; try plain `npm audit fix` first.
+- Never regenerate `package-lock.json` on macOS: npm drops the Linux-only `@emnapi/*` optional peers and CI's `npm ci` fails. Bump a dependency by editing its lockfile entries (range, version, `resolved`, `integrity`) by hand.
+- The main checkout is the pinned bench build: never `npm install` there. Worktrees under `.worktrees/` without their own `node_modules` resolve up to it, so run `npm ci` in the worktree before believing a local failure CI does not show.
+- The SPA consumes `@titan-design/react-ui` from npm at a caret pin, so a titan component merged to titan `main` is unavailable here until a titan release is tagged and published.
+- In the dashboard SPA, react-native-web's base `View` rules silently beat Tailwind layout classes (`flex-1`, `flex-row`, `items-center`); put layout in `style` props and keep colour classes in `className`.
+- `@voltras/workout-analytics` typings degrade `Set.reps` to `readonly any[]` under NodeNext; import `Rep` directly and annotate callbacks (`set.reps.map((rep: Rep) => ...)`).
+- Upserts on a parent row with FK children use `INSERT ... ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`, which deletes and reinserts the row and cascade-wipes its children.
+- Migrations: probe columns with `table_xinfo` (`table_info` omits generated columns); create indexes over new columns inside the migration, because `SCHEMA_SQL` runs first; keep backticks out of SQL comments in `SCHEMA_SQL`; an explicitly bound `NULL` overrides a column `DEFAULT`.
+- A fresh store and a migrated store can hold the same columns in different physical positions; sort columns by name in any store-to-store comparison (`src/store/portable/inventory.ts`).
+- Opening `~/.voltras/vmcp.sqlite` through `SessionStore` migrates it; a read-only tool copies the file into a gitignored scratch dir and opens the copy with `node:sqlite` `readOnly: true` (see `scripts/sim/`).
+- There is no `tsx` or `ts-node`: a TypeScript script compiles through its own tsconfig into a gitignored build dir (`tsconfig.sim.json` to `.sim-build/`), and `npm run lint` does not cover `scripts/`.
+- `VMCP_DASHBOARD_PORT=0` turns the dashboard off (like `off`); it is not an ephemeral port. On a held port the sidecar falls back to an OS-assigned one, so read the URL from `server.health.dashboardUrl`, which ends in `/app`.
