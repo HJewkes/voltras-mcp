@@ -18,7 +18,7 @@ export default defineConfig({
   ],
 
   themeConfig: {
-    logo: '/logo.svg',
+    logo: { src: '/logo.svg', alt: 'voltras-mcp' },
     search: { provider: 'local' },
     lastUpdated: { text: 'Last updated' },
     editLink: {
