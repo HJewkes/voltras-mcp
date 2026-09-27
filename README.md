@@ -288,8 +288,11 @@ verdict, not the number). The scratch store is removed on exit and
 
 ## The dashboard
 
-The server starts a **read-only, loopback-only HTTP sidecar** alongside the MCP transport.
-It binds `127.0.0.1` only and exposes no mutating routes.
+The server starts a **loopback-only HTTP sidecar** alongside the MCP transport. It binds
+`127.0.0.1` only; its live-view routes are reads, and it also serves a small set of
+plan-editing routes used by the plan builder page, each behind the write guard in
+`src/dashboard/write-guard.ts` (`src/dashboard/server.ts:87-103`,
+`src/dashboard/write-guard.ts:85-95`).
 
 | URL                                  | What it is                                                                                                         |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |

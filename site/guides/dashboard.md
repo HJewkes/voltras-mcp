@@ -30,8 +30,8 @@ network exposure beyond the machine it runs on (`README.md`). Its live-view rout
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
 `/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
 `/api/muscle-recovery`, `/api/goals`, `/api/goal-progress`, `/api/session-summary/:sessionId`
-— are all reads. That's the surface the README calls "read-only," and it's the one this
-guide is mostly about. `/api/muscle-plan` (VW-331) rolls up the active training week into
+— are all reads. That's the live-view surface (`README.md`), and it's the one this guide is
+mostly about. `/api/muscle-plan` (VW-331) rolls up the active training week into
 planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
 planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
 how much you actually trained each muscle this week, and whether that is a lot or a little.

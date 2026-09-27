@@ -10,6 +10,7 @@ sources:
   - CLAUDE.md
   - src/config.ts
   - src/dashboard/server.ts
+  - src/dashboard/write-guard.ts
   - src/integrations/truecoach/outbox.ts
   - src/tools/report-tools.ts
   - src/tools/session-tools.ts
@@ -32,8 +33,10 @@ With no extra settings, voltras-mcp sends nothing to anyone:
 - The training records live in one SQLite file on the lifter's machine,
   `~/.voltras/vmcp.sqlite` unless `VMCP_DB_PATH` moves it (`README.md`, "Environment
   variables").
-- The dashboard binds `127.0.0.1` only and has no route that changes anything, so no other
-  machine can open it (`README.md`, "The dashboard"; `src/dashboard/server.ts:242`).
+- The dashboard binds `127.0.0.1` only, so no other machine can open it. Its live-view
+  routes are reads; it also serves a small set of plan-editing routes used by the plan
+  builder page, each behind the write guard in `src/dashboard/write-guard.ts` (`README.md`,
+  "The dashboard"; `src/dashboard/server.ts:242`, `src/dashboard/write-guard.ts:85-95`).
 - `report.session_results` and `report.weekly` read the store and make no network call
   (`src/tools/report-tools.ts`).
 - The outbox file drop and the automated TrueCoach post are both off by default
