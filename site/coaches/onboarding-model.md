@@ -8,6 +8,7 @@ sources:
   - CLAUDE.md
   - README.md
   - src/dashboard/server.ts
+  - src/dashboard/write-guard.ts
   - src/tools/report-tools.ts
   - src/tools/truecoach-tools.ts
   - plugins/voltras-channel/skills/pt-session/SKILL.md
@@ -41,8 +42,11 @@ at a time, one process per session (`CLAUDE.md`).
 
 **You** write the programme, read the results and decide what changes. You have no path to
 the device or to the lifter's records. The server talks to Claude over standard input and
-output, and its dashboard binds `127.0.0.1` only and has no route that changes anything
-(`README.md`, `src/dashboard/server.ts`).
+output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
+machine can reach it. Its live-view routes are reads; the plan-editing routes behind the
+plan builder page are further gated by the per-boot write guard in
+`src/dashboard/write-guard.ts` (`README.md`, `src/dashboard/server.ts`,
+`src/dashboard/write-guard.ts:85-95`).
 
 ## Responsibilities
 
