@@ -67,6 +67,16 @@ export default defineConfig({
         ],
       },
       { text: 'Capability reference', collapsed: false, items: referenceSidebar },
+      {
+        text: 'Coming soon',
+        collapsed: false,
+        items: [
+          { text: 'Overview', link: '/coming-soon/' },
+          { text: 'Body map', link: '/coming-soon/body-map' },
+          { text: 'Goals page', link: '/coming-soon/goals-page' },
+          { text: 'Effort readout', link: '/coming-soon/effort-readout' },
+        ],
+      },
     ],
 
     socialLinks: [{ icon: 'github', link: 'https://github.com/HJewkes/voltras-mcp' }],

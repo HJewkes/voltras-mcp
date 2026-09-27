@@ -21,6 +21,9 @@ environment variable, a documented direction — but don't yet do, or fully do, 
 would reasonably expect from their name. Nothing here is a commitment or a date; several
 items are directions under consideration, not decisions.
 
+Dashboard screens that are built but not yet usable end to end have their own pages under
+[Coming soon](/coming-soon/).
+
 ## Registered but does nothing
 
 - **`mock.configure` and `mock.inject_error`.** In mock mode, both tools are registered and

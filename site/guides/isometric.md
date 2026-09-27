@@ -318,7 +318,7 @@ The isometric tools apply this conversion directly, independent of the main tele
 bridge — and as of this writing, the assessment's empirical validity (the plateau detection,
 the inferred working weight) has **not** been re-verified against hardware since that scale
 was last changed. It's flagged in source for a separate calibration ticket
-(`src/tools/isometric-tools.ts:744-751`).
+(`src/tools/isometric-tools.ts:1465-1468`).
 
 Practically: treat `peakForceLbs` and `meanPlateauForceLbs` as the device's own reading
 under its own conversion, not as a value checked against a known reference load. Trends —

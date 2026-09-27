@@ -38,8 +38,8 @@ how much you actually trained each muscle this week, and whether that is a lot o
 `/api/muscle-strength` (VW-330) answers the third — which muscles are actually getting
 stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
 `/api/muscle-recovery` (VW-332) answers the fourth: when you last trained each muscle, and
-how that session went against the one before it. All four are internal plumbing for the
-body-map page (VW-323), not surfaced on a page of their own yet. `/api/goals` and
+how that session went against the one before it. The body-map page (VW-323) reads the first
+three; `/api/muscle-recovery` is not surfaced on any page yet. `/api/goals` and
 `/api/goal-progress` (VW-352) are the equivalent plumbing for the `#/goals` page: what the
 coach is tracking, and how each target is reading this week; see
 [their own section below](#goal-coach-api-goals-api-goal-progress).
