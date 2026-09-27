@@ -68,7 +68,7 @@ entry is written from the user's point of view is a review question, not a check
 
 - A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
   horizon now continues past the named block through the program's later dated blocks, and
-  undated weeks are split into 5-week blocks (a placeholder until the owner picks the length).
+  undated weeks are split into 5-week blocks, the length the owner chose.
   The first block keeps the class step; every later block ramps at the lifter's measured
   block-to-block rate when 8 sessions across 2 blocks back it, never above half the class step,
   and at half the class step otherwise. A 12-week goal for a 100 lb beginner chest press now

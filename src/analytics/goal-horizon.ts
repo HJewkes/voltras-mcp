@@ -5,8 +5,8 @@ import type { GoalBandWeek } from './goal-band.js';
 
 /**
  * The block length an undated stretch of the horizon is split into, so a later week ramps at the
- * later-block rate (VW-510). ENGINEERING DEFAULT, not an owner decision yet: the middle of RP's
- * 4-to-6-week accumulation run; the PR puts the 4, 5 and 6 week sim numbers to the owner.
+ * later-block rate (VW-510). HUMAN DECISION 2026-09-26 (VW-510): the owner chose 5 weeks over 4
+ * and 6 from the goal ramp sim (`npm run sim:goal-ramp`), the middle of RP's 4-to-6-week run.
  */
 export const UNDATED_MESO_WEEKS = 5;
 

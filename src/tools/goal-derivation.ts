@@ -181,7 +181,7 @@ function undatedWeeksNote(planned: number, length: number): string {
   const span = planned === 0 ? 'The horizon' : `Weeks ${planned + 1} to ${length}`;
   return (
     `${span} sit past any dated block, so they are split into ${UNDATED_MESO_WEEKS}-week blocks ` +
-    '(ENGINEERING DEFAULT) and every block after the first ramps at the later-block rate (VW-510).'
+    '(the owner’s choice of length) and every block after the first ramps at the later-block rate (VW-510).'
   );
 }
 

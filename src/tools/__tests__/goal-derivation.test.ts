@@ -106,7 +106,11 @@ describe('readHorizonWeeks across blocks', () => {
     expect(context.weeks.filter((week) => week.blockOrdinal === 0)).toHaveLength(
       UNDATED_MESO_WEEKS,
     );
-    expect(context.notes.join(' ')).toContain('ENGINEERING DEFAULT');
+    expect(context.notes.join(' ')).toContain('5-week blocks');
+  });
+
+  it('pins the undated block length at the owner’s 5 weeks', () => {
+    expect(UNDATED_MESO_WEEKS).toBe(5);
   });
 
   it('still truncates at the horizon when the named block is longer', async () => {
