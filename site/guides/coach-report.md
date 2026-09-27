@@ -1,3 +1,17 @@
+---
+diataxis: how-to
+audience: [coach]
+status: available
+sources:
+  - src/tools/report-tools.ts
+  - src/state/set-capture.ts
+  - tools/truecoach-submit/
+  - tools/truecoach-submit/package.json
+  - tools/truecoach-submit/README.md
+  - tools/truecoach-submit/src/selectors.js
+lastVerified: 2026-09-19
+---
+
 # Coach reports and the outbox
 
 By the end of this you'll know what [`report.session_results`](/reference/report) writes,

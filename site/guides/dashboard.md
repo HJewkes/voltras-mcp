@@ -1,3 +1,21 @@
+---
+diataxis: explanation
+audience: [lifter, coach, developer]
+status: available
+sources:
+  - src/store/types.ts
+  - src/dashboard/README.md
+  - src/dashboard/server.ts
+  - src/store/sqlite-store.ts
+  - src/dashboard/spa/main.tsx
+  - src/dashboard/spa/live-stream.ts
+  - src/dashboard/muscle-strength-api.ts
+  - src/analytics/side-comparison.ts
+  - docs/dashboard-drivers.md
+  - scripts/dashboard-mock-drive.mjs
+lastVerified: 2026-09-15
+---
+
 # The wall dashboard
 
 This page is about the sidecar itself — what it is, how to find it, its four pages, and

@@ -1,3 +1,19 @@
+---
+diataxis: how-to
+audience: [lifter, developer]
+status: available
+sources:
+  - scripts/dashboard-mock-drive.mjs
+  - docs/screenshot-harness.md
+  - plugins/voltras-channel/bin/voltras-mcp-launch.sh
+  - docs/channel-plugin-packaging.md
+  - scripts/preflight.mjs
+  - src/state/session-recorder.ts
+  - src/voice/vad.ts
+  - README.md
+lastVerified: 2026-09-17
+---
+
 # Install and run
 
 ## Install

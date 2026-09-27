@@ -2,6 +2,7 @@ import { defineConfig } from 'vitepress';
 // Emitted by `npm run docs:reference` alongside the reference pages themselves,
 // so a new tool namespace never needs a hand edit here.
 import referenceSidebar from './reference-sidebar.json';
+import { statusSearchOptions } from './search-status';
 
 // GitHub Pages serves this as a project site under /voltras-mcp/, not the
 // repo root, so every asset/link needs that prefix baked in.
@@ -19,7 +20,8 @@ export default defineConfig({
 
   themeConfig: {
     logo: { src: '/logo.svg', alt: 'voltras-mcp' },
-    search: { provider: 'local' },
+    // Badged pages carry their status word into search results (VMCP-07.02).
+    search: { provider: 'local', options: statusSearchOptions },
     lastUpdated: { text: 'Last updated' },
     editLink: {
       pattern: 'https://github.com/HJewkes/voltras-mcp/edit/main/site/:path',
@@ -35,8 +37,9 @@ export default defineConfig({
       { text: 'Install and run', link: '/install-and-run' },
       { text: 'Capability reference', link: '/reference/' },
       { text: 'Guides', link: '/guides/' },
-      { text: 'Planned', link: '/planned' },
+      { text: 'Roadmap', link: '/roadmap' },
       { text: 'Changelog', link: '/changelog' },
+      { text: 'Status', link: '/status' },
     ],
 
     sidebar: [
@@ -45,7 +48,7 @@ export default defineConfig({
         items: [
           { text: 'Install and run', link: '/install-and-run' },
           { text: 'Guides', link: '/guides/' },
-          { text: 'Planned', link: '/planned' },
+          { text: 'Roadmap', link: '/roadmap' },
           { text: 'Changelog', link: '/changelog' },
         ],
       },

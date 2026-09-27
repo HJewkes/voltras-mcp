@@ -1,3 +1,13 @@
+---
+diataxis: how-to
+audience: [coach]
+status: available
+sources:
+  - src/tools/report-tools.ts
+  - src/tools/__tests__/report-weekly-tools.test.ts
+lastVerified: 2026-09-19
+---
+
 # The weekly report
 
 By the end of this you'll know what each section of [`report.weekly`](/reference/report)
