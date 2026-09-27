@@ -41,6 +41,8 @@ and links the issue that tracks it.
 **What you can rely on.** Nothing yet. The page describes intent, not behaviour. The
 [roadmap](/roadmap) lists the same kind of item in one place.
 
+The [Coming soon](/coming-soon/) section collects the dashboard screens with this status.
+
 ## How the status shows
 
 - A badged page shows its status as a word above the title, with a note that says what does
