@@ -90,8 +90,8 @@ npm run dashboard:preview -- goals                  # #/goals
 npm run dashboard:preview -- goals --state behind   # …with a chosen goal state
 ```
 
-A `body` run on 2026-09-27 printed this (trimmed: the seed line and two Node
-`ExperimentalWarning` lines are cut):
+A `body` run on 2026-09-27 printed this (trimmed: five lines are cut, the seed line and
+two Node `ExperimentalWarning` warnings, each followed by its `--trace-warnings` hint line):
 
 ```
 > voltras-mcp@0.5.0 dashboard:preview
