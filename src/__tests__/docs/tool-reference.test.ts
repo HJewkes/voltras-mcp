@@ -15,12 +15,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProtocolGuard } from '../../docs/protocol-guard.js';
-import { buildReference } from '../../docs/reference-pages.js';
+import { buildReference, isGeneratedPage } from '../../docs/reference-pages.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from '../../tool-registry.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -112,8 +112,11 @@ describe('generated capability reference', () => {
   it('emits every page the site has checked in, and no others', () => {
     // Only the generated roots, so a `.vitepress/dist` from a local docs build
     // never counts as a checked-in page.
+    // Hand-written reference pages carry no banner and are not the generator's.
     const checkedIn = [
-      ...listFiles(join(SITE_DIR, 'reference')).map((file) => join('reference', file)),
+      ...listFiles(join(SITE_DIR, 'reference'))
+        .map((file) => join('reference', file))
+        .filter((file) => isGeneratedPage(readFileSync(join(SITE_DIR, file), 'utf8'))),
       join('.vitepress', 'reference-sidebar.json'),
     ].sort();
     expect(generated).toEqual(checkedIn);
@@ -136,12 +139,33 @@ describe('generated capability reference', () => {
     expect(drifted, 'the generator is not deterministic').toEqual([]);
   });
 
-  it('writes one page per namespace plus the index, resources and push events', () => {
+  it('writes one page per namespace plus the index, resources, push events and environment', () => {
     const namespaces = new Set(
       [...CORE_TOOL_NAMES, ...MOCK_TOOL_NAMES].map((n) => n.split('.')[0]),
     );
-    expect(report.pageCount).toBe(namespaces.size + 3);
+    expect(report.pageCount).toBe(namespaces.size + 4);
   });
+
+  it(
+    'leaves a hand-written reference page in place when it regenerates',
+    () => {
+      const outDir = mkdtempSync(join(tmpdir(), 'vmcp-ref-keep-'));
+      try {
+        mkdirSync(join(outDir, 'reference'));
+        writeFileSync(join(outDir, 'reference/hand-written.md'), '# Kept\n');
+        writeFileSync(
+          join(outDir, 'reference/device.md'),
+          `${readFileSync(join(firstRun, 'reference/device.md'), 'utf8')}stale\n`,
+        );
+        generateInto(outDir, join(scratch, 'keep.md'));
+        expect(readFileSync(join(outDir, 'reference/hand-written.md'), 'utf8')).toBe('# Kept\n');
+        expect(readFileSync(join(outDir, 'reference/device.md'), 'utf8')).not.toContain('stale');
+      } finally {
+        rmSync(outDir, { recursive: true, force: true });
+      }
+    },
+    GENERATE_TIMEOUT_MS,
+  );
 });
 
 // The coach skill ships in this repo so it cannot be older than the server
@@ -218,6 +242,8 @@ describe('the push-event table is treated as untrusted input', () => {
   const poisoned = () =>
     buildReference({
       guard: createProtocolGuard(['device.set_weight', 'rep_finalized']),
+      toolStatus: {},
+      environmentVariables: [],
       coreToolNames: [],
       mockToolNames: [],
       tools: [],
@@ -274,6 +300,20 @@ describe('badges', () => {
     const page = devicePage();
     for (const name of ['device.start_guided_load', 'device.exit_guided_load']) {
       expect(sectionFor(page, name), name).toContain('text="experimental"');
+    }
+  });
+
+  it('says on the mock page that the namespace needs the mock adapter', () => {
+    const page = readFileSync(join(firstRun, 'reference/mock.md'), 'utf8');
+    expect(page).toContain('Mock adapter only (`VOLTRA_ADAPTER=mock`)');
+  });
+
+  it('marks every tool in the status map with its status and note', () => {
+    const page = readFileSync(join(firstRun, 'reference/mock.md'), 'utf8');
+    for (const name of ['mock.configure', 'mock.inject_error']) {
+      const section = sectionFor(page, name);
+      expect(section, name).toContain('text="coming soon"');
+      expect(section, name).toContain('/roadmap#registered-but-does-nothing');
     }
   });
 
