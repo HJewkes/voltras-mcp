@@ -1,11 +1,14 @@
 ---
+title: Read the weekly report
+description: What each section of report.weekly means for a coach, how to call it, and how its adherence trend feeds accountability.state.
 diataxis: how-to
-audience: [coach]
+audience: [coach, lifter]
 status: available
 sources:
   - src/tools/report-tools.ts
   - src/tools/__tests__/report-weekly-tools.test.ts
-lastVerified: 2026-09-19
+  - src/tools/accountability-tools.ts
+lastVerified: 2026-09-27
 ---
 
 # The weekly report
@@ -13,7 +16,7 @@ lastVerified: 2026-09-19
 By the end of this you'll know what each section of [`report.weekly`](/reference/report)
 means for a coach reading it, how to call it, and how it feeds the accountability protocol.
 
-This assumes the [coach-report guide](/guides/coach-report) already — a weekly report is
+This assumes the [coach-report guide](/coaches/read-a-session-report) already — a weekly report is
 built from the same per-session results that guide covers, rolled up over a date range.
 
 ## What it is
@@ -176,7 +179,7 @@ let one bad week on an otherwise strong plan misread as decline.
 ## What to read next
 
 - The [`report.*` reference](/reference/report) for the tool's full schema.
-- The [coach-report guide](/guides/coach-report) for what a single session's result
+- The [coach-report guide](/coaches/read-a-session-report) for what a single session's result
   strings mean.
 - The [`accountability.*` reference](/reference/accountability) for the protocol state
   this trend feeds into.

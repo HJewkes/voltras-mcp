@@ -17,12 +17,9 @@ lastVerified: 2026-09-19
   across both with `bilateral.cascade`, and read per-slot events.
 - [Isometric assessment](/guides/isometric) — the single-hold primitive versus the two
   blocking protocols, trial validity, and the calibration caveat on the force figures.
-- [Coach reports and the outbox](/guides/coach-report) — reading `report.session_results`,
-  load labels on non-weight modes, the local outbox, and the separate, gated write-back
-  submitter.
-- [The weekly report](/guides/weekly-report) — reading `report.weekly`'s header, per-session
-  blocks, progression suggestions, flags, and check-in section, and how its adherence trend
-  feeds `accountability.state`.
+- [For coaches](/coaches/) — reading a session report and the weekly report, the
+  TrueCoach import, and how a coach and a lifter share results. The two report guides
+  moved there.
 - [The wall dashboard](/guides/dashboard) — the sidecar itself: finding its URL, its three
   pages, how it stays current, and driving it without hardware.
 

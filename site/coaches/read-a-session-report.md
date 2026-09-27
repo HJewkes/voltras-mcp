@@ -1,15 +1,18 @@
 ---
+title: Read a session report
+description: What report.session_results writes for one ended session, the load labels on non-weight modes, the local outbox, and the separate gated write-back submitter.
 diataxis: how-to
-audience: [coach]
+audience: [coach, lifter]
 status: available
 sources:
+  - README.md
   - src/tools/report-tools.ts
   - src/state/set-capture.ts
   - tools/truecoach-submit/
-  - tools/truecoach-submit/package.json
   - tools/truecoach-submit/README.md
+  - tools/truecoach-submit/package.json
   - tools/truecoach-submit/src/selectors.js
-lastVerified: 2026-09-19
+lastVerified: 2026-09-27
 ---
 
 # Coach reports and the outbox
@@ -114,12 +117,12 @@ tree — is a different, already-read-only tool: see
 [`report.weekly`](/reference/report) rolls per-session results like the ones above up over
 a date range — training days, a rolling 28-day count of training days, adherence and its trend,
 progression suggestions, flags, and a check-in section. See the
-[weekly report guide](/guides/weekly-report) for what each part means and how to call it.
+[weekly report guide](/coaches/read-the-weekly-report) for what each part means and how to call it.
 
 ## What to read next
 
 - The [`report.*` reference](/reference/report) for the tool's full schema.
-- The [weekly report guide](/guides/weekly-report) for the rolled-up multi-session view.
+- The [weekly report guide](/coaches/read-the-weekly-report) for the rolled-up multi-session view.
 - The [`truecoach.*` reference](/reference/truecoach) for the read-only pull path.
 - [The planned-session guide](/guides/planned-session) for what makes a set count toward
   `missed:`.
