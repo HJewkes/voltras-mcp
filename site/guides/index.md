@@ -23,6 +23,8 @@ lastVerified: 2026-09-19
 - [The wall dashboard](/guides/dashboard) — the sidecar itself: finding its URL, its three
   pages, how it stays current, and driving it without hardware.
 
+For what the numbers mean rather than how to get them, see [Understand your data](/concepts/).
+
 ## The wall dashboard, stage by stage
 
 voltras-mcp ships a local web dashboard alongside the MCP server, so a workout is

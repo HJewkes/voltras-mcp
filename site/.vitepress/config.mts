@@ -37,6 +37,7 @@ export default defineConfig({
       { text: 'Install and run', link: '/install-and-run' },
       { text: 'Capability reference', link: '/reference/' },
       { text: 'Guides', link: '/guides/' },
+      { text: 'Understand your data', link: '/concepts/' },
       { text: 'For coaches', link: '/coaches/' },
       { text: 'Roadmap', link: '/roadmap' },
       { text: 'Changelog', link: '/changelog' },
@@ -51,6 +52,14 @@ export default defineConfig({
           { text: 'Guides', link: '/guides/' },
           { text: 'Roadmap', link: '/roadmap' },
           { text: 'Changelog', link: '/changelog' },
+        ],
+      },
+      {
+        text: 'Understand your data',
+        items: [
+          { text: 'Overview', link: '/concepts/' },
+          { text: 'Velocity and effort', link: '/concepts/velocity-and-effort' },
+          { text: 'Calibration and trust', link: '/concepts/calibration-and-trust' },
         ],
       },
       {
