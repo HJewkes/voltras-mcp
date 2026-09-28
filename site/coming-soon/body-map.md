@@ -16,7 +16,9 @@ sources:
   - src/dashboard/server.ts
   - scripts/dashboard-body-seed.mjs
   - src/docs/capture-shots.ts
-lastVerified: 2026-09-27
+  - src/docs/preview-seeds.ts
+  - scripts/dashboard-preview.mjs
+lastVerified: 2026-09-28
 ---
 
 # Body map
@@ -25,7 +27,7 @@ The body map is the `#/body` page of the wall dashboard. It shows how many worki
 muscle got this week, which lifts are getting stronger, and what your plan still owes. The
 page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/DashboardChrome.tsx:38`).
 
-## What the page shows
+## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for three things every 2 seconds, all at once
 (`src/dashboard/spa/body/BodyPage.tsx:22-31`):
@@ -38,7 +40,7 @@ The page asks the dashboard for three things every 2 seconds, all at once
 - **Next up.** The planned sets your current program week still owes, from `/api/muscle-plan`
   (`src/dashboard/spa/body/BodyView.tsx:190`).
 
-## Why it is not ready yet
+## Why it is not ready yet <Badge type="warning" text="Coming soon" />
 
 Every picture of this page so far comes from seeded data. The published screenshot below is
 made by writing a plausible training week straight into the store, not by lifting
@@ -60,11 +62,40 @@ Three more things can leave the page empty after real training:
 - Next up is empty unless a program week is active today
   (`src/dashboard/server.ts:846-850`, `src/dashboard/spa/body/body-client.ts:37-45`).
 
-![Seeded data, not yet available: the body page with a front and back muscle figure coloured by this week's sets, a Next up list, a Recent PRs list and a This week summary.](/captures/body-week.png)
+<CaptureCallouts
+  shot="body-week"
+  :callouts='[
+    {"quote": "SETS 28 MUSCLES 5 PRODUCTIVE 1", "text": "This week at a glance: working sets, muscles trained, and muscles in the productive zone."},
+    {"quote": "Chest 15/14", "text": "A muscle past the top of the range that helps most."},
+    {"quote": "Biceps 3/10", "text": "A muscle still under the fewest sets that help."},
+    {"quote": "Cable Lat Pulldown Pull B 4 sets", "text": "Next up: what the current program week still owes, one row per lift."},
+    {"quote": "Cable Chest Press Chest 221.7 lb (+12.7)", "text": "A recent PR: the best estimated one-rep max for the lift, and its change."}
+  ]'
+/>
 
 _Seeded preview data, not a real session._
 
-## Landmarks are population defaults
+## Preview it without a device <Badge type="warning" text="Coming soon" />
+
+You can open this page on your own machine with no Voltra and no workout. Build once, then
+start the preview:
+
+```sh
+npm run build && npm run build:dashboard
+npm run dashboard:preview -- body
+```
+
+The command starts a server on a scratch store, seeds it with the same training week as the
+screenshot above, and prints the page address. Open that address in a browser. Press Ctrl-C
+to stop; that also deletes the scratch store. Your real store at `~/.voltras/vmcp.sqlite` is
+never opened (`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:34-37`,
+`scripts/dashboard-preview.mjs:164-176`, `src/docs/preview-seeds.ts:89-94`).
+
+The preview can fill this page only because it writes recorded sets into the store. Mock sets
+never count on this page, so a mock-adapter workout leaves it empty
+(`src/dashboard/read-models/muscle-set-scope.ts:59-65`).
+
+## Landmarks are population defaults <Badge type="warning" text="Coming soon" />
 
 The landmarks on this page are weekly set counts: the fewest sets that still help a muscle
 grow, the range that helps most, and the most you can recover from. They are the same numbers
@@ -76,7 +107,7 @@ to a typical lifter," not as "how this week compares to what you can recover fro
 
 Landmarks fitted to you are coming. That work is VW-146.
 
-## Recovery: computed, not on any page
+## Recovery: computed, not on any page <Badge type="warning" text="Coming soon" />
 
 Per-muscle recovery (when you last trained each muscle, and how that session went against the
 one before) is computed by the dashboard at `/api/muscle-recovery`
@@ -84,5 +115,4 @@ one before) is computed by the dashboard at `/api/muscle-recovery`
 (`src/dashboard/spa/body/BodyPage.tsx:24-31`). It also never says how long a muscle needs
 before you can train it again, because no per-muscle number for that exists to cite
 (`src/dashboard/read-models/muscle-recovery.ts:9-20`). The
-[dashboard guide](/guides/dashboard)
-describes what it returns.
+[dashboard API reference](/reference/dashboard-api) describes what it returns.
