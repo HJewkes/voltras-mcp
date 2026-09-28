@@ -90,7 +90,7 @@ The 15 test files under `src/**/__tests__/` still hold protocol fixtures and are
 - The main checkout is the pinned bench build: never `npm install` there. Worktrees under `.worktrees/` without their own `node_modules` resolve up to it, so run `npm ci` in the worktree before believing a local failure CI does not show.
 - The SPA consumes `@titan-design/react-ui` from npm at a caret pin, so a titan component merged to titan `main` is unavailable here until a titan release is tagged and published.
 - In the dashboard SPA, react-native-web's base `View` rules silently beat Tailwind layout classes (`flex-1`, `flex-row`, `items-center`); put layout in `style` props and keep colour classes in `className`.
-- `@voltras/workout-analytics` typings degrade `Set.reps` to `readonly any[]` under NodeNext; import `Rep` directly and annotate callbacks (`set.reps.map((rep: Rep) => ...)`).
+- `@voltras/workout-analytics` typings degrade `Set.reps` to `readonly any[]` under NodeNext; import `Rep` directly and annotate callbacks (`workoutSet.reps.map((rep: Rep) => ...)`).
 - Upserts on a parent row with FK children use `INSERT ... ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`, which deletes and reinserts the row and cascade-wipes its children.
 - Migrations: probe columns with `table_xinfo` (`table_info` omits generated columns); create indexes over new columns inside the migration, because `SCHEMA_SQL` runs first; keep backticks out of SQL comments in `SCHEMA_SQL`; an explicitly bound `NULL` overrides a column `DEFAULT`.
 - A fresh store and a migrated store can hold the same columns in different physical positions; sort columns by name in any store-to-store comparison (`src/store/portable/inventory.ts`).
