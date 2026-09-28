@@ -14,7 +14,9 @@ sources:
   - src/docs/preview-seeds.ts
   - src/docs/capture-shots.ts
   - scripts/dashboard-mock-drive.mjs
-lastVerified: 2026-09-27
+  - scripts/dashboard-preview.mjs
+  - src/dashboard/__tests__/preview-seeds.test.ts
+lastVerified: 2026-09-28
 ---
 
 # Goals page
@@ -27,7 +29,7 @@ The goal tools themselves work today. `goal.declare_priorities`, `goal.propose_t
 `goal.accept_target` set goals, and `profile.log_bodyweight` logs a weigh-in. This page is only
 about the wall page that draws them.
 
-## What the page shows
+## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for your priorities, then for each priority's progress, every
 2 seconds (`src/dashboard/spa/goals/GoalsPage.tsx:24-30`,
@@ -43,7 +45,7 @@ only that priority shows nothing; the rest of the page still draws
 - **Whole body.** Bodyweight and training-day cards. The section is left out when you have no
   whole-body goal (`src/dashboard/spa/goals/whole-body-cards.ts:27-31`).
 
-## Why it is not ready yet
+## Why it is not ready yet <Badge type="warning" text="Coming soon" />
 
 **It has only been exercised on seeded data.** The published screenshots come from a scripted
 run on the mock adapter. That run drives the real goal tools, but first writes a prior week's
@@ -63,10 +65,53 @@ keeps only the priorities and drops both (`src/dashboard/spa/goals/GoalsPage.tsx
 the page cannot yet tell you which block week you are in, or that some sessions are left out
 of its counts until you review them. That work is VW-514.
 
-![Seeded data, not yet available: the goals page with a Cable Chest Press card marked Calibrating, a trajectory chart rising toward the goal, and two smaller per-lift cards.](/captures/goals.png)
+## What the screenshots show <Badge type="warning" text="Coming soon" />
+
+Both captures come from the seeded run described above, not from a real session.
+
+<CaptureCallouts
+  shot="goals"
+  :callouts='[
+    {"quote": "CABLE CHEST PRESS", "text": "The card for the lift you declared as your priority."},
+    {"quote": "Calibrating", "text": "The goal is still on its planned ramp, not yet on your own lifts."},
+    {"quote": "Goal 8 x 123 lb", "text": "The target for the end of the block."},
+    {"quote": "Best 8 x 110 lb", "text": "Your best set of the block so far."},
+    {"quote": "13 lb to goal", "text": "How far that best set is from the target."},
+    {"quote": "PER-LIFT", "text": "Smaller cards for your other lifts. The priority lift is never listed here."}
+  ]'
+/>
 
 _Seeded preview data, not a real session._
 
-![Seeded data, not yet available: the Whole body section of the goals page, with a bodyweight card during a cut and a training-days card for the last 28 days.](/captures/goals-whole-body.png)
+<CaptureCallouts
+  shot="goals-whole-body"
+  :callouts='[
+    {"quote": "WHOLE BODY", "text": "Left out of the page when you have no whole-body goal."},
+    {"quote": "196.2", "text": "The latest weigh-in, set against the band for this week during a cut."},
+    {"quote": "Training days", "text": "Days trained in the last 28, against the commitment you made."}
+  ]'
+/>
 
 _Seeded preview data, not a real session._
+
+## Preview it without a device <Badge type="warning" text="Coming soon" />
+
+You can open this page on your own machine with no Voltra and no workout. Build once, then
+start the preview:
+
+```sh
+npm run build && npm run build:dashboard
+npm run dashboard:preview -- goals
+```
+
+The command starts a mock-adapter server on a scratch store, seeds it, and prints the page
+address. Open that address in a browser. Press Ctrl-C to stop; that also deletes the scratch
+store. Your real store at `~/.voltras/vmcp.sqlite` is never opened
+(`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:34-37`,
+`scripts/dashboard-preview.mjs:164-176`).
+
+The preview does not replay the run behind the screenshots. It writes a history straight into
+the scratch store and lets the real goal read model work out the rest
+(`src/docs/preview-seeds.ts:8-18`). With no other arguments, it seeds a lift goal that is on
+track (`scripts/dashboard-preview.mjs:57`, `src/dashboard/__tests__/preview-seeds.test.ts:138-139`).
+The page you see can therefore differ from the screenshots above.
