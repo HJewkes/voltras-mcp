@@ -12,11 +12,11 @@
 // clock and disables animations/transitions before every shot (VW-389), which
 // makes `dashboard-cold`, `plan-builder`, `goals` and `body-week` — the four
 // shots with no server-real-time field on the page — byte-identical across two
-// runs on ONE machine. The other four still carry a value the SERVER computed
+// runs on ONE machine. The live-page shots still carry a value the SERVER computed
 // from its own clock (a rep-shape curve's per-sample frame-decode timestamp, a
 // pace ETA, a session start/end stamp) that no client-side freeze reaches; see
 // `docs/screenshot-harness.md` for the exact split and the two-run proof, and
-// `guardLocalOverwrite` in the harness for what stops one of those four from
+// `guardLocalOverwrite` in the harness for what stops one of those from
 // being silently replaced by an ordinary local run. Font hinting, GPU
 // rasterisation and Skia antialiasing differ machine to machine on top of all
 // of that, so a byte or perceptual comparison in CI would either fail
@@ -67,7 +67,7 @@ export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
 export const CAPTURE_DEVICE_SCALE_FACTOR = 1;
 
 /** Scenario names, each one no-hardware run. */
-export type CaptureScenarioName = 'cold' | 'planned' | 'dual' | 'goals' | 'body';
+export type CaptureScenarioName = 'cold' | 'planned' | 'fatigued' | 'dual' | 'goals' | 'body';
 
 /**
  * How a scenario is driven. `driver: null` boots `dist/bin.js` directly (nothing
@@ -105,6 +105,20 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
       '--pinned-reps=5',
       '--settle-ms=8000',
       '--rest-ms=10000',
+    ],
+  },
+  {
+    name: 'fatigued',
+    driver: 'scripts/dashboard-plan-drive.mjs',
+    // The planned run with a longer pinned burst: ten reps carry the set's
+    // velocity loss past the 20% line, so the fatigue card leaves `Good`.
+    // Five reps (the `planned` scenario) stay under it.
+    args: [
+      '--port={port}',
+      '--control-port={controlPort}',
+      '--sets=1',
+      '--pinned-reps=10',
+      '--settle-ms=8000',
     ],
   },
   {
@@ -268,10 +282,10 @@ const GOALS_VALUES: readonly string[] = [
   // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
   // and the coach's own proposal. Never asserted as a raw number elsewhere,
   // so a wrong target here would pass every other shot's check.
-  'Goal 8 x 133 lb',
+  'Goal 8 x 123 lb',
   // The driven PR set as the block's best, and the gap it leaves to the goal.
   'Best 8 x 110 lb',
-  '23 lb to goal',
+  '13 lb to goal',
 ];
 
 /**
@@ -370,6 +384,23 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     holdsPageOpen: false,
   },
   {
+    name: 'live-slowing',
+    scenario: 'fatigued',
+    route: '/app',
+    caption:
+      'The live page on a set whose velocity loss has passed the 20% line, ' +
+      'with the fatigue card reading Slowing.',
+    waitFor: { kind: 'set-open', reps: [['primary', 10]] },
+    expectText: ['Cable Chest Press', 'VELOCITY · this set', 'FATIGUE'],
+    expectValues: [
+      // Ten per-rep peaks: the last one sits 26% under the first.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37',
+      // The verdict the tour exists to show. `live-mid-set` pins `Good`.
+      'FATIGUE — RPE Slowing',
+    ],
+    holdsPageOpen: true,
+  },
+  {
     name: 'live-dual-mid-set',
     scenario: 'dual',
     route: '/app?variant=live-dual',
@@ -407,7 +438,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     scenario: 'goals',
     route: '/app#/goals',
     caption:
-      'The goal-coach wall page, with an accepted target and a personal record from the heavier set.',
+      'Seeded data, not yet available: the goal-coach wall page, with an accepted target and a personal record ' +
+      'from the heavier set.',
     // 4: the goal driver seeds one PREVIOUS-week session per lift (the lead and
     // its two companions) directly into the store before the server even opens,
     // so any count up to 3 was satisfied at server startup, before
@@ -422,7 +454,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     name: 'goals-phone',
     scenario: 'goals',
     route: '/app#/goals',
-    caption: 'The goal-coach page at phone width, cards and chart stacked to one column.',
+    caption:
+      'Seeded data, not yet available: the goal-coach page at phone width, cards and chart stacked to one column.',
     // Same state as `goals` — this shot proves the phone layout (VW-356), not
     // a different read of the pipeline, so it reuses that shot's predicate
     // and content rather than re-deriving one.
@@ -437,7 +470,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     scenario: 'goals',
     route: '/app#/goals',
     caption:
-      'The Whole body cards on the goals page: the latest weigh-in against this week’s band ' +
+      'Seeded data, not yet available: the Whole body cards on the goals page: the latest weigh-in against ' +
+      'this week’s band ' +
       'during a cut, and training days in the last 28 days against the commitment.',
     // Same run as `goals`, scrolled to the section the lead card pushes below the fold.
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
@@ -450,7 +484,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     name: 'goals-whole-body-phone',
     scenario: 'goals',
     route: '/app#/goals',
-    caption: 'The Whole body cards at phone width, one card per row.',
+    caption:
+      'Seeded data, not yet available: the Whole body cards at phone width, one card per row.',
     waitFor: { kind: 'sessions-ended', minSessions: 4 },
     viewport: PHONE_VIEWPORT,
     scrollTo: 'Whole body',
@@ -463,7 +498,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     scenario: 'body',
     route: '/app#/body',
     caption:
-      "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "Seeded data, not yet available: the body page: a training week's volume per muscle, what is due next, " +
+      'and recent PRs.',
     // The seed is written before the server boots, so this holds from the first
     // poll — it is here to fail loudly if the seed ever writes fewer sessions.
     waitFor: { kind: 'sessions-ended', minSessions: 18 },
@@ -473,12 +509,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // The four glance tiles with their own labels: swapping two tiles' data
       // sources leaves every one of these numbers on the page, and this string
       // still fails.
-      'SETS 32 MUSCLES 7 PRODUCTIVE 1',
-      'BELOW MEV 11 OVER MRV 0',
-      // The one muscle over its MAV and the one still under its MEV, off the
-      // strip — the two ends of the status scale the figure paints.
+      'SETS 28 MUSCLES 5 PRODUCTIVE 1',
+      'BELOW MEV 9 OVER MRV 0',
+      // The one muscle over its MAV and one still under its MEV, off the strip:
+      // the two ends of the status scale the figure paints. Not lats, whose
+      // verdict is withheld (VW-561).
       'Chest 15/14',
-      'Lats 4/14',
+      'Biceps 3/10',
       // A PR the strength read model found, not one the seed declared.
       'Cable Chest Press Chest 221.7 lb (+12.7)',
       // The plan's remaining work, folded to one row per lift.
