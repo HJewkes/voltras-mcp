@@ -63,10 +63,10 @@ keeps only the priorities and drops both (`src/dashboard/spa/goals/GoalsPage.tsx
 the page cannot yet tell you which block week you are in, or that some sessions are left out
 of its counts until you review them. That work is VW-514.
 
-![Preview, not yet available: the goals page with a Cable Chest Press card marked Calibrating, a trajectory chart rising toward the goal, and two smaller per-lift cards.](/captures/goals.png)
+![Seeded data, not yet available: the goals page with a Cable Chest Press card marked Calibrating, a trajectory chart rising toward the goal, and two smaller per-lift cards.](/captures/goals.png)
 
 _Seeded preview data, not a real session._
 
-![Preview, not yet available: the Whole body section of the goals page, with a bodyweight card during a cut and a training-days card for the last 28 days.](/captures/goals-whole-body.png)
+![Seeded data, not yet available: the Whole body section of the goals page, with a bodyweight card during a cut and a training-days card for the last 28 days.](/captures/goals-whole-body.png)
 
 _Seeded preview data, not a real session._

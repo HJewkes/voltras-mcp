@@ -6,7 +6,7 @@
 // which is the half of "a screenshot rots silently" that is actually decidable.
 //
 // It does NOT compare pixels. Font hinting, GPU rasterisation and Skia's
-// antialiasing differ per machine regardless, and four of the eight shots
+// antialiasing differ per machine regardless, and five of the twelve shots
 // render a value the SERVER computed from its own real clock (a rep-shape
 // curve's frame-decode timestamp, a pace ETA, a session start/end stamp) that
 // no local determinism measure reaches — see docs/screenshot-harness.md for
@@ -200,7 +200,7 @@ describe('the captures are safe to publish', () => {
 
   it('drives every shot against a no-hardware scenario, never a real device', () => {
     const scenarios = new Set(CAPTURE_SHOTS.map((shot) => shot.scenario));
-    expect([...scenarios].sort()).toEqual(['body', 'cold', 'dual', 'goals', 'planned']);
+    expect([...scenarios].sort()).toEqual(['body', 'cold', 'dual', 'fatigued', 'goals', 'planned']);
   });
 });
 
@@ -217,3 +217,108 @@ describe('the docs site cannot link a capture that is gone', () => {
     expect(dangling, REGENERATE).toEqual([]);
   });
 });
+
+// The goals and body pages are Coming soon, and their captures come from seeded
+// data. A reader who meets one of these images must be told both, wherever it is.
+const SEEDED_SCENARIOS = new Set(['goals', 'body']);
+const SEEDED_SHOT = /^(goals[\w-]*|body-week)$/;
+const COMING_SOON_BADGE = /<Badge[^>]*text="Coming soon"/;
+
+describe('seeded captures are labelled as seeded and as Coming soon', () => {
+  it('captions every goals and body shot as seeded data', () => {
+    const unlabelled = CAPTURE_SHOTS.filter(
+      (shot) =>
+        SEEDED_SCENARIOS.has(shot.scenario) &&
+        !shot.caption.startsWith('Seeded data, not yet available:'),
+    );
+    expect(unlabelled.map((shot) => shot.name)).toEqual([]);
+  });
+
+  it('embeds a seeded capture only on a Coming soon page or under a Coming soon heading', () => {
+    const offenders = sitePages().flatMap((page) =>
+      unmarkedSeededEmbeds(readFileSync(page, 'utf8')).map((line) => `${page}:${line}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('the fatigue tour has a capture past the stop line', () => {
+  it('pins a live-slowing verdict other than Good', () => {
+    const shot = CAPTURE_SHOTS.find((candidate) => candidate.name === 'live-slowing');
+    const verdicts = (shot?.expectValues ?? []).flatMap((value) => {
+      const match = /^FATIGUE — RPE (\w+)$/.exec(value);
+      return match ? [match[1]] : [];
+    });
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).not.toBe('Good');
+  });
+});
+
+describe('a callout can only quote what its capture asserted', () => {
+  it('names a declared shot and quotes an asserted string in every CaptureCallouts on the site', () => {
+    const offenders = sitePages().flatMap((page) =>
+      calloutOffenders(readFileSync(page, 'utf8')).map((problem) => `${page}: ${problem}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('rejects a callout quoting a value the shot never asserted', () => {
+    const page = `<CaptureCallouts shot="body-week" :callouts='[{"quote": "Chest 16/14", "text": "x"}]' />`;
+    expect(calloutOffenders(page)).toEqual([
+      'body-week: "Chest 16/14" is not asserted by the shot',
+    ]);
+  });
+
+  it('rejects a callout on a shot that does not exist', () => {
+    const page = `<CaptureCallouts shot="no-such-shot" :callouts='[]' />`;
+    expect(calloutOffenders(page)).toEqual(['no-such-shot: no such shot']);
+  });
+});
+
+interface ParsedCallouts {
+  readonly shot: string;
+  readonly quotes: readonly string[];
+}
+
+/** Every `<CaptureCallouts shot="..." :callouts='[...]' />` on a page; the callouts are JSON. */
+function parseCallouts(body: string): ParsedCallouts[] {
+  return [...body.matchAll(/<CaptureCallouts\b([\s\S]*?)\/>/g)].map((match) => {
+    const attributes = match[1] ?? '';
+    const shot = /\sshot="([^"]+)"/.exec(attributes)?.[1] ?? '';
+    const json = /:callouts='([^']*)'/.exec(attributes)?.[1] ?? 'null';
+    const callouts = JSON.parse(json) as { quote: string }[];
+    return { shot, quotes: callouts.map((callout) => callout.quote) };
+  });
+}
+
+function calloutOffenders(body: string): string[] {
+  return parseCallouts(body).flatMap(({ shot, quotes }) => {
+    const declared = CAPTURE_SHOTS.find((candidate) => candidate.name === shot);
+    if (!declared) return [`${shot}: no such shot`];
+    const asserted = new Set([...declared.expectText, ...declared.expectValues]);
+    return quotes
+      .filter((quote) => !asserted.has(quote))
+      .map((quote) => `${shot}: "${quote}" is not asserted by the shot`);
+  });
+}
+
+/** 1-based lines embedding a seeded capture outside anything marked Coming soon. */
+function unmarkedSeededEmbeds(body: string): number[] {
+  if (/^---\n[\s\S]*?^status: coming-soon$[\s\S]*?^---$/m.test(body)) return [];
+  let heading = '';
+  const offenders: number[] = [];
+  body.split('\n').forEach((line, index) => {
+    if (/^#{1,6}\s/.test(line)) heading = line;
+    if (embedsSeededShot(line) && !COMING_SOON_BADGE.test(heading)) offenders.push(index + 1);
+  });
+  return offenders;
+}
+
+function embedsSeededShot(line: string): boolean {
+  const names = [
+    ...[...line.matchAll(/\/captures\/([\w-]+)\.png/g)].map((match) => match[1]),
+    // Only CaptureCallouts takes `shot=`, and its attributes may sit on their own lines.
+    ...[...line.matchAll(/(?:^|\s)shot="([\w-]+)"/g)].map((match) => match[1]),
+  ];
+  return names.some((name) => name !== undefined && SEEDED_SHOT.test(name));
+}

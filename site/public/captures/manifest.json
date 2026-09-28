@@ -1,5 +1,5 @@
 {
-  "definitionHash": "d79e30e20c190819a7e53639b8ff3050c9cabed87b030222683af2016ad0ba46",
+  "definitionHash": "a380ed30138c58803da54de3b5f95d343ef6c289171233b442f9c52c35a1e41f",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -119,6 +119,26 @@
       "sha256": "394145cba5f0fca4bbcc4ff74616ddc8e0bd7a7c164ee90fc7ca57ac3fbe0225"
     },
     {
+      "name": "live-slowing",
+      "scenario": "fatigued",
+      "route": "/app",
+      "caption": "The live page on a set whose velocity loss has passed the 20% line, with the fatigue card reading Slowing.",
+      "file": "live-slowing.png",
+      "waitFor": {
+        "kind": "set-open",
+        "reps": [["primary", 10]]
+      },
+      "assertedText": ["Cable Chest Press", "VELOCITY · this set", "FATIGUE"],
+      "assertedValues": [
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37",
+        "FATIGUE — RPE Slowing"
+      ],
+      "width": 1440,
+      "height": 900,
+      "bytes": 929143,
+      "sha256": "92dbba08c932a4d87dea3b1ddb7c0d8f12f36f9db713d61e16829dda434006e7"
+    },
+    {
       "name": "live-dual-mid-set",
       "scenario": "dual",
       "route": "/app?variant=live-dual",
@@ -145,7 +165,7 @@
       "name": "goals",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The goal-coach wall page, with an accepted target and a personal record from the heavier set.",
+      "caption": "Seeded data, not yet available: the goal-coach wall page, with an accepted target and a personal record from the heavier set.",
       "file": "goals.png",
       "waitFor": {
         "kind": "sessions-ended",
@@ -159,17 +179,17 @@
         "WHOLE BODY",
         "Rate:"
       ],
-      "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
+      "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 90577,
-      "sha256": "4919de2416e83d27ce5a5b0ef3a5a9ec95b23568c99286cce2856ee6c105c4d6"
+      "bytes": 88675,
+      "sha256": "798bcb373d8b89a2884e754f8f46833635f222bd167b2e836e4ea854501c1aeb"
     },
     {
       "name": "goals-phone",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The goal-coach page at phone width, cards and chart stacked to one column.",
+      "caption": "Seeded data, not yet available: the goal-coach page at phone width, cards and chart stacked to one column.",
       "file": "goals-phone.png",
       "waitFor": {
         "kind": "sessions-ended",
@@ -183,17 +203,17 @@
         "WHOLE BODY",
         "Rate:"
       ],
-      "assertedValues": ["Goal 8 x 133 lb", "Best 8 x 110 lb", "23 lb to goal"],
+      "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 390,
       "height": 844,
-      "bytes": 52329,
-      "sha256": "86a866720ac1c77bf0ba3b6f0e09f197eeb9d8f9eca0ca4e13e4b2fdae8ebf18"
+      "bytes": 51692,
+      "sha256": "ead52843252793415da7799eaf69b545b66f036e336c3e2344a3f5003771e91f"
     },
     {
       "name": "goals-whole-body",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The Whole body cards on the goals page: the latest weigh-in against this week’s band during a cut, and training days in the last 28 days against the commitment.",
+      "caption": "Seeded data, not yet available: the Whole body cards on the goals page: the latest weigh-in against this week’s band during a cut, and training days in the last 28 days against the commitment.",
       "file": "goals-whole-body.png",
       "waitFor": {
         "kind": "sessions-ended",
@@ -203,14 +223,14 @@
       "assertedValues": ["196.2"],
       "width": 1440,
       "height": 900,
-      "bytes": 100032,
-      "sha256": "9bfff83853217d2c3a78fb435df392ed6cc4b623dfcd5603b133707de4c97d27"
+      "bytes": 98145,
+      "sha256": "76e6a4b487ad3f42b5bd5fc06c072696db79b23a9207599111b9f9c5c683c267"
     },
     {
       "name": "goals-whole-body-phone",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The Whole body cards at phone width, one card per row.",
+      "caption": "Seeded data, not yet available: the Whole body cards at phone width, one card per row.",
       "file": "goals-whole-body-phone.png",
       "waitFor": {
         "kind": "sessions-ended",
@@ -220,14 +240,14 @@
       "assertedValues": ["196.2"],
       "width": 390,
       "height": 844,
-      "bytes": 62052,
-      "sha256": "19948af172d4e6bb013c933389b855707dbf532c7586fe724839d4e7dd5a1b18"
+      "bytes": 62063,
+      "sha256": "b365e586f2b934b69279cb0973f928d07215a187e581c7f1743ef6158b98a91d"
     },
     {
       "name": "body-week",
       "scenario": "body",
       "route": "/app#/body",
-      "caption": "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "caption": "Seeded data, not yet available: the body page: a training week's volume per muscle, what is due next, and recent PRs.",
       "file": "body-week.png",
       "waitFor": {
         "kind": "sessions-ended",
@@ -235,17 +255,17 @@
       },
       "assertedText": ["Next up", "Recent PRs", "This week", "Legend", "Weekly sets by muscle"],
       "assertedValues": [
-        "SETS 32 MUSCLES 7 PRODUCTIVE 1",
-        "BELOW MEV 11 OVER MRV 0",
+        "SETS 28 MUSCLES 5 PRODUCTIVE 1",
+        "BELOW MEV 9 OVER MRV 0",
         "Chest 15/14",
-        "Lats 4/14",
+        "Biceps 3/10",
         "Cable Chest Press Chest 221.7 lb (+12.7)",
         "Cable Lat Pulldown Pull B 4 sets"
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 200752,
-      "sha256": "3c621e2eee44951e7013a2079aa4e230a05f8da134ae4c262a2584a1f07ffe51"
+      "bytes": 195279,
+      "sha256": "1e1f5b85d255006ed7f99ef8cc46cb17f0656ac00bc13e626254db46c2118b8d"
     }
   ],
   "clipDefinitionHash": "608e12dc1d0b4fb606157cab9b1068c2c5226620a20dd4c88134de40305a3365",

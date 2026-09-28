@@ -60,7 +60,7 @@ Three more things can leave the page empty after real training:
 - Next up is empty unless a program week is active today
   (`src/dashboard/server.ts:846-850`, `src/dashboard/spa/body/body-client.ts:37-45`).
 
-![Preview, not yet available: the body page with a front and back muscle figure coloured by this week's sets, a Next up list, a Recent PRs list and a This week summary.](/captures/body-week.png)
+![Seeded data, not yet available: the body page with a front and back muscle figure coloured by this week's sets, a Next up list, a Recent PRs list and a This week summary.](/captures/body-week.png)
 
 _Seeded preview data, not a real session._
 

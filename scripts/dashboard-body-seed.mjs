@@ -122,6 +122,7 @@ async function putSession(store, startedAt, exerciseId, exerciseName) {
     exerciseId,
     exerciseName,
     catalogVersion: MUSCLE_MAP_VERSION,
+    kind: 'training',
   });
   return id;
 }

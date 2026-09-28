@@ -68,8 +68,18 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | `live-rest`         | `dashboard-plan-drive.mjs`                    | the rest stage between two sets  |
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
 | `plan-builder`      | `dashboard-plan-drive.mjs`                    | the plan builder with a template |
+| `live-slowing`      | `dashboard-plan-drive.mjs`, 10 pinned reps    | live page past the 20% loss line |
 | `live-dual-mid-set` | `dashboard-mock-drive.mjs --dual`, asymmetric | the diverging two-slot stage     |
 | `goals`             | `dashboard-mock-drive.mjs --goal`, PR loop    | the goal-coach page with a PR    |
+
+`live-slowing` has a scenario of its own, `fatigued`: the same plan driver with one set of
+ten pinned reps instead of five. The per-rep peaks fall from 0.50 to 0.37, a 26% loss, so
+the fatigue card reads `Slowing` rather than the `Good` that `live-mid-set` pins.
+
+The goals and body shots are captioned `Seeded data, not yet available:`. Both pages are
+Coming soon, and their captures come from seeded store rows, so `captures.test.ts` fails a
+caption without that prefix and a site page that embeds one outside a `status: coming-soon`
+page or a section headed by a Coming soon badge.
 
 `dashboard-plan-drive.mjs` is the only driver that can show a prescription; `dashboard-sim`
 carries no plan data and plain `dashboard-mock-drive` attaches none
@@ -138,11 +148,12 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
 | `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
 | `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | not guaranteed     |
+| `live-slowing`      | same, one set of ten reps                                      | not guaranteed     |
 | `live-dual-mid-set` | same, both slots' curves                                       | not guaranteed     |
 | `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
 | `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
 
-"Not guaranteed" means exactly that and no more: the four rows above render a value the
+"Not guaranteed" means exactly that and no more: the five rows above render a value the
 SERVER computed from its own real clock, so nothing on the harness side pins it, and whether
 two runs land on the same value is down to timing, not design. A fast back-to-back run can
 have the frame-decode clock, the pace ETA or the session start/end stamp land on the same
@@ -186,14 +197,14 @@ matches the frozen baseline above. Restoring the call brings both the `12:00` cl
 the matching digest straight back.
 
 `guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
-one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four not-guaranteed-reproducible shots can't
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the five not-guaranteed-reproducible shots can't
 drift by accident on a routine local run — regenerating one is still a normal, deliberate
 action, just an explicit one.
 
 ## What the staleness gate can and cannot check
 
 **It cannot compare pixels ACROSS MACHINES.** Font hinting, GPU rasterisation and Skia
-antialiasing differ between machines regardless of anything above, and four of the eight shots
+antialiasing differ between machines regardless of anything above, and five of the twelve shots
 carry a genuine server-real-time field even on one machine (see above). A byte comparison run
 in CI would fail on every run there; a perceptual threshold loose enough to survive that would
 be loose enough never to fail. Neither is shipped.
@@ -212,6 +223,26 @@ be loose enough never to fail. Neither is shipped.
 - Every shot must pin at least one computed value.
 - The captures directory must hold nothing the definition does not declare.
 - Every `/captures/*.png` any site page references must resolve to a declared shot.
+- Every `<CaptureCallouts>` on a site page must name a declared shot, and every callout's
+  `quote` must be one of that shot's `expectText` or `expectValues` strings.
+
+## Callouts on a capture
+
+`site/.vitepress/theme/CaptureCallouts.vue` renders one capture with a numbered legend
+under it. Nothing is drawn on the PNG, so the committed images and their gates are
+unchanged. The alt text is the shot's caption from the manifest.
+
+```md
+<CaptureCallouts
+  shot="live-slowing"
+  :callouts='[{"quote": "FATIGUE — RPE Slowing", "text": "The verdict once the loss passes 20%."}]'
+/>
+```
+
+`:callouts` is JSON inside single quotes, so neither field may contain a `'`. Each `quote`
+must be a string the shot asserts. A callout can then only point at text the harness proved
+was on the page when the image was taken, and a changed page fails `npm run docs:captures`
+before the legend can go stale (VW-215).
 
 **The values are checked by the capture run, not by CI.** CI has no browser, so it can only
 hold the committed capture to the values the definition pins _now_; the comparison against
