@@ -83,7 +83,7 @@ export function extractPathCitations(text, repoRoots) {
   return citations;
 }
 
-/** `36`, `5-6` and `28-45,94` all reduce to the numbers they name. */
+/** `36` is one line, `5-6` is a range, and `28-45` plus `94` is a list — each reduces to the numbers it names. */
 function parseLineSpec(spec) {
   if (spec === undefined) return [];
   return spec.split(/[-,]/).map(Number);

@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
+import { ESLint } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
 import { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
@@ -82,6 +83,35 @@ describe('what the guard does not fire on', () => {
   });
 });
 
+// scripts/ was outside the ESLint target (`eslint src tools/truecoach-retro`), so a
+// command code sitting in a script's header comment was invisible to this rule even
+// though the rule itself scans comments fine (VW-497). This runs the real config the
+// widened `npm run lint:scripts-confidentiality` uses, against a synthetic fixture, to
+// prove the scripts/ glob is actually wired up rather than asserting on the detector
+// in isolation again.
+describe('the scripts/ scan (VW-497)', () => {
+  const CONFIG = join(REPO_ROOT, 'eslint.scripts-confidentiality.config.mjs');
+  const FIXTURE_PATH = join(REPO_ROOT, 'scripts/__synthetic-fixture-not-a-real-file__.mjs');
+
+  async function lint(code: string) {
+    const eslint = new ESLint({ cwd: REPO_ROOT, overrideConfigFile: CONFIG });
+    const [result] = await eslint.lintText(code, { filePath: FIXTURE_PATH });
+    return result.messages;
+  }
+
+  it('fails on a synthetic forbidden token planted in a script header comment', async () => {
+    const messages = await lint(
+      '#!/usr/bin/env node\n// driver header: observed 0x1f on the wire\n',
+    );
+    expect(messages.some((m) => m.ruleId === 'voltras/no-protocol-detail')).toBe(true);
+  });
+
+  it('lets an ordinary script header comment through', async () => {
+    const messages = await lint('#!/usr/bin/env node\n// driver header: nothing notable here\n');
+    expect(messages.some((m) => m.ruleId === 'voltras/no-protocol-detail')).toBe(false);
+  });
+});
+
 // The rule reads the parsed source, not the file as a text tool classifies it.
 // That is what makes it immune to VW-223: a NUL byte anywhere in a file makes
 // `grep -r` report "Binary file ... matches" and print nothing, and every sweep
@@ -103,23 +133,27 @@ describe('the exemption list', () => {
     for (const entry of readdirSync(dir)) {
       const path = join(dir, entry);
       if (statSync(path).isDirectory()) sourceFiles(path, out);
-      else if (/\.(ts|tsx|cjs)$/.test(path)) out.push(path);
+      else if (/\.(ts|tsx|cjs|mjs)$/.test(path)) out.push(path);
     }
     return out;
   }
 
-  it('is exactly the hex-encoding helper, and nothing else', () => {
+  // scripts/ is in scope alongside src/ since the widened scan covers it too (VW-497).
+  it('is exactly these four sites, and nothing else', () => {
     const sites: string[] = [];
-    for (const file of sourceFiles(join(REPO_ROOT, 'src'))) {
-      const text = readFileSync(file, 'utf8');
-      for (const match of text.matchAll(DIRECTIVE)) {
-        sites.push(`${relative(REPO_ROOT, file)} — ${match[1].trim()}`);
+    for (const root of ['src', 'scripts']) {
+      for (const file of sourceFiles(join(REPO_ROOT, root))) {
+        const text = readFileSync(file, 'utf8');
+        for (const match of text.matchAll(DIRECTIVE)) {
+          sites.push(`${relative(REPO_ROOT, file)} — ${match[1].trim()}`);
+        }
       }
     }
     expect(sites).toEqual([
       'src/tools/device-tools.ts — the hex alphabet, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
+      'scripts/check-docs.mjs — a reviewed docs exception recorded as data, not a device value (VW-497)',
     ]);
   });
 });
