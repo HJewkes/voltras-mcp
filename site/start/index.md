@@ -6,7 +6,7 @@ sources:
   - README.md
   - package.json
   - src/tool-registry.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-28
 ---
 
 # Get started
@@ -34,6 +34,8 @@ copy. ([README.md](https://github.com/HJewkes/voltras-mcp/blob/main/README.md))
    dashboard drivers, and `npm run dashboard:preview`.
 4. [Launch options](/start/launch-options): the `voltra-pt` launcher for push events,
    `.launch.env`, and running more than one instance.
+5. [Open the dashboard](/guides/dashboard-setup): build the wall dashboard, turn it on, and
+   find its address.
 
 After that, the [guides](/guides/) cover planned sessions, two devices, isometric tests and
 the wall dashboard. The [capability reference](/reference/) lists every tool.

@@ -89,11 +89,12 @@ describe('the reference sidebar', () => {
 
   it('ends with the resource, event, environment and dashboard pages', () => {
     const { sidebar } = referenceFor(['device.b']);
-    expect(sidebar.slice(-4).map((item) => item.text)).toEqual([
+    expect(sidebar.slice(-5).map((item) => item.text)).toEqual([
       'Resources',
       'Push events',
       'Environment variables',
       'Dashboard pages',
+      'Dashboard API',
     ]);
   });
 });

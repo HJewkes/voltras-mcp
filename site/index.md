@@ -4,7 +4,7 @@ title: voltras-mcp
 hero:
   name: voltras-mcp
   text: Let Claude run your Voltra workout
-  tagline: An MCP server that connects to a Voltra trainer, sets the load, records every set and rep, and reports on the history.
+  tagline: An MCP server that connects to a Voltra trainer, sets the load, records every set and rep, and shows each one live on a local wall dashboard.
   image:
     src: /logo.svg
     alt: The voltras-mcp logo
@@ -13,23 +13,23 @@ hero:
       text: Get started
       link: /start/
     - theme: alt
+      text: See the dashboard
+      link: /guides/dashboard
+    - theme: alt
       text: See it without a device
       link: /start/try-without-a-device
-    - theme: alt
-      text: Capability reference
-      link: /reference/
 features:
-  - title: Live set coaching
-    details: Claude sets the load, opens and closes each set, and receives each rep as it is recorded. A local wall dashboard shows the set as it happens.
+  - title: Watch every set live
+    details: A local wall dashboard shows the set as it happens, rep by rep, with the prescription beside it. When the session ends, it reads the session back.
     link: /guides/dashboard
-    linkText: Read the dashboard guide
-  - title: Velocity-based analytics
-    details: The server records the speed of every rep and the velocity loss across a set. It states an effort number only for a lift with an effort curve fitted to you.
-    link: /concepts/velocity-and-effort
-    linkText: Read Velocity and effort
-  - title: Plans and goals
-    details: Programs, blocks, weeks and workouts live in the plan tools, and the dashboard's plan builder edits a workout by hand. Goal tracking is coming soon.
-    link: /guides/dashboard#the-four-pages
+    linkText: Read the dashboard overview
+  - title: Fatigue you can see
+    details: The live page draws each rep's speed against the velocity-loss lines and gives a fatigue verdict, and the session summary reads it back. It shows no effort number yet.
+    link: /concepts/fatigue-and-pacing
+    linkText: Read Fatigue and pacing
+  - title: Plans on screen
+    details: Programs, blocks, weeks and workouts live in the plan tools. The dashboard's plan builder shows the workout and edits it by hand, and a lift Claude adds appears without a reload.
+    link: /guides/dashboard-tour#building-the-plan-behind-it
     linkText: See the plan builder
   - title: Reports for your coach
     details: A plain-text result for each session and a weekly rollup, both read from the local store. A coach installs nothing.
@@ -41,37 +41,64 @@ status: available
 sources:
   - README.md
   - CLAUDE.md
-  - docs/push-events.md
   - docs/screenshot-harness.md
   - docs/architecture/future-convergence-deep-dive.md
   - plugins/voltras-channel/skills/pt-session/SKILL.md
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
+  - src/dashboard/spa/planner/planner-client.ts
   - src/tools/report-tools.ts
   - site/guides/dashboard.md
-  - site/concepts/velocity-and-effort.md
+  - site/guides/dashboard-setup.md
+  - site/guides/dashboard-tour.md
+  - site/concepts/fatigue-and-pacing.md
+  - site/coming-soon/effort-readout.md
   - site/coaches/index.md
   - site/coaches/consent-and-data-loop.md
   - site/coming-soon/index.md
-  - site/coming-soon/goals-page.md
   - site/public/captures/manifest.json
-lastVerified: 2026-09-27
+lastVerified: 2026-09-28
 ---
+
+## The dashboard
+
+Every set you record shows up on a local web page as you lift it. Put it on a screen you can
+see from the machine; [Set it up and open it](/guides/dashboard-setup) gets it there.
+
+![The live page mid-set, with the prescribed sets, reps, load and tempo attached.](/captures/live-mid-set.png)
+
+**Mid-set.** Each rep's speed against the 20% and 30% velocity-loss lines, the fatigue card
+and the prescription. [The live workout tour](/guides/dashboard-tour#mid-set-with-a-plan-attached)
+walks through it.
+
+![The rest stage between two sets of a planned exercise.](/captures/live-rest.png)
+
+**Between sets.** The set you just finished, its verdict and the rest ring.
+[The live workout tour](/guides/dashboard-tour#between-sets) walks through it.
+
+![The session-completion screen for the session that just ended.](/captures/session-summary.png)
+
+**After the session.** Totals, the fatigue verdict, each set and a load recommendation for
+next time. [The live workout tour](/guides/dashboard-tour#session-complete) walks through it.
+
+The mock adapter drives these captures, not a real Voltra: every published screenshot runs the
+real MCP tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
+`site/public/captures/manifest.json`).
 
 ## How the cards above are backed
 
-- **Live set coaching.** Claude drives the device and the set lifecycle through the `device.*`
-  and `set.*` tools, and the server pushes a `rep_finalized` event per rep into the
-  conversation (`README.md`, `docs/push-events.md`). The dashboard is a local web page served
-  alongside the server (`site/guides/dashboard.md`).
-- **Velocity-based analytics.** [`metrics.compute`](/reference/metrics) reports velocity loss per
-  set, and the coach skill states no RPE or reps in reserve until a lift has a trusted fitted
-  profile (`site/concepts/velocity-and-effort.md`,
-  `plugins/voltras-channel/skills/pt-session/SKILL.md`).
-- **Plans and goals.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
-  workout templates and planned exercises, and `/app#/plan` is the dashboard's plan builder
-  (`README.md`, `site/guides/dashboard.md`). The goals page is not yet usable
-  (`site/coming-soon/goals-page.md`).
+- **Watch every set live.** The dashboard is a local web page that the server starts beside
+  the MCP server (`site/guides/dashboard.md`). The live page shows the prescription next to
+  the set, and the session summary reads a finished session back (`live-mid-set` and
+  `session-summary` in `site/public/captures/manifest.json`).
+- **Fatigue you can see.** The live page draws the 20% and 30% velocity-loss lines and a
+  fatigue card, and the session summary repeats the verdict (`site/public/captures/manifest.json`,
+  `site/concepts/fatigue-and-pacing.md`). The effort number (RPE or reps in reserve) is
+  withheld until a lift has a trusted fitted profile (`site/coming-soon/effort-readout.md`).
+- **Plans on screen.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
+  workout templates and planned exercises (`README.md`). The plan builder at `/app#/plan`
+  re-reads the plan every 2 seconds, so a lift added over MCP appears without a reload
+  (`src/dashboard/spa/planner/planner-client.ts:25`).
 - **Reports for your coach.** [`report.session_results`](/reference/report) and
   [`report.weekly`](/reference/report) read the store and make no network call
   (`src/tools/report-tools.ts`, `site/coaches/index.md`).
@@ -80,8 +107,14 @@ lastVerified: 2026-09-27
 
 ### I lift with a Voltra
 
+- [Open the dashboard](/guides/dashboard-setup)
 - [Run your first session](/start/first-session)
 - [Run a planned session](/guides/planned-session)
+
+### I want to see my training on a screen
+
+- [The wall dashboard](/guides/dashboard)
+- [The live workout tour](/guides/dashboard-tour)
 
 ### I coach a lifter
 
@@ -112,14 +145,6 @@ lastVerified: 2026-09-27
 - **Not the mobile app.** The Voltras mobile app is a separate project. It owns the Bluetooth
   connection on the phone, while here the server owns the connection and the dashboard renders
   what the server reports (`docs/architecture/future-convergence-deep-dive.md`).
-
-## The live page, mid-set
-
-![The wall dashboard's live page mid-set on Cable Chest Press: the prescription of 3 sets of 8 to 10 reps at 140 lb, a velocity chart for the current set with the 20% and 30% velocity-loss lines, and the fatigue panel.](/captures/live-mid-set.png)
-
-The mock adapter drives this capture, not a real Voltra: every published screenshot runs the
-real MCP tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
-`site/public/captures/manifest.json`).
 
 ## Coming soon
 

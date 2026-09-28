@@ -6,7 +6,7 @@ sources:
   - src/tools/server-tools.ts
   - src/tools/plan-tools.ts
   - src/dashboard/README.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-28
 ---
 
 # Guides
@@ -15,6 +15,15 @@ The guides assume the server is installed and you have run one session. If not, 
 [Get started](/start/), which ends with the [first-session tutorial](/start/first-session).
 Each guide below is a set of steps toward one goal. For every tool a guide names, the
 [capability reference](/reference/) has the full schema.
+
+## The wall dashboard
+
+- [The wall dashboard](/guides/dashboard): what the dashboard is, its five screens, and how
+  it stays current.
+- [Set it up and open it](/guides/dashboard-setup): build it, launch the server so it is on,
+  find its address, and what to do when it does not open.
+- [Live workout tour](/guides/dashboard-tour): published captures of each stage of the live
+  page, from before a Voltra connects to the session summary and the two-device view.
 
 ## Training
 
@@ -30,15 +39,8 @@ Each guide below is a set of steps toward one goal. For every tool a guide names
 Plans live in the [`plan.*`](/reference/plan) tools: programs, blocks, weeks, workout
 templates and the planned exercises in each template. The wall dashboard has a plan builder
 page at `/app#/plan` for browsing the exercise catalog and editing a workout by hand. See
-[the dashboard guide's page list](/guides/dashboard#the-four-pages) and the
+[the dashboard's screens](/guides/dashboard#the-five-screens) and the
 [plan builder capture](/guides/dashboard-tour#building-the-plan-behind-it).
-
-## The wall dashboard
-
-- [The wall dashboard](/guides/dashboard): the sidecar itself. How to find its URL, its
-  pages, how it stays current, and how to drive it without hardware.
-- [The dashboard, stage by stage](/guides/dashboard-tour): published captures of each stage,
-  from before a Voltra connects to the session summary and the two-device view.
 
 ## Troubleshooting
 
