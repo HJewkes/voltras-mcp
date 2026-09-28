@@ -256,23 +256,39 @@ describe('the clips are safe to publish', () => {
   });
 });
 
+/** Pages that embed a clip beyond its own guide; each owes the reader the same notice. */
+const EXTRA_CLIP_EMBEDS: readonly (readonly [string, string])[] = [
+  ['planned-set', 'site/guides/dashboard-tour.md'],
+];
+
+const embeddingPages = CAPTURE_CLIPS.flatMap((clip) => [
+  [clip.name, clip.guide] as const,
+  ...EXTRA_CLIP_EMBEDS.filter(([name]) => name === clip.name),
+]);
+
 describe('the docs site says what it is showing', () => {
-  it.each(CAPTURE_CLIPS.map((clip) => [clip.name, clip] as const))(
-    '%s is embedded on its guide, which states the narration is synthetic',
-    (name, clip) => {
-      const guide = join(REPO_ROOT, clip.guide);
-      expect(existsSync(guide), `${clip.guide} missing`).toBe(true);
-      const body = readFileSync(guide, 'utf8');
+  it.each(embeddingPages)(
+    '%s is embedded on %s, which states the narration is synthetic',
+    (name, page) => {
+      const clip = CAPTURE_CLIPS.find((candidate) => candidate.name === name);
+      const path = join(REPO_ROOT, page);
+      expect(existsSync(path), `${page} missing`).toBe(true);
+      const body = readFileSync(path, 'utf8');
       expect(body).toContain(`/captures/clips/${name}.mp4`);
       // Synthetic narration is a deliberate choice, and a reader is owed it.
-      expect(body, `${clip.guide} must carry the synthetic-narration notice`).toContain(
+      expect(body, `${page} must carry the synthetic-narration notice`).toContain(
         SYNTHETIC_NARRATION_NOTICE,
       );
       // The script itself is linked, so "edit it and re-run" is discoverable
       // from the page rather than only from the harness doc.
-      expect(body).toContain(clip.narrationFile);
+      expect(body).toContain(clip?.narrationFile);
     },
   );
+
+  it('lists extra embeds only for declared clips', () => {
+    const declared = new Set(CAPTURE_CLIPS.map((clip) => clip.name));
+    expect(EXTRA_CLIP_EMBEDS.filter(([name]) => !declared.has(name))).toEqual([]);
+  });
 
   it('resolves every /captures/clips/*.mp4 a site page references', () => {
     const declared = new Set(CAPTURE_CLIPS.map((clip) => `${clip.name}.mp4`));
