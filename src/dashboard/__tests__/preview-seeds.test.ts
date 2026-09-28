@@ -15,7 +15,7 @@
 // A fake that answered `getBaseline: () => undefined` would pass this file while
 // the command previewed one status for all six names.
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,8 +42,18 @@ import type { GoalProgressView } from '../read-models/index.js';
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
 const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
 
+// `now` feeds a whole-body target's startMeasuredAt as a raw day offset (preview-seeds.ts,
+// seedWholeBodyGoal), not a calendar-week-aligned one, so its meso week position flips with
+// the real weekday the suite runs on; freeze it to the weekday this fixture was written against.
+const PREVIEW_NOW = new Date('2026-09-27T12:00:00.000Z');
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(PREVIEW_NOW);
+});
+
 const scratchDirs: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   while (scratchDirs.length > 0) {
     rmSync(scratchDirs.pop()!, { recursive: true, force: true });
   }
