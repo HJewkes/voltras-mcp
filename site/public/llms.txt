@@ -2,6 +2,12 @@
 
 > A stdio MCP server that lets Claude drive a Voltra cable-resistance trainer: connect, set the load, record sets and reps, and report on the history. One server process per Claude Code session. Not published to npm; install from source. Training records stay in a local SQLite file, and the dashboard binds 127.0.0.1 only.
 
+## The dashboard
+
+- [The wall dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard): what the local dashboard shows, its five screens and which are available
+- [Set it up and open it](https://hjewkes.github.io/voltras-mcp/guides/dashboard-setup): build it, launch the server so it is on, find its address, and fix it when it does not open
+- [Live workout tour](https://hjewkes.github.io/voltras-mcp/guides/dashboard-tour): captures of each stage of the live page, from before a device connects to the session summary
+
 ## Get started
 
 - [Get started](https://hjewkes.github.io/voltras-mcp/start/): what you need, and the order to read the setup pages in
@@ -14,12 +20,12 @@
 
 - [Capability reference](https://hjewkes.github.io/voltras-mcp/reference/): every tool, resource and push event, generated from the tool registry
 - [Push events](https://hjewkes.github.io/voltras-mcp/reference/push-events): the events the server pushes into the conversation
+- [Dashboard API](https://hjewkes.github.io/voltras-mcp/reference/dashboard-api): the dashboard's HTTP routes and response shapes, for developers
 - [Page status](https://hjewkes.github.io/voltras-mcp/status): what Available, Experimental and Coming soon promise
 
 ## Guides and concepts
 
 - [Guides](https://hjewkes.github.io/voltras-mcp/guides/): task guides for sessions, bilateral work, isometric tests and reports
-- [The wall dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard): the local dashboard, its pages and how to find its URL
 - [Understand your data](https://hjewkes.github.io/voltras-mcp/concepts/): what the numbers from a session mean
 - [Velocity and effort](https://hjewkes.github.io/voltras-mcp/concepts/velocity-and-effort): velocity loss, reps in reserve, and when the server states an effort number
 - [Calibration and trust](https://hjewkes.github.io/voltras-mcp/concepts/calibration-and-trust): which numbers are measured and which are derived

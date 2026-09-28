@@ -22,6 +22,7 @@ export function isGeneratedPage(text: string): boolean {
 /** Pages under `reference/` that a person writes; the sidebar links them. */
 export const HAND_WRITTEN_REFERENCE_PAGES: readonly SidebarLink[] = [
   { text: 'Dashboard pages', link: '/reference/dashboard-pages' },
+  { text: 'Dashboard API', link: '/reference/dashboard-api' },
 ];
 
 const MOCK_NAMESPACE = 'mock';

@@ -11,7 +11,7 @@ sources:
   - src/store/__tests__/portable-round-trip.test.ts
   - package.json
   - .gitignore
-lastVerified: 2026-09-27
+lastVerified: 2026-09-28
 ---
 
 # Troubleshooting
@@ -57,7 +57,8 @@ where the dashboard logs the URL it bound. A null `dashboardUrl` means
 
 If you started the server through the plugin launcher without `scripts/voltra-pt`, the
 launcher turns the dashboard off by default. [Launch options](/start/launch-options#the-launcher-script)
-explains when.
+explains when. [Set it up and open it](/guides/dashboard-setup#when-it-does-not-open) walks
+through each way the dashboard fails to open.
 
 ### Nothing works and the error mentions node:sqlite
 

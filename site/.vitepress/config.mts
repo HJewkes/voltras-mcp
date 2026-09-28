@@ -56,14 +56,20 @@ export default defineConfig({
         ],
       },
       {
+        text: 'The dashboard',
+        items: [
+          { text: 'Overview', link: '/guides/dashboard' },
+          { text: 'Set it up and open it', link: '/guides/dashboard-setup' },
+          { text: 'Live workout tour', link: '/guides/dashboard-tour' },
+        ],
+      },
+      {
         text: 'Guides',
         items: [
           { text: 'Overview', link: '/guides/' },
           { text: 'Running a planned session', link: '/guides/planned-session' },
           { text: 'Bilateral work', link: '/guides/bilateral' },
           { text: 'Isometric assessment', link: '/guides/isometric' },
-          { text: 'The wall dashboard', link: '/guides/dashboard' },
-          { text: 'The dashboard, stage by stage', link: '/guides/dashboard-tour' },
           { text: 'Troubleshooting', link: '/guides/troubleshooting' },
         ],
       },

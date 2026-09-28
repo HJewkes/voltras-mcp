@@ -31,8 +31,8 @@ measurement (`src/analytics/optimal-mvt.ts:20`). Used in [the `baselines.*` refe
 **MEV, MAV, MRV.** Minimum Effective Volume, Maximum Adaptive Volume and Maximum Recoverable
 Volume: weekly working-set landmarks for one muscle group
 (`src/dashboard/read-models/muscle-week.ts:40-47`). The dashboard's landmarks are
-population defaults, not numbers learned from this lifter (`site/guides/dashboard.md:59`). Used in
-[the dashboard guide](/guides/dashboard) and [the `mrvguard.*` reference](/reference/mrvguard).
+population defaults, not numbers learned from this lifter (`site/reference/dashboard-api.md:76-78`). Used in
+[the dashboard API reference](/reference/dashboard-api) and [the `mrvguard.*` reference](/reference/mrvguard).
 
 **Mesocycle.** See Block.
 
