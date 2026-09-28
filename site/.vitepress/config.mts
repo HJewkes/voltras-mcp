@@ -61,6 +61,11 @@ export default defineConfig({
           { text: 'Overview', link: '/guides/dashboard' },
           { text: 'Set it up and open it', link: '/guides/dashboard-setup' },
           { text: 'Live workout tour', link: '/guides/dashboard-tour' },
+          { text: 'Fatigue', link: '/guides/dashboard-fatigue' },
+          { text: 'Pacing and form', link: '/guides/dashboard-pacing-and-form' },
+          { text: 'Session review', link: '/guides/dashboard-session-review' },
+          { text: 'Plan builder', link: '/guides/dashboard-plan-builder' },
+          { text: 'What each screen shows', link: '/reference/dashboard-pages' },
         ],
       },
       {

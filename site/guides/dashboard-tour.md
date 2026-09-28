@@ -99,7 +99,7 @@ RPE or RIR (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`).
 
 ## The plan behind it
 
-The plan builder has its own entry in the [dashboard overview](/guides/dashboard#plan-builder).
+The plan builder has its own tour: [Build a plan on the dashboard](/guides/dashboard-plan-builder).
 
 ## Two Voltras, one dashboard
 

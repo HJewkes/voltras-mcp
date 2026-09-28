@@ -88,3 +88,5 @@ page, not the tools.
 Some tools answer only in the conversation, and no dashboard page reads what they return:
 `report.session_results`, `report.weekly`, `metrics.compute`, `coaching.explain` and
 `progression.get_for_exercise`. Ask for them in the chat.
+
+For the endpoint shapes behind each screen, see the [dashboard API](/reference/dashboard-api).

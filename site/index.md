@@ -25,11 +25,11 @@ features:
     linkText: Read the dashboard overview
   - title: Fatigue you can see
     details: The live page draws each rep's speed against the velocity-loss lines and gives a fatigue verdict, and the session summary reads it back. It shows no effort number yet.
-    link: /concepts/fatigue-and-pacing
-    linkText: Read Fatigue and pacing
+    link: /guides/dashboard-fatigue
+    linkText: Read the fatigue tour
   - title: Plans on screen
     details: Programs, blocks, weeks and workouts live in the plan tools. The dashboard's plan builder shows the workout and edits it by hand, and a lift Claude adds appears without a reload.
-    link: /guides/dashboard-tour#building-the-plan-behind-it
+    link: /guides/dashboard-plan-builder
     linkText: See the plan builder
   - title: Reports for your coach
     details: A plain-text result for each session and a weekly rollup, both read from the local store. A coach installs nothing.

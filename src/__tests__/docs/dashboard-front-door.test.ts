@@ -3,7 +3,7 @@
 // The home page must lead with the dashboard without advertising a Coming soon
 // screen, and the setup page's port, health fields and launcher rule must be the
 // ones the server and the plugin launcher actually implement.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_DASHBOARD_PORT } from '../../dashboard/server.js';
@@ -118,5 +118,19 @@ describe('the sidebar gives the dashboard its own group', () => {
     const links = [...block.matchAll(/link: '([^']+)'/g)].map((match) => match[1] as string);
     expect(links).toContain('/guides/dashboard-setup');
     for (const link of links) expect(existsSync(new URL(`site${link}.md`, REPO_ROOT))).toBe(true);
+  });
+});
+
+describe('the guides index lists every dashboard tour', () => {
+  it('links every site/guides/dashboard*.md page', () => {
+    const guidesIndex = read('site/guides/index.md');
+    const tourFiles = readdirSync(new URL('site/guides/', REPO_ROOT)).filter((name) =>
+      /^dashboard.*\.md$/.test(name),
+    );
+    expect(tourFiles.length).toBeGreaterThan(0);
+    for (const file of tourFiles) {
+      const slug = file.replace(/\.md$/, '');
+      expect(guidesIndex).toContain(`/guides/${slug}`);
+    }
   });
 });

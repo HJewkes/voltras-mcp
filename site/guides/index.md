@@ -24,6 +24,14 @@ Each guide below is a set of steps toward one goal. For every tool a guide names
   find its address, and what to do when it does not open.
 - [Live workout tour](/guides/dashboard-tour): published captures of each stage of the live
   page, from before a Voltra connects to the session summary and the two-device view.
+- [Read the fatigue card](/guides/dashboard-fatigue): the fatigue card on a fresh set that
+  reads Good, on a set that has slowed past the 20% line, and on the session summary.
+- [Read pacing and form](/guides/dashboard-pacing-and-form): the tempo target and its light,
+  the range-of-motion light, the rest stage's pace footer, and the two-device readout.
+- [Review a session on the dashboard](/guides/dashboard-session-review): the verdict at the
+  top of each exercise, the set it came from, and the load recommendation for next time.
+- [Build a plan on the dashboard](/guides/dashboard-plan-builder): pick exercises from the
+  catalog, set their targets, put them in order, and take them out again.
 
 ## Training
 
@@ -40,7 +48,7 @@ Plans live in the [`plan.*`](/reference/plan) tools: programs, blocks, weeks, wo
 templates and the planned exercises in each template. The wall dashboard has a plan builder
 page at `/app#/plan` for browsing the exercise catalog and editing a workout by hand. See
 [the dashboard's screens](/guides/dashboard#the-five-screens) and the
-[plan builder capture](/guides/dashboard-tour#building-the-plan-behind-it).
+[plan builder tour](/guides/dashboard-plan-builder).
 
 ## Troubleshooting
 

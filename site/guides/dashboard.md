@@ -98,6 +98,14 @@ stream cadence above. It re-polls `/api/plan-tree` on its own 2-second interval
 
 - [Live workout tour](/guides/dashboard-tour): each stage of the live page, from before a
   Voltra connects to the session summary and the two-device view.
+- [Read the fatigue card](/guides/dashboard-fatigue): the fatigue card on a fresh set that
+  reads Good, on a set that has slowed past the 20% line, and on the session summary.
+- [Read pacing and form](/guides/dashboard-pacing-and-form): the tempo target and its light,
+  the range-of-motion light, the rest stage's pace footer, and the two-device readout.
+- [Review a session on the dashboard](/guides/dashboard-session-review): the verdict at the
+  top of each exercise, the set it came from, and the load recommendation for next time.
+- [Build a plan on the dashboard](/guides/dashboard-plan-builder): pick exercises from the
+  catalog, set their targets, put them in order, and take them out again.
 
 ## For developers
 

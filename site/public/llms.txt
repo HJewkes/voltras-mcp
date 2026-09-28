@@ -7,6 +7,10 @@
 - [The wall dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard): what the local dashboard shows, its five screens and which are available
 - [Set it up and open it](https://hjewkes.github.io/voltras-mcp/guides/dashboard-setup): build it, launch the server so it is on, find its address, and fix it when it does not open
 - [Live workout tour](https://hjewkes.github.io/voltras-mcp/guides/dashboard-tour): captures of each stage of the live page, from before a device connects to the session summary
+- [Read the fatigue card](https://hjewkes.github.io/voltras-mcp/guides/dashboard-fatigue): the fatigue card from a fresh set through past the 20% line, and the verdict on the session summary
+- [Read pacing and form](https://hjewkes.github.io/voltras-mcp/guides/dashboard-pacing-and-form): the tempo target, the range-of-motion light, the rest stage and the two-device readout
+- [Review a session on the dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard-session-review): the verdict, the set it came from, and the load recommendation for next time
+- [Build a plan on the dashboard](https://hjewkes.github.io/voltras-mcp/guides/dashboard-plan-builder): browse the catalog and build, retarget, reorder or delete a workout by hand
 
 ## Get started
 
