@@ -325,44 +325,40 @@ export interface LintPriorityMuscleInput {
 }
 
 /**
- * The muscle group with the most planned sets in week 1 vs. a later week of
- * the same block. Silent when either week has no resolvable muscle data, or
- * when the top spot is tied — a tie is not a determinable priority to compare.
+ * The top muscles (those tied at the most planned sets) in week 1 vs. a later
+ * week of the same block. Silent when either week has no resolvable muscle
+ * data, or when the two top sets share a muscle — a shared muscle is not a
+ * determinable shift. A multi-target lift ties its targets, so ties are compared.
  */
 export function lintPriorityMuscleChangedMidBlock(input: LintPriorityMuscleInput): PlanWarning[] {
-  const week1Top = topMuscle(input.week1Exercises);
-  const laterTop = topMuscle(input.laterWeekExercises);
-  if (week1Top === null || laterTop === null || week1Top === laterTop) return [];
+  const week1Tops = topMuscles(input.week1Exercises);
+  const laterTops = topMuscles(input.laterWeekExercises);
+  if (week1Tops.length === 0 || laterTops.length === 0) return [];
+  if (week1Tops.some((slug) => laterTops.includes(slug))) return [];
   return [
     {
       code: 'priority_muscle_changed_mid_block',
       message:
-        `Week 1 of this block prioritized ${muscleLabel(week1Top)} (the most planned sets), but ` +
-        `week ${input.laterWeekOrderIndex + 1} prioritizes ${muscleLabel(laterTop)} instead. ` +
+        `Week 1 of this block prioritized ${muscleList(week1Tops)} (the most planned sets), but ` +
+        `week ${input.laterWeekOrderIndex + 1} prioritizes ${muscleList(laterTops)} instead. ` +
         "A block's priority muscle is normally set once for the whole mesocycle — if this " +
         'shift is intentional, ' +
         'it usually means this is really the start of a new block rather than a change inside ' +
         'this one.',
-      muscleGroup: laterTop,
+      muscleGroup: laterTops[0],
     },
   ];
 }
 
-/** `null` when there is nothing to compare, or the top spot is tied. */
-function topMuscle(exercises: LintPlanExercise[]): string | null {
-  let best: string | null = null;
-  let bestSets = -1;
-  let tied = false;
-  for (const [muscleGroup, sets] of totalsByMuscle(exercises)) {
-    if (sets > bestSets) {
-      best = muscleGroup;
-      bestSets = sets;
-      tied = false;
-    } else if (sets === bestSets) {
-      tied = true;
-    }
-  }
-  return tied ? null : best;
+function muscleList(slugs: string[]): string {
+  return slugs.map(muscleLabel).join(' and ');
+}
+
+/** Every slug tied at the most planned sets; empty when there is no muscle data. */
+function topMuscles(exercises: LintPlanExercise[]): string[] {
+  const totals = totalsByMuscle(exercises);
+  const best = Math.max(...totals.values());
+  return [...totals].filter(([, sets]) => sets === best).map(([slug]) => slug);
 }
 
 export interface LintConsecutiveDayTemplate {
