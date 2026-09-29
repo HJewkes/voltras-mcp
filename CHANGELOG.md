@@ -563,6 +563,9 @@ entry is written from the user's point of view is a review question, not a check
 - `accountability.state` with an `at` on a Thursday read the adherence trend over the seven
   days before the real clock, not before `at`, so sessions logged after `at` counted. It
   now reads the week ending at `at`, as `accountability.preview` already did (VW-472, #461).
+- `report.weekly` for a past or pinned week judged the lifter's tier by today's training
+  history, so a progression line could allow a set that week's history did not. It now counts
+  only sessions up to the report's end (VW-575, #542).
 - A maintenance bodyweight goal now reads `behind` when the weight leaves its ±2% corridor,
   on either side. Before, it read `on_track` however far outside the weight drifted.
   `/api/goal-progress` says which side in a new `corridorSide` field (`above` or `below`),
