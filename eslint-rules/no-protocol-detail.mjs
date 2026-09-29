@@ -76,6 +76,7 @@ const CLOCK_SHAPE = /^\d{2}(?:[:.]\d{2})+$/;
  * `isLineRangeList` draws the same line, so a citation passes both layers.
  */
 function isLineRangeList(token) {
+  // Known gap, shared with the docs guard: an all-decimal run mixing dash and comma passes.
   return /^\d+(?:[-,]\d+)+$/.test(token) && token.includes('-') && token.includes(',');
 }
 

@@ -14,6 +14,8 @@ import { ESLint } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
 import { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
+// @ts-expect-error — plain ESM, no declarations.
+import { isScanned } from '../../../scripts/lib/text-confidentiality.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -131,22 +133,40 @@ describe('the exemption list', () => {
   const DIRECTIVE =
     /eslint-disable(?:-next-line|-line)?\s+voltras\/no-protocol-detail\s+--\s+([^\n]*)/g;
 
-  // Every tracked file either pass reads, markdown included, since a directive
-  // written as an HTML comment exempts a line from the text pass (VW-497).
+  // Every path either pass reads: the text pass's own predicate, plus what ESLint parses.
+  // A directive in any file type the text pass scans exempts a line (VW-497).
+  const isPinned = (path: string): boolean =>
+    isScanned(path) || /\.(ts|tsx|cjs|mjs|md)$/.test(path);
+
   function trackedFiles(): string[] {
     return execFileSync('git', ['ls-files', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' })
       .split('\0')
-      .filter((path) => /\.(ts|tsx|cjs|mjs|md)$/.test(path));
+      .filter((path) => path !== '' && isPinned(path));
   }
 
-  it('is exactly these four sites, and nothing else', () => {
+  function exemptionSites(files: string[], read: (file: string) => string): string[] {
     const sites: string[] = [];
-    for (const file of trackedFiles()) {
-      const text = readFileSync(join(REPO_ROOT, file), 'utf8');
-      for (const match of text.matchAll(DIRECTIVE)) {
+    for (const file of files.filter(isPinned)) {
+      for (const match of read(file).matchAll(DIRECTIVE)) {
         sites.push(`${file} — ${match[1].replace(/\s*-->$/, '').trim()}`);
       }
     }
+    return sites;
+  }
+
+  it.each(['ci.yml', 'run.sh', 'app.js', 'view.vue', 'data.json', 'page.html'])(
+    'catches a directive planted in a scanned %s file',
+    (name) => {
+      const planted = ['eslint-disable-next-line', 'voltras/no-protocol-detail', '-- planted'];
+      const sites = exemptionSites([`fixtures/${name}`], () => `# ${planted.join(' ')}\nx\n`);
+      expect(sites).toEqual([`fixtures/${name} — planted`]);
+    },
+  );
+
+  it('is exactly these four sites, and nothing else', () => {
+    const sites = exemptionSites(trackedFiles(), (file) =>
+      readFileSync(join(REPO_ROOT, file), 'utf8'),
+    );
     expect(sites).toEqual([
       'WISHLIST.md — a commit sha, not a device value (VW-497)',
       'src/tools/device-tools.ts — the hex alphabet, not a device value (VW-213)',

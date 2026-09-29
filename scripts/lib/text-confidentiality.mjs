@@ -24,6 +24,7 @@ const BINARY_EXTENSION =
 export const SKIPPED_PATHS = [
   {
     // Test fixtures are exempt by path until w5-13, as in eslint.config.mjs.
+    // Known unscanned path: packages/**/__tests__ is linted by neither layer (synthetic ids only today).
     matches: (path) => /(^|\/)__tests__\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path),
     reason: 'test fixture',
   },
