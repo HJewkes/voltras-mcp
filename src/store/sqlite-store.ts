@@ -80,6 +80,8 @@ import {
   UI_ACTION_ACTORS,
   UI_ACTION_STATUSES,
   UI_ACTION_SURFACES,
+  type AdvisoryAnswer,
+  type AdvisoryAnswerRetire,
   type ClaimUiActionInput,
   type ClaimUiActionOutcome,
   type CompleteUiActionInput,
@@ -5050,6 +5052,37 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToAdvisoryDecision));
   }
 
+  /**
+   * `WHERE user_response IS NULL` is the whole arbitration (VW-587): the first
+   * answer to reach the row is the one recorded, and the retire rides only on it.
+   */
+  async answerAdvisoryIfOpen(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): Promise<StoredAdvisoryDecision | undefined> {
+    const won = this.atomically(() => {
+      const row = this.db
+        .prepare(ANSWER_ADVISORY_IF_OPEN_SQL)
+        .get(
+          answer.userResponse,
+          answer.respondedAt,
+          answer.inputs === undefined ? null : JSON.stringify(answer.inputs),
+          decisionId,
+        ) as AdvisoryDecisionRow | undefined;
+      if (row !== undefined && retire !== undefined) {
+        this.db
+          .prepare(
+            `UPDATE goal_targets SET retired_at = ?, outcome = ?
+               WHERE id = ? AND retired_at IS NULL`,
+          )
+          .run(answer.respondedAt, retire.outcome, retire.goalTargetId);
+      }
+      return row;
+    });
+    return Promise.resolve(won === undefined ? undefined : rowToAdvisoryDecision(won));
+  }
+
   // --- Priorities and goal targets (VW-349) ---
 
   /**
@@ -6302,6 +6335,13 @@ const PUT_ADVISORY_DECISION_SQL = `
     verdict = excluded.verdict,
     user_response = excluded.user_response,
     responded_at = excluded.responded_at
+`;
+
+const ANSWER_ADVISORY_IF_OPEN_SQL = `
+  UPDATE advisory_decisions
+    SET user_response = ?, responded_at = ?, inputs_json = coalesce(?, inputs_json)
+    WHERE id = ? AND user_response IS NULL
+  RETURNING *
 `;
 
 function advisoryDecisionBindings(input: PutAdvisoryDecisionInput): (string | null)[] {

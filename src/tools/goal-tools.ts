@@ -89,12 +89,14 @@ import {
 } from './goal-descriptions.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
+import { alreadyAnsweredError } from './advisory-answer.js';
 import {
   checkOffer,
   completeOffer,
   declineOfferFor,
   findOpenOffer,
   listOfferDecisions,
+  offerInputsOf,
   offerRowIds,
   reconcileRecalibrationOffers,
   withdrawOffersFor,
@@ -706,9 +708,11 @@ async function acceptTarget(
   const stretch = input.stretchValue ?? target.stretchValue;
   const custom = input.committedValue !== undefined || input.stretchValue !== undefined;
   const outside = assertInsideBand(target, committed, stretch, input.acknowledgeStretch === true);
+  const blockStamp = await blockStampFor(state, target);
+  if (offer !== undefined) await claimOffer(state, offer, target.id);
   const saved = await state.store.putGoalTarget({
     ...target,
-    ...(await blockStampFor(state, target)),
+    ...blockStamp,
     committedValue: committed,
     stretchValue: stretch,
     ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
@@ -716,8 +720,22 @@ async function acceptTarget(
     acknowledgedStretch: outside,
   });
   if (offer === undefined) return acceptedResult(saved);
-  const supersededTargetId = await completeOffer(state, offer, saved.id);
+  const supersededTargetId = offerInputsOf(offer).targetId;
   return { ...acceptedResult(saved), recalibration: { decisionId: offer.id, supersededTargetId } };
+}
+
+/**
+ * The offer row IS the target being accepted, so the answer is claimed before
+ * the row is written: an acceptance that lost the offer writes nothing (VW-587).
+ */
+async function claimOffer(
+  state: ServerState,
+  offer: StoredAdvisoryDecision,
+  targetId: string,
+): Promise<void> {
+  const claimed = await completeOffer(state, offer, targetId);
+  if (claimed.kind === 'answered') return;
+  throw alreadyAnsweredError(`The recalibration offer ${targetId}`, claimed.standing);
 }
 
 /**
@@ -881,6 +899,8 @@ export interface RetireGoalResult {
   cascaded: number;
   /** True when the retired row was an open recalibration offer, now recorded as declined (VW-444). */
   declinedOffer?: boolean;
+  /** Present when another call answered that offer first, so no decline was recorded (VW-587). */
+  offerAlreadyAnswered?: true;
 }
 
 async function retireGoal(
@@ -896,11 +916,7 @@ async function retireGoal(
     );
   }
   if (input.targetId !== undefined) {
-    const target = await state.store.retireGoalTarget(input.targetId, input.outcome, retiredAt);
-    if (target === undefined) throw notFound('goal target', input.targetId);
-    const declinedOffer = await declineOfferFor(state, target.id);
-    await withdrawOffersFor(state, [target.id]);
-    return { priority: null, targets: [target], cascaded: 0, declinedOffer };
+    return retireOneTarget(state, input.targetId, input.outcome, retiredAt);
   }
   const priorityId = input.priorityId as string;
   const priority = await state.store.retirePriority(priorityId, retiredAt);
@@ -913,6 +929,25 @@ async function retireGoal(
     targets.map((target) => target.id),
   );
   return { priority, targets: await refreshTargets(state, priorityId), cascaded };
+}
+
+async function retireOneTarget(
+  state: ServerState,
+  targetId: string,
+  outcome: 'met' | 'missed' | 'abandoned',
+  retiredAt: string,
+): Promise<RetireGoalResult> {
+  const target = await state.store.retireGoalTarget(targetId, outcome, retiredAt);
+  if (target === undefined) throw notFound('goal target', targetId);
+  const decline = await declineOfferFor(state, target.id);
+  await withdrawOffersFor(state, [target.id]);
+  return {
+    priority: null,
+    targets: [target],
+    cascaded: 0,
+    declinedOffer: decline?.kind === 'answered',
+    ...(decline?.kind === 'already_answered' ? { offerAlreadyAnswered: true } : {}),
+  };
 }
 
 /**

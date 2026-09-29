@@ -116,6 +116,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Two answers to one goal offer or weekly-review proposal no longer both report success. The
+  first answer is kept, and a later one is refused with `ADVISORY_ALREADY_ANSWERED`, naming
+  the answer that stands (`goal.retire` on an offer returns `offerAlreadyAnswered: true`).
+  An accepted recalibration target can no longer be retired by a withdrawal that arrived
+  second (VW-587).
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
   of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
   priority of their own, and the goals page then drew one goal twice. The second now folds

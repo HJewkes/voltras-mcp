@@ -48,6 +48,7 @@ import {
   type StoredGoalTarget,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
+import { alreadyAnsweredError, answerIfOpen } from './advisory-answer.js';
 import { mostRecentSundayIso, readWeeklyCheckin, type WeeklyCheckin } from './profile-tools.js';
 
 /** The advisory this tool issues, in `advisory_decisions.code`. */
@@ -455,15 +456,20 @@ async function recordResponse(
         'proposal it answers, never on its own.',
     );
   }
-  const saved = await state.store.putAdvisoryDecision({
-    ...open,
+  const answered = await answerIfOpen(state.store, open, {
     userResponse: response,
     respondedAt: at,
   });
+  if (answered.kind === 'already_answered') {
+    throw alreadyAnsweredError(
+      `The bodyweight-rate proposal for the week of ${weekOf}`,
+      answered.standing,
+    );
+  }
   return {
-    decisionId: saved.id,
+    decisionId: answered.decision.id,
     userResponse: response,
-    respondedAt: saved.respondedAt ?? at,
+    respondedAt: answered.decision.respondedAt ?? at,
   };
 }
 
