@@ -49,6 +49,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
       },
     ],
     "sets": 3,
+    "source": "prescribed",
     "tempo": [
       3,
       0,
