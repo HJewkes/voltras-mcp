@@ -1195,9 +1195,9 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
     }
   });
 
-  it('hands a set back to the owner by patch, and a session by re-put', async () => {
-    // A set re-put keeps its stored label (VW-583), so the set goes back through
-    // `patchSetLifter`; the session's DO UPDATE half still rewrites its label.
+  it('hands a set and a session back to the owner by patch, and a re-put keeps them there', async () => {
+    // A re-put keeps the stored label on a set (VW-583) and on a session (VW-584),
+    // so each goes back through its patch method.
     const store = SqliteSessionStore.open(':memory:');
     try {
       await store.putSession({
@@ -1218,6 +1218,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
       await store.putSet(set);
 
       await store.patchSetLifter('set-1', null);
+      await store.patchSession('s', { lifter: null });
       await store.putSession({ kind: 'training', id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
 
       expect(await store.getSet('set-1')).not.toHaveProperty('lifter');

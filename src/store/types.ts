@@ -1921,6 +1921,9 @@ export interface SessionStore extends ExerciseSetupStore {
    * re-inserting, and that delete cascades — every `session.end` re-put would
    * wipe the session's `program_assignment` links (the data-loss regression
    * fixed in #79). Update the row in place instead.
+   *
+   * On an existing row the re-put keeps the stored `lifter` and `preSessionCarbs`
+   * (VW-584): {@link patchSession} is the one path that changes them after start.
    */
   putSession(s: StoredSession): Promise<void>;
 
