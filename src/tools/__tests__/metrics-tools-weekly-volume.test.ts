@@ -421,6 +421,35 @@ describe('metrics.compute — history.weekly_volume on the muscle weight table',
     expect(body.setsByMuscle).toEqual({ lats: 1, upper_back: 1, chest: 1 });
   });
 
+  it('includes a session exactly on either edge of the window and excludes one just outside, in all three reads', async () => {
+    const now = Date.parse('2026-09-08T12:00:00.000Z');
+    const from = now - 12 * 7 * 24 * 60 * 60 * 1000;
+    const at = (ms: number): string => new Date(ms).toISOString();
+    const body = await weeklyVolumeOf([
+      makeSet('before-from', { exerciseId: 'cable-crunch', startedAt: at(from - 1) }),
+      makeSet('at-from', { exerciseId: 'cable-lateral-raise', startedAt: at(from) }),
+      makeSet('at-to', { exerciseId: 'cable-bicep-curl', startedAt: at(now) }),
+      makeSet('after-to', { exerciseId: 'cable-tricep-pushdown', startedAt: at(now + 1) }),
+    ]);
+
+    expect(body.setsByMuscle).toEqual({ side_delts: 1, biceps: 1 });
+    expect(body.doseSetsByMuscle).toEqual({ side_delts: 1, biceps: 1 });
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ side_delts: 200, biceps: 200 });
+    expect(body.byMuscleGroup.totalVolumeLbs).toBe(400);
+  });
+
+  it('files an exercise the catalog does not know under unknown, so the tonnage parts still sum to the total', async () => {
+    const body = await weeklyVolumeOf([
+      makeSet('known', { exerciseId: 'cable-chest-press' }),
+      makeSet('mystery', { exerciseId: 'not-in-catalog', weightLbs: 50 }),
+    ]);
+
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 200, unknown: 100 });
+    expect(body.byMuscleGroup.totalVolumeLbs).toBe(300);
+    expect(body.setsByMuscle).toEqual({ chest: 1, unknown: 1 });
+    expect(body.doseSetsByMuscle).not.toHaveProperty('unknown');
+  });
+
   it('counts a barbell deadlift set on hamstrings, with half a lat set in the dose read', async () => {
     const body = await weeklyVolumeOf([makeSet('dl', { exerciseId: 'barbell-deadlift' })]);
 

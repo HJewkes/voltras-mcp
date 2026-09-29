@@ -148,6 +148,7 @@ import { movementClassForExerciseId, type MovementClass } from '../exercises/mov
 import {
   countSetsByAttribution,
   targetMuscles,
+  UNATTRIBUTED_MUSCLE,
   type AttributedSetCounts,
   type SlugAttribution,
 } from '../exercises/muscle-attribution.js';
@@ -1085,7 +1086,7 @@ async function computeHistoryWeeklyVolume(
       // VW-662: the landmark targets, so WA's even split gives a row half its
       // tonnage on lats and half on upper_back and the parts still sum to the total.
       const targets = targetMuscles(attributionOf(state, exerciseId));
-      return targets.length === 0 ? undefined : { muscleGroups: targets };
+      return { muscleGroups: targets.length > 0 ? targets : [UNATTRIBUTED_MUSCLE] };
     },
     period,
   );
@@ -2656,7 +2657,9 @@ const METRICS_COMPUTE_DESCRIPTION =
   'does: the landmark read counts a set 1 toward each target muscle (a deadlift is one ' +
   '`hamstrings` set), and the dose read adds each muscle its weight (the deadlift adds 0.5 to ' +
   '`lats`). Compare only `setsByMuscle` with a volume landmark. `muscleMapVersion` stamps the ' +
-  'weight table used. `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
+  'weight table used. An exercise the catalog does not know files its tonnage under ' +
+  '`unknown` in `byMuscleGroup` and its sets under `unknown` in `setsByMuscle`, so the ' +
+  'per-muscle tonnage still sums to `totalVolumeLbs`. `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
   'caller-supplied `VolumeLandmarks` that no source in this repo states for this athlete, so no ' +
   'landmark is invented here. A window with no working sets is NOT_FOUND. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
