@@ -66,6 +66,11 @@ entry is written from the user's point of view is a review question, not a check
   when behind. Rest inside the rest the plan gives you never counts against you, and slip
   within two minutes (or 5% of a long plan) reads as on pace (VW-577, #573).
 
+- The session-pace model can now work out what to change when you are off pace: behind, it
+  names the sets to trim (last exercise first, never below one set, never the exercise you
+  are on) and whether that covers the delay; ahead, it offers up to two extra sets for the
+  exercise you are on. It is not shown anywhere yet (VW-578).
+
 - The live page and the rest recap now show the effort target for a working set under the
   prescription: the plan's RPE as the coach wrote it, else the target for your training tier,
   marked "(assumed tier)" when you never declared one. Hover it for what the target rests on.

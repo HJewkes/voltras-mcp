@@ -42,12 +42,30 @@ export const PACE_TOLERANCE_FRACTION = 0.05;
  */
 export type PaceState = 'ahead' | 'on_pace' | 'behind' | 'idle';
 
+/** Most sets an `add` suggestion offers at once. */
+export const PACE_ADD_MAX_SETS = 2;
+
 /** One logged working set, as far as pace needs it. */
 export interface CompletedWorkingSet {
   exerciseId?: string | undefined;
   /** When the set ended, ms since epoch. */
   endedAtMs: number;
 }
+
+/** Sets to drop from one planned exercise so the session ends nearer its plan. */
+export interface PaceTrimCut {
+  exerciseId: string;
+  fromSets: number;
+  toSets: number;
+}
+
+/**
+ * What to change to bring the session back to its plan. Ids and numbers only:
+ * the consumer resolves names and writes the sentence.
+ */
+export type PaceSuggestion =
+  | { kind: 'trim'; cuts: PaceTrimCut[]; savesMinutes: number; coversSlip: boolean }
+  | { kind: 'add'; exerciseId: string; sets: number; costsMinutes: number };
 
 /** The session's pace against its plan. Every field is plan-derived, never measured. */
 export interface SessionPaceView {
@@ -63,6 +81,8 @@ export interface SessionPaceView {
   state: PaceState;
   /** Signed delay against the plan, minutes: positive is behind, negative ahead, 0 when idle. */
   slipMinutes: number;
+  /** Trim or add offer for the state; absent when there is nothing to suggest. */
+  suggestion?: PaceSuggestion;
 }
 
 /** Everything `buildSessionPaceView` needs, already resolved out of the store. */
@@ -112,13 +132,22 @@ export function buildSessionPaceView(
   const plannedSeconds = remainingSeconds(costs, 0);
   const idle = done === 0 && !input.liveSetActive;
   const slipSeconds = idle ? 0 : computeSlipSeconds(input, startedMs, costs);
+  const state = classifyPace(slipSeconds, plannedSeconds, idle);
+  const suggestion = suggestPaceAdjustment(
+    state,
+    slipSeconds,
+    input.planned,
+    input.completedWorkingSets,
+    catalog,
+  );
   return {
     plannedMinutes: toMinutes(plannedSeconds),
     elapsedMinutes: toMinutes(Math.max(0, input.nowMs - startedMs) / 1000),
     plannedSetsRemaining: Math.max(0, costs.length - done),
     projectedEndAt: new Date(input.nowMs + remainingSeconds(costs, done) * 1000).toISOString(),
-    state: classifyPace(slipSeconds, plannedSeconds, idle),
+    state,
     slipMinutes: toSignedMinutes(slipSeconds),
+    ...(suggestion !== null && { suggestion }),
   };
 }
 
@@ -178,13 +207,20 @@ function plannedSetCosts(
   return [...planned]
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .flatMap((row) => {
-      const cost: PlannedSetCost = {
-        workSeconds: setWorkSeconds(row, catalog),
-        restSeconds: row.restSec ?? defaultRestSeconds(row.trainingIntent),
-      };
+      const cost = rowSetCost(row, catalog);
       const sets = Math.max(0, Math.trunc(row.targetSets));
       return Array.from({ length: sets }, () => cost);
     });
+}
+
+function rowSetCost(
+  row: StoredPlannedExercise,
+  catalog: ExerciseCatalogLookup | undefined,
+): PlannedSetCost {
+  return {
+    workSeconds: setWorkSeconds(row, catalog),
+    restSeconds: row.restSec ?? defaultRestSeconds(row.trainingIntent),
+  };
 }
 
 /**
@@ -227,4 +263,122 @@ function toMinutes(seconds: number): number {
 /** Rounds half away from zero, so a slip reads the same magnitude either side, and never -0. */
 function toSignedMinutes(seconds: number): number {
   return Math.sign(seconds) * Math.round(Math.abs(seconds) / 60) + 0;
+}
+
+/** One planned exercise with what the lifter has and has not done of it. */
+interface ExerciseProgress {
+  exerciseId: string;
+  targetSets: number;
+  loggedSets: number;
+  setSeconds: number;
+}
+
+/**
+ * Trim or add sets to move the session toward its plan, or `null` when the state
+ * is not behind or ahead or nothing is left to change. Behind trims from the last
+ * exercise backward, one set at a time, never below one set and never the
+ * exercise in progress. Ahead adds up to {@link PACE_ADD_MAX_SETS} sets to the
+ * exercise in progress while it has sets left, else the next one with sets left, while they fit the
+ * headroom. Sets logged with no `exerciseId` count toward the plan total but are
+ * never attributed to an exercise.
+ */
+export function suggestPaceAdjustment(
+  state: PaceState,
+  slipSeconds: number,
+  planned: readonly StoredPlannedExercise[],
+  completed: readonly CompletedWorkingSet[],
+  catalog: ExerciseCatalogLookup | undefined,
+): PaceSuggestion | null {
+  if (state !== 'behind' && state !== 'ahead') return null;
+  const totalSets = planned.reduce((sum, row) => sum + Math.max(0, Math.trunc(row.targetSets)), 0);
+  if (totalSets - completed.length <= 0) return null;
+  const progress = exerciseProgress(planned, completed, catalog);
+  const current = inProgressExerciseId(completed);
+  return state === 'behind'
+    ? suggestTrim(slipSeconds, progress, current)
+    : suggestAdd(-slipSeconds, progress, current);
+}
+
+function exerciseProgress(
+  planned: readonly StoredPlannedExercise[],
+  completed: readonly CompletedWorkingSet[],
+  catalog: ExerciseCatalogLookup | undefined,
+): ExerciseProgress[] {
+  const attributedLogged = new Map<string, number>();
+  for (const set of completed) {
+    if (set.exerciseId === undefined) continue;
+    attributedLogged.set(set.exerciseId, (attributedLogged.get(set.exerciseId) ?? 0) + 1);
+  }
+  return [...planned]
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((row) => {
+      const targetSets = Math.max(0, Math.trunc(row.targetSets));
+      const loggedSets = Math.min(targetSets, attributedLogged.get(row.exerciseId) ?? 0);
+      attributedLogged.set(
+        row.exerciseId,
+        (attributedLogged.get(row.exerciseId) ?? 0) - loggedSets,
+      );
+      const cost = rowSetCost(row, catalog);
+      return {
+        exerciseId: row.exerciseId,
+        targetSets,
+        loggedSets,
+        setSeconds: cost.workSeconds + cost.restSeconds,
+      };
+    });
+}
+
+/** The exercise of the most recently ended logged set that names one. */
+function inProgressExerciseId(completed: readonly CompletedWorkingSet[]): string | undefined {
+  let latest: CompletedWorkingSet | undefined;
+  for (const set of completed) {
+    if (set.exerciseId === undefined) continue;
+    if (latest === undefined || set.endedAtMs >= latest.endedAtMs) latest = set;
+  }
+  return latest?.exerciseId;
+}
+
+function suggestTrim(
+  slipSeconds: number,
+  progress: readonly ExerciseProgress[],
+  current: string | undefined,
+): PaceSuggestion | null {
+  const cuts: PaceTrimCut[] = [];
+  let saved = 0;
+  for (const exercise of [...progress].reverse()) {
+    if (saved >= slipSeconds) break;
+    if (exercise.exerciseId === current) continue;
+    const floor = Math.max(1, exercise.loggedSets);
+    let toSets = exercise.targetSets;
+    while (toSets > floor && saved < slipSeconds) {
+      toSets -= 1;
+      saved += exercise.setSeconds;
+    }
+    if (toSets < exercise.targetSets) {
+      cuts.push({ exerciseId: exercise.exerciseId, fromSets: exercise.targetSets, toSets });
+    }
+  }
+  if (cuts.length === 0) return null;
+  return { kind: 'trim', cuts, savesMinutes: toMinutes(saved), coversSlip: saved >= slipSeconds };
+}
+
+function suggestAdd(
+  headroomSeconds: number,
+  progress: readonly ExerciseProgress[],
+  current: string | undefined,
+): PaceSuggestion | null {
+  const hasSetsLeft = (exercise: ExerciseProgress): boolean =>
+    exercise.targetSets > exercise.loggedSets;
+  const target =
+    progress.find((exercise) => exercise.exerciseId === current && hasSetsLeft(exercise)) ??
+    progress.find(hasSetsLeft);
+  if (target === undefined || target.setSeconds <= 0) return null;
+  const sets = Math.min(PACE_ADD_MAX_SETS, Math.floor(headroomSeconds / target.setSeconds));
+  if (sets < 1) return null;
+  return {
+    kind: 'add',
+    exerciseId: target.exerciseId,
+    sets,
+    costsMinutes: toMinutes(sets * target.setSeconds),
+  };
 }
