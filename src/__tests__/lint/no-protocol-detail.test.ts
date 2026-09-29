@@ -92,6 +92,7 @@ describe('what the guard does not fire on', () => {
 describe('a value split across a concatenation (VW-224)', () => {
   const PAIR = 'a1';
   const OTHER = 'b2';
+  const [THIRD, FOURTH, FIFTH] = ['c', 'd', 'e'].map((letter, i) => `${letter}${i + 3}`);
   const prefix = ['0', 'x'].join('');
 
   function messagesFor(code: string) {
@@ -129,9 +130,26 @@ describe('a value split across a concatenation (VW-224)', () => {
     expect(messagesFor(`const v = '${prefix}${PAIR}' + '${OTHER}';`)).toHaveLength(1);
   });
 
+  it('reports a new value across the join beside a hit already in the first piece', () => {
+    const code = `const v = '${prefix}${PAIR} ${OTHER}' + '${THIRD}';`;
+    expect(messagesFor(code)).toHaveLength(2);
+  });
+
+  it('reports a new value across the join beside a hit in a middle piece', () => {
+    const middle = `${OTHER} ${prefix}${THIRD} ${FOURTH}`;
+    const code = `const v = '${PAIR}' + '${middle}' + '${FIFTH}';`;
+    expect(messagesFor(code)).toHaveLength(2);
+  });
+
+  const escapedZero = `\\x${'0'.charCodeAt(0).toString(16)}`;
+
   it('reports a split value whose first piece is spelled in an escape', () => {
-    const escapedZero = `\\x${'0'.charCodeAt(0).toString(16)}`;
     const code = `const v = '${escapedZero}x' + '${PAIR}';`;
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
+  it('reports an escaped piece that decodes to a hit, extended across the join', () => {
+    const code = `const v = '${escapedZero}x${PAIR}' + '${OTHER}';`;
     expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
   });
 

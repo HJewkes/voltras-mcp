@@ -26,8 +26,9 @@
 //   - It folds a CONCATENATION OF STRING LITERALS (VW-224). `'0x' + '1f'` and a
 //     line-wrapped `'a9c7' + 'f00d'` are joined, adjacent literal pieces at a
 //     time, and scanned as one string. A finding reported this way crosses a
-//     join and touches no piece whose source text the whole-text pass already
-//     reported, so one value is not reported twice.
+//     join and overlaps no hit the whole-text pass already reported inside a
+//     piece. A hit inside a piece spelled with escapes is not matched, so such
+//     a value can be reported twice.
 //
 // What it does NOT catch (VW-224):
 //
@@ -209,43 +210,50 @@ function chainOperands(node) {
 }
 
 /**
- * Runs of adjacent literal pieces in source order. Each piece keeps its cooked
- * text and whether the whole-text pass already reported its raw spelling.
+ * Runs of adjacent literal pieces in source order, each as its cooked text and
+ * the source text between its quotes.
  */
 function literalRuns(operands, sourceCode) {
   const runs = [[]];
   for (const operand of operands) {
     const text = literalText(operand);
     if (text === null) runs.push([]);
-    else
-      runs
-        .at(-1)
-        .push({ text, reported: findProtocolDetail(sourceCode.getText(operand)).length > 0 });
+    else runs.at(-1).push({ text, raw: sourceCode.getText(operand).slice(1, -1) });
   }
   return runs.filter((run) => run.length > 1);
 }
 
-/** Each piece's `[start, end)` span in the joined text. */
-function pieceSpans(pieces) {
+/**
+ * The whole-text pass's hits inside the pieces, as spans of the joined text.
+ * A piece spelled with escapes has no offset map from raw to cooked, so it
+ * contributes none: it may report twice, but it never hides a value.
+ */
+function reportedSpans(pieces) {
   let offset = 0;
-  return pieces.map(({ text, reported }) => ({
-    start: offset,
-    end: (offset += text.length),
-    reported,
-  }));
+  return pieces.flatMap(({ text, raw }) => {
+    const start = offset;
+    offset += text.length;
+    if (raw !== text) return [];
+    return findProtocolDetail(raw).map(({ index, length }) => ({ index: start + index, length }));
+  });
 }
+
+const overlaps = (a, b) => a.index < b.index + b.length && b.index < a.index + a.length;
 
 /**
  * The first shape that only exists once `pieces` are joined, or `undefined`.
- * A shape touching a piece the whole-text pass already reported is skipped.
+ * A shape overlapping a hit the whole-text pass already reported is skipped.
  */
 function shapeAcrossJoin(pieces) {
-  const spans = pieceSpans(pieces);
-  return findProtocolDetail(pieces.map((piece) => piece.text).join('')).find((finding) => {
-    const end = finding.index + finding.length;
-    const touched = spans.filter((span) => span.start < end && finding.index < span.end);
-    return touched.length > 1 && !touched.some((span) => span.reported);
-  });
+  const joins = [];
+  let offset = 0;
+  for (const { text } of pieces.slice(0, -1)) joins.push((offset += text.length));
+  const reported = reportedSpans(pieces);
+  return findProtocolDetail(pieces.map((piece) => piece.text).join('')).find(
+    (finding) =>
+      joins.some((join) => join > finding.index && join < finding.index + finding.length) &&
+      !reported.some((hit) => overlaps(hit, finding)),
+  );
 }
 
 const MESSAGES = {
