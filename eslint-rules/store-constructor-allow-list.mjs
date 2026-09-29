@@ -5,8 +5,7 @@
 // migration chain itself, which has no meaning under another engine. The helper is here
 // because it is the one place the constructor is still called for everyone else.
 //
-// `eslint.config.mjs` exempts these paths from the guard, and
-// `scripts/codemod-open-test-store.mjs` skips them. An entry that no longer calls the
+// `eslint.config.mjs` exempts these paths from the guard. An entry that no longer calls the
 // constructor is a hole, so review it the way the other exemption lists are reviewed.
 
 export const STORE_CONSTRUCTOR_ALLOW_LIST = [
