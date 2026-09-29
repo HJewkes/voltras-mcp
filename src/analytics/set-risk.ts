@@ -49,27 +49,47 @@ function levelFromEdges(value: number, moderate: number, high: number): RiskLeve
   return value >= moderate ? 1 : 0;
 }
 
-export function intensityLevel(
-  relativeIntensity: number | null,
-  t: SetRiskThresholds,
-): RiskLevel | null {
-  if (relativeIntensity === null || !Number.isFinite(relativeIntensity)) return null;
+// Outside the declared domain reads as unknown, so a bad value fails closed.
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isSetIndex(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+}
+
+export function exerciseLevel(exerciseClass: unknown): RiskLevel | null {
+  if (typeof exerciseClass !== 'string' || !Object.hasOwn(EXERCISE_LEVEL, exerciseClass)) {
+    return null;
+  }
+  return EXERCISE_LEVEL[exerciseClass as ExerciseRiskClass];
+}
+
+export function intensityLevel(relativeIntensity: unknown, t: SetRiskThresholds): RiskLevel | null {
+  if (!isNonNegativeNumber(relativeIntensity)) return null;
   return levelFromEdges(relativeIntensity, t.intensityModerate, t.intensityHigh);
 }
 
-export function loadLevel(loadLbs: number | null, t: SetRiskThresholds): RiskLevel | null {
-  if (loadLbs === null || !Number.isFinite(loadLbs)) return null;
+export function loadLevel(loadLbs: unknown, t: SetRiskThresholds): RiskLevel | null {
+  if (!isNonNegativeNumber(loadLbs)) return null;
   if (t.loadModerateLbs === null || t.loadHighLbs === null) return MAX_LEVEL;
   return levelFromEdges(loadLbs, t.loadModerateLbs, t.loadHighLbs);
 }
 
+function priorDecayFor(setIndex: number, priorSetDecayed: unknown): boolean | null {
+  if (typeof priorSetDecayed === 'boolean') return priorSetDecayed;
+  const absentOnFirstSet =
+    setIndex === 1 && (priorSetDecayed === null || priorSetDecayed === undefined);
+  return absentOnFirstSet ? false : null;
+}
+
 export function fatigueLevel(
-  setIndex: number | null,
-  priorSetDecayed: boolean | null,
+  setIndex: unknown,
+  priorSetDecayed: unknown,
   t: SetRiskThresholds,
 ): RiskLevel | null {
-  if (setIndex === null || !Number.isFinite(setIndex)) return null;
-  const decayed = setIndex <= 1 ? (priorSetDecayed ?? false) : priorSetDecayed;
+  if (!isSetIndex(setIndex)) return null;
+  const decayed = priorDecayFor(setIndex, priorSetDecayed);
   if (decayed === null) return null;
   const indexLevel = setIndex >= t.lateSetFromIndex ? 1 : 0;
   return Math.min(MAX_LEVEL, indexLevel + (decayed ? 1 : 0)) as RiskLevel;
@@ -77,7 +97,7 @@ export function fatigueLevel(
 
 function scoreFactors(inputs: SetRiskInputs, t: SetRiskThresholds): SetRiskFactors {
   return {
-    exercise: inputs.exerciseClass === null ? null : EXERCISE_LEVEL[inputs.exerciseClass],
+    exercise: exerciseLevel(inputs.exerciseClass),
     intensity: intensityLevel(inputs.relativeIntensity, t),
     load: loadLevel(inputs.loadLbs, t),
     fatigue: fatigueLevel(inputs.setIndexInExercise, inputs.priorSetDecayed, t),
@@ -92,9 +112,10 @@ function sumPoints(factors: SetRiskFactors): number {
 function collectVetoes(inputs: SetRiskInputs, factors: SetRiskFactors): RiskVeto[] {
   const vetoes: RiskVeto[] = [];
   const anyFactorMissing = Object.values(factors).some((level) => level === null);
-  if (anyFactorMissing || inputs.resistanceFamily === null) vetoes.push('missing_signal');
-  if (inputs.resistanceFamily === 'other') vetoes.push('non_constant_mode');
-  if (inputs.guestLifter) vetoes.push('guest_lifter');
+  const familyKnown = inputs.resistanceFamily === 'constant' || inputs.resistanceFamily === 'other';
+  if (anyFactorMissing || !familyKnown) vetoes.push('missing_signal');
+  if (inputs.resistanceFamily !== 'constant') vetoes.push('non_constant_mode');
+  if (inputs.guestLifter !== false) vetoes.push('guest_lifter');
   if (factors.exercise === 2 && factors.intensity === 2) vetoes.push('heavy_loaded_compound');
   return vetoes;
 }

@@ -82,20 +82,77 @@ describe('scoreSetRisk on the owner examples', () => {
 });
 
 describe('scoreSetRisk fail-safe rule', () => {
-  const nullCases: [string, Partial<SetRiskInputs>][] = [
-    ['exercise class', { exerciseClass: null }],
-    ['relative intensity', { relativeIntensity: null }],
-    ['load', { loadLbs: null }],
-    ['set index', { setIndexInExercise: null }],
-    ['prior-set decay after set 1', { setIndexInExercise: 2, priorSetDecayed: null }],
-    ['resistance family', { resistanceFamily: null }],
+  const nullCases: [string, Partial<SetRiskInputs>, number][] = [
+    ['exercise class', { exerciseClass: null }, 2],
+    ['relative intensity', { relativeIntensity: null }, 2],
+    ['load', { loadLbs: null }, 2],
+    ['set index', { setIndexInExercise: null }, 2],
+    ['prior-set decay after set 1', { setIndexInExercise: 2, priorSetDecayed: null }, 2],
+    ['resistance family', { resistanceFamily: null }, 0],
   ];
 
-  it.each(nullCases)('denies with missing_signal when the %s is unknown', (_name, override) => {
-    const reading = scoreSetRisk(inputs(override), TEST_THRESHOLDS);
+  it.each(nullCases)(
+    'denies with missing_signal when the %s is unknown',
+    (_name, override, expectedPoints) => {
+      const reading = scoreSetRisk(inputs(override), TEST_THRESHOLDS);
 
-    expect(reading.vetoes).toContain('missing_signal');
-    expect(reading.band).toBe('red');
+      expect(reading.vetoes).toContain('missing_signal');
+      expect(reading.points).toBe(expectedPoints);
+      expect(reading.band).toBe('red');
+      expect(reading.permitsIntraSet).toBe(false);
+    },
+  );
+
+  const outOfDomainCases: [string, Record<string, unknown>, number][] = [
+    ['a negative relative intensity', { relativeIntensity: -1 }, 2],
+    ['a NaN relative intensity', { relativeIntensity: Number.NaN }, 2],
+    ['an infinite relative intensity', { relativeIntensity: Number.POSITIVE_INFINITY }, 2],
+    ['a negative load', { loadLbs: -5 }, 2],
+    ['a NaN load', { loadLbs: Number.NaN }, 2],
+    ['set index zero', { setIndexInExercise: 0 }, 2],
+    ['a negative set index', { setIndexInExercise: -3 }, 2],
+    ['a fractional set index', { setIndexInExercise: 1.5 }, 2],
+    ['a NaN set index', { setIndexInExercise: Number.NaN }, 2],
+    [
+      'an undefined prior-set decay on set 2',
+      { setIndexInExercise: 2, priorSetDecayed: undefined },
+      2,
+    ],
+    ['a non-boolean prior-set decay', { priorSetDecayed: 'no' }, 2],
+    ['an unrecognised exercise class', { exerciseClass: 'bogus' }, 2],
+    ['an inherited property as exercise class', { exerciseClass: 'toString' }, 2],
+    ['an unrecognised resistance family', { resistanceFamily: 'foo' }, 0],
+    ['an undefined resistance family', { resistanceFamily: undefined }, 0],
+  ];
+
+  it.each(outOfDomainCases)(
+    'denies with missing_signal on %s',
+    (_name, override, expectedPoints) => {
+      const outOfDomain = { ...inputs(), ...override } as unknown as SetRiskInputs;
+
+      const reading = scoreSetRisk(outOfDomain, TEST_THRESHOLDS);
+
+      expect(reading.vetoes).toContain('missing_signal');
+      expect(reading.points).toBe(expectedPoints);
+      expect(reading.band).toBe('red');
+      expect(reading.permitsIntraSet).toBe(false);
+    },
+  );
+
+  it('vetoes any resistance family other than constant as a non-constant mode', () => {
+    const outOfDomain = { ...inputs(), resistanceFamily: 'foo' } as unknown as SetRiskInputs;
+
+    const reading = scoreSetRisk(outOfDomain, TEST_THRESHOLDS);
+
+    expect(reading.vetoes).toContain('non_constant_mode');
+  });
+
+  it('vetoes a guest-lifter flag that is not exactly false', () => {
+    const outOfDomain = { ...inputs(), guestLifter: undefined } as unknown as SetRiskInputs;
+
+    const reading = scoreSetRisk(outOfDomain, TEST_THRESHOLDS);
+
+    expect(reading.vetoes).toEqual(['guest_lifter']);
     expect(reading.permitsIntraSet).toBe(false);
   });
 
