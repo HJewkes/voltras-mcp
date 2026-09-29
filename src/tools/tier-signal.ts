@@ -178,14 +178,19 @@ function ceilingBasisOf(
  *
  * `advanced` is never produced by the ceiling (§3.5): it can only come from an explicit
  * `declared_tier = 'advanced'`, and the clamp still applies to it.
+ *
+ * `asOf` counts only sessions that started at or before that instant; omitted, the whole
+ * history counts. The profile and the unreviewed-day count are always read as they stand now.
  */
 export async function getTierSignal(
   state: TierSignalState,
   userId: string = LOCAL_USER_ID,
+  asOf?: string,
 ): Promise<TierSignal> {
   const profile = await state.store.getTrainingProfile(userId);
-  const days = await readTrainingDaysMatching(state.store, {});
-  const span = await state.store.getSessionDateSpan({ endedOnly: true });
+  const asOfFilter = asOf === undefined ? {} : { to: asOf };
+  const days = await readTrainingDaysMatching(state.store, asOfFilter);
+  const span = await state.store.getSessionDateSpan({ endedOnly: true, ...asOfFilter });
   const weeksSpanned = weeksBetween(span.first, span.last);
   const everPlateaued = profile?.everPlateaued ?? false;
   const loggedHistoryMet = days.length >= MIN_TRAINING_DAYS && weeksSpanned >= MIN_WEEKS_SPANNED;

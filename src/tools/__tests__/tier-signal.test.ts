@@ -126,6 +126,26 @@ describe('getTierSignal', () => {
     await store.close();
   });
 
+  it('counts only sessions that started at or before asOf (VW-575)', async () => {
+    const store = SqliteSessionStore.open(':memory:');
+    await seedSessions(store, 24, 90);
+    await store.putTrainingProfile({
+      userId: LOCAL_USER_ID,
+      everPlateaued: true,
+      updatedAt: new Date().toISOString(),
+    });
+    const midway = endedSession('mid', 30).startedAt;
+
+    const now = await getTierSignal(makeState(store), LOCAL_USER_ID);
+    const past = await getTierSignal(makeState(store), LOCAL_USER_ID, midway);
+
+    expect(now.confidence).toBe('confident');
+    expect(past.confidence).toBe('provisional');
+    expect(past.derivedCeiling).toBe('beginner');
+    expect(past.evidence.trainingDaysLogged).toBeLessThan(24);
+    await store.close();
+  });
+
   it('counts twelve sessions on one day as one training day toward the 24 (VW-462)', async () => {
     const store = SqliteSessionStore.open(':memory:');
     await seedSessions(store, 23, 90);
