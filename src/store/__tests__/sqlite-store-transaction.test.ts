@@ -8,7 +8,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 interface TransactionInternals {
   readonly db: DatabaseSync;
@@ -41,7 +42,7 @@ function noTransactionOpen(): boolean {
 }
 
 beforeEach(() => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openSqliteTestStore();
   tx = store as unknown as TransactionInternals;
   tx.db.exec(`CREATE TABLE scratch (label TEXT NOT NULL)`);
 });
