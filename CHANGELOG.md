@@ -72,6 +72,9 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- `bilateral_divergence` now carries `slot`, set to the side whose close fired it, so a
+  consumer filtering on `slot` no longer drops it (VW-685). `slot_id` and `partner_slot_id`
+  stay.
 - `history.weekly_volume` reads the muscle weight table, the way `session.volume` does
   (VW-662). Its tonnage breakdown is keyed by muscle (`front_delts` and `side_delts`, never
   `shoulders`), and a row splits its tonnage evenly between `lats` and `upper_back`, so the

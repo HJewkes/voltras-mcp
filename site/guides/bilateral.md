@@ -102,8 +102,8 @@ Most push events carry a `slot` meta key: `primary` for a single-device flow, `l
 two rep streams apart. Every event also carries an `at` meta key — an ISO-8601 UTC
 timestamp of when the server emitted the push
 (`docs/push-events.md:40-46`). A handful of events never carry `slot` at all (global things
-like `timer_complete`), and two carry slot information under different keys
-(`slot_id`/`partner_slot_id` on `bilateral_divergence`) — see
+like `timer_complete`). `bilateral_divergence` carries `slot` for the side whose close
+fired it, plus `partner_slot_id` for the other side — see
 [the full breakdown](https://github.com/HJewkes/voltras-mcp/blob/main/docs/push-events.md)
 if you're filtering programmatically.
 
