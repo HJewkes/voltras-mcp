@@ -329,6 +329,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-661: `session.volume`'s dose read and the weight-table stamp beside it.
   'doseSetsByMuscle',
   'muscleMapVersion',
+  // VW-662: `history.weekly_volume`'s tonnage total, which its per-muscle parts sum to.
+  'totalVolumeLbs',
   'setsPerExercise',
   // VW-327: `profile.get_body_metrics`'s trailing 7-day bodyweight mean.
   'sevenDayMeanBodyweightLbs',
