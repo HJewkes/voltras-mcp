@@ -66,6 +66,12 @@ entry is written from the user's point of view is a review question, not a check
   `session.get`. A finished session reads its final verdict against its own end time. The
   pacing guide gained a Session pace section on why time alone drives the state (VW-579).
 
+- The weekly report now shows where each goal stands. With priorities declared, `report.weekly`
+  adds a Goals section with one line per accepted target, such as `goal: seated row 190x8 by
+  Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a muscle
+  priority. The status word is the same one the goals page shows. The section is left out when
+  you have no priorities, and the JSON form carries the same lines as `goals` (VW-358).
+
 - A session's pace against its plan now says where you stand, not only how long is left:
   `sessionPace` on `session.get` and the dashboard snapshot carries a `state` (ahead, on
   pace, behind, or idle before your first working set) and a signed `slipMinutes`, positive

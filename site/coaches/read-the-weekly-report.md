@@ -6,6 +6,8 @@ audience: [coach, lifter]
 status: available
 sources:
   - src/tools/report-tools.ts
+  - src/tools/report-goals.ts
+  - src/tools/__tests__/report-weekly-goals.test.ts
   - src/tools/__tests__/report-weekly-tools.test.ts
   - src/tools/accountability-tools.ts
 lastVerified: 2026-09-27
@@ -152,6 +154,22 @@ even if the lifter didn't bring it up again unprompted.
 
 When no self-reports exist for the range at all, the section falls back to the `notes`
 input as a plain lifter note instead — and if neither exists, the whole section is omitted.
+
+## The goals section
+
+```
+## Goals
+- goal: seated row 190x8 by Oct 25, on track (wk 3/6)
+- goal: arms, 1 of 2 primary lifts on track (wk 3/6)
+```
+
+Only appears when the lifter has declared goal priorities. One line per accepted target
+(JSON: `goals`), worded `goal: <lift> <committed load>x<reps> by <date>, <status> (wk n/of)`.
+The status is the word the goals page shows for that target, read from the same model, so
+the report never re-judges it: `on track`, `ahead`, `behind`, `stalled`, `calibrating`,
+`deload week, no verdict`, or `behind, tolerated for the diet phase`. A muscle priority adds a
+rollup line counting how many of its lifts are on track. Proposals the lifter has not accepted
+are left out, and with no priorities the whole section is omitted.
 
 ## Calling it
 

@@ -14,6 +14,7 @@
 // not read as a light top set.
 
 import { resolveCurrentBlock } from '../plan/current-block.js';
+import { buildGoalLines, type WeeklyGoalLine } from './report-goals.js';
 import { datedWeeksOverlapping, scheduleChangeLines } from './report-calendar.js';
 import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -320,7 +321,9 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'inactivity timeout with reps recorded, and velocity-loss holds at the VL30 stop point — ' +
   '`setting_coerced` is never included: it is a live-only signal with no persisted record, so ' +
   'there is nothing to read back after the session ends); and a check-in section built from ' +
-  'recorded self-reports, falling back to the `notes` input as a lifter note when none exist. ' +
+  'recorded self-reports, falling back to the `notes` input as a lifter note when none exist; and ' +
+  'a goals section (VW-358): one line per accepted goal target, worded from the goal-progress read ' +
+  'model (`goal: seated row 190x8 by Oct 25, on track (wk 3/6)`), plus a rollup line per muscle priority, omitted with no priorities. ' +
   'Read-only and local: no network call, and it writes nothing.';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -452,6 +455,8 @@ export interface WeeklyReport {
   progression: WeeklyProgressionLine[];
   flags: WeeklyFlags;
   checkIn: WeeklyCheckIn | null;
+  /** One line per accepted goal target; empty when the lifter declared no priorities (VW-358). */
+  goals: WeeklyGoalLine[];
 }
 
 export async function buildWeeklyReport(
@@ -498,6 +503,7 @@ export async function buildWeeklyReport(
     progression: await buildProgressionLines(state, endedSessions, to),
     flags: await buildFlags(state, endedSessions),
     checkIn: await buildCheckIn(state, input, from, to),
+    goals: await buildGoalLines(state, to),
   };
 }
 
@@ -998,6 +1004,11 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
   if (flagLines.length > 0) lines.push('', '## Flags', ...flagLines);
 
   if (report.checkIn !== null) lines.push('', '## Check-in', ...renderCheckInLines(report.checkIn));
+
+  if (report.goals.length > 0) {
+    lines.push('', '## Goals');
+    for (const goal of report.goals) lines.push(`- ${goal.text}`);
+  }
 
   return lines.join('\n');
 }
