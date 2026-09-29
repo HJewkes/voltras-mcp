@@ -343,6 +343,27 @@ describe.each(VARIANTS)('goal.propose_targets racing another write, $name', (var
   });
 });
 
+describe.each(VARIANTS)('goal.propose_targets racing an accept, $name', (variant) => {
+  it('writes no second proposal over a leg accepted while it derived', async () => {
+    const first = openStore();
+    const proposal = await seedProposal(first);
+    const acceptor = toolsOver(variant.second(first));
+    const race = raced(first, PROPOSE_WRITE, 'before', () =>
+      ok(acceptor, 'goal.accept_target', { targetId: proposal.id }),
+    );
+
+    const proposed = await ok(race.call, 'goal.propose_targets', {
+      priorityId: proposal.priorityId,
+    });
+
+    expect(race.fired()).toBe(true);
+    expect(proposed.targets).toEqual([]);
+    expect(JSON.stringify(proposed.skipped)).toContain(proposal.id);
+    const live = await first.listGoalTargets({ priorityId: proposal.priorityId });
+    expect(live.map((row) => [row.id, row.acceptedBy])).toEqual([[proposal.id, 'coach-default']]);
+  });
+});
+
 describe.each(VARIANTS)('goal.retire with an outcome, $name', (variant) => {
   it('stamps the outcome without reverting a chapter stamped just after the cascade read', async () => {
     const first = openStore();
