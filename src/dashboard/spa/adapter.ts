@@ -132,6 +132,8 @@ export interface TierView {
 
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
+  /** Where the targets come from: a plan the coach attached. */
+  source: 'prescribed';
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;

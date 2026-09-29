@@ -592,6 +592,7 @@ describe('GET /api/history', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body) as { plan: Record<string, unknown> | null };
     expect(body.plan).toEqual({
+      source: 'prescribed',
       sets: 3,
       repsLow: 8,
       repsHigh: 10,
@@ -945,6 +946,7 @@ describe('GET /api/history', () => {
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
     const body = JSON.parse(res.body) as { plan: Record<string, unknown> };
     expect(body.plan).toEqual({
+      source: 'prescribed',
       sets: 4,
       exercises: [{ name: 'bench', order: 0, sets: 4, active: true }],
     });

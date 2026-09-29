@@ -46,6 +46,8 @@ export interface TierView {
 
 /** Prescribed targets for the active exercise, from its attached plan template. */
 export interface PrescriptionView {
+  /** Where the targets come from: a plan the coach attached. */
+  source: 'prescribed';
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;
@@ -106,7 +108,7 @@ export function buildSessionPlanView(
   catalog: ExerciseCatalogLookup | undefined,
 ): PrescriptionView {
   const { match, planned, activeExerciseId, title } = rows;
-  const prescription: PrescriptionView = { sets: match.targetSets };
+  const prescription: PrescriptionView = { source: 'prescribed', sets: match.targetSets };
   if (match.targetRepsLow !== undefined) prescription.repsLow = match.targetRepsLow;
   if (match.targetRepsHigh !== undefined) prescription.repsHigh = match.targetRepsHigh;
   if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;

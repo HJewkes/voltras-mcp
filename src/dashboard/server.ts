@@ -1849,12 +1849,11 @@ async function fetchHistory(
 
 /**
  * The active exercise's prescription, when the live session is attached to a
- * workout template (plan.attach_to_session): find the planned exercise matching
- * the active exercise id and surface its target rep range / weight / RPE. Returns
- * null when the plan store isn't available, no session/exercise is active, or no
- * template-level attachment covers the active exercise. Single-exercise
- * (plannedExerciseId) attachments aren't resolved here — the store has no direct
- * getPlannedExercise(id); tracked as a follow-up. Plan metadata only (NF-07).
+ * plan (plan.attach_to_session): a whole workout template, or one planned
+ * exercise. The first assignment covering the active exercise wins, as in
+ * `findPlannedExerciseForSession`. Returns null when the plan store isn't
+ * available, no session/exercise is active, or no attachment covers the active
+ * exercise. Plan metadata only (NF-07).
  */
 async function fetchSessionPlan(state: DashboardServerState): Promise<PrescriptionView | null> {
   const { store } = state;
@@ -1864,38 +1863,63 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
   ) {
     return null;
   }
-  let session: ActiveSession | undefined;
-  let setLifter: string | undefined;
+  const live = findLiveSessionForPlan(state);
+  if (live === undefined) return null;
+  const { session, exerciseId } = live;
+  const attached = await resolveAttachedPlan(store, session.sessionId, exerciseId);
+  if (attached === undefined) return null;
+  // VW-669: the tier signal is the owner's; a guest or partner on the cable gets no tier.
+  const tier = live.ownerLifting ? await readTierView(store) : undefined;
+  const rows: SessionPlanRows = {
+    activeExerciseId: exerciseId,
+    match: attached.match,
+    planned: attached.planned,
+    title: await resolveSessionTitle(store, attached.match.workoutTemplateId),
+    ...(tier !== undefined && { tier }),
+  };
+  return buildSessionPlanView(rows, state.exercises);
+}
+
+/** The first slot's open session with an active exercise, and whether the owner is lifting. */
+function findLiveSessionForPlan(
+  state: DashboardServerState,
+): { session: ActiveSession; exerciseId: string; ownerLifting: boolean } | undefined {
   for (const [, slot] of state.slots) {
-    const candidate = slot.live.snapshotSession();
-    if (candidate !== undefined) {
-      session = candidate;
-      setLifter = slot.live.snapshotSet()?.lifter;
-      break;
+    const session = slot.live.snapshotSession();
+    if (session === undefined) continue;
+    if (session.exerciseId === undefined) return undefined;
+    const ownerLifting =
+      session.lifter === undefined && slot.live.snapshotSet()?.lifter === undefined;
+    return { session, exerciseId: session.exerciseId, ownerLifting };
+  }
+  return undefined;
+}
+
+/** The planned row covering `exerciseId` and the rail it sits in: its whole template, or itself alone. */
+async function resolveAttachedPlan(
+  store: DashboardServerState['store'],
+  sessionId: string,
+  exerciseId: string,
+): Promise<
+  { match: StoredPlannedExercise; planned: readonly StoredPlannedExercise[] } | undefined
+> {
+  if (
+    store.getAssignmentsForSession === undefined ||
+    store.getPlannedExercisesForTemplate === undefined
+  ) {
+    return undefined;
+  }
+  for (const assignment of await store.getAssignmentsForSession(sessionId)) {
+    if (assignment.workoutTemplateId !== undefined) {
+      const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
+      const match = planned.find((p) => p.exerciseId === exerciseId);
+      if (match !== undefined) return { match, planned };
+    } else if (assignment.plannedExerciseId !== undefined && store.getPlannedExercise) {
+      const match = await store.getPlannedExercise(assignment.plannedExerciseId);
+      if (match?.exerciseId === exerciseId) return { match, planned: [match] };
     }
   }
-  if (session === undefined || session.exerciseId === undefined) return null;
-  const { sessionId, exerciseId } = session;
-  // VW-669: the tier signal is the owner's; a guest or partner on the cable gets no tier.
-  const ownerLifting = session.lifter === undefined && setLifter === undefined;
-
-  for (const assignment of await store.getAssignmentsForSession(sessionId)) {
-    if (assignment.workoutTemplateId === undefined) continue;
-    const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
-    const match = planned.find((p) => p.exerciseId === exerciseId);
-    if (match === undefined) continue;
-    const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
-    const tier = ownerLifting ? await readTierView(store) : undefined;
-    const rows: SessionPlanRows = {
-      activeExerciseId: exerciseId,
-      match,
-      planned,
-      title,
-      ...(tier !== undefined && { tier }),
-    };
-    return buildSessionPlanView(rows, state.exercises);
-  }
-  return null;
+  return undefined;
 }
 
 /** @see hasPlanStore — same narrowing, for the tier read on the plan channel (VW-668). */
