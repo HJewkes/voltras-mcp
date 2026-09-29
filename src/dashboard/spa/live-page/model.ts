@@ -470,8 +470,9 @@ function plannedRepTarget(session: SessionModel): number | string | null {
  * {@link plannedRepTarget}, but numeric.
  *
  * A prescribed RANGE sizes the committed columns by its floor (`repsLow`), the reps the set
- * is definitely expected to carry; {@link plannedRepRange} carries the top so the strip can
- * draw the reps between the two as a range rather than as missing columns.
+ * is definitely expected to carry. A todo set draws the whole range as titan's `range`
+ * variant (floor..max). The active set keeps `planned` segments and its live pulse, plus the
+ * {@link plannedRepRange} label, because `range` has no pulse; VW-576 asks titan for one.
  */
 export function plannedRepCount(session: SessionModel): number | null {
   const active = session.plannedExercises.find((e) => e.active);
@@ -488,6 +489,21 @@ export function plannedRepRange(session: SessionModel): { repsLow?: number; reps
   const high = active?.repsHigh ?? null;
   if (low === null || high === null || high <= low) return {};
   return { repsLow: low, repsHigh: high };
+}
+
+/**
+ * A not-yet-started set. A prescribed range (high above low) draws titan's `range` variant,
+ * floor..max with the variable zone; anything else stays fixed `planned` columns.
+ */
+function todoSet(
+  planned: number,
+  low: number | undefined,
+  high: number | null | undefined,
+): SessionRailExercise['setStates'][number] {
+  if (low === undefined || high === undefined || high === null || high <= low) {
+    return { status: 'todo', planned };
+  }
+  return { status: 'range', floor: low, max: high, doneVels: [] };
 }
 
 /**
@@ -616,7 +632,8 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
   const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
   if (targetReps !== null) {
     for (let i = 0; i < remaining; i++) {
-      setStates.push({ status: 'todo', planned: targetReps, ...plannedRepRange(session) });
+      const { repsLow, repsHigh } = plannedRepRange(session);
+      setStates.push(todoSet(targetReps, repsLow, repsHigh));
     }
   }
   return setStates;
@@ -692,7 +709,7 @@ function buildUpcomingRow(
   const setStates: SessionRailExercise['setStates'] = [];
   if (planned.targetReps !== null) {
     for (let i = 0; i < planned.plannedSets; i++) {
-      setStates.push({ status: 'todo', planned: planned.targetReps });
+      setStates.push(todoSet(planned.targetReps, planned.targetReps, planned.repsHigh ?? null));
     }
   }
   return {

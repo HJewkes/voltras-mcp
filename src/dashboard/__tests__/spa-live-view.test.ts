@@ -783,11 +783,14 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
     });
   }
 
-  it('carries a prescribed 8-10 range onto the active and todo sets', () => {
+  it('draws a prescribed 8-10 todo set as a range from floor 8 to max 10', () => {
     const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
-    for (const state of states) {
-      expect(state).toMatchObject({ planned: 8, repsLow: 8, repsHigh: 10 });
-    }
+    expect(states[1]).toEqual({ status: 'range', floor: 8, max: 10, doneVels: [] });
+  });
+
+  it('keeps the active 8-10 set as planned segments with the range label', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
+    expect(states[0]).toMatchObject({ status: 'active', planned: 8, repsLow: 8, repsHigh: 10 });
   });
 
   it('leaves a single prescribed count as fixed columns with no range', () => {
@@ -795,6 +798,7 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
     for (const state of states) {
       expect(state).toMatchObject({ planned: 8 });
       expect(state).not.toHaveProperty('repsHigh');
+      expect(state.status).not.toBe('range');
     }
   });
 
