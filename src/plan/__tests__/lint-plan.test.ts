@@ -18,6 +18,9 @@ import {
 
 const CONFIDENT = 'confident' as const;
 
+const ROW = ['lats', 'upper_back'];
+const PRESS = ['chest', 'front_delts', 'triceps'];
+
 function exercise(over: Partial<LintPlanExercise> = {}): LintPlanExercise {
   return { exerciseId: 'cable-fly', targetSets: 3, muscleGroups: ['chest'], ...over };
 }
@@ -283,6 +286,17 @@ describe('weekly hard sets per muscle', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0].message).toContain('tier is provisional');
   });
+
+  it('counts a two-target exercise in full toward each target across the week', () => {
+    const exercises = [
+      exercise({ exerciseId: 'cable-row', targetSets: 11, muscleGroups: ROW }),
+      exercise({ exerciseId: 'face-pull', targetSets: 10, muscleGroups: ['upper_back'] }),
+    ];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    expect(warnings.map((x) => [x.muscleGroup, x.observed])).toEqual([['upper_back', 21]]);
+  });
 });
 
 describe('meso_length_grew_mid_block', () => {
@@ -361,9 +375,60 @@ describe('priority_muscle_changed_mid_block', () => {
 
     expect(warnings).toEqual([]);
   });
+
+  it('warns when an all-rows week 1 gives way to an all-press week', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [exercise({ muscleGroups: ROW, targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroups: PRESS, targetSets: 10 })],
+      laterWeekOrderIndex: 1,
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('lats and upper back');
+    expect(warnings[0].message).toContain('chest and front delts and triceps');
+  });
+
+  it('says nothing when an all-rows week 1 meets another all-rows week', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [exercise({ muscleGroups: ROW, targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroups: ROW, targetSets: 6 })],
+      laterWeekOrderIndex: 1,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('says nothing when the tied tops of the two weeks share one muscle', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [exercise({ muscleGroups: ROW, targetSets: 10 })],
+      laterWeekExercises: [
+        exercise({ muscleGroups: ['upper_back'], targetSets: 6 }),
+        exercise({ muscleGroups: ['lats'], targetSets: 3 }),
+      ],
+      laterWeekOrderIndex: 1,
+    });
+
+    expect(warnings).toEqual([]);
+  });
 });
 
 describe('same_muscle_high_volume_consecutive_days', () => {
+  it('counts a two-target exercise toward each target on consecutive days', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroups: ROW, targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ROW, targetSets: 9 })] },
+      ],
+      tier: 'beginner',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings.map((x) => [x.muscleGroup, x.observed])).toEqual([
+      ['lats', 9],
+      ['upper_back', 9],
+    ]);
+  });
+
   it('warns when the same muscle is over the session ceiling on two consecutive templates', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
