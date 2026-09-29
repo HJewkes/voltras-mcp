@@ -62,13 +62,7 @@ const SKIPPED_DIRS = new Set(['.vitepress', 'node_modules']);
  * a threshold: it says a human looked at this token on this page and it is not
  * a device value.
  */
-const ALLOWED_TOKENS = new Set([
-  // A truncated example UUID in a sample `set_ended` payload. Bare hex runs are
-  // flagged because a hex run and a truncated id are the same shape; this one
-  // is an id the doc made up.
-  // eslint-disable-next-line voltras/no-protocol-detail -- a reviewed docs exception recorded as data, not a device value (VW-497)
-  'docs/push-events.md:3f2a1b04',
-]);
+const ALLOWED_TOKENS = new Set();
 
 /**
  * A page that records what the tree USED to be. Its entries name tools and

@@ -8,9 +8,8 @@
 // its two groups differ in tau alone, and their very different spreads have to
 // fall out of that.
 //
-// Every published figure below is quoted from
-// `sources/research/2026-09-19-vw-445-adaptive-rest-research.md` s.2.2 and
-// s.2.4. No paper was re-read here.
+// Every published figure below is quoted from the VW-445 adaptive-rest research
+// note in the private research tree, s.2.2 and s.2.4. No paper was re-read here.
 
 import {
   afterRest,
@@ -238,9 +237,9 @@ export interface FitScore {
 
 /** Score a candidate: squared relative error on every published figure, plus the pattern. */
 export function scoreFit(params: FitParams, seed = 4242, population = POPULATION_FIT): FitScore {
-  const a60 = baselineAAt(params, 60, seed, population);
-  const a180 = baselineAAt(params, 180, seed + 1, population);
-  const a300 = baselineAAt(params, 300, seed + 2, population);
+  const at60 = baselineAAt(params, 60, seed, population);
+  const at180 = baselineAAt(params, 180, seed + 1, population);
+  const at300 = baselineAAt(params, 300, seed + 2, population);
   const women = baselineBGroup(
     params,
     params.tauWomenSec,
@@ -250,18 +249,18 @@ export function scoreFit(params: FitParams, seed = 4242, population = POPULATION
   );
   const men = baselineBGroup(params, params.tauMenSec, params.tauSpreadMen, seed + 4, population);
   const rests = runBaselineC(params);
-  const errors = publishedErrors(a60.reps, a180.reps, a300.reps, women, men, rests[0]);
+  const errors = publishedErrors(at60.reps, at180.reps, at300.reps, women, men, rests[0]);
   const pattern =
-    patternPenalty(a60.openingDrop, a180.openingDrop, a300.openingDrop) + growthPenalty(rests);
+    patternPenalty(at60.openingDrop, at180.openingDrop, at300.openingDrop) + growthPenalty(rests);
   return {
     params,
     baselineCRests: rests,
     error: errors.reduce((sum, value) => sum + value * value, 0) + pattern,
-    baselineA: { rest60: a60.reps, rest180: a180.reps, rest300: a300.reps },
+    baselineA: { rest60: at60.reps, rest180: at180.reps, rest300: at300.reps },
     openingDrop: {
-      rest60: a60.openingDrop,
-      rest180: a180.openingDrop,
-      rest300: a300.openingDrop,
+      rest60: at60.openingDrop,
+      rest180: at180.openingDrop,
+      rest300: at300.openingDrop,
     },
     baselineB: {
       womenMean: women.mean,
@@ -295,17 +294,17 @@ export const STABILITY_CEILING_IS_SOURCED = false;
 
 /** Relative error against every published figure the fit is scored on. */
 function publishedErrors(
-  a60: number,
-  a180: number,
-  a300: number,
+  at60: number,
+  at180: number,
+  at300: number,
   women: { mean: number; sd: number },
   men: { mean: number; sd: number },
   firstRest: number,
 ): number[] {
   return [
-    relativeError(a60, BASELINE_A_TARGETS.rest60),
-    relativeError(a180, BASELINE_A_TARGETS.rest180),
-    relativeError(a300, BASELINE_A_TARGETS.rest300),
+    relativeError(at60, BASELINE_A_TARGETS.rest60),
+    relativeError(at180, BASELINE_A_TARGETS.rest180),
+    relativeError(at300, BASELINE_A_TARGETS.rest300),
     relativeError(women.mean, BASELINE_B_TARGETS.womenMean),
     relativeError(men.mean, BASELINE_B_TARGETS.menMean),
     relativeError(women.sd, BASELINE_B_TARGETS.womenSd),

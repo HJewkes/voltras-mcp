@@ -6,13 +6,16 @@
 // The rule is off for this directory (it is a test path, deferred to w5-13), so
 // the fixtures below do not trip it on their way past.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ESLint } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
 import { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
+// @ts-expect-error — plain ESM, no declarations.
+import { isScanned } from '../../../scripts/lib/text-confidentiality.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -78,6 +81,7 @@ describe('what the guard does not fire on', () => {
     ['ordinary prose', '// A read-only, best-effort back-fill of the self-report.'],
     ['a snake_case identifier', 'const set_weight_lbs = 1;'],
     ['a snake_case event name', "const name = 'on_per_rep';"],
+    ['a multi-line source citation', '// see `scripts/drive.mjs:28-45,94`'],
   ])('lets %s through', (_label, text) => {
     expect(find(text)).toEqual([]);
   });
@@ -129,31 +133,45 @@ describe('the exemption list', () => {
   const DIRECTIVE =
     /eslint-disable(?:-next-line|-line)?\s+voltras\/no-protocol-detail\s+--\s+([^\n]*)/g;
 
-  function sourceFiles(dir: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) sourceFiles(path, out);
-      else if (/\.(ts|tsx|cjs|mjs)$/.test(path)) out.push(path);
-    }
-    return out;
+  // Every path either pass reads: the text pass's own predicate, plus what ESLint parses.
+  // A directive in any file type the text pass scans exempts a line (VW-497).
+  const isPinned = (path: string): boolean =>
+    isScanned(path) || /\.(ts|tsx|cjs|mjs|md)$/.test(path);
+
+  function trackedFiles(): string[] {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter((path) => path !== '' && isPinned(path));
   }
 
-  // scripts/ is in scope alongside src/ since the widened scan covers it too (VW-497).
-  it('is exactly these four sites, and nothing else', () => {
+  function exemptionSites(files: string[], read: (file: string) => string): string[] {
     const sites: string[] = [];
-    for (const root of ['src', 'scripts']) {
-      for (const file of sourceFiles(join(REPO_ROOT, root))) {
-        const text = readFileSync(file, 'utf8');
-        for (const match of text.matchAll(DIRECTIVE)) {
-          sites.push(`${relative(REPO_ROOT, file)} — ${match[1].trim()}`);
-        }
+    for (const file of files.filter(isPinned)) {
+      for (const match of read(file).matchAll(DIRECTIVE)) {
+        sites.push(`${file} — ${match[1].replace(/\s*-->$/, '').trim()}`);
       }
     }
+    return sites;
+  }
+
+  it.each(['ci.yml', 'run.sh', 'app.js', 'view.vue', 'data.json', 'page.html'])(
+    'catches a directive planted in a scanned %s file',
+    (name) => {
+      const planted = ['eslint-disable-next-line', 'voltras/no-protocol-detail', '-- planted'];
+      const sites = exemptionSites([`fixtures/${name}`], () => `# ${planted.join(' ')}\nx\n`);
+      expect(sites).toEqual([`fixtures/${name} — planted`]);
+    },
+  );
+
+  it('is exactly these four sites, and nothing else', () => {
+    const sites = exemptionSites(trackedFiles(), (file) =>
+      readFileSync(join(REPO_ROOT, file), 'utf8'),
+    );
     expect(sites).toEqual([
+      'WISHLIST.md — a commit sha, not a device value (VW-497)',
       'src/tools/device-tools.ts — the hex alphabet, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
-      'scripts/check-docs.mjs — a reviewed docs exception recorded as data, not a device value (VW-497)',
     ]);
   });
 });
