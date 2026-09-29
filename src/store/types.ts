@@ -2643,8 +2643,17 @@ export interface SessionStore extends ExerciseSetupStore {
    * savepoint, and all of its writes commit when `fn` resolves or roll back when it throws.
    * Callers queue first-in first-out, one open transaction at a time. While one is open, a store
    * call from outside its async context throws `STORE_TRANSACTION_BUSY` rather than joining it,
-   * and a nested `transaction` from inside becomes a savepoint. `fn` should await only the store:
-   * a transaction that spans an event-loop turn logs a warning.
+   * and a nested `transaction` from inside becomes a savepoint. Nest in sequence: a second nested
+   * `transaction` opened beside one still open throws `STORE_TRANSACTION_OVERLAP`. `fn` should
+   * await only the store: a transaction that spans an event-loop turn logs a warning, and one
+   * still open after `TRANSACTION_STALL_WARN_MS` logs another.
+   *
+   * Two hazards follow from ownership, and neither is detected:
+   * - Deadlock: if `fn` awaits a promise started outside its context that itself calls
+   *   `transaction`, that call queues behind `fn`, and `fn` never resolves.
+   * - Same-turn foreign work: a foreign microtask that runs while `fn` is pending throws
+   *   `STORE_TRANSACTION_BUSY`, even within one macrotask. So never run an audited action beside
+   *   other store work in `Promise.all`; await it alone.
    */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
 

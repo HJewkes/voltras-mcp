@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { log } from '../../logger.js';
+import { TRANSACTION_STALL_WARN_MS } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredSet } from '../types.js';
 import { openTestStore, type SessionStore } from './open-test-store.js';
 
@@ -56,6 +57,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await store.close();
 });
@@ -96,6 +98,34 @@ describe('store.transaction', () => {
 
     expect(await persisted('set-a')).toEqual({ set: true, dietPhases: 0 });
     expect(await store.getSet('set-b')).toBeDefined();
+  });
+
+  it('nests a transaction inside a nested one, in sequence', async () => {
+    await store.transaction(() =>
+      store.transaction(() => store.transaction(() => store.putSet(setWithId('set-a')))),
+    );
+
+    expect(await store.getSet('set-a')).toBeDefined();
+  });
+
+  it('refuses a nested transaction opened beside one still open, and keeps the first', async () => {
+    const settled = await store.transaction(() =>
+      Promise.allSettled([
+        store.transaction(async () => {
+          await store.putSet(setWithId('set-a'));
+          await nextTurn();
+        }),
+        store.transaction(() => store.putSet(setWithId('set-b'))),
+      ]),
+    );
+
+    expect(settled[0].status).toBe('fulfilled');
+    expect(settled[1]).toMatchObject({
+      status: 'rejected',
+      reason: { code: 'STORE_TRANSACTION_OVERLAP' },
+    });
+    expect(await store.getSet('set-a')).toBeDefined();
+    expect(await store.getSet('set-b')).toBeUndefined();
   });
 
   it('does not commit before fn resolves: a second connection sees nothing until then', async () => {
@@ -220,5 +250,42 @@ describe('store.transaction yield sentinel', () => {
     await nextTurn();
 
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('store.transaction stall sentinel', () => {
+  function stallWarnings(warn: ReturnType<typeof vi.spyOn>): number {
+    return warn.mock.calls.filter((call) => String(call[0]).includes('still open')).length;
+  }
+
+  it('warns once when fn is still open past the stall limit', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(log, 'warn');
+    let markOpen!: () => void;
+    let finish!: () => void;
+    const opened = new Promise<void>((resolve) => (markOpen = resolve));
+    const run = store.transaction(() => {
+      markOpen();
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    await opened;
+
+    await vi.advanceTimersByTimeAsync(TRANSACTION_STALL_WARN_MS - 1);
+    expect(stallWarnings(warn)).toBe(0);
+    await vi.advanceTimersByTimeAsync(TRANSACTION_STALL_WARN_MS * 2);
+    expect(stallWarnings(warn)).toBe(1);
+
+    finish();
+    await run;
+  });
+
+  it('stays quiet about a transaction that closed before the limit', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(log, 'warn');
+
+    await store.transaction(() => store.putSet(setWithId('set-a')));
+    await vi.advanceTimersByTimeAsync(TRANSACTION_STALL_WARN_MS * 2);
+
+    expect(stallWarnings(warn)).toBe(0);
   });
 });

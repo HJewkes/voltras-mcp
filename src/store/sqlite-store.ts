@@ -2748,6 +2748,23 @@ function asyncTransactionRefused(): Error {
   return err;
 }
 
+function nestedTransactionOverlap(): Error {
+  const err = new Error(
+    'A nested store transaction was opened beside another one still open; nest them in sequence.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_OVERLAP';
+  return err;
+}
+
+/** How long a caller transaction may stay open before it logs that it is holding the store. */
+export const TRANSACTION_STALL_WARN_MS = 30_000;
+
+/** The owner of the open caller transaction, and the level its code runs at. */
+interface TransactionFrame {
+  readonly owner: object;
+  readonly depth: number;
+}
+
 function transactionBusy(): Error {
   const err = new Error(
     'The store is inside a caller-owned transaction, and this call came from outside it.',
@@ -3137,7 +3154,7 @@ export class SqliteSessionStore implements SessionStore {
   private readonly connection: DatabaseSync;
   private closed = false;
   private transactionDepth = 0;
-  private readonly transactionOwner = new AsyncLocalStorage<object>();
+  private readonly transactionFrame = new AsyncLocalStorage<TransactionFrame>();
   private openOwner: object | undefined;
   private transactionQueue: Promise<void> = Promise.resolve();
 
@@ -3147,10 +3164,12 @@ export class SqliteSessionStore implements SessionStore {
 
   /** Every statement goes through here, so a foreign context cannot join an open caller transaction. */
   private get db(): DatabaseSync {
-    if (this.openOwner !== undefined && this.transactionOwner.getStore() !== this.openOwner) {
-      throw transactionBusy();
-    }
+    if (this.openOwner !== undefined && !this.insideOpenTransaction()) throw transactionBusy();
     return this.connection;
+  }
+
+  private insideOpenTransaction(): boolean {
+    return this.transactionFrame.getStore()?.owner === this.openOwner;
   }
 
   /**
@@ -3177,7 +3196,7 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.openOwner !== undefined && this.transactionOwner.getStore() === this.openOwner) {
+    if (this.openOwner !== undefined && this.insideOpenTransaction()) {
       return this.nestedTransaction(fn);
     }
     const previous = this.transactionQueue;
@@ -3199,8 +3218,14 @@ export class SqliteSessionStore implements SessionStore {
     const yieldSentinel = setImmediate(() =>
       log.warn('store.transaction spanned an event-loop turn; foreign store calls during it throw'),
     );
+    const stallSentinel = setTimeout(() => {
+      log.warn(
+        `store.transaction still open after ${TRANSACTION_STALL_WARN_MS} ms; the store is held`,
+      );
+    }, TRANSACTION_STALL_WARN_MS);
+    stallSentinel.unref();
     try {
-      const result = await this.transactionOwner.run(owner, fn);
+      const result = await this.transactionFrame.run({ owner, depth: 1 }, fn);
       leaveTransactionLevel(this.connection, 0, true);
       return result;
     } catch (err) {
@@ -3208,6 +3233,7 @@ export class SqliteSessionStore implements SessionStore {
       throw err;
     } finally {
       clearImmediate(yieldSentinel);
+      clearTimeout(stallSentinel);
       this.openOwner = undefined;
       this.transactionDepth = 0;
     }
@@ -3215,10 +3241,12 @@ export class SqliteSessionStore implements SessionStore {
 
   private async nestedTransaction<T>(fn: () => Promise<T>): Promise<T> {
     const depth = this.transactionDepth;
+    const frame = this.transactionFrame.getStore()!;
+    if (frame.depth !== depth) throw nestedTransactionOverlap();
     enterTransactionLevel(this.connection, depth);
     this.transactionDepth = depth + 1;
     try {
-      const result = await fn();
+      const result = await this.transactionFrame.run({ owner: frame.owner, depth: depth + 1 }, fn);
       leaveTransactionLevel(this.connection, depth, true);
       return result;
     } catch (err) {

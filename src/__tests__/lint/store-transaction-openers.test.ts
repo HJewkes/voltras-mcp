@@ -2,9 +2,10 @@
 //
 // A method that writes its own `BEGIN` cannot nest: called inside an open
 // transaction it fails, and a caller-owned transaction (VW-512) could never
-// wrap it. So the only transaction-control literals allowed in the class body
-// are the ones inside the helper. Migrations and the open-time lock probe are
-// module-level functions, outside the class span, and stay exempt.
+// wrap it. So the class body holds no transaction-control literal, and only the
+// helpers below may call the two module-level functions that hold them (VW-658).
+// Migrations and the open-time lock probe are module-level functions, outside
+// the class span, and stay exempt.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +14,13 @@ import { describe, expect, it } from 'vitest';
 
 const STORE_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../store/sqlite-store.ts');
 const CLASS_START = 'export class SqliteSessionStore';
-const HELPER_START = '  private atomically<';
-const TRANSACTION_CONTROL = /['"`](BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/g;
+const HELPER_STARTS = [
+  '  private atomically<',
+  '  private async ownedTransaction<',
+  '  private async nestedTransaction<',
+];
+const TRANSACTION_CONTROL =
+  /['"`](BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b|\b(enter|leave)TransactionLevel\(/g;
 
 interface Span {
   start: number;
@@ -29,14 +35,20 @@ function spanFrom(source: string, marker: string, closer: string): Span {
   return { start, end: end + closer.length };
 }
 
-/** Transaction-control literals in the class body that sit outside `atomically`. */
+function helperSpans(source: string): Span[] {
+  return HELPER_STARTS.filter((marker) => source.includes(marker)).map((marker) =>
+    spanFrom(source, marker, '\n  }\n'),
+  );
+}
+
+/** Transaction-control literals and level calls in the class body that sit outside the helpers. */
 function rawOpenersOutsideHelper(source: string): string[] {
   const klass = spanFrom(source, CLASS_START, '\n}\n');
-  const helper = spanFrom(source, HELPER_START, '\n  }\n');
+  const helpers = helperSpans(source);
   const body = source.slice(klass.start, klass.end);
   return [...body.matchAll(TRANSACTION_CONTROL)]
     .map((match) => ({ at: klass.start + match.index, text: match[0] }))
-    .filter(({ at }) => at < helper.start || at >= helper.end)
+    .filter(({ at }) => helpers.every((helper) => at < helper.start || at >= helper.end))
     .map(({ at, text }) => `line ${source.slice(0, at).split('\n').length}: ${text}`);
 }
 
@@ -63,6 +75,11 @@ describe('the pin itself', () => {
     expect(rawOpenersOutsideHelper(source)).toEqual(['line 7: `SAVEPOINT']);
   });
 
+  it('flags a method that calls a transaction level function itself', () => {
+    const source = synthetic('  put() {\n    enterTransactionLevel(this.db, 0);\n  }');
+    expect(rawOpenersOutsideHelper(source)).toEqual(['line 7: enterTransactionLevel(']);
+  });
+
   it('exempts the helper and module-level functions', () => {
     const source = synthetic('  put() {\n    this.atomically(() => 1);\n  }');
     expect(rawOpenersOutsideHelper(source)).toEqual([]);
@@ -70,8 +87,13 @@ describe('the pin itself', () => {
 });
 
 describe('SqliteSessionStore', () => {
-  it('opens every transaction through atomically', () => {
+  it('opens every transaction through its helpers', () => {
     const source = readFileSync(STORE_PATH, 'utf8');
     expect(rawOpenersOutsideHelper(source)).toEqual([]);
+  });
+
+  it('still names every helper the pin exempts', () => {
+    const source = readFileSync(STORE_PATH, 'utf8');
+    expect(HELPER_STARTS.filter((marker) => !source.includes(marker))).toEqual([]);
   });
 });
