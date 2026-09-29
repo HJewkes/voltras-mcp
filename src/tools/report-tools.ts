@@ -495,7 +495,7 @@ export async function buildWeeklyReport(
     },
     scheduleChanges: await scheduleChangeLines(state.store, from, to),
     sessions: sessionEntries,
-    progression: await buildProgressionLines(state, endedSessions),
+    progression: await buildProgressionLines(state, endedSessions, to),
     flags: await buildFlags(state, endedSessions),
     checkIn: await buildCheckIn(state, input, from, to),
   };
@@ -603,6 +603,7 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
 async function buildProgressionLines(
   state: ServerState,
   endedSessions: (StoredSession & { endedAt: string })[],
+  asOf: string,
 ): Promise<WeeklyProgressionLine[]> {
   let program: StoredTrainingProgram;
   try {
@@ -610,7 +611,7 @@ async function buildProgressionLines(
   } catch {
     return [];
   }
-  const tierSignal = await getTierSignal(state);
+  const tierSignal = await getTierSignal(state, LOCAL_USER_ID, asOf);
 
   // The last (most recent, by `startedAt`) session in range that trained each
   // exercise is that exercise's progression basis for this report.
