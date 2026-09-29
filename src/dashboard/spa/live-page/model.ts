@@ -462,6 +462,8 @@ export interface PrescriptionCells {
 export interface EffortCell {
   text: string;
   basis: string;
+  /** True when the tier was defaulted rather than declared or derived; never parsed from `basis`. */
+  assumed: boolean;
 }
 
 /**
@@ -469,12 +471,18 @@ export interface EffortCell {
  * is not interchangeable with it), else RP's per-tier target. A defaulted tier reads assumed.
  */
 function deriveEffort(session: SessionModel): EffortCell | null {
-  if (session.targetRpe != null) return { text: `RPE ${session.targetRpe}`, basis: 'plan' };
+  if (session.targetRpe != null)
+    return { text: `RPE ${session.targetRpe}`, basis: 'plan', assumed: false };
   if (session.tier == null) return null;
   const { tier, source } = session.tier;
   const { wallText, sources } = effortTargetFor(tier);
-  const provenance = source === 'default' ? 'assumed' : source;
-  return { text: wallText, basis: `${tier} tier (${provenance}) · RP ${sources.join(', ')}` };
+  const assumed = source === 'default';
+  const provenance = assumed ? 'assumed' : source;
+  return {
+    text: wallText,
+    basis: `${tier} tier (${provenance}) · RP ${sources.join(', ')}`,
+    assumed,
+  };
 }
 
 /**

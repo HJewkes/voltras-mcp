@@ -1023,7 +1023,16 @@ describe('derivePrescription effort target (VW-669)', () => {
 
   it("shows the plan's RPE as written over the tier target, with basis plan", () => {
     const session = { ...tiered('intermediate'), targetRpe: 8 };
-    expect(derivePrescription(session)?.effort).toEqual({ text: 'RPE 8', basis: 'plan' });
+    expect(derivePrescription(session)?.effort).toEqual({
+      text: 'RPE 8',
+      basis: 'plan',
+      assumed: false,
+    });
+  });
+
+  it('sets assumed from the tier source, not the basis text', () => {
+    expect(derivePrescription(tiered('beginner', 'default'))?.effort?.assumed).toBe(true);
+    expect(derivePrescription(tiered('advanced', 'declared'))?.effort?.assumed).toBe(false);
   });
 
   it('gives no effort line when neither a plan RPE nor a tier is known', () => {

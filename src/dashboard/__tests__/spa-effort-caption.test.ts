@@ -58,20 +58,28 @@ function renderRecap(session: SessionModel): string {
 
 describe('effortCaption', () => {
   it('labels a coach-written RPE as the target, unconverted', () => {
-    expect(effortCaption({ text: 'RPE 8', basis: 'plan' })).toBe('Target RPE 8');
+    expect(effortCaption({ text: 'RPE 8', basis: 'plan', assumed: false })).toBe('Target RPE 8');
   });
 
   it("shows a declared tier's wall text as written", () => {
     const basis = `advanced tier (declared) · ${CORPUS}`;
 
-    expect(effortCaption({ text: 'Target 2-3 RIR', basis })).toBe('Target 2-3 RIR');
+    expect(effortCaption({ text: 'Target 2-3 RIR', basis, assumed: false })).toBe('Target 2-3 RIR');
   });
 
   it('marks a tier nobody declared as assumed', () => {
     const basis = `beginner tier (assumed) · ${CORPUS}`;
     const text = 'Technique focus, 1-2 reps shy of failure at most';
 
-    expect(effortCaption({ text, basis })).toBe(`${text} (assumed tier)`);
+    expect(effortCaption({ text, basis, assumed: true })).toBe(`${text} (assumed tier)`);
+  });
+
+  it('keeps the assumed marker when the basis wording changes', () => {
+    const text = 'Technique focus';
+
+    expect(effortCaption({ text, basis: 'a reworded basis', assumed: true })).toBe(
+      `${text} (assumed tier)`,
+    );
   });
 
   it('gives no caption without an effort target', () => {
@@ -80,6 +88,12 @@ describe('effortCaption', () => {
 });
 
 describe('ExerciseHeader effort caption', () => {
+  it('exposes the basis through an accessible label, not only the hover tooltip', () => {
+    const html = renderHeader(sessionModel({ targetRpe: null, tier: DECLARED }));
+
+    expect(html).toMatch(/aria-label="[^"]*advanced tier \(declared\)[^"]*"/);
+  });
+
   it('renders the plan RPE under the lockup', () => {
     const html = renderHeader(sessionModel({ targetRpe: 8, tier: DECLARED }));
 
