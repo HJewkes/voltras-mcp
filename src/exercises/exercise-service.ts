@@ -111,6 +111,11 @@ export class ExerciseService {
     return catalog.getExerciseById(id);
   }
 
+  /** Whether any catalog has been loaded yet; unfiltered, so history-only rows count. */
+  isLoaded(): boolean {
+    return catalog.getAllExercises().length > 0;
+  }
+
   /**
    * Every cable-equivalent entry of the catalog loaded at boot; the history lifts
    * are left out, as in `search`. Added for the dashboard's plan-builder catalog

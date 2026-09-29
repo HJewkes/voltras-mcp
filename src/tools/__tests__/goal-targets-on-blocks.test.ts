@@ -4,7 +4,9 @@
 const ORIGINAL_TZ = process.env.TZ;
 process.env.TZ = 'America/Denver';
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 
 import { localMidnightIso } from '../../analytics/training-days.js';
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
@@ -25,6 +27,8 @@ vi.mock('@voltras/node-sdk', () => {
   }
   return { VoltraSDKError: FakeVoltraSDKError };
 });
+
+beforeAll(loadSeedCatalog);
 
 const { registerPlanTools } = await import('../plan-tools.js');
 const { registerPlanScheduleTools } = await import('../plan-schedule-tools.js');

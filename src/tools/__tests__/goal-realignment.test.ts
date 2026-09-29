@@ -15,7 +15,9 @@
 //   * switching is what draws the warnings: rp-s6 for a priority still bound
 //     to the block that just ended, rp-s5 for one held under two mesocycles.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
@@ -23,6 +25,8 @@ import type { StoredPriority, StoredRep, StoredSet } from '../../store/types.js'
 import { buildGoalRealignment } from '../goal-realignment.js';
 import { registerPlanTools } from '../plan-tools.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+
+beforeAll(loadSeedCatalog);
 
 const CATALOG = [
   { id: 'bench-press', muscleGroups: ['chest'], name: 'Bench Press' },

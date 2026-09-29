@@ -137,6 +137,9 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Classifying an exercise into a ramp class on an empty exercise catalog now fails with
+  `CATALOG_NOT_LOADED` instead of quietly answering upper-body compound for every lift. An id
+  missing from a loaded catalog still gets that default (VW-495).
 - The plan lint again warns when a block's priority muscle shifts between week 1 and a later
   week in a row-based plan. A lift that trains two muscles ties them for the top spot, and
   the warning stayed silent on every tie; it now compares the tied muscles and warns only when

@@ -12,7 +12,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID, type StoredRep } from '../../store/types.js';
@@ -20,6 +22,8 @@ import { openTestStore, type SessionStore } from '../../store/__tests__/open-tes
 import { registerGoalTools } from '../goal-tools.js';
 import { BODYWEIGHT_RATE_ADVISORY_CODE } from '../goal-weekly-review.js';
 import { RECALIBRATION_OFFER_CODE } from '../goal-recalibration.js';
+
+beforeAll(loadSeedCatalog);
 
 const TOOL_NAMES = [
   'goal.declare_priorities',
