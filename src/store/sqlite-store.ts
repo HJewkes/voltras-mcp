@@ -2734,6 +2734,14 @@ function sameCommitmentContent(latest: StoredCommitment, input: DeclareCommitmen
   );
 }
 
+function weeksExist(blockId: string): Error {
+  const err = new Error(
+    `block ${blockId} already has week rows; scaffoldWeeks only builds an empty block.`,
+  );
+  (err as Error & { code: string }).code = 'WEEKS_EXIST';
+  return err;
+}
+
 function blockScheduleInvalid(blockId: string, problem: string): Error {
   const err = new Error(`block ${blockId}: ${problem}.`);
   (err as Error & { code: string }).code = 'BLOCK_SCHEDULE_INVALID';
@@ -4270,6 +4278,11 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putTrainingWeek(w: StoredTrainingWeek): Promise<void> {
+    this.writeTrainingWeek(w);
+    return Promise.resolve();
+  }
+
+  private writeTrainingWeek(w: StoredTrainingWeek): void {
     this.db
       .prepare(
         `INSERT INTO training_weeks
@@ -4292,7 +4305,6 @@ export class SqliteSessionStore implements SessionStore {
         w.isDeload ? 1 : 0,
         w.weekIndex ?? null,
       );
-    return Promise.resolve();
   }
 
   async getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined> {
@@ -4338,7 +4350,35 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToWorkoutTemplate));
   }
 
+  async scaffoldTrainingWeeks(
+    block: StoredTrainingBlock,
+    weeks: readonly StoredTrainingWeek[],
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null> {
+    const problem = schedule === undefined ? null : scheduleProblem(schedule);
+    if (schedule !== undefined && problem !== null) {
+      throw blockScheduleInvalid(schedule.blockId, problem);
+    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const existing = this.db
+          .prepare(`SELECT 1 FROM training_weeks WHERE block_id = ? LIMIT 1`)
+          .get(block.id);
+        if (existing !== undefined) throw weeksExist(block.id);
+        this.writeTrainingBlock(block);
+        const written = schedule === undefined ? null : this.insertBlockSchedule(schedule);
+        for (const week of weeks) this.writeTrainingWeek(week);
+        return written;
+      }),
+    );
+  }
+
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
+    this.writePlannedExercise(e);
+    return Promise.resolve();
+  }
+
+  private writePlannedExercise(e: StoredPlannedExercise): void {
     this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL).run(
       e.id,
       e.workoutTemplateId,
@@ -4359,7 +4399,23 @@ export class SqliteSessionStore implements SessionStore {
       e.restLearning === false ? 0 : 1,
       e.externalId ?? null,
     );
-    return Promise.resolve();
+  }
+
+  async patchPlannedExercise(
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db.prepare(`SELECT * FROM planned_exercises WHERE id = ?`).get(id) as
+          | PlannedExerciseRow
+          | undefined;
+        if (row === undefined) return undefined;
+        const updated = apply(rowToPlannedExercise(row));
+        this.writePlannedExercise(updated);
+        return updated;
+      }),
+    );
   }
 
   async getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined> {

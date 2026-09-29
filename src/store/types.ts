@@ -2255,6 +2255,16 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** Upsert a week within a block. */
   putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
+  /**
+   * Upsert a block, append its dating row when one is given, and insert every week of its scaffold,
+   * in one transaction. Throws a `WEEKS_EXIST` error, writing nothing, when the block already has
+   * any week, so a retried create cannot double the weeks or leave the block edited without them.
+   */
+  scaffoldTrainingWeeks(
+    block: StoredTrainingBlock,
+    weeks: readonly StoredTrainingWeek[],
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null>;
   /** Look up a week by id; `undefined` when no row matches. */
   getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   /** Return every week in a block, ordered by `orderIndex` ascending. */
@@ -2273,6 +2283,15 @@ export interface SessionStore extends ExerciseSetupStore {
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+  /**
+   * Read a planned exercise, run the synchronous `apply` over it and write what it returns, all
+   * under one write lock, so two patches to one row each see the other's result. A throw from
+   * `apply` rolls back and reaches the caller unchanged. `undefined` when no row matches.
+   */
+  patchPlannedExercise(
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined>;
 
   /** Fetch a planning row by its authoring key, or `undefined` when nothing carries it. */
   getWorkoutTemplateByExternalId(externalId: string): Promise<StoredWorkoutTemplate | undefined>;

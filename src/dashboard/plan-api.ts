@@ -78,6 +78,10 @@ export interface DashboardPlanStore {
   getWorkoutTemplatesForWeek(weekId: string): Promise<StoredWorkoutTemplate[]>;
   putPlannedExercise(e: StoredPlannedExercise): Promise<void>;
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
+  patchPlannedExercise(
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined>;
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
   deletePlannedExercise(id: string): Promise<boolean>;
   getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
@@ -346,13 +350,26 @@ export async function updatePlannedExercise(
   plannedExerciseId: string,
   body: UpdatePlannedExerciseBody,
 ): Promise<{ plannedExercise: StoredPlannedExercise }> {
-  const existing = await store.getPlannedExercise(plannedExerciseId);
-  if (existing === undefined) {
+  const targetSets = optionalNumber(body.targetSets, 'targetSets');
+  const orderIndex = optionalNumber(body.orderIndex, 'orderIndex');
+  const updated = await store.patchPlannedExercise(plannedExerciseId, (existing) =>
+    applyUpdate(existing, body, { targetSets, orderIndex }),
+  );
+  if (updated === undefined) {
     throw new PlanApiError(
       'not_found',
       `No planned exercise with id "${plannedExerciseId}" exists.`,
     );
   }
+  return { plannedExercise: updated };
+}
+
+/** The merge and its validation, run on the row read under the write lock. */
+function applyUpdate(
+  existing: StoredPlannedExercise,
+  body: UpdatePlannedExerciseBody,
+  parsed: { targetSets: number | undefined; orderIndex: number | undefined },
+): StoredPlannedExercise {
   const updated: StoredPlannedExercise = {
     ...existing,
     ...targetPatch(body),
@@ -362,17 +379,14 @@ export async function updatePlannedExercise(
   // percent, and clearing a rest is the one edit the learning-off rule has to see.
   if (body.restSec === null) delete updated.restSec;
   if (body.targetVelocityLossPct === null) delete updated.targetVelocityLossPct;
-  const targetSets = optionalNumber(body.targetSets, 'targetSets');
-  if (targetSets !== undefined) updated.targetSets = targetSets;
-  const orderIndex = optionalNumber(body.orderIndex, 'orderIndex');
-  if (orderIndex !== undefined) updated.orderIndex = orderIndex;
+  if (parsed.targetSets !== undefined) updated.targetSets = parsed.targetSets;
+  if (parsed.orderIndex !== undefined) updated.orderIndex = parsed.orderIndex;
   // Validated against the MERGED row, not the patch: a PATCH that raises only
   // `targetRepsLow` above the row's existing `targetRepsHigh` is exactly the
   // inverted band a per-field check waves through. The same holds for a patch that
   // clears the rest of a learning-off row without turning learning on.
   assertRowIsValid(updated, touchedGroups(body));
-  await store.putPlannedExercise(updated);
-  return { plannedExercise: updated };
+  return updated;
 }
 
 /**
