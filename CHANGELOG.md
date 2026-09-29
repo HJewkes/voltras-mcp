@@ -141,6 +141,11 @@ entry is written from the user's point of view is a review question, not a check
   and two `goal.weekly_review` runs of one week could each record a rate proposal. Each now
   lands as one. A review or proposal that refreshes an offer also keeps an answer given
   meanwhile, where it used to reopen a declined offer or clear an accepted proposal (VW-588).
+- A dashboard action or plan-builder edit that fails part way no longer leaves half its
+  writes behind. The action, its writes and its audit row now land together or not at all,
+  so an action recorded as an error changed nothing, and one cut short before it finished
+  leaves no trace and can be resubmitted under the same id. Two submits of one id now always
+  run once and replay, where the second could answer `indeterminate` (VW-659, VW-660).
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
   of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
   priority of their own, and the goals page then drew one goal twice. The second now folds
