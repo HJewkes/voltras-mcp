@@ -487,3 +487,117 @@ describe('T6b: a set re-put after a relabel and a group stamp (VW-583)', () => {
     expect((await store.getSet('set-1'))?.bilateralGroupId).toBe('group-2');
   });
 });
+
+// --- T9: two answers to one advisory (VW-587) -----------------------------
+
+const DECISION_ID = 'decision-1';
+const TARGET_ID = 'target-1';
+
+async function seedOpenAdvisoryAndTarget(store: SessionStore): Promise<void> {
+  await store.putAdvisoryDecision({
+    id: DECISION_ID,
+    userId: LOCAL_USER_ID,
+    code: 'synthetic_offer',
+    issuedAt: AT,
+    inputs: { note: 'as issued' },
+    thresholds: {},
+    algorithmVersion: 'test@1',
+    verdict: 'offered',
+  });
+  await store.putPriority({
+    id: 'priority-1',
+    userId: LOCAL_USER_ID,
+    horizonWeeks: 6,
+    kind: 'lift',
+    ref: 'bench-press',
+    level: 'specialize',
+    declaredAt: AT,
+    mesosHeld: 0,
+  });
+  await store.putGoalTarget({
+    id: TARGET_ID,
+    priorityId: 'priority-1',
+    metric: 'e1rm_trend',
+    startValue: 100,
+    startMeasuredAt: AT,
+    bandLowPctPerWeek: 0.5,
+    bandHighPctPerWeek: 1,
+    committedValue: 103,
+    stretchValue: 106,
+    basis: 'rp_ramp',
+    infoLevel: 'ramp',
+    tierUsed: 'beginner',
+    tierProvisional: false,
+    dietPhaseAtDerivation: 'maintenance',
+    acceptedBy: 'coach-default',
+    acknowledgedStretch: false,
+    derivedAt: AT,
+    endsAt: '2026-11-01T00:00:00.000Z',
+  });
+}
+
+const ACCEPT = { userResponse: 'accepted', respondedAt: AT, inputs: { note: 'accepted' } } as const;
+const DECLINE = { userResponse: 'declined', respondedAt: AT } as const;
+const RETIRE = { goalTargetId: TARGET_ID, outcome: 'abandoned' } as const;
+
+async function expectAcceptanceStands(reader: SessionStore): Promise<void> {
+  const [stored] = await reader.listAdvisoryDecisions(LOCAL_USER_ID);
+  expect(stored.userResponse).toBe('accepted');
+  expect(stored.inputs).toEqual({ note: 'accepted' });
+}
+
+describe('T9: two answers to one advisory (VW-587)', () => {
+  it('records exactly one of two concurrent answers, on one connection', async () => {
+    const store = await (await engineFor('t9-one')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+
+    const [first, second] = await Promise.all([
+      store.answerAdvisoryIfOpen(DECISION_ID, ACCEPT),
+      store.answerAdvisoryIfOpen(DECISION_ID, DECLINE),
+    ]);
+
+    expect(first?.userResponse).toBe('accepted');
+    expect(second).toBeUndefined();
+    await expectAcceptanceStands(store);
+  });
+
+  it('records exactly one across two connections on one database', async () => {
+    const eng = await engineFor('t9-two');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedOpenAdvisoryAndTarget(a);
+
+    const [first, second] = await Promise.all([
+      a.answerAdvisoryIfOpen(DECISION_ID, ACCEPT),
+      b.answerAdvisoryIfOpen(DECISION_ID, DECLINE),
+    ]);
+
+    expect([first, second].filter((row) => row !== undefined)).toHaveLength(1);
+    await expectAcceptanceStands(b);
+  });
+
+  it('retires the target with a winning answer', async () => {
+    const store = await (await engineFor('t9-retire-win')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+
+    await store.answerAdvisoryIfOpen(DECISION_ID, DECLINE, RETIRE);
+
+    const [target] = await store.listGoalTargets(
+      { userId: LOCAL_USER_ID },
+      { includeRetired: true },
+    );
+    expect(target).toMatchObject({ retiredAt: AT, outcome: 'abandoned' });
+  });
+
+  it('leaves the target live when the answer carrying the retire lost', async () => {
+    const eng = await engineFor('t9-retire-lose');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedOpenAdvisoryAndTarget(a);
+    await a.answerAdvisoryIfOpen(DECISION_ID, ACCEPT);
+
+    const lost = await b.answerAdvisoryIfOpen(DECISION_ID, DECLINE, RETIRE);
+
+    expect(lost).toBeUndefined();
+    expect((await a.listGoalTargets({ userId: LOCAL_USER_ID }))[0].retiredAt).toBeUndefined();
+    await expectAcceptanceStands(a);
+  });
+});
