@@ -881,6 +881,20 @@ export interface AdvisoryAnswerRetire {
   outcome: StoredGoalTargetOutcome;
 }
 
+/** What a {@link SessionStore.putAdvisoryDerived} callback decides against the live rows. */
+export interface AdvisoryDerivation<T> {
+  decision?: PutAdvisoryDecisionInput;
+  goalTarget?: StoredGoalTarget;
+  result: T;
+}
+
+/** What {@link SessionStore.putAdvisoryDerived} wrote, beside the callback's result. */
+export interface AdvisoryDerived<T> {
+  result: T;
+  decision?: StoredAdvisoryDecision;
+  goalTarget?: StoredGoalTarget;
+}
+
 /** Filter for {@link SessionStore.listAdvisoryDecisions}; every field narrows. */
 export interface ListAdvisoryDecisionsFilter {
   code?: string;
@@ -2460,6 +2474,20 @@ export interface SessionStore extends ExerciseSetupStore {
     answer: AdvisoryAnswer,
     retire?: AdvisoryAnswerRetire,
   ): Promise<StoredAdvisoryDecision | undefined>;
+
+  /**
+   * Read the user's live decisions under `code`, derive what to write from them and write it,
+   * in ONE transaction (VW-588): the goal target first, then the decision, so a dedupe or an
+   * answer checked against the live rows holds at the write. `derive` is synchronous. With
+   * `whileTargetLive`, nothing is derived or written once that target or its priority is
+   * retired, and the call returns `undefined`.
+   */
+  putAdvisoryDerived<T>(
+    userId: string,
+    code: string,
+    derive: (live: readonly StoredAdvisoryDecision[]) => AdvisoryDerivation<T>,
+    options?: { whileTargetLive?: string },
+  ): Promise<AdvisoryDerived<T> | undefined>;
 
   // --- UI action audit (VW-502) ---
 

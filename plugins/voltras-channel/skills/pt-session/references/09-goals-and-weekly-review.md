@@ -112,6 +112,7 @@ Pass `anchorLoad`, the load its reps are counted at, so the goal reads as a whol
 - `GOAL_TARGET_BELOW_BAND`: a value short of the committed edge is refused.
 - `GOAL_TARGET_ABOVE_BAND`: a value past the stretch edge needs `acknowledgeStretch: true`. The band itself is never moved to make it look supported.
 - `GOAL_TARGET_RETIRED`: the target was already retired.
+- `ADVISORY_ALREADY_ANSWERED`: a second answer to one offer or proposal is refused, and the message names the answer that stands; re-read it and relay that answer, never answer again.
 
 The honest exits:
 

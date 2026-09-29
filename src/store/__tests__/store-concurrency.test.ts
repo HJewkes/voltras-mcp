@@ -31,10 +31,12 @@ import type { Phase } from '@voltras/workout-analytics';
 
 import {
   LOCAL_USER_ID,
+  type AdvisoryDerivation,
   type AppendBlockScheduleInput,
   type ClaimUiActionOutcome,
   type DeclareCommitmentInput,
   type SessionStore,
+  type StoredAdvisoryDecision,
   type StoredRep,
   type StoredSet,
   type StoredUiAction,
@@ -650,5 +652,111 @@ describe('T9: two answers to one advisory (VW-587)', () => {
     expect(lost).toBeUndefined();
     expect((await a.listGoalTargets({ userId: LOCAL_USER_ID }))[0].retiredAt).toBeUndefined();
     await expectAcceptanceStands(a);
+  });
+});
+
+// --- T10: two derived advisory writes for one observation (VW-588) --------
+
+const OBSERVATION = 'week-1#1';
+
+/** Refresh the observation's row in place, keeping its live answer, or mint one. */
+function refreshObservation(live: readonly StoredAdvisoryDecision[]): AdvisoryDerivation<string> {
+  const current = live.find((row) => row.inputs.observationKey === OBSERVATION);
+  return {
+    decision: {
+      ...(current === undefined ? {} : { id: current.id }),
+      userId: LOCAL_USER_ID,
+      code: 'synthetic_offer',
+      issuedAt: current?.issuedAt ?? AT,
+      inputs: { observationKey: OBSERVATION },
+      thresholds: {},
+      algorithmVersion: 'test@1',
+      verdict: 'offered',
+      ...(current?.userResponse === undefined ? {} : { userResponse: current.userResponse }),
+      ...(current?.respondedAt === undefined ? {} : { respondedAt: current.respondedAt }),
+    },
+    result: current === undefined ? 'minted' : 'refreshed',
+  };
+}
+
+async function observationRows(reader: SessionStore) {
+  return reader.listAdvisoryDecisions(LOCAL_USER_ID, { code: 'synthetic_offer' });
+}
+
+describe('T10: two derived advisory writes for one observation (VW-588)', () => {
+  it('mints one row from two concurrent derivations, on one connection', async () => {
+    const store = await (await engineFor('t10-one')).connect();
+
+    const results = await Promise.all([
+      store.putAdvisoryDerived(LOCAL_USER_ID, 'synthetic_offer', refreshObservation),
+      store.putAdvisoryDerived(LOCAL_USER_ID, 'synthetic_offer', refreshObservation),
+    ]);
+
+    expect(results.map((written) => written?.result)).toEqual(['minted', 'refreshed']);
+    expect(await observationRows(store)).toHaveLength(1);
+  });
+
+  it('mints one row across two connections on one database', async () => {
+    const eng = await engineFor('t10-two');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+
+    await Promise.all([
+      a.putAdvisoryDerived(LOCAL_USER_ID, 'synthetic_offer', refreshObservation),
+      b.putAdvisoryDerived(LOCAL_USER_ID, 'synthetic_offer', refreshObservation),
+    ]);
+
+    expect(await observationRows(a)).toHaveLength(1);
+  });
+
+  it('keeps an answer another connection recorded before the refresh', async () => {
+    const eng = await engineFor('t10-answer');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    const minted = await a.putAdvisoryDerived(LOCAL_USER_ID, 'synthetic_offer', refreshObservation);
+    await b.answerAdvisoryIfOpen(minted!.decision!.id, DECLINE);
+
+    const refreshed = await a.putAdvisoryDerived(
+      LOCAL_USER_ID,
+      'synthetic_offer',
+      refreshObservation,
+    );
+
+    expect(refreshed?.decision?.userResponse).toBe('declined');
+    expect((await observationRows(b))[0].userResponse).toBe('declined');
+  });
+
+  it('writes nothing once the guarding target is retired', async () => {
+    const store = await (await engineFor('t10-retired')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+    await store.retireGoalTarget(TARGET_ID, 'abandoned', AT);
+    let derived = false;
+
+    const written = await store.putAdvisoryDerived(
+      LOCAL_USER_ID,
+      'synthetic_offer',
+      (live) => {
+        derived = true;
+        return refreshObservation(live);
+      },
+      { whileTargetLive: TARGET_ID },
+    );
+
+    expect(written).toBeUndefined();
+    expect(derived).toBe(false);
+    expect(await observationRows(store)).toHaveLength(1);
+  });
+
+  it('writes nothing once the guarding target’s priority is retired', async () => {
+    const store = await (await engineFor('t10-priority')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+    await store.retirePriority('priority-1', AT);
+
+    const written = await store.putAdvisoryDerived(
+      LOCAL_USER_ID,
+      'synthetic_offer',
+      refreshObservation,
+      { whileTargetLive: TARGET_ID },
+    );
+
+    expect(written).toBeUndefined();
   });
 });

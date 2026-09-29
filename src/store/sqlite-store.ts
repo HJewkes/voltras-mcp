@@ -112,6 +112,8 @@ import {
   type ListPrioritiesOptions,
   type MarkExerciseChapterInput,
   type PutAdvisoryDecisionInput,
+  type AdvisoryDerivation,
+  type AdvisoryDerived,
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
@@ -5047,12 +5049,16 @@ export class SqliteSessionStore implements SessionStore {
    * second identity the way `body_metrics` owns its instant.
    */
   async putAdvisoryDecision(input: PutAdvisoryDecisionInput): Promise<StoredAdvisoryDecision> {
+    return Promise.resolve(this.writeAdvisoryDecision(input));
+  }
+
+  private writeAdvisoryDecision(input: PutAdvisoryDecisionInput): StoredAdvisoryDecision {
     const id = input.id ?? randomUUID();
     this.db.prepare(PUT_ADVISORY_DECISION_SQL).run(id, ...advisoryDecisionBindings(input));
     const row = this.db
       .prepare(`SELECT * FROM advisory_decisions WHERE id = ?`)
       .get(id) as unknown as AdvisoryDecisionRow;
-    return Promise.resolve(rowToAdvisoryDecision(row));
+    return rowToAdvisoryDecision(row);
   }
 
   /**
@@ -5158,6 +5164,13 @@ export class SqliteSessionStore implements SessionStore {
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]> {
+    return Promise.resolve(this.advisoryDecisions(userId, filter));
+  }
+
+  private advisoryDecisions(
+    userId: string,
+    filter?: ListAdvisoryDecisionsFilter,
+  ): StoredAdvisoryDecision[] {
     const clauses = ['user_id = ?'];
     const bindings: string[] = [userId];
     if (filter?.code !== undefined) {
@@ -5174,7 +5187,7 @@ export class SqliteSessionStore implements SessionStore {
          ORDER BY issued_at DESC, id ASC`,
       )
       .all(...bindings) as unknown as AdvisoryDecisionRow[];
-    return Promise.resolve(rows.map(rowToAdvisoryDecision));
+    return rows.map(rowToAdvisoryDecision);
   }
 
   /**
@@ -5206,6 +5219,41 @@ export class SqliteSessionStore implements SessionStore {
       return row;
     });
     return Promise.resolve(won === undefined ? undefined : rowToAdvisoryDecision(won));
+  }
+
+  async putAdvisoryDerived<T>(
+    userId: string,
+    code: string,
+    derive: (live: readonly StoredAdvisoryDecision[]) => AdvisoryDerivation<T>,
+    options?: { whileTargetLive?: string },
+  ): Promise<AdvisoryDerived<T> | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const guard = options?.whileTargetLive;
+        if (guard !== undefined && !this.isGoalTargetLive(guard)) return undefined;
+        const derived = derive(this.advisoryDecisions(userId, { code }));
+        return {
+          result: derived.result,
+          ...(derived.goalTarget === undefined
+            ? {}
+            : { goalTarget: this.writeGoalTarget(derived.goalTarget) }),
+          ...(derived.decision === undefined
+            ? {}
+            : { decision: this.writeAdvisoryDecision(derived.decision) }),
+        };
+      }),
+    );
+  }
+
+  private isGoalTargetLive(id: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM goal_targets JOIN priorities ON priorities.id = goal_targets.priority_id
+          WHERE goal_targets.id = ? AND goal_targets.retired_at IS NULL
+            AND priorities.retired_at IS NULL`,
+      )
+      .get(id);
+    return row !== undefined;
   }
 
   // --- Priorities and goal targets (VW-349) ---
@@ -5291,6 +5339,10 @@ export class SqliteSessionStore implements SessionStore {
    * band to a declaration that never earned it.
    */
   async putGoalTarget(target: StoredGoalTarget): Promise<StoredGoalTarget> {
+    return Promise.resolve(this.writeGoalTarget(target));
+  }
+
+  private writeGoalTarget(target: StoredGoalTarget): StoredGoalTarget {
     const existing = this.db.prepare(`SELECT * FROM goal_targets WHERE id = ?`).get(target.id) as
       | GoalTargetRow
       | undefined;
@@ -5299,7 +5351,7 @@ export class SqliteSessionStore implements SessionStore {
     const row = this.db
       .prepare(`SELECT * FROM goal_targets WHERE id = ?`)
       .get(target.id) as unknown as GoalTargetRow;
-    return Promise.resolve(rowToGoalTarget(row));
+    return rowToGoalTarget(row);
   }
 
   async listGoalTargets(
