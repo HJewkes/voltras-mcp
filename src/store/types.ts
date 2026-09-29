@@ -2638,6 +2638,16 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts>;
 
+  /**
+   * Run `fn` as one caller-owned transaction (VW-512): every store call it awaits joins as a
+   * savepoint, and all of its writes commit when `fn` resolves or roll back when it throws.
+   * Callers queue first-in first-out, one open transaction at a time. While one is open, a store
+   * call from outside its async context throws `STORE_TRANSACTION_BUSY` rather than joining it,
+   * and a nested `transaction` from inside becomes a savepoint. `fn` should await only the store:
+   * a transaction that spans an event-loop turn logs a warning.
+   */
+  transaction<T>(fn: () => Promise<T>): Promise<T>;
+
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;
 }
