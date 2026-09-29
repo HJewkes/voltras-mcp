@@ -67,10 +67,21 @@ value in any shape a pattern can match. If you're writing or editing a docs
 page, read what you're adding and ask whether a reader could reconstruct
 protocol detail from it, the same way you'd review for a leaked secret.
 
-**A known limit of the ESLint rule:** it cannot see a value split across a
-string concatenation (`'0x' + '1f'` reads as two harmless-looking pieces).
-Keep a value on one line, where the rule can actually see it, rather than
-relying on the rule to catch a value assembled at runtime.
+**What the ESLint rule does not catch.** It joins a `+` chain of adjacent
+string literals (and templates with no `${}`) before scanning, so
+`'0x' + '1f'` is caught. It does not catch:
+
+- a value built from variables or calls (`PREFIX + digits`, `[a, b].join('')`,
+  `String.fromCharCode(...)`); nothing is evaluated;
+- prose provenance: a sentence saying where a value came from, or what a
+  register does, without quoting a value or a private path;
+- deliberate evasion: anyone set on it can spell a value in a shape the rule
+  does not know. The rule is for accidents, not adversaries.
+
+`npm run lint:text-confidentiality` runs the same detector over the raw
+text of markdown, site sources and non-JS files. It reads text, not a
+parse tree, so the concatenation join does not apply there: a value split
+across `' + '` in a markdown code block is not caught.
 
 The 15 test files under `src/**/__tests__/` are exempt by path and may hold
 protocol fixtures that predate the rule; that exemption governs what's

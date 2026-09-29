@@ -23,17 +23,23 @@
 //     writing to it does carries no value in any shape a pattern can match.
 //     Prose is a review-checklist item (see CLAUDE.md), not a lint rule, and
 //     nothing here should be read as covering it.
-//   - It cannot see a value SPLIT ACROSS A CONCATENATION. `'0x' + '1f'` and a
-//     line-wrapped `'a9c7' + 'f00d'` are two string literals to the parser and
-//     neither half is a finding on its own. Constant folding would close it and
-//     is not worth the machinery: deliberate evasion is not the threat model,
-//     because anyone evading the rule would simply not write the value. The
-//     case that actually happens is a long string wrapped to fit the line
-//     width, so if a value must live in source, keep it on one line where the
-//     rule can see it.
+//   - It folds a CONCATENATION OF STRING LITERALS (VW-224). `'0x' + '1f'` and a
+//     line-wrapped `'a9c7' + 'f00d'` are joined, adjacent literal pieces at a
+//     time, and scanned as one string. A finding reported this way is one that
+//     crosses a join; a finding inside one piece is already reported above.
 //
-// Naming that last limit is the point. A guard that is silently narrower than
-// it looks is the failure this campaign is named after: a `[redacted]` marker
+// What it does NOT catch (VW-224):
+//
+//   - A value built from VARIABLES OR CALLS. `PREFIX + digits`, `[a, b].join()`
+//     and `String.fromCharCode(...)` are never evaluated; only adjacent string
+//     and expression-free template literals are folded.
+//   - PROSE PROVENANCE: a sentence saying where a value came from, or what a
+//     register does, without quoting a value or a private path.
+//   - DELIBERATE EVASION. Anyone evading the rule can always spell a value in a
+//     shape it does not know; the threat model is accidental disclosure.
+//
+// Naming these limits is the point. A guard that is silently narrower than it
+// looks is the failure this campaign is named after: a `[redacted]` marker
 // beside surviving prose made an exposure look handled (VW-220).
 //
 // It never reports the matched token. A CI log is as public as the source it
@@ -170,6 +176,46 @@ export function findProtocolDetail(text) {
   return findings.sort((a, b) => a.index - b.index);
 }
 
+/** A literal's string value, or `null` for anything that would need evaluating. */
+function literalText(node) {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0].value.cooked ?? null;
+  }
+  return null;
+}
+
+function isConcatenation(node) {
+  return node?.type === 'BinaryExpression' && node.operator === '+';
+}
+
+/** The leaves of a `+` chain, left to right. */
+function chainOperands(node) {
+  if (!isConcatenation(node)) return [node];
+  return [...chainOperands(node.left), ...chainOperands(node.right)];
+}
+
+/** Runs of adjacent literal pieces, each as its pieces' texts, in source order. */
+function literalRuns(operands) {
+  const runs = [[]];
+  for (const operand of operands) {
+    const text = literalText(operand);
+    if (text === null) runs.push([]);
+    else runs.at(-1).push(text);
+  }
+  return runs.filter((run) => run.length > 1);
+}
+
+/** The first shape that only exists once `pieces` are joined, or `undefined`. */
+function shapeAcrossJoin(pieces) {
+  const joins = [];
+  let offset = 0;
+  for (const piece of pieces.slice(0, -1)) joins.push((offset += piece.length));
+  return findProtocolDetail(pieces.join('')).find(({ index, length }) =>
+    joins.some((join) => join > index && join < index + length),
+  );
+}
+
 const MESSAGES = {
   'hex-literal': 'a hex literal',
   'byte-sequence': 'a byte sequence',
@@ -206,6 +252,16 @@ const rule = {
             data: { shape: MESSAGES[kind] },
           });
         }
+      },
+      BinaryExpression(node) {
+        if (node.operator !== '+' || isConcatenation(node.parent)) return;
+        const finding = literalRuns(chainOperands(node)).map(shapeAcrossJoin).find(Boolean);
+        if (!finding) return;
+        context.report({
+          node,
+          messageId: 'protocolDetail',
+          data: { shape: `${MESSAGES[finding.kind]} split across a concatenation` },
+        });
       },
     };
   },

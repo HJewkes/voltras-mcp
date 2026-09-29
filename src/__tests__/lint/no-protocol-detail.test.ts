@@ -10,10 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { ESLint } from 'eslint';
+import { ESLint, Linter } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
-import { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
+import protocolPlugin, { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
 // @ts-expect-error — plain ESM, no declarations.
 import { isScanned } from '../../../scripts/lib/text-confidentiality.mjs';
 
@@ -84,6 +84,56 @@ describe('what the guard does not fire on', () => {
     ['a multi-line source citation', '// see `scripts/drive.mjs:28-45,94`'],
   ])('lets %s through', (_label, text) => {
     expect(find(text)).toEqual([]);
+  });
+});
+
+// VW-224: a value split across a `+` chain of string literals. Every hex-shaped
+// token is assembled here at runtime, so no fixture below spells one.
+describe('a value split across a concatenation (VW-224)', () => {
+  const PAIR = 'a1';
+  const OTHER = 'b2';
+  const prefix = ['0', 'x'].join('');
+
+  function messagesFor(code: string) {
+    const linter = new Linter({ configType: 'flat' });
+    return linter.verify(code, {
+      plugins: { voltras: protocolPlugin },
+      rules: { 'voltras/no-protocol-detail': 'error' },
+    });
+  }
+
+  it.each([
+    ['a hex literal split after its prefix', `const v = '${prefix}' + '${PAIR}';`],
+    ['a hex literal split out of a template', `const v = \`${prefix}\` + '${PAIR}';`],
+    ['a spaced byte sequence split in two', `const v = '${PAIR} ${PAIR}' + ' ${PAIR} ${PAIR}';`],
+    ['an underscored byte sequence split in two', `const v = '${PAIR}_${PAIR}' + '_${PAIR}';`],
+    ['a bare hex run split in two', `const v = '${PAIR}' + '${OTHER}';`],
+    ['a run of literals behind an identifier', `const v = label + '${prefix}' + '${PAIR}';`],
+    ['a nested chain', `const v = '${PAIR}' + ('${OTHER}' + '${PAIR}');`],
+  ])('flags %s, once', (_label, code) => {
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
+  it('reports a chain holding two split values once, at its start', () => {
+    const code = `const v = '${prefix}' + '${PAIR}' + ' ' + '${prefix}' + '${OTHER}';`;
+    const messages = messagesFor(code);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].column).toBe(code.indexOf(`'${prefix}'`) + 1);
+  });
+
+  it('does not report a value inside one piece a second time', () => {
+    expect(messagesFor(`const v = '${prefix}${PAIR}' + ' units';`)).toHaveLength(1);
+  });
+
+  it.each([
+    ['a snake_case name built in pieces', "const v = 'max_' + 'force_' + 'lbs';"],
+    ['ordinary words', "const v = 'Set ' + 'complete' + ', rest ' + 'now';"],
+    ['a prefix joined to an identifier', `const v = '${prefix}' + digits;`],
+    ['a prefix joined to a call', `const v = '${prefix}' + pad(value);`],
+    ['a prefix joined to an expression template', `const v = '${prefix}' + \`\${value}\`;`],
+    ['numeric addition', 'const v = 1 + 2 + 3;'],
+  ])('lets %s through', (_label, code) => {
+    expect(messagesFor(code)).toEqual([]);
   });
 });
 

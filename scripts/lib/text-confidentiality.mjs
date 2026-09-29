@@ -5,6 +5,9 @@
 // scan. This runs the rule's own detector over the raw text of those files, so
 // there is one definition of a forbidden shape, not two.
 //
+// It scans text, not a parse tree, so the rule's join of a string-literal
+// concatenation (VW-224) does not apply here.
+//
 // Exemptions use the rule's own directive, written inside whatever comment the
 // file type has (an HTML comment in markdown). Only the line and next-line forms
 // are honoured, and a directive without a `-- reason` is ignored, so every
