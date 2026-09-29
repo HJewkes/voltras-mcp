@@ -22,10 +22,23 @@ export function rampClassOf(exercise: RampClassifiable | undefined): RampClass {
   return LOWER_BODY_PATTERNS.has(exercise.movementPattern) ? 'lower_compound' : 'upper_compound';
 }
 
-/** An absent id, or one the catalog does not carry, reads as the unknown-class default. */
+export class CatalogNotLoadedError extends Error {
+  readonly code = 'CATALOG_NOT_LOADED';
+
+  constructor() {
+    super('CATALOG_NOT_LOADED: the exercise catalog is empty; load it before classifying an id');
+    this.name = 'CatalogNotLoadedError';
+  }
+}
+
+/**
+ * An absent id, or one a loaded catalog does not carry, reads as the unknown-class default.
+ * An empty catalog throws: the default would otherwise read as a real answer.
+ */
 export function rampClassForExerciseId(exerciseId: string | null | undefined): RampClass {
   if (exerciseId === null || exerciseId === undefined) {
     return GOAL_BAND_CONSTANTS.rampClassWhenUnknown;
   }
+  if (!lookup.isLoaded()) throw new CatalogNotLoadedError();
   return rampClassOf(lookup.getById(exerciseId));
 }

@@ -16,7 +16,9 @@
 //   * an accepted target does not move, in either direction, ever.
 
 import * as analytics from '@voltras/workout-analytics';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 
 import { programmedRampStepLbs } from '../../analytics/goal-band.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
@@ -27,6 +29,8 @@ import type { Tier } from '../tier-signal.js';
 import { deriveTargetInFrame, readDerivationContext } from '../goal-derivation.js';
 import { registerGoalTools } from '../goal-tools.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+
+beforeAll(loadSeedCatalog);
 
 const TOOL_NAMES = [
   'goal.declare_priorities',

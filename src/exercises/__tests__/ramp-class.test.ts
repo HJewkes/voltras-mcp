@@ -1,7 +1,7 @@
 import * as analytics from '@voltras/workout-analytics';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { rampClassForExerciseId, rampClassOf } from '../ramp-class.js';
+import { CatalogNotLoadedError, rampClassForExerciseId, rampClassOf } from '../ramp-class.js';
 import { HISTORY_SEED_EXERCISES } from '../history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../seed-catalog.js';
 
@@ -30,13 +30,28 @@ describe('rampClassOf', () => {
   });
 });
 
-describe('rampClassForExerciseId', () => {
-  beforeEach(() => {
-    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog([
-      ...SEED_CABLE_EXERCISES,
-      ...HISTORY_SEED_EXERCISES,
-    ]);
+const setCatalog = (rows: unknown[]): void =>
+  (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(rows);
+const loadSeedCatalog = (): void =>
+  setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
+
+describe('rampClassForExerciseId on an unloaded catalog', () => {
+  beforeEach(() => setCatalog([]));
+  afterEach(loadSeedCatalog);
+
+  it('throws CATALOG_NOT_LOADED instead of returning the default', () => {
+    expect(() => rampClassForExerciseId('barbell-back-squat')).toThrow(CatalogNotLoadedError);
+    expect(() => rampClassForExerciseId('barbell-back-squat')).toThrow(/CATALOG_NOT_LOADED/);
   });
+
+  it('returns the default for a null id without touching the catalog', () => {
+    expect(rampClassForExerciseId(null)).toBe('upper_compound');
+    expect(rampClassForExerciseId(undefined)).toBe('upper_compound');
+  });
+});
+
+describe('rampClassForExerciseId', () => {
+  beforeEach(loadSeedCatalog);
 
   it('places the seed catalog lifts', () => {
     expect(rampClassForExerciseId('cable-overhead-tricep-extension')).toBe('isolation');

@@ -6,7 +6,9 @@
 // end to end. The pure per-target projection is covered separately in
 // `goal-progress-read-model.test.ts`.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterEach, describe, expect, it } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { EMPTY_PHASE } from '@voltras/workout-analytics';
 
@@ -31,6 +33,8 @@ import type {
 } from '../../store/types.js';
 
 /** A rep with no measurable movement — enough for a rep count, never a fatigue verdict. */
+beforeAll(loadSeedCatalog);
+
 function makeRep(setId: string, index: number): StoredRep {
   return {
     id: `${setId}-rep-${index}`,
