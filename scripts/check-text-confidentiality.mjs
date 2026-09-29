@@ -2,11 +2,12 @@
 // Runs the confidentiality rule over every tracked text file, markdown and site
 // sources included (VW-497). See scripts/lib/text-confidentiality.mjs.
 //
-// Usage: node scripts/check-text-confidentiality.mjs
+// Usage: node scripts/check-text-confidentiality.mjs [path ...]
+// With no paths it scans every tracked file; the tests pass a planted fixture.
 
 import { lstatSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isScanned, scanText } from './lib/text-confidentiality.mjs';
@@ -27,12 +28,14 @@ function trackedFiles() {
 
 // A symlink is scanned at its target, so following it would count a file twice.
 const isRegularFile = (path) =>
-  lstatSync(join(REPO_ROOT, path), { throwIfNoEntry: false })?.isFile();
+  lstatSync(resolve(REPO_ROOT, path), { throwIfNoEntry: false })?.isFile();
 
-const paths = trackedFiles().filter((path) => isScanned(path) && isRegularFile(path));
+const requested = process.argv.slice(2);
+const candidates = requested.length > 0 ? requested : trackedFiles();
+const paths = candidates.filter((path) => isScanned(path) && isRegularFile(path));
 let total = 0;
 for (const path of paths) {
-  for (const { line, column, kind } of scanText(readFileSync(join(REPO_ROOT, path), 'utf8'))) {
+  for (const { line, column, kind } of scanText(readFileSync(resolve(REPO_ROOT, path), 'utf8'))) {
     console.error(`${path}:${line}:${column}  ${kind} (voltras/no-protocol-detail)`);
     total += 1;
   }
