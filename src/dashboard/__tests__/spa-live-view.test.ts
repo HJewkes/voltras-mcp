@@ -14,12 +14,14 @@ import {
   type CompletedSet as StoreCompletedSet,
   type PrescriptionView,
   type Snapshot,
+  type TierView,
 } from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
   deriveActiveSetStates,
   derivePrescription,
   deriveRailExercises,
+  deriveRecapPrescription,
   deriveRailMetrics,
   peakVelocity,
   velocityLossPct,
@@ -202,6 +204,31 @@ describe('mapStoreToDashboardModel', () => {
     it('leaves the title null when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.title).toBeNull();
+    });
+  });
+
+  describe('session.tier and session.targetRpe (VW-669)', () => {
+    const tier: TierView = { tier: 'intermediate', confidence: 'confident', source: 'declared' };
+
+    it("carries the plan channel's tier and RPE onto the session model", () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, rpe: 8, tier } }));
+      expect(model?.session.tier).toEqual(tier);
+      expect(model?.session.targetRpe).toBe(8);
+    });
+
+    it('leaves the tier and RPE null when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.tier).toBeNull();
+      expect(model?.session.targetRpe).toBeNull();
+    });
+
+    it("drops the owner's tier while a guest is on the cable", () => {
+      const guest: Snapshot = { ...snapshot(), session: { sessionId: 's1', lifter: 'Guest' } };
+      const model = mapStoreToDashboardModel(
+        sources({ snapshot: guest, prescription: { sets: 4, tier } }),
+      );
+      expect(model?.session.lifter).toBe('Guest');
+      expect(model?.session.tier).toBeNull();
     });
   });
 
@@ -614,7 +641,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
     const cells = derivePrescription(
       sessionModel({ plannedSets: 4, targetReps: null, plannedExercises: [planned()] }),
     );
-    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs' });
+    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs', effort: null });
   });
 
   it('keeps a prescribed rep RANGE as a range', () => {
@@ -679,7 +706,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
   it('reads sets × reps @ load when the plan states all three', () => {
     expect(
       derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: 140 })),
-    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs' });
+    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs', effort: null });
   });
 
   it('keeps the prescription and marks an unset load with the em-dash', () => {
@@ -687,7 +714,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
     // dropping the whole lockup for a missing load would hide what the coach wrote.
     expect(
       derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: null })),
-    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs' });
+    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs', effort: null });
   });
 
   it('returns null when no rep target is prescribed', () => {
@@ -957,5 +984,64 @@ describe('velocityRatios', () => {
 
   it('leaves an empty set empty rather than producing NaN', () => {
     expect(velocityRatios([])).toEqual([]);
+  });
+});
+
+describe('derivePrescription effort target (VW-669)', () => {
+  const CORPUS = ['rp-s7-rir-self-report-accuracy-by-tier', 'rp-s4-beginner-rir-floor-progression'];
+
+  function tiered(tier: TierView['tier'], source: TierView['source'] = 'declared'): SessionModel {
+    return sessionModel({
+      plannedSets: 4,
+      targetReps: 8,
+      tier: { tier, confidence: 'confident', source },
+    });
+  }
+
+  it('gives beginner, intermediate and advanced lifters different targets', () => {
+    const texts = (['beginner', 'intermediate', 'advanced'] as const).map(
+      (tier) => derivePrescription(tiered(tier))?.effort?.text,
+    );
+    expect(texts.every((text) => typeof text === 'string' && text.length > 0)).toBe(true);
+    expect(new Set(texts).size).toBe(3);
+  });
+
+  it.each(['beginner', 'intermediate', 'advanced'] as const)(
+    'names the %s tier in the basis and cites the RIR corpus entries',
+    (tier) => {
+      const basis = derivePrescription(tiered(tier))?.effort?.basis ?? '';
+      expect(basis).toContain(`${tier} tier (declared)`);
+      for (const id of CORPUS) expect(basis).toContain(id);
+    },
+  );
+
+  it('reads a default-sourced tier as assumed', () => {
+    const effort = derivePrescription(tiered('beginner', 'default'))?.effort;
+    expect(effort?.basis).toContain('beginner tier (assumed)');
+    expect(effort?.basis).not.toContain('default');
+  });
+
+  it("shows the plan's RPE as written over the tier target, with basis plan", () => {
+    const session = { ...tiered('intermediate'), targetRpe: 8 };
+    expect(derivePrescription(session)?.effort).toEqual({ text: 'RPE 8', basis: 'plan' });
+  });
+
+  it('gives no effort line when neither a plan RPE nor a tier is known', () => {
+    const cells = derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, tier: null }));
+    expect(cells).not.toBeNull();
+    expect(cells?.effort).toBeNull();
+  });
+
+  it("carries the header's effort onto the rest recap", () => {
+    const session = tiered('advanced');
+    const recap = deriveRecapPrescription(session, 2);
+    expect(recap.effort).not.toBeNull();
+    expect(recap.effort).toEqual(derivePrescription(session)?.effort);
+  });
+
+  it('keeps the effort on a recap whose lockup degraded to placeholders', () => {
+    const session = { ...tiered('advanced'), plannedSets: null, targetReps: null };
+    expect(derivePrescription(session)).toBeNull();
+    expect(deriveRecapPrescription(session, 2).effort?.basis).toContain('advanced tier');
   });
 });

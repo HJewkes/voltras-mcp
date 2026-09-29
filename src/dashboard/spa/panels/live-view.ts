@@ -277,15 +277,16 @@ function mapSession(
   displayUnit: MassUnit,
 ): SessionModel {
   const plannedExercises = mapPlannedExercises(prescription);
+  // VW-169: the open set's own label wins over the session default — it is
+  // who is lifting RIGHT NOW, and the default only says who the next set
+  // will be attributed to. Null (the owner) renders nothing.
+  const lifter = snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null;
   return {
     // A real training session is open when the snapshot carries one, regardless of whether its
     // exercise is named yet — lets the idle stage tell "no session" from "session, no set".
     hasSession: snapshot.session != null,
     exerciseName: resolveExerciseName(snapshot, plannedExercises),
-    // VW-169: the open set's own label wins over the session default — it is
-    // who is lifting RIGHT NOW, and the default only says who the next set
-    // will be attributed to. Null (the owner) renders nothing.
-    lifter: snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null,
+    lifter,
     // Composed template · block title (VW-43); null when no plan is attached or the
     // block can't resolve — never a fabricated title.
     title: prescription?.title ?? null,
@@ -316,6 +317,9 @@ function mapSession(
     expectedSetupCard: snapshot.expectedSetupCard ?? null,
     // VW-290: null with no plan attached — the rail footer then stays hidden.
     sessionPace: snapshot.sessionPace ?? null,
+    targetRpe: prescription?.rpe ?? null,
+    // VW-669: the plan channel reads the owner's tier; a named lifter on the cable gets none.
+    tier: lifter === null ? (prescription?.tier ?? null) : null,
   };
 }
 
