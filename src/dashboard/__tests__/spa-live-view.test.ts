@@ -281,6 +281,7 @@ describe('mapStoreToDashboardModel', () => {
           name: 'Squat',
           plannedSets: 3,
           targetReps: 5,
+          repsHigh: null,
           repsLabel: 5,
           weightLbs: null,
           active: false,
@@ -289,6 +290,7 @@ describe('mapStoreToDashboardModel', () => {
           name: 'Bench',
           plannedSets: 3,
           targetReps: 8,
+          repsHigh: 10,
           repsLabel: '8–10',
           weightLbs: 135,
           active: true,
@@ -763,6 +765,46 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
     expect(states.map((s) => s.status)).toEqual(['active', 'todo', 'todo']);
     expect(states[0]).toMatchObject({ planned: 8 });
     expect(states[1]).toMatchObject({ planned: 8 });
+  });
+
+  function withPlannedReps(targetReps: number, repsHigh: number | null, repsLabel: string) {
+    return plannedLive({
+      plannedExercises: [
+        {
+          name: 'Cable Chest Press',
+          plannedSets: 3,
+          targetReps,
+          repsHigh,
+          repsLabel,
+          weightLbs: 140,
+          active: true,
+        },
+      ],
+    });
+  }
+
+  it('draws a prescribed 8-10 todo set as a range from floor 8 to max 10', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
+    expect(states[1]).toEqual({ status: 'range', floor: 8, max: 10, doneVels: [] });
+  });
+
+  it('keeps the active 8-10 set as planned segments with the range label', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
+    expect(states[0]).toMatchObject({ status: 'active', planned: 8, repsLow: 8, repsHigh: 10 });
+  });
+
+  it('leaves a single prescribed count as fixed columns with no range', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, null, '8'));
+    for (const state of states) {
+      expect(state).toMatchObject({ planned: 8 });
+      expect(state).not.toHaveProperty('repsHigh');
+      expect(state.status).not.toBe('range');
+    }
+  });
+
+  it('treats a high bound at or below the floor as no range', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 8, '8'));
+    expect(states[1]).not.toHaveProperty('repsHigh');
   });
 
   it('still emits no todo columns when neither the plan nor the device states a rep target', () => {

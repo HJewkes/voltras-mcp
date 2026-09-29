@@ -149,6 +149,8 @@ export interface PlannedExerciseModel {
   plannedSets: number;
   /** Rep target sizing an upcoming row's `todo` columns; null when no rep range. */
   targetReps: number | null;
+  /** The range's top as a number, so a strip can draw it; absent or null for a single count. */
+  repsHigh?: number | null;
   /** Preformatted reps cell for the rail summary: `"8–10"`, `8`, or the em-dash. */
   repsLabel: number | string;
   /** Null when the plan prescribes no working weight. */
@@ -467,14 +469,41 @@ function plannedRepTarget(session: SessionModel): number | string | null {
  * The rep COUNT to size a strip column by — the same plan-first sourcing as
  * {@link plannedRepTarget}, but numeric.
  *
- * A prescribed RANGE collapses to its committed floor (`repsLow`): those are the reps the
- * set is definitely expected to carry. The reps between the floor and the range's top are
- * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
- * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
+ * A prescribed RANGE sizes the committed columns by its floor (`repsLow`), the reps the set
+ * is definitely expected to carry. A todo set draws the whole range as titan's `range`
+ * variant (floor..max). The active set keeps `planned` segments and its live pulse, plus the
+ * {@link plannedRepRange} label, because `range` has no pulse; VW-576 asks titan for one.
  */
 export function plannedRepCount(session: SessionModel): number | null {
   const active = session.plannedExercises.find((e) => e.active);
   return active?.targetReps ?? session.targetReps;
+}
+
+/**
+ * The active exercise's prescribed rep range for titan's `SetStrip`, or `{}` when the plan
+ * states a single count or no high bound. A high at or below the floor is not a range.
+ */
+export function plannedRepRange(session: SessionModel): { repsLow?: number; repsHigh?: number } {
+  const active = session.plannedExercises.find((e) => e.active);
+  const low = active?.targetReps ?? null;
+  const high = active?.repsHigh ?? null;
+  if (low === null || high === null || high <= low) return {};
+  return { repsLow: low, repsHigh: high };
+}
+
+/**
+ * A not-yet-started set. A prescribed range (high above low) draws titan's `range` variant,
+ * floor..max with the variable zone; anything else stays fixed `planned` columns.
+ */
+function todoSet(
+  planned: number,
+  low: number | undefined,
+  high: number | null | undefined,
+): SessionRailExercise['setStates'][number] {
+  if (low === undefined || high === undefined || high === null || high <= low) {
+    return { status: 'todo', planned };
+  }
+  return { status: 'range', floor: low, max: high, doneVels: [] };
 }
 
 /**
@@ -593,6 +622,7 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
       status: 'active',
       velocities: velocityRatios(live.repVelocities),
       planned: plannedRepCount(session) ?? live.repVelocities.length,
+      ...plannedRepRange(session),
     });
   }
   // Any planned sets beyond those done + the one in progress. Skipped entirely without a
@@ -602,7 +632,8 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
   const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
   if (targetReps !== null) {
     for (let i = 0; i < remaining; i++) {
-      setStates.push({ status: 'todo', planned: targetReps });
+      const { repsLow, repsHigh } = plannedRepRange(session);
+      setStates.push(todoSet(targetReps, repsLow, repsHigh));
     }
   }
   return setStates;
@@ -678,7 +709,7 @@ function buildUpcomingRow(
   const setStates: SessionRailExercise['setStates'] = [];
   if (planned.targetReps !== null) {
     for (let i = 0; i < planned.plannedSets; i++) {
-      setStates.push({ status: 'todo', planned: planned.targetReps });
+      setStates.push(todoSet(planned.targetReps, planned.targetReps, planned.repsHigh ?? null));
     }
   }
   return {
