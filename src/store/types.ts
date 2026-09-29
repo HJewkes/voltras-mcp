@@ -868,6 +868,19 @@ export interface PutAdvisoryDecisionInput extends Omit<StoredAdvisoryDecision, '
   id?: string;
 }
 
+/** An answer to an open advisory. `inputs`, when given, replaces the stored inputs. */
+export interface AdvisoryAnswer {
+  userResponse: StoredAdvisoryResponse;
+  respondedAt: string;
+  inputs?: Record<string, unknown>;
+}
+
+/** The goal target an answer retires, at its `respondedAt`, only if the answer is recorded. */
+export interface AdvisoryAnswerRetire {
+  goalTargetId: string;
+  outcome: StoredGoalTargetOutcome;
+}
+
 /** Filter for {@link SessionStore.listAdvisoryDecisions}; every field narrows. */
 export interface ListAdvisoryDecisionsFilter {
   code?: string;
@@ -2433,6 +2446,17 @@ export interface SessionStore extends ExerciseSetupStore {
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]>;
+
+  /**
+   * Record `answer` only if the advisory is still unanswered, and then retire
+   * `retire`'s target in the same transaction. `undefined` means another answer
+   * got there first (or no such row): nothing was written, the target included.
+   */
+  answerAdvisoryIfOpen(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): Promise<StoredAdvisoryDecision | undefined>;
 
   // --- UI action audit (VW-502) ---
 
