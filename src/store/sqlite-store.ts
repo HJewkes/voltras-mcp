@@ -5496,6 +5496,7 @@ export class SqliteSessionStore implements SessionStore {
     throw createChangedTargetError(id);
   }
 
+  /** The stamp is the latest live chapter, as `chapterStartedAt` reads it, not the one just written. */
   async startGoalChapter(
     targetId: string,
     chapter: MarkExerciseChapterInput,
@@ -5505,8 +5506,13 @@ export class SqliteSessionStore implements SessionStore {
         if (this.findGoalTarget(targetId) === undefined) return undefined;
         const written = this.insertExerciseChapter(chapter);
         this.db
-          .prepare(`UPDATE goal_targets SET new_chapter_at = ? WHERE id = ?`)
-          .run(written.startedAt, targetId);
+          .prepare(
+            `UPDATE goal_targets SET new_chapter_at = (
+               SELECT max(started_at) FROM exercise_chapters
+                 WHERE user_id = ? AND exercise_id = ? AND retired_at IS NULL)
+             WHERE id = ?`,
+          )
+          .run(chapter.userId, chapter.exerciseId, targetId);
         return { target: this.findGoalTarget(targetId) as StoredGoalTarget, chapter: written };
       }),
     );

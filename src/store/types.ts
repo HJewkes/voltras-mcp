@@ -2658,7 +2658,8 @@ export interface SessionStore extends ExerciseSetupStore {
   ): Promise<StoredGoalTarget[]>;
 
   /**
-   * Insert `chapter` and stamp the target's `newChapterAt` with its `startedAt`, in one
+   * Insert `chapter` and stamp the target's `newChapterAt` with the latest live chapter's
+   * `startedAt` for that exercise (a backdated chapter does not move it back), in one
    * transaction. `undefined`, with nothing written, when no such target exists.
    */
   startGoalChapter(

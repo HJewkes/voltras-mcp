@@ -966,7 +966,7 @@ describe('T11: goal target writes (VW-589)', () => {
     ]);
   });
 
-  it('leaves the stamp on the last chapter written, across two connections', async () => {
+  it('keeps the stamp on the latest chapter when a backdated one lands second', async () => {
     const eng = await engineFor('t11-chapter');
     const [a, b] = [await eng.connect(), await eng.connect()];
     await seedProposal(a);
@@ -977,8 +977,11 @@ describe('T11: goal target writes (VW-589)', () => {
       b.startGoalChapter(PROPOSAL_ID, { ...chapter, startedAt: AT }),
     ]);
 
-    expect(last?.target.newChapterAt).toBe(AT);
-    expect((await proposal(a))?.newChapterAt).toBe(last?.chapter.startedAt);
+    expect(last?.chapter.startedAt).toBe(AT);
+    expect(last?.target.newChapterAt).toBe(LATER);
+    expect((await proposal(a))?.newChapterAt).toBe(
+      await a.chapterStartedAt(LOCAL_USER_ID, 'bench-press'),
+    );
     expect(await a.listExerciseChapters(LOCAL_USER_ID, 'bench-press')).toHaveLength(2);
   });
 
