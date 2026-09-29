@@ -214,7 +214,7 @@ export interface ComparabilitySubject extends PurposeBearing {
    */
   setIndexInExercise?: number | undefined;
   /**
-   * How many distinct exercises for the same target muscle back the claim
+   * How many distinct exercises sharing a target muscle slug back the claim
    * window this set belongs to (B16 d), counting this set's own exercise.
    * Written by `deriveCorroboratingExerciseCount` (VW-211,
    * `comparability-subject.ts`) — the "claim window" is the lifter's entire
