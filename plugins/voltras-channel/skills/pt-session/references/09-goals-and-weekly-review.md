@@ -112,6 +112,8 @@ Pass `anchorLoad`, the load its reps are counted at, so the goal reads as a whol
 - `GOAL_TARGET_BELOW_BAND`: a value short of the committed edge is refused.
 - `GOAL_TARGET_ABOVE_BAND`: a value past the stretch edge needs `acknowledgeStretch: true`. The band itself is never moved to make it look supported.
 - `GOAL_TARGET_RETIRED`: the target was already retired.
+- `GOAL_TARGET_CHANGED`: the target was accepted, retired or re-proposed after it was read. Nothing was accepted and any offer it answered stays open. Re-read with `goal.list` and accept the current row again, never the old numbers.
+- `PRIORITY_RETIRED` from `goal.propose_targets`: the priority was retired, possibly by another call; nothing was proposed. Declare it again to track it.
 - `ADVISORY_ALREADY_ANSWERED`: a second answer to one offer or proposal is refused, and the message names the answer that stands; re-read it and relay that answer, never answer again.
 
 The honest exits:

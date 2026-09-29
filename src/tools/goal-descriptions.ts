@@ -52,7 +52,9 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'own fitted slope. A cold lift target also carries `startingRamp` (`sessionsNeeded`, ' +
   '`blockedBy`, `baselineState`, `reProposeAfterCalibration`, `note`): its number is the generic ' +
   'starting ramp, so tell the lifter so, and re-propose a data-based target once calibration ' +
-  'ends. A metric whose proposal was declined is never re-offered. ' +
+  'ends. A metric whose proposal was declined is never re-offered. A retired priority, ' +
+  'including one retired while the bands were derived, is refused with `PRIORITY_RETIRED` and ' +
+  'nothing is proposed. ' +
   'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
   'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
   '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
@@ -85,7 +87,9 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   '(`decisionId`, `supersededTargetId`); an offer whose lift is no longer calibrated is refused ' +
   'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays. An offer another call answered ' +
   'first is refused with `ADVISORY_ALREADY_ANSWERED`, naming the answer that stands, and ' +
-  'nothing is accepted. A proposal written before targets ' +
+  'nothing is accepted. A target accepted, retired or re-proposed after it was read is refused ' +
+  'with `GOAL_TARGET_CHANGED` and nothing is accepted, the offer answer included: re-read it ' +
+  'and accept again. A proposal written before targets ' +
   'carried a block is set for one here, the way a new proposal would be (VW-477).';
 
 export const GOAL_LIST_DESCRIPTION =

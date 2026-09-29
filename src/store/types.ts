@@ -1116,6 +1116,31 @@ export interface StoredGoalTarget {
   newChapterAt?: string;
 }
 
+// --- Atomic goal target writes (VW-589) ---
+
+/** The columns {@link SessionStore.acceptGoalTarget} writes; an absent optional keeps the row's. */
+export interface GoalTargetAcceptance {
+  committedValue: number;
+  stretchValue: number;
+  acceptedBy: StoredGoalTargetAcceptedBy;
+  acknowledgedStretch: boolean;
+  anchorLoad?: number;
+  blockId?: string;
+  endsAt?: string;
+}
+
+/** The open advisory an acceptance answers, claimed in the acceptance's own transaction. */
+export interface GoalTargetOfferClaim {
+  decisionId: string;
+  answer: AdvisoryAnswer;
+  retire?: AdvisoryAnswerRetire;
+}
+
+/** `offer_answered`: another call answered the claimed offer first, and nothing was written. */
+export type GoalTargetAcceptOutcome =
+  | { kind: 'accepted'; target: StoredGoalTarget }
+  | { kind: 'offer_answered' };
+
 /** Why a `block_schedules` row was written (VW-473). */
 export const BLOCK_SCHEDULE_KINDS = [
   'planned',
@@ -2560,9 +2585,13 @@ export interface SessionStore extends ExerciseSetupStore {
    *
    * Idempotent: an already-retired priority keeps its original `retiredAt`,
    * and so does an already-retired target. Returns `undefined` when no such
-   * priority exists.
+   * priority exists. `outcome` replaces `'abandoned'` on the targets this call retires.
    */
-  retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined>;
+  retirePriority(
+    id: string,
+    retiredAt: string,
+    outcome?: StoredGoalTargetOutcome,
+  ): Promise<StoredPriority | undefined>;
 
   /**
    * Upsert a derived target on its `id`, `ON CONFLICT DO UPDATE`.
@@ -2602,6 +2631,41 @@ export interface SessionStore extends ExerciseSetupStore {
    * `undefined` when no such target exists.
    */
   setGoalTargetNewChapter(id: string, at: string): Promise<StoredGoalTarget | undefined>;
+
+  // --- Atomic goal target writes (VW-589) ---
+
+  /**
+   * Accept a proposal only if it is still the one read: unaccepted, unretired and carrying
+   * `expected.derivedAt`, else throw `GOAL_TARGET_CHANGED`. `claim` answers its offer in the
+   * same transaction, so a lost claim or a changed target writes nothing, the answer included.
+   */
+  acceptGoalTarget(
+    targetId: string,
+    acceptance: GoalTargetAcceptance,
+    expected: { derivedAt: string },
+    claim?: GoalTargetOfferClaim,
+  ): Promise<GoalTargetAcceptOutcome>;
+
+  /**
+   * Read every target of a live priority, derive the rows to write from them and upsert those
+   * rows, in ONE transaction. Throws `PRIORITY_RETIRED` (or `NOT_FOUND`) before deriving, and
+   * `GOAL_TARGET_CHANGED` when a derived row names an accepted or retired target. `derive` is
+   * synchronous; a throw from it writes nothing.
+   */
+  putGoalTargetsDerived(
+    priorityId: string,
+    derive: (live: readonly StoredGoalTarget[]) => readonly StoredGoalTarget[],
+  ): Promise<StoredGoalTarget[]>;
+
+  /**
+   * Insert `chapter` and stamp the target's `newChapterAt` with the latest live chapter's
+   * `startedAt` for that exercise (a backdated chapter does not move it back), in one
+   * transaction. `undefined`, with nothing written, when no such target exists.
+   */
+  startGoalChapter(
+    targetId: string,
+    chapter: MarkExerciseChapterInput,
+  ): Promise<{ target: StoredGoalTarget; chapter: StoredExerciseChapter } | undefined>;
 
   // --- Exercise baselines (I5 / B56, VW-116) ---
 

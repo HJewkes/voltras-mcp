@@ -39,6 +39,14 @@ export async function answerIfOpen(
 ): Promise<AdvisoryAnswerOutcome> {
   const decision = await store.answerAdvisoryIfOpen(open.id, answer, retire);
   if (decision !== undefined) return { kind: 'answered', decision };
+  return lostAnswer(store, open);
+}
+
+/** What a caller whose answer to `open` was not recorded is told: the answer that stands. */
+export async function lostAnswer(
+  store: Pick<SessionStore, 'listAdvisoryDecisions'>,
+  open: StoredAdvisoryDecision,
+): Promise<Extract<AdvisoryAnswerOutcome, { kind: 'already_answered' }>> {
   const stored = (await store.listAdvisoryDecisions(open.userId, { code: open.code })).find(
     (row) => row.id === open.id,
   );

@@ -160,6 +160,14 @@ entry is written from the user's point of view is a review question, not a check
   so an action recorded as an error changed nothing, and one cut short before it finished
   leaves no trace and can be resubmitted under the same id. Two submits of one id now always
   run once and replay, where the second could answer `indeterminate` (VW-659, VW-660, #570).
+- Goal targets no longer change under a call that read them a moment earlier. Accepting a
+  target that was retired or re-proposed meanwhile is refused with `GOAL_TARGET_CHANGED`
+  (re-read it and accept again), where it used to un-retire the target or fix a stale band;
+  a refused acceptance of a recalibration offer now leaves the offer open. Two
+  `goal.propose_targets` calls at once leave one proposal per lift, a proposal never lands
+  under a priority retired meanwhile (`PRIORITY_RETIRED`), and `goal.retire` with `met` or
+  `missed` records that outcome in the same step as the retirement. `goal.new_chapter` now
+  records the chapter and the target's stamp together (VW-589, #572).
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
   of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
   priority of their own, and the goals page then drew one goal twice. The second now folds
