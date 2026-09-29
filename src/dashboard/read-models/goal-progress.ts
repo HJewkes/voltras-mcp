@@ -1107,7 +1107,7 @@ const STATUS_RANK: Record<GoalProgressStatus, number> = {
   stalled: 6,
 };
 
-const STATUS_LABEL: Record<GoalProgressStatus, string> = {
+export const STATUS_LABEL: Record<GoalProgressStatus, string> = {
   beyond_goal: 'beyond goal',
   goal_met: 'goal met',
   ahead: 'ahead',
