@@ -507,6 +507,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'offerAlreadyAnswered',
   // VW-459: `goal.declare_priorities` refuses a second whole-body priority for one ref.
   'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
+  // VW-589: a target that moved since it was read, and a priority retired meanwhile.
+  'GOAL_TARGET_CHANGED',
+  'PRIORITY_RETIRED',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',
