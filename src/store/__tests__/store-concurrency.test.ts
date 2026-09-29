@@ -488,6 +488,57 @@ describe('T6b: a set re-put after a relabel and a group stamp (VW-583)', () => {
   });
 });
 
+const CARBS = { level: 'high' as const, hoursSinceLastMeal: 2 };
+
+/** The owner in a declared phase, and a session of theirs to re-put. */
+async function seedOwnerSession(store: SessionStore): Promise<void> {
+  await store.declareDietPhase({
+    userId: LOCAL_USER_ID,
+    phase: 'fat-loss',
+    startedAt: '2026-09-01T00:00:00.000Z',
+    declaredAt: '2026-09-01T00:00:00.000Z',
+  });
+  await store.putSession({ id: 'sess-1', startedAt: AT, kind: 'training' });
+}
+
+describe('T6c: a session re-put after a relabel and a carb check-in (VW-584)', () => {
+  it.each([1, 2] as const)('keeps both with %i connection(s)', async (n) => {
+    const eng = await engineFor(`t6c-${n}`);
+    const a = await eng.connect();
+    const b = n === 1 ? a : await eng.connect();
+    await seedOwnerSession(a);
+    await b.patchSession('sess-1', { lifter: 'Jordan', preSessionCarbs: CARBS });
+
+    await a.putSession({ id: 'sess-1', startedAt: AT, endedAt: AT });
+
+    const stored = await b.getSession('sess-1');
+    expect(stored?.endedAt).toBe(AT);
+    expect(stored?.lifter).toBe('Jordan');
+    expect(stored?.preSessionCarbs).toEqual(CARBS);
+  });
+
+  it('stamps no owner phase when the stored label is a guest, though the re-put carries none', async () => {
+    const store = await (await engineFor('t6c-guest')).connect();
+    await seedOwnerSession(store);
+    await store.patchSession('sess-1', { lifter: 'Jordan' });
+
+    await store.putSession({ id: 'sess-1', startedAt: AT, endedAt: AT });
+
+    expect((await store.getSession('sess-1'))?.dietPhase).toBeUndefined();
+  });
+
+  it('stamps the owner phase when the stored row is the owner’s, though the re-put carries a label', async () => {
+    const store = await (await engineFor('t6c-owner')).connect();
+    await seedOwnerSession(store);
+
+    await store.putSession({ id: 'sess-1', startedAt: AT, endedAt: AT, lifter: 'Jordan' });
+
+    const stored = await store.getSession('sess-1');
+    expect(stored).not.toHaveProperty('lifter');
+    expect(stored?.dietPhase).toBe('fat-loss');
+  });
+});
+
 // --- T9: two answers to one advisory (VW-587) -----------------------------
 
 const DECISION_ID = 'decision-1';

@@ -3151,6 +3151,20 @@ interface ProgramAssignmentRow {
   assigned_at: string;
 }
 
+/** The session upsert; the last parameter is the phase covering the start, stamped only on an unlabelled stored row. */
+const PUT_SESSION_SQL = `
+  INSERT INTO sessions
+    (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
+     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    started_at = excluded.started_at,
+    ended_at = excluded.ended_at,
+    exercise_id = excluded.exercise_id,
+    exercise_name = excluded.exercise_name,
+    notes = excluded.notes,
+    diet_phase = CASE WHEN sessions.lifter IS NULL THEN ? END`;
+
 /** SQLite-backed implementation of `SessionStore`. */
 export class SqliteSessionStore implements SessionStore {
   private readonly connection: DatabaseSync;
@@ -3317,40 +3331,34 @@ export class SqliteSessionStore implements SessionStore {
     // training days, tier, goals, reports and calibration the moment it ended
     // (VW-489). `setSessionKind` is the one path that changes an existing row's
     // kind, which is what makes marking auditable.
-    this.db
-      .prepare(
-        `INSERT INTO sessions
-           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           started_at = excluded.started_at,
-           ended_at = excluded.ended_at,
-           exercise_id = excluded.exercise_id,
-           exercise_name = excluded.exercise_name,
-           notes = excluded.notes,
-           lifter = excluded.lifter,
-           diet_phase = excluded.diet_phase,
-           pre_session_carbs_level = excluded.pre_session_carbs_level,
-           pre_session_carbs_hours_since_meal = excluded.pre_session_carbs_hours_since_meal`,
-      )
-      .run(
-        s.id,
-        s.startedAt,
-        s.endedAt ?? null,
-        s.exerciseId ?? null,
-        s.exerciseName ?? null,
-        s.notes ?? null,
-        s.lifter ?? null,
-        // Derived here, never taken from the caller: the stamp's whole job is
-        // to agree with the table for a session written now, and a tool that
-        // could pass its own value would be a second, disagreeing writer.
-        this.stampableDietPhase(s),
-        s.preSessionCarbs?.level ?? null,
-        s.preSessionCarbs?.hoursSinceLastMeal ?? null,
-        s.catalogVersion ?? null,
-        s.kind ?? null,
-      );
+    //
+    // lifter and the carb columns are held out for the same reason (VW-584):
+    // `patchSession` owns them after start, and a re-put from one process's live
+    // state would revert a patch another process made. The diet-phase stamp
+    // therefore follows the STORED label, the one that survives the re-put.
+    this.atomically(() => {
+      // Derived here, never taken from the caller: the stamp's whole job is
+      // to agree with the table for a session written now, and a tool that
+      // could pass its own value would be a second, disagreeing writer.
+      const phase = this.dietPhaseCovering(s.startedAt);
+      this.db
+        .prepare(PUT_SESSION_SQL)
+        .run(
+          s.id,
+          s.startedAt,
+          s.endedAt ?? null,
+          s.exerciseId ?? null,
+          s.exerciseName ?? null,
+          s.notes ?? null,
+          s.lifter ?? null,
+          s.lifter === undefined ? phase : null,
+          s.preSessionCarbs?.level ?? null,
+          s.preSessionCarbs?.hoursSinceLastMeal ?? null,
+          s.catalogVersion ?? null,
+          s.kind ?? null,
+          phase,
+        );
+    });
     return Promise.resolve();
   }
 
@@ -3384,14 +3392,19 @@ export class SqliteSessionStore implements SessionStore {
       );
   }
 
+  /** The phase to stamp on `s`, or `null`: a labelled session is a guest's and never carries the owner's phase. */
+  private stampableDietPhase(s: StoredSession): string | null {
+    if (s.lifter !== undefined) return null;
+    return this.dietPhaseCovering(s.startedAt);
+  }
+
   /**
-   * The phase to stamp on `s`, or `null`. Both `session.start` and
+   * The owner's phase covering `startedAt`, or `null`. Both `session.start` and
    * `session.end` re-put the row, so this is recomputed on each — a
    * correction declared mid-session is picked up rather than frozen.
    */
-  private stampableDietPhase(s: StoredSession): string | null {
-    if (s.lifter !== undefined) return null;
-    return this.findDietPhaseCovering(LOCAL_USER_ID, s.startedAt, s.startedAt)?.phase ?? null;
+  private dietPhaseCovering(startedAt: string): string | null {
+    return this.findDietPhaseCovering(LOCAL_USER_ID, startedAt, startedAt)?.phase ?? null;
   }
 
   /**
