@@ -1856,15 +1856,19 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     return null;
   }
   let session: ActiveSession | undefined;
+  let setLifter: string | undefined;
   for (const [, slot] of state.slots) {
     const candidate = slot.live.snapshotSession();
     if (candidate !== undefined) {
       session = candidate;
+      setLifter = slot.live.snapshotSet()?.lifter;
       break;
     }
   }
   if (session === undefined || session.exerciseId === undefined) return null;
   const { sessionId, exerciseId } = session;
+  // VW-669: the tier signal is the owner's; a guest or partner on the cable gets no tier.
+  const ownerLifting = session.lifter === undefined && setLifter === undefined;
 
   for (const assignment of await store.getAssignmentsForSession(sessionId)) {
     if (assignment.workoutTemplateId === undefined) continue;
@@ -1872,7 +1876,7 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     const match = planned.find((p) => p.exerciseId === exerciseId);
     if (match === undefined) continue;
     const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
-    const tier = await readTierView(store);
+    const tier = ownerLifting ? await readTierView(store) : undefined;
     const rows: SessionPlanRows = {
       activeExerciseId: exerciseId,
       match,

@@ -10,6 +10,8 @@ export interface EffortTarget {
   /** `null` at the beginner tier, which should not track RIR at all. */
   rirTarget: number | null;
   text: string;
+  /** The wall's one-line form of {@link text}, read as a target and never as a reading (VW-669). */
+  wallText: string;
   /** Corpus ids the target rests on. */
   sources: readonly string[];
 }
@@ -25,16 +27,19 @@ const EFFORT_TARGETS: Record<Tier, EffortTarget> = {
     text:
       'Do not track RIR at this tier — beginner self-report runs 5-10 reps off. Progress on ' +
       'technique instead, with a floor of never closer than 1-2 RIR.',
+    wallText: 'Technique focus, 1-2 reps shy of failure at most',
     sources: EFFORT_SOURCES,
   },
   intermediate: {
     rirTarget: 3,
     text: 'Start around 3 RIR in week 1, trending toward 0 by the last pre-deload session.',
+    wallText: 'Target ~3 RIR in week 1, toward 0 by deload',
     sources: EFFORT_SOURCES,
   },
   advanced: {
     rirTarget: 2,
     text: '2-3 RIR generally; 1-2 RIR for a prioritized small muscle.',
+    wallText: 'Target 2-3 RIR',
     sources: EFFORT_SOURCES,
   },
 };

@@ -992,8 +992,15 @@ describe('GET /api/history', () => {
 });
 
 describe('GET /api/session-plan tier (VW-668)', () => {
-  function planStateWithTierStore(
-    getTrainingProfile: () => Promise<StoredTrainingProfile | undefined>,
+  const declaredBeginner = (): Promise<StoredTrainingProfile | undefined> =>
+    Promise.resolve({
+      userId: LOCAL_USER_ID,
+      declaredTier: 'beginner',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    });
+
+  function planStateWithoutTierStore(
+    slot: { session?: Partial<ActiveSession>; activeSet?: ActiveSet } = {},
   ): DashboardServerState {
     const session: ActiveSession = {
       sessionId: 'sess-tier',
@@ -1002,8 +1009,9 @@ describe('GET /api/session-plan tier (VW-668)', () => {
       exerciseName: 'Bench',
       setIds: [],
       status: 'active',
+      ...slot.session,
     };
-    const base = makeFakeState({ primary: { session } });
+    const base = makeFakeState({ primary: { session, activeSet: slot.activeSet } });
     return {
       slots: base.slots,
       store: {
@@ -1022,12 +1030,34 @@ describe('GET /api/session-plan tier (VW-668)', () => {
               targetSets: 3,
             },
           ]),
+      },
+    };
+  }
+
+  function planStateWithTierStore(
+    getTrainingProfile: () => Promise<StoredTrainingProfile | undefined>,
+    slot: { session?: Partial<ActiveSession>; activeSet?: ActiveSet } = {},
+  ): DashboardServerState {
+    const base = planStateWithoutTierStore(slot);
+    return {
+      slots: base.slots,
+      store: {
+        ...base.store,
         getTrainingProfile,
         listTrainingDayInstants: () => Promise.resolve([]),
         getSessionDateSpan: () => Promise.resolve({ first: null, last: null }),
         listSessionReviewRows: () => Promise.resolve([]),
       },
     };
+  }
+
+  async function fetchPlan(
+    state: DashboardServerState,
+  ): Promise<{ sets: number; tier?: unknown } | null> {
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    expect(res.status).toBe(200);
+    return (JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null }).plan;
   }
 
   it('carries the tier signal for a declared profile', async () => {
@@ -1056,6 +1086,53 @@ describe('GET /api/session-plan tier (VW-668)', () => {
     const body = JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null };
     expect(body.plan?.sets).toBe(3);
     expect(body.plan).not.toHaveProperty('tier');
+  });
+
+  it('omits the tier on a store without the tier reads', async () => {
+    const plan = await fetchPlan(planStateWithoutTierStore());
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it('returns no plan, and so no tier, when no planned exercise matches', async () => {
+    const plan = await fetchPlan(
+      planStateWithTierStore(declaredBeginner, { session: { exerciseId: 'row' } }),
+    );
+    expect(plan).toBeNull();
+  });
+
+  it("does not put the owner's tier on a guest's session", async () => {
+    const plan = await fetchPlan(
+      planStateWithTierStore(declaredBeginner, { session: { lifter: 'Guest' } }),
+    );
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it("does not put the owner's tier on a set labelled for a partner", async () => {
+    const activeSet: ActiveSet = {
+      setId: 'set-partner',
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:05.000Z',
+      reps: [],
+      status: 'active',
+      lifter: 'Partner',
+    };
+    const plan = await fetchPlan(planStateWithTierStore(declaredBeginner, { activeSet }));
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it("keeps the owner's tier while the owner's own set is open", async () => {
+    const activeSet: ActiveSet = {
+      setId: 'set-owner',
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:05.000Z',
+      reps: [],
+      status: 'active',
+    };
+    const plan = await fetchPlan(planStateWithTierStore(declaredBeginner, { activeSet }));
+    expect(plan?.tier).toMatchObject({ tier: 'beginner', source: 'declared' });
   });
 });
 

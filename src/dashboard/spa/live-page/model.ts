@@ -29,6 +29,9 @@ import type { SetPurpose } from '../../../store/types.js';
 import type { SetupCard } from '../../../store/types.js';
 // Type-only, same rationale: the server-computed session pace (VW-290).
 import type { SessionPaceView } from '../../read-models/session-pace.js';
+// Type-only, same rationale: the lifter's tier signal off the plan channel (VW-668).
+import type { TierView } from '../../read-models/session-plan.js';
+import { effortTargetFor } from '../../../profile/effort-target.js';
 import type { FatigueStop } from './fatigue-state';
 import type { ResolvedRest } from '../../../analytics/rest-defaults.js';
 
@@ -225,6 +228,13 @@ export interface SessionModel {
    * rather than pacing the lifter against a budget nobody prescribed.
    */
   sessionPace: SessionPaceView | null;
+  /** The coach's RPE for the active exercise. Absent or null when the plan states none. */
+  targetRpe?: number | null;
+  /**
+   * The owner's tier signal (VW-669), read off the plan channel. Absent or null with no plan,
+   * a failed tier read, or a non-owner on the cable, so nobody gets another lifter's target.
+   */
+  tier?: TierView | null;
 }
 
 /** The provenance of a resolved rest (VW-441), from the snapshot's `rest`. */
@@ -444,6 +454,27 @@ export interface PrescriptionCells {
   /** The formatted load, or `NO_VALUE` ("—") for an unset/discovery load — never a faked 0. */
   load: number | string;
   unit: MassUnit;
+  /** The effort target for a working set (VW-669); null when neither the plan nor a tier states one. */
+  effort: EffortCell | null;
+}
+
+/** An effort target and what it rests on: `plan` for a coach-written RPE, else the tier and its corpus. */
+export interface EffortCell {
+  text: string;
+  basis: string;
+}
+
+/**
+ * The working-set effort target: the coach's RPE as written (never converted to RIR, which
+ * is not interchangeable with it), else RP's per-tier target. A defaulted tier reads assumed.
+ */
+function deriveEffort(session: SessionModel): EffortCell | null {
+  if (session.targetRpe != null) return { text: `RPE ${session.targetRpe}`, basis: 'plan' };
+  if (session.tier == null) return null;
+  const { tier, source } = session.tier;
+  const { wallText, sources } = effortTargetFor(tier);
+  const provenance = source === 'default' ? 'assumed' : source;
+  return { text: wallText, basis: `${tier} tier (${provenance}) · RP ${sources.join(', ')}` };
 }
 
 /**
@@ -560,7 +591,7 @@ export function derivePrescription(
   const reps = plannedRepTarget(session) ?? session.targetReps;
   if (plannedSets === null || reps === null) return null;
   const { weight, unit } = summaryLoad(prescribedLoadLbs(session), displayUnit);
-  return { sets: plannedSets, reps, load: weight, unit };
+  return { sets: plannedSets, reps, load: weight, unit, effort: deriveEffort(session) };
 }
 
 /**
@@ -598,6 +629,7 @@ export function deriveRecapPrescription(
     reps: plannedRepTarget(session) ?? session.targetReps ?? NO_VALUE,
     load: weight,
     unit,
+    effort: deriveEffort(session),
   };
 }
 
