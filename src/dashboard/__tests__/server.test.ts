@@ -23,7 +23,7 @@ import {
   type DashboardServerState,
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
-import type { StoredSession, StoredSet } from '../../store/types.js';
+import type { StoredSession, StoredSet, StoredTrainingProfile } from '../../store/types.js';
 import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { LiveSignalHub } from '../../state/live-signal.js';
 import { openTestStore } from '../../store/__tests__/open-test-store.js';
@@ -988,6 +988,74 @@ describe('GET /api/history', () => {
     await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/history?limit=garbage');
     const callArgs = state.store.listSessions.mock.calls[0]?.[0] as { limit: number };
     expect(callArgs.limit).toBe(HISTORY_DEFAULT_LIMIT);
+  });
+});
+
+describe('GET /api/session-plan tier (VW-668)', () => {
+  function planStateWithTierStore(
+    getTrainingProfile: () => Promise<StoredTrainingProfile | undefined>,
+  ): DashboardServerState {
+    const session: ActiveSession = {
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    return {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-tier', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+        getTrainingProfile,
+        listTrainingDayInstants: () => Promise.resolve([]),
+        getSessionDateSpan: () => Promise.resolve({ first: null, last: null }),
+        listSessionReviewRows: () => Promise.resolve([]),
+      },
+    };
+  }
+
+  it('carries the tier signal for a declared profile', async () => {
+    const state = planStateWithTierStore(() =>
+      Promise.resolve({
+        userId: LOCAL_USER_ID,
+        declaredTier: 'beginner',
+        updatedAt: '2026-05-01T00:00:00.000Z',
+      }),
+    );
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null };
+    expect(body.plan?.tier).toEqual({
+      tier: 'beginner',
+      confidence: 'provisional',
+      source: 'declared',
+    });
+  });
+
+  it('omits the tier but keeps the prescription when the tier read throws', async () => {
+    const state = planStateWithTierStore(() => Promise.reject(new Error('profile read failed')));
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null };
+    expect(body.plan?.sets).toBe(3);
+    expect(body.plan).not.toHaveProperty('tier');
   });
 });
 

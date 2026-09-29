@@ -15,7 +15,8 @@
 //
 // Consumers read the clamped `tier`: `plan.warmup_ramp` (rung count), `report.weekly` and
 // `plan.suggest_progression` (whether a set may be added), the plan lints (volume ceilings and
-// the provisional note), and `profile.get_starting_prescription`. Goal derivation reads the
+// the provisional note), `profile.get_starting_prescription`, and the wall's prescription
+// (`/api/session-plan`, VW-668). Goal derivation reads the
 // DECLARED tier for magnitude and flags when the clamp disagreed.
 //
 // `sessions.user_id` is not populated by any current writer, so this file counts every owner

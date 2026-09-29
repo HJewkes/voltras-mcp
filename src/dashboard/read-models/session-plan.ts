@@ -12,6 +12,7 @@
 
 import { resolveTargetTempo } from '../tempo-defaults.js';
 import type { PlanGoalKind, StoredPlannedExercise } from '../../store/types.js';
+import type { Tier, TierConfidence, TierSource } from '../../tools/tier-signal.js';
 
 /** Narrow catalog lookup this module needs — name + movement pattern, nothing else. */
 export type ExerciseCatalogLookup = {
@@ -34,6 +35,13 @@ export interface PlannedExerciseView {
   weightLbs?: number;
   /** True for the exercise the live session is currently on. */
   active: boolean;
+}
+
+/** The lifter's tier signal as the wall reads it (VW-668). Mirrors `TierView` in `spa/adapter.ts`. */
+export interface TierView {
+  tier: Tier;
+  confidence: TierConfidence;
+  source: TierSource;
 }
 
 /** Prescribed targets for the active exercise, from its attached plan template. */
@@ -70,6 +78,8 @@ export interface PrescriptionView {
    * resolve the full template → week → block chain (each hop optional, never invented).
    */
   title?: string;
+  /** The lifter's tier signal (VW-668). Absent when the tier read failed or was not given. */
+  tier?: TierView;
 }
 
 /** Everything `buildSessionPlanView` needs, already resolved out of the store. */
@@ -82,6 +92,8 @@ export interface SessionPlanRows {
   planned: readonly StoredPlannedExercise[];
   /** Composed via `composeSessionTitle` from the resolved template → week → block chain. */
   title: string | null;
+  /** The tier signal, read by the caller; absent when that read failed. */
+  tier?: TierView;
 }
 
 /**
@@ -120,6 +132,7 @@ export function buildSessionPlanView(
   if (tempo !== null) prescription.tempo = tempo;
   prescription.exercises = buildPlannedExerciseList(planned, activeExerciseId, catalog);
   if (title !== null) prescription.title = title;
+  if (rows.tier !== undefined) prescription.tier = rows.tier;
   return prescription;
 }
 

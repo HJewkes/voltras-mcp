@@ -58,6 +58,7 @@ export {
   type PlannedExerciseView,
   type PrescriptionView,
   type SessionPlanRows,
+  type TierView,
 } from './session-plan.js';
 
 export { buildHistoryView, type HistoryRows } from './history.js';
