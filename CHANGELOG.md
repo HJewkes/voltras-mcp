@@ -130,7 +130,10 @@ entry is written from the user's point of view is a review question, not a check
   week in a row-based plan. A lift that trains two muscles ties them for the top spot, and
   the warning stayed silent on every tie; it now compares the tied muscles and warns only when
   the two weeks share none (VW-698).
-
+- The effort target's "(assumed tier)" marker now comes from whether the tier was defaulted,
+  not from matching the wording of the hover text, so rewording that text can no longer drop
+  it. The text saying what the target rests on is also read aloud by screen readers and no
+  longer needs a hover (VW-700).
 - Two answers to one goal offer or weekly-review proposal no longer both report success. The
   first answer is kept, and a later one is refused with `ADVISORY_ALREADY_ANSWERED`, naming
   the answer that stands (`goal.retire` on an offer returns `offerAlreadyAnswered: true`).

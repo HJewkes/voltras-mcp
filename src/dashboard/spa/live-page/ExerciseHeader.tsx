@@ -21,7 +21,7 @@ import {
   type EffortCell,
 } from './model';
 import { type MassUnit } from './mass';
-import { effortCaption } from './live-copy';
+import { effortAccessibleLabel, effortCaption } from './live-copy';
 
 const t = getSemanticColors('dark');
 
@@ -57,7 +57,11 @@ export function EffortCaption({ effort }: { effort: EffortCell | null }) {
   if (effort === null || caption === null) return null;
   return (
     <Tooltip label={effort.basis} placement="bottom">
-      <Text testID="effort-caption" style={{ color, fontSize: 13 }}>
+      <Text
+        testID="effort-caption"
+        accessibilityLabel={effortAccessibleLabel(caption, effort.basis)}
+        style={{ color, fontSize: 13 }}
+      >
         {caption}
       </Text>
     </Tooltip>

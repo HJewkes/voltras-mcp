@@ -44,13 +44,20 @@ export function restBasisCaption(basis: {
 /** The basis `derivePrescription` gives a coach-written RPE. */
 const PLAN_EFFORT_BASIS = 'plan';
 
+/** The caption with its basis appended, for the accessible label (the tooltip needs hover). */
+export function effortAccessibleLabel(caption: string, basis: string): string {
+  return `${caption}. Basis: ${basis}`;
+}
+
 /**
  * The effort target caption under the prescription lockup (VW-670), labelled as a target so
  * it never reads as a reading (VW-485). A tier nobody declared is marked assumed. Null hides it.
  */
-export function effortCaption(effort: { text: string; basis: string } | null): string | null {
+export function effortCaption(
+  effort: { text: string; basis: string; assumed: boolean } | null,
+): string | null {
   if (effort === null) return null;
   if (effort.basis === PLAN_EFFORT_BASIS) return `Target ${effort.text}`;
-  if (effort.basis.includes(' tier (assumed)')) return `${effort.text} (assumed tier)`;
+  if (effort.assumed) return `${effort.text} (assumed tier)`;
   return effort.text;
 }
