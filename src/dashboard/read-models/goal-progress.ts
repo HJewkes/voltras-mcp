@@ -85,8 +85,8 @@ import {
   blockReadingsOf,
   expectationAt,
   isCorridor,
-  isOneSidedHold,
   goalReachOf,
+  readsTwoSided,
   mesoMilestoneOf,
   weekOutcomesOf,
   type BlockReading,
@@ -627,11 +627,6 @@ function deviationOf(expected: GoalBandExpectation, value: number, band: GoalBan
   const displacement = readsTwoSided(band) ? -Math.abs(value - mid) : (value - mid) * signOf(band);
   if (halfSpan > 0) return (displacement / halfSpan) * SMALL_DEVIATION_PCT;
   return mid === 0 ? 0 : (displacement / Math.abs(mid)) * 100;
-}
-
-/** A `hold` band judged on distance from its middle; a lift held through a diet phase is not one. */
-function readsTwoSided(band: GoalBand): boolean {
-  return band.direction === 'hold' && !isOneSidedHold(band);
 }
 
 function signOf(band: GoalBand): number {

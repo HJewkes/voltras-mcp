@@ -154,6 +154,11 @@ export function isOneSidedHold(band: GoalBand): boolean {
   return band.direction === 'hold' && band.corridorPct === null;
 }
 
+/** A `hold` band judged on distance from its middle; a lift held through a diet phase is not one. */
+export function readsTwoSided(band: GoalBand): boolean {
+  return band.direction === 'hold' && !isOneSidedHold(band);
+}
+
 /** Which side of its corridor a reading sits on, or `null` inside it. */
 export function corridorSideOf(
   expected: GoalBandExpectation,
@@ -288,8 +293,8 @@ export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
 
 /**
  * Hit the moment the committed number is lifted; missed only once the block
- * has ended without it. A lift held through a diet phase has no number to lift, so
- * it is judged at the boundary alone: held if its last reading sits inside that week's band.
+ * has ended without it. A `hold` band with no reach is judged at the boundary alone,
+ * off its last reading against that week's band row.
  */
 function milestoneState(
   input: MesoMilestoneInput,
@@ -300,7 +305,13 @@ function milestoneState(
   if (!ended) return 'upcoming';
   if (input.reach !== null || last === undefined) return 'missed';
   const expected = expectationAt(input.band, input.weeks, last.position);
-  return insideCorridor(expected, last.value) ? 'hit' : 'missed';
+  return heldAt(expected, last.value, input.band) ? 'hit' : 'missed';
+}
+
+/** Inside a two-sided band; for a lift held through a diet phase, not under its low edge (VW-486). */
+function heldAt(expected: GoalBandExpectation, value: number, band: GoalBand): boolean {
+  if (readsTwoSided(band)) return insideCorridor(expected, value);
+  return !behindEdge(expected.low, value, band);
 }
 
 /** One entry per week of the block, aligned to week 1. */
@@ -327,7 +338,7 @@ function outcomeAgainst(
   value: number,
   band: GoalBand,
 ): GoalWeekOutcome {
-  if (band.direction === 'hold') return insideCorridor(expected, value) ? 'on_track' : 'missed';
+  if (readsTwoSided(band)) return insideCorridor(expected, value) ? 'on_track' : 'missed';
   if (behindEdge(expected.low, value, band)) return 'missed';
   return aheadOfEdge(expected.high, value, band) ? 'ahead' : 'on_track';
 }
