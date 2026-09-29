@@ -29,7 +29,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
 import {
   LOCAL_USER_ID,
   type AppendBlockScheduleInput,
@@ -40,6 +39,7 @@ import {
   type StoredSet,
   type StoredUiAction,
 } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const AT = '2026-09-20T18:00:00.000Z';
 const WEEK_ONE = '2026-09-21';
@@ -61,7 +61,7 @@ function openEngine(name: string): Engine {
   const opened: SessionStore[] = [];
   return {
     connect() {
-      const store = SqliteSessionStore.open(path);
+      const store = openTestStore({ path });
       opened.push(store);
       return Promise.resolve(store);
     },

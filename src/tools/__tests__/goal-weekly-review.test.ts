@@ -19,10 +19,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WEEKLY_CHECKIN_CODES, WEEKLY_CHECKIN_KIND } from '../../schemas/profile.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredGoalTarget } from '../../store/types.js';
 import { registerGoalTools } from '../goal-tools.js';
 import { BODYWEIGHT_RATE_ADVISORY_CODE } from '../goal-weekly-review.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const TOOL_NAMES = [
   'goal.declare_priorities',
@@ -47,7 +48,7 @@ interface FakeRegisteredTool {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (name: string, args?: unknown) => Promise<Record<string, unknown>>;
 }
 
@@ -60,7 +61,7 @@ function mostRecentSunday(): string {
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = { store, exercises: { list: () => [] } } as unknown as ServerState;
   const placeholders = new Map<string, FakeRegisteredTool>();
   for (const name of TOOL_NAMES) {
@@ -89,7 +90,7 @@ function setup(): Harness {
 }
 
 /** A declared fat-loss phase with an accepted bodyweight target under it. */
-async function seedPhaseAndTarget(store: SqliteSessionStore, days = PHASE_DAYS): Promise<void> {
+async function seedPhaseAndTarget(store: SessionStore, days = PHASE_DAYS): Promise<void> {
   await store.declareDietPhase({
     userId: LOCAL_USER_ID,
     phase: 'fat-loss',
@@ -137,7 +138,7 @@ function bodyweightTarget(priorityId: string): StoredGoalTarget {
  * the gap off the committed line widens every week.
  */
 async function seedReadings(
-  store: SqliteSessionStore,
+  store: SessionStore,
   lbsPerWeek: number,
   days = PHASE_DAYS,
 ): Promise<void> {
@@ -150,7 +151,7 @@ async function seedReadings(
   }
 }
 
-async function seedCheckin(store: SqliteSessionStore, adherence: string): Promise<void> {
+async function seedCheckin(store: SessionStore, adherence: string): Promise<void> {
   await store.putSelfReport({
     id: 'checkin-adherence',
     userId: LOCAL_USER_ID,

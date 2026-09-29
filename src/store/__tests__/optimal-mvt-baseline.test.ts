@@ -9,7 +9,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
 import {
   LOCAL_USER_ID,
   type StoredFailureAnchor,
@@ -17,6 +16,7 @@ import {
   type StoredSession,
   type StoredSet,
 } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -140,8 +140,8 @@ function toAnchor(spec: SetSpec, session: SessionSpec): StoredFailureAnchor {
   };
 }
 
-async function openWith(history: SessionSpec[]): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+async function openWith(history: SessionSpec[]): Promise<SessionStore> {
+  const store = openTestStore();
   for (const session of history) {
     const first: StoredSession = {
       id: session.id,

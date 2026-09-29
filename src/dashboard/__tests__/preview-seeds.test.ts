@@ -32,12 +32,13 @@ import {
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { fetchGoalPriorityRows, fetchGoalProgressViews } from '../goal-progress-api.js';
 import { primaryTarget, type GoalsPageData } from '../spa/goals/goals-model.js';
 import { wholeBodyCards } from '../spa/goals/whole-body-cards.js';
 import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
 const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
@@ -63,7 +64,7 @@ afterEach(() => {
 async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
   const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
   scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+  const store = openTestStore({ path: join(dir, 'preview.sqlite') });
   try {
     const now = new Date();
     await seedGoalPreview(store, state, now);
@@ -221,7 +222,7 @@ describe('dashboard:preview companion lifts (VW-467)', () => {
   it('seeds two accepted lifts beside the lead, which still lists first', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
     scratchDirs.push(dir);
-    const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
     try {
       const now = new Date();
       await seedGoalPreview(store, goalPreviewState('on_track'), now, { companions: true });
@@ -266,7 +267,7 @@ describe('dashboard:preview whole-body goals (VW-455)', () => {
   ): Promise<{ data: GoalsPageData; wholeBody: string[] }> {
     const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
     scratchDirs.push(dir);
-    const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
     try {
       const now = new Date();
       const report = await seedGoalPreview(store, goalPreviewState(stateName), now, {

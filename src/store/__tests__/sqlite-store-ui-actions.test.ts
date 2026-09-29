@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const AT = '2026-09-19T12:00:00.000Z';
 const DONE_AT = '2026-09-19T12:00:01.000Z';
@@ -25,7 +26,7 @@ let store: SqliteSessionStore;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'vmcp-ui-actions-'));
   path = join(dir, 'store.sqlite');
-  store = SqliteSessionStore.open(path);
+  store = openSqliteTestStore({ path });
 });
 
 afterEach(async () => {
@@ -300,7 +301,7 @@ describe('reading the trail', () => {
       completedAt: DONE_AT,
     });
     await store.close();
-    store = SqliteSessionStore.open(path);
+    store = openSqliteTestStore({ path });
     const pending = await store.listUiActions({ status: 'pending' });
     expect(pending.map((r) => r.actionId)).toEqual(['act-crashed']);
   });

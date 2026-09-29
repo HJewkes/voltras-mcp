@@ -16,7 +16,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Phase } from '@voltras/workout-analytics';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../../sqlite-store.js';
+import { openSqliteTestStore } from '../open-test-store.js';
 import type { StoredRep, StoredSession, StoredSet } from '../../types.js';
 
 export const FIXTURE_EXERCISE_ID = 'ex-back-squat';
@@ -83,7 +84,7 @@ const SET: StoredSet = {
 
 /** Builds a store at `path` holding at least one row in every table, and closes it. */
 export async function seedEveryTable(path: string): Promise<void> {
-  const store = SqliteSessionStore.open(path);
+  const store = openSqliteTestStore({ path });
   try {
     await seedTraining(store);
     await seedPlanTree(store);

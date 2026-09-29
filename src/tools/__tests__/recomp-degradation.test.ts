@@ -8,16 +8,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { RECOMP_DEGRADATION_CODE } from '../../analytics/recomp-degradation.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID, type StoredTrainingBlock } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import { buildRecompDegradation, recordRecompResponse } from '../recomp-degradation.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const PROGRAM_ID = 'program-1';
 const PHASE_STARTED_AT = '2026-01-01T00:00:00.000Z';
 const NOW = '2026-05-01T00:00:00.000Z';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let state: ServerState;
 
 /** One block with one week and one template, finished at `finishedAt` when given. */
@@ -61,7 +61,7 @@ async function declareRecomposition(): Promise<void> {
 }
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   state = { store } as unknown as ServerState;
   await store.putTrainingProgram({ id: PROGRAM_ID, name: 'p', createdAt: PHASE_STARTED_AT });
 });

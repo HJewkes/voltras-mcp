@@ -12,11 +12,11 @@ import {
   type DashboardServerState,
 } from '../server.js';
 import { dateBlock } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { BannerRecord } from '../read-models/banners.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const handles: DashboardServerHandle[] = [];
-const stores: SqliteSessionStore[] = [];
+const stores: SessionStore[] = [];
 
 afterEach(async () => {
   while (handles.length > 0) {
@@ -38,8 +38,8 @@ function mondayWeeksAgo(weeks: number): string {
   return `${monday.getFullYear()}-${month}-${day}`;
 }
 
-async function planStore(): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+async function planStore(): Promise<SessionStore> {
+  const store = openTestStore();
   stores.push(store);
   await store.putTrainingProgram({
     id: 'p1',

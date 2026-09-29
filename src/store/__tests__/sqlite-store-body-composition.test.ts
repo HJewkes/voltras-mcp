@@ -14,8 +14,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BODY_FAT_SOURCES } from '../../analytics/body-fat-sources.js';
 import { LEANNESS_BANDS } from '../leanness-band.js';
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 let dir: string;
 let path: string;
@@ -24,7 +25,7 @@ let store: SqliteSessionStore;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'vmcp-bodycomp-'));
   path = join(dir, 'db.sqlite');
-  store = SqliteSessionStore.open(path);
+  store = openSqliteTestStore({ path });
 });
 
 afterEach(async () => {

@@ -5,8 +5,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import type { AppendBlockScheduleInput, SessionStore } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const MONDAY = '2026-09-21';
 const AT = '2026-09-19T12:00:00.000Z';
@@ -14,7 +15,7 @@ const AT = '2026-09-19T12:00:00.000Z';
 let store: SqliteSessionStore;
 
 beforeEach(async () => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openSqliteTestStore();
   await store.putTrainingProgram({ id: 'prog', name: 'Return', createdAt: AT });
   await store.putTrainingBlock({
     id: 'blk',

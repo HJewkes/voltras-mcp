@@ -8,20 +8,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { blockEndsAt } from '../../analytics/goal-block-weeks.js';
 import { localDate, readTrainingDays } from '../../analytics/training-days.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredGoalTarget, StoredPriority } from '../../store/types.js';
 import { deriveTarget, readDerivationContext, selectionOf } from '../../tools/goal-derivation.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_MS = 28 * DAY_MS;
 const NOW = new Date(2026, 8, 19, 18, 0);
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
 });
 afterEach(async () => {
   await store.close();

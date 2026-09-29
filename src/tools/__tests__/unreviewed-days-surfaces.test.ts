@@ -11,12 +11,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { readUnreviewed } from '../../analytics/session-review.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 /** Two unreviewed local days, one of them holding two sessions. */
-async function openUnreviewed(): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+async function openUnreviewed(): Promise<SessionStore> {
+  const store = openTestStore();
   const days: [string, string][] = [
     ['u1', '2026-09-07T15:00:00.000Z'],
     ['u2', '2026-09-07T16:00:00.000Z'],

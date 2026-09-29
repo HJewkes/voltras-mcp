@@ -1,6 +1,6 @@
 // Unit tests for `report.weekly` (src/tools/report-tools.ts).
 //
-// Uses a real `SqliteSessionStore.open(':memory:')` rather than a hand-rolled
+// Uses a real `openSqliteTestStore()` rather than a hand-rolled
 // stub: the tool composes plan-tree, baseline-gate and self-report reads
 // across many store methods, and re-deriving each one's filtering behaviour
 // by hand would test the stub, not the tool. `self_reports` has no writer yet
@@ -10,12 +10,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { baselineKeyId, type Phase, type Rep } from '@voltras/workout-analytics';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import { buildWeeklyReport, renderWeeklyMarkdown } from '../report-tools.js';
 import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openSqliteTestStore } from '../../store/__tests__/open-test-store.js';
 
 const EXERCISE_ID = 'seated-row';
 
@@ -164,7 +165,7 @@ describe('report.weekly', () => {
   let store: SqliteSessionStore;
 
   beforeEach(() => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
   });
 
   afterEach(async () => {

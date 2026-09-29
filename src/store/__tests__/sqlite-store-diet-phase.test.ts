@@ -25,8 +25,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import { RECOMP_MODES } from '../diet-phase.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const T = {
   jan: '2026-01-01T00:00:00.000Z',
@@ -38,7 +39,7 @@ const T = {
 const DECLARED_AT = '2026-04-15T00:00:00.000Z';
 
 function open(): SqliteSessionStore {
-  return SqliteSessionStore.open(':memory:');
+  return openSqliteTestStore();
 }
 
 async function declare(store: SqliteSessionStore, phase: string, startedAt: string): Promise<void> {
@@ -216,7 +217,7 @@ describe('recomp_mode (VW-378)', () => {
   });
 
   it('keeps the fresh-DB CHECK list identical to RECOMP_MODES', () => {
-    const store = SqliteSessionStore.open(path);
+    const store = openSqliteTestStore({ path });
     store.close();
     const db = new DatabaseSync(path);
     try {
@@ -243,12 +244,12 @@ describe('file-backed database', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('writes into a database created before this change without moving user_version', async () => {
-    const seeded = SqliteSessionStore.open(path);
+    const seeded = openSqliteTestStore({ path });
     await seeded.putSession({ kind: 'training', id: 'old-sess', startedAt: T.feb });
     seeded.close();
     const before = readUserVersion(path);
 
-    const reopened = SqliteSessionStore.open(path);
+    const reopened = openSqliteTestStore({ path });
     await reopened.declareDietPhase({
       userId: LOCAL_USER_ID,
       phase: 'fat-loss',
@@ -267,7 +268,7 @@ describe('file-backed database', () => {
   });
 
   it('falls back to the stamp when no range covers the session any more', async () => {
-    const store = SqliteSessionStore.open(path);
+    const store = openSqliteTestStore({ path });
     await store.declareDietPhase({
       userId: LOCAL_USER_ID,
       phase: 'gain',
@@ -282,14 +283,14 @@ describe('file-backed database', () => {
     // branch needs a test that reaches past it.
     exec(path, `DELETE FROM diet_phases`);
 
-    const reopened = SqliteSessionStore.open(path);
+    const reopened = openSqliteTestStore({ path });
     expect(await reopened.getDietPhaseCovering(LOCAL_USER_ID, T.feb, T.feb)).toBeUndefined();
     expect(await reopened.getSessionDietPhase('sess-1')).toBe('gain');
     reopened.close();
   });
 
   it('neither reads nor writes training_weeks.phase_type', async () => {
-    const seeded = SqliteSessionStore.open(path);
+    const seeded = openSqliteTestStore({ path });
     await seeded.putTrainingProgram({ id: 'prog-1', name: 'Return Block', createdAt: T.jan });
     await seeded.putTrainingBlock({
       id: 'block-1',
@@ -304,7 +305,7 @@ describe('file-backed database', () => {
     // contract does not expose `phase_type` at all, which is the separation.
     exec(path, `UPDATE training_weeks SET phase_type = 'accumulation' WHERE id = 'week-1'`);
 
-    const store = SqliteSessionStore.open(path);
+    const store = openSqliteTestStore({ path });
     await store.declareDietPhase({
       userId: LOCAL_USER_ID,
       phase: 'fat-loss',

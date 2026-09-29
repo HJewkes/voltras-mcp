@@ -14,9 +14,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -99,7 +100,7 @@ function makeSet(args: {
 const MIXED_SESSION_ID = 'sess-mixed';
 
 /** One session, two exercises: 2×8 @135 bench and 1×3 @325 squat. */
-async function seedMixedSession(store: SqliteSessionStore, startedAt: string): Promise<void> {
+async function seedMixedSession(store: SessionStore, startedAt: string): Promise<void> {
   await store.putSession({
     kind: 'training',
     id: MIXED_SESSION_ID,
@@ -172,7 +173,7 @@ function fakePlaceholders(names: readonly string[]): {
   };
 }
 
-function stateWith(store: SqliteSessionStore): ServerState {
+function stateWith(store: SessionStore): ServerState {
   // `session.volume`'s B47 set count resolves each set's exercise through the
   // catalog. Empty here — this file is about set SCOPING, and the muscle
   // mapping has its own test in `metrics-rp-readouts.test.ts`.
@@ -180,10 +181,10 @@ function stateWith(store: SqliteSessionStore): ServerState {
   return { store, slots: new Map(), exercises } as unknown as ServerState;
 }
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 beforeEach(() => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-07-20T12:00:00.000Z'));
 });

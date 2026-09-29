@@ -24,8 +24,9 @@ import {
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
 import type { StoredSession, StoredSet } from '../../store/types.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { LiveSignalHub } from '../../state/live-signal.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 // Track every handle a test acquires so `afterEach` can close stragglers.
 const liveHandles: DashboardServerHandle[] = [];
@@ -378,7 +379,7 @@ describe('GET /api/snapshot', () => {
   // so this test wires the REAL `SqliteSessionStore` in as `state.store`, exactly
   // how `src/server.ts` wires the real `ServerState.store` into the dashboard.
   it('reads a confirmed card off a real SqliteSessionStore without losing method binding', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putExerciseSetup({
       id: 'setup@1.0.0:local/cable-chest-press/both#0',
       userId: LOCAL_USER_ID,

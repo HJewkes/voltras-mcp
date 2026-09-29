@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -22,6 +22,7 @@ import type {
   StoredTrainingWeek,
   StoredWorkoutTemplate,
 } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 function makeProgram(overrides: Partial<StoredTrainingProgram> = {}): StoredTrainingProgram {
   return {
@@ -90,7 +91,7 @@ describe('SqliteSessionStore — v3 plan schema', () => {
   let store: SqliteSessionStore;
 
   beforeEach(() => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
   });
 
   afterEach(async () => {
@@ -509,7 +510,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
   it('opening the same DB twice is a no-op (CREATE IF NOT EXISTS guards)', async () => {
     const dbPath = join(workdir, 'idempotent.sqlite');
 
-    const first = SqliteSessionStore.open(dbPath);
+    const first = openSqliteTestStore({ path: dbPath });
     await first.putTrainingProgram({
       id: 'prog-1',
       name: 'P',
@@ -517,7 +518,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
     });
     await first.close();
 
-    const second = SqliteSessionStore.open(dbPath);
+    const second = openSqliteTestStore({ path: dbPath });
     try {
       const fetched = await second.getTrainingProgram('prog-1');
       expect(fetched?.name).toBe('P');
@@ -563,7 +564,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
     `);
     seed.close();
 
-    const store = SqliteSessionStore.open(dbPath);
+    const store = openSqliteTestStore({ path: dbPath });
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
       const tables = raw

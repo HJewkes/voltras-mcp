@@ -14,9 +14,9 @@ import {
   seedOwnerShapedPlan,
 } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import { buildWeeklyReport } from '../report-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -34,14 +34,14 @@ const { CORE_TOOL_NAMES } = await import('../../tool-registry.js');
 
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let state: ServerState;
 let callbacks: Map<string, Callback>;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-19T12:00:00.000Z'));
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
   state = {
     config: { adapter: 'node' },

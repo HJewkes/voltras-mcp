@@ -8,8 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSession, type StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -74,7 +74,7 @@ function daysAgo(days: number): string {
 }
 
 async function openWith(sets: { set: StoredSet; sessionStartedAt: string }[]) {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const seen = new Set<string>();
   for (const { set, sessionStartedAt } of sets) {
     if (!seen.has(set.sessionId)) {
@@ -220,7 +220,7 @@ interface AnchorRow {
   session_position_sec: number | null;
 }
 
-function rawAnchors(store: SqliteSessionStore): AnchorRow[] {
+function rawAnchors(store: SessionStore): AnchorRow[] {
   const db = (store as unknown as { db: { prepare(sql: string): { all(): unknown[] } } }).db;
   return db.prepare(`SELECT * FROM failure_anchors ORDER BY observed_at`).all() as AnchorRow[];
 }

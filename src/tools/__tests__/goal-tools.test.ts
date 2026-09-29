@@ -21,11 +21,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { programmedRampStepLbs } from '../../analytics/goal-band.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { Tier } from '../tier-signal.js';
 import { deriveTargetInFrame, readDerivationContext } from '../goal-derivation.js';
 import { registerGoalTools } from '../goal-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const TOOL_NAMES = [
   'goal.declare_priorities',
@@ -49,7 +50,7 @@ interface FakeRegisteredTool {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (name: string, args?: unknown) => Promise<Record<string, unknown>>;
   expectError: (name: string, args?: unknown) => Promise<{ code: string; message: string }>;
 }
@@ -84,7 +85,7 @@ function makeReps(setId: string, count: number): StoredRep[] {
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = {
     store,
     exercises: { list: () => CATALOG, getById: (id: string) => CATALOG.find((e) => e.id === id) },
@@ -133,7 +134,7 @@ function setup(): Harness {
  * `withBaseline` adds the one failure anchor that carries it to PROVISIONAL.
  */
 async function seedLiftHistory(
-  store: SqliteSessionStore,
+  store: SessionStore,
   options: {
     exerciseId?: string;
     sessionCount: number;
