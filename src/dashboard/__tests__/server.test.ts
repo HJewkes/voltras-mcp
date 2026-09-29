@@ -118,7 +118,10 @@ function completedRecord(
  * sets have already closed on it. The template is two exercises so the pace
  * costs more than one exercise's rest.
  */
-function paceState(completed: ReturnType<typeof completedRecord>[]): DashboardServerState {
+function paceState(
+  completed: ReturnType<typeof completedRecord>[],
+  activeSet?: ActiveSet,
+): DashboardServerState {
   const session: ActiveSession = {
     sessionId: 'sess-PACE',
     startedAt: '2026-05-09T12:00:00.000Z',
@@ -134,7 +137,7 @@ function paceState(completed: ReturnType<typeof completedRecord>[]): DashboardSe
           live: {
             snapshotDevice: () => ({ connected: true }),
             snapshotSession: () => session,
-            snapshotSet: () => undefined,
+            snapshotSet: () => activeSet,
             snapshotCompletedSets: () => completed,
           },
         },
@@ -442,6 +445,46 @@ describe('GET /api/snapshot', () => {
     const body = JSON.parse(res.body) as { sessionPace: { plannedSetsRemaining: number } | null };
     // Only `s1` counts: the warm-up and the 0-rep set leave the plan untouched.
     expect(body.sessionPace?.plannedSetsRemaining).toBe(5);
+  });
+
+  it('serves the pace state, slip and a trim suggestion for a seeded plan running late', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2026-05-09T14:00:00.000Z'));
+    try {
+      const handle = await startWithFake(
+        paceState([
+          completedRecord('s1', {
+            exerciseId: 'bench',
+            setPurpose: 'working',
+            reps: [oneRep()],
+            endedAt: '2026-05-09T12:05:00.000Z',
+          }),
+        ]),
+      );
+      const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+      const body = JSON.parse(res.body) as {
+        sessionPace: { state: string; slipMinutes: number; suggestion?: { kind: string } };
+      };
+      expect(body.sessionPace.state).toBe('behind');
+      expect(body.sessionPace.slipMinutes).toBeGreaterThan(0);
+      expect(body.sessionPace.suggestion?.kind).toBe('trim');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads a streaming first set as live, so the pace is not idle', async () => {
+    const streaming = {
+      setId: 'live-1',
+      sessionId: 'sess-PACE',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      status: 'active',
+      reps: [],
+    } as unknown as ActiveSet;
+    const handle = await startWithFake(paceState([], streaming));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { sessionPace: { state: string } };
+    expect(body.sessionPace.state).not.toBe('idle');
   });
 
   it('reports sessionPace=null when no plan is attached to the session', async () => {

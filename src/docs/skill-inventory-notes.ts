@@ -330,7 +330,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'session.get': {
     job: 'record',
     when: 'One session in full',
-    rule: 'Carries `sessionPace` when a plan is attached: an estimate, never a measurement',
+    rule: 'Carries `sessionPace` when a plan is attached: an estimate, never a measurement. Its `state` and `slipMinutes` come from time alone; a finished session reports its final verdict',
   },
   'session.review_list': {
     job: 'record',
