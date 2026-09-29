@@ -39,6 +39,7 @@ import {
   LOCAL_USER_ID,
   type AdvisoryDerivation,
   type BaselineState,
+  type GoalTargetOfferClaim,
   type StoredAdvisoryDecision,
   type StoredGoalTarget,
 } from '../store/types.js';
@@ -364,24 +365,22 @@ function settled(
 
 /**
  * Acceptance: record which row replaced the starting ramp, and retire the ramp
- * only if this acceptance is the answer recorded.
+ * only if this acceptance is the answer recorded. The acceptance's own write claims it.
  */
-export async function completeOffer(
-  state: ServerState,
+export function offerClaim(
   open: StoredAdvisoryDecision,
   newTargetId: string,
-): Promise<AdvisoryAnswerOutcome> {
+): GoalTargetOfferClaim {
   const inputs = offerInputsOf(open);
-  return answerIfOpen(
-    state.store,
-    open,
-    {
+  return {
+    decisionId: open.id,
+    answer: {
       userResponse: 'accepted',
       respondedAt: new Date().toISOString(),
       inputs: { ...inputs, newTargetId },
     },
-    { goalTargetId: inputs.targetId, outcome: 'abandoned' },
-  );
+    retire: { goalTargetId: inputs.targetId, outcome: 'abandoned' },
+  };
 }
 
 /**

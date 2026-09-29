@@ -99,6 +99,7 @@ async function ok(call: Call, name: string, args?: unknown): Promise<Record<stri
 type HookedMethod =
   | 'listAdvisoryDecisions'
   | 'answerAdvisoryIfOpen'
+  | 'acceptGoalTarget'
   | 'putAdvisoryDecision'
   | 'putAdvisoryDerived';
 
@@ -315,8 +316,13 @@ describe.each(VARIANTS)('an offer answered from two sides, $name', (variant) => 
   it('writes no acceptance and retires no ramp when a decline claimed the offer first', async () => {
     const decliner = toolsOver(variant.second(first));
     const accept = toolsOver(
-      interleaved(first, 'answerAdvisoryIfOpen', { nth: 1, when: 'before' }, () =>
-        ok(decliner, 'goal.retire', { targetId: fixture.offerTargetId, outcome: 'abandoned' }),
+      // The accept claims the offer inside its own write (VW-589).
+      interleaved(
+        first,
+        ['answerAdvisoryIfOpen', 'acceptGoalTarget'],
+        { nth: 1, when: 'before' },
+        () =>
+          ok(decliner, 'goal.retire', { targetId: fixture.offerTargetId, outcome: 'abandoned' }),
       ),
     );
 

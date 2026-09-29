@@ -104,6 +104,9 @@ import {
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
   type RirVelocityRefitCounts,
+  type GoalTargetAcceptance,
+  type GoalTargetAcceptOutcome,
+  type GoalTargetOfferClaim,
   type GoalTargetSelector,
   type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
@@ -4914,6 +4917,10 @@ export class SqliteSessionStore implements SessionStore {
    * clause has anything to do here.
    */
   markExerciseChapter(input: MarkExerciseChapterInput): Promise<StoredExerciseChapter> {
+    return Promise.resolve(this.insertExerciseChapter(input));
+  }
+
+  private insertExerciseChapter(input: MarkExerciseChapterInput): StoredExerciseChapter {
     const id = randomUUID();
     this.db
       .prepare(
@@ -4929,7 +4936,7 @@ export class SqliteSessionStore implements SessionStore {
         input.declaredAt,
         input.reason ?? null,
       );
-    return Promise.resolve(this.readExerciseChapter(id) as StoredExerciseChapter);
+    return this.readExerciseChapter(id) as StoredExerciseChapter;
   }
 
   retireExerciseChapter(id: string, retiredAt: string): Promise<StoredExerciseChapter | undefined> {
@@ -5199,26 +5206,32 @@ export class SqliteSessionStore implements SessionStore {
     answer: AdvisoryAnswer,
     retire?: AdvisoryAnswerRetire,
   ): Promise<StoredAdvisoryDecision | undefined> {
-    const won = this.atomically(() => {
-      const row = this.db
-        .prepare(ANSWER_ADVISORY_IF_OPEN_SQL)
-        .get(
-          answer.userResponse,
-          answer.respondedAt,
-          answer.inputs === undefined ? null : JSON.stringify(answer.inputs),
-          decisionId,
-        ) as AdvisoryDecisionRow | undefined;
-      if (row !== undefined && retire !== undefined) {
-        this.db
-          .prepare(
-            `UPDATE goal_targets SET retired_at = ?, outcome = ?
-               WHERE id = ? AND retired_at IS NULL`,
-          )
-          .run(answer.respondedAt, retire.outcome, retire.goalTargetId);
-      }
-      return row;
-    });
+    const won = this.atomically(() => this.claimAdvisory(decisionId, answer, retire));
     return Promise.resolve(won === undefined ? undefined : rowToAdvisoryDecision(won));
+  }
+
+  private claimAdvisory(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): AdvisoryDecisionRow | undefined {
+    const row = this.db
+      .prepare(ANSWER_ADVISORY_IF_OPEN_SQL)
+      .get(
+        answer.userResponse,
+        answer.respondedAt,
+        answer.inputs === undefined ? null : JSON.stringify(answer.inputs),
+        decisionId,
+      ) as AdvisoryDecisionRow | undefined;
+    if (row !== undefined && retire !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE goal_targets SET retired_at = ?, outcome = ?
+             WHERE id = ? AND retired_at IS NULL`,
+        )
+        .run(answer.respondedAt, retire.outcome, retire.goalTargetId);
+    }
+    return row;
   }
 
   async putAdvisoryDerived<T>(
@@ -5311,17 +5324,21 @@ export class SqliteSessionStore implements SessionStore {
    * `WHERE retired_at IS NULL` on both statements is what makes a second call a
    * no-op instead of a rewrite of when this ended.
    */
-  async retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined> {
+  async retirePriority(
+    id: string,
+    retiredAt: string,
+    outcome: StoredGoalTargetOutcome = 'abandoned',
+  ): Promise<StoredPriority | undefined> {
     this.atomically(() => {
       this.db
         .prepare(`UPDATE priorities SET retired_at = ? WHERE id = ? AND retired_at IS NULL`)
         .run(retiredAt, id);
       this.db
         .prepare(
-          `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
+          `UPDATE goal_targets SET retired_at = ?, outcome = ?
              WHERE priority_id = ? AND retired_at IS NULL`,
         )
-        .run(retiredAt, id);
+        .run(retiredAt, outcome, id);
     });
     const row = this.db.prepare(`SELECT * FROM priorities WHERE id = ?`).get(id) as
       | PriorityRow
@@ -5358,6 +5375,13 @@ export class SqliteSessionStore implements SessionStore {
     selector: GoalTargetSelector,
     options?: ListGoalTargetsOptions,
   ): Promise<StoredGoalTarget[]> {
+    return Promise.resolve(this.goalTargets(selector, options));
+  }
+
+  private goalTargets(
+    selector: GoalTargetSelector,
+    options?: ListGoalTargetsOptions,
+  ): StoredGoalTarget[] {
     const retiredClause =
       options?.includeRetired === true ? '' : 'AND goal_targets.retired_at IS NULL';
     const rows =
@@ -5377,7 +5401,7 @@ export class SqliteSessionStore implements SessionStore {
                  ORDER BY derived_at DESC, goal_targets.id ASC`,
             )
             .all(selector.userId) as unknown as GoalTargetRow[]);
-    return Promise.resolve(rows.map(rowToGoalTarget));
+    return rows.map(rowToGoalTarget);
   }
 
   async retireGoalTarget(
@@ -5404,6 +5428,88 @@ export class SqliteSessionStore implements SessionStore {
       | GoalTargetRow
       | undefined;
     return row === undefined ? undefined : rowToGoalTarget(row);
+  }
+
+  // --- Atomic goal target writes (VW-589) ---
+
+  /** The claim goes first, so a lost claim returns before anything is written. */
+  async acceptGoalTarget(
+    targetId: string,
+    acceptance: GoalTargetAcceptance,
+    expected: { derivedAt: string },
+    claim?: GoalTargetOfferClaim,
+  ): Promise<GoalTargetAcceptOutcome> {
+    return Promise.resolve(
+      this.atomically((): GoalTargetAcceptOutcome => {
+        if (claim !== undefined) {
+          const won = this.claimAdvisory(claim.decisionId, claim.answer, claim.retire);
+          if (won === undefined) return { kind: 'offer_answered' };
+        }
+        const row = this.db
+          .prepare(ACCEPT_GOAL_TARGET_SQL)
+          .get(...acceptanceBindings(acceptance), targetId, expected.derivedAt) as
+          | GoalTargetRow
+          | undefined;
+        if (row === undefined) throw createChangedTargetError(targetId);
+        return { kind: 'accepted', target: rowToGoalTarget(row) };
+      }),
+    );
+  }
+
+  async putGoalTargetsDerived(
+    priorityId: string,
+    derive: (live: readonly StoredGoalTarget[]) => readonly StoredGoalTarget[],
+  ): Promise<StoredGoalTarget[]> {
+    return Promise.resolve(
+      this.atomically(() => {
+        this.assertPriorityLive(priorityId);
+        const live = this.goalTargets({ priorityId }, { includeRetired: true });
+        return derive(live).map((row) => {
+          this.assertGoalTargetOpen(row.id);
+          return this.writeGoalTarget(row);
+        });
+      }),
+    );
+  }
+
+  private assertPriorityLive(id: string): void {
+    const row = this.db.prepare(`SELECT retired_at FROM priorities WHERE id = ?`).get(id) as
+      | { retired_at: string | null }
+      | undefined;
+    if (row === undefined) {
+      throw codedError('NOT_FOUND', `No priority with id "${id}" exists.`);
+    }
+    if (row.retired_at !== null) {
+      throw codedError(
+        'PRIORITY_RETIRED',
+        `priority ${id} was retired on ${row.retired_at}; declare it again to track it.`,
+      );
+    }
+  }
+
+  /** A derivation re-writes proposals only: an accepted or retired row is never overwritten. */
+  private assertGoalTargetOpen(id: string): void {
+    const row = this.db
+      .prepare(`SELECT accepted_by, retired_at FROM goal_targets WHERE id = ?`)
+      .get(id) as { accepted_by: string | null; retired_at: string | null } | undefined;
+    if (row === undefined || (row.accepted_by === null && row.retired_at === null)) return;
+    throw createChangedTargetError(id);
+  }
+
+  async startGoalChapter(
+    targetId: string,
+    chapter: MarkExerciseChapterInput,
+  ): Promise<{ target: StoredGoalTarget; chapter: StoredExerciseChapter } | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        if (this.findGoalTarget(targetId) === undefined) return undefined;
+        const written = this.insertExerciseChapter(chapter);
+        this.db
+          .prepare(`UPDATE goal_targets SET new_chapter_at = ? WHERE id = ?`)
+          .run(written.startedAt, targetId);
+        return { target: this.findGoalTarget(targetId) as StoredGoalTarget, chapter: written };
+      }),
+    );
   }
 
   /**
@@ -6680,6 +6786,47 @@ function createFixedTargetError(id: string, field: 'committedValue' | 'stretchVa
       `Retire it with an outcome, or stamp a new chapter, and derive a new target.`,
   );
   (err as Error & { code: string }).code = 'GOAL_TARGET_FIXED';
+  return err;
+}
+
+/** `derived_at` is the proposal's version: a re-derivation moves it, so a stale accept misses. */
+const ACCEPT_GOAL_TARGET_SQL = `
+  UPDATE goal_targets SET
+    committed_value = ?,
+    stretch_value = ?,
+    accepted_by = ?,
+    acknowledged_stretch = ?,
+    anchor_load = coalesce(?, anchor_load),
+    block_id = coalesce(?, block_id),
+    ends_at = coalesce(?, ends_at)
+  WHERE id = ? AND accepted_by IS NULL AND retired_at IS NULL AND derived_at = ?
+  RETURNING *
+`;
+
+function acceptanceBindings(a: GoalTargetAcceptance): (string | number | null)[] {
+  return [
+    a.committedValue,
+    a.stretchValue,
+    a.acceptedBy,
+    a.acknowledgedStretch ? 1 : 0,
+    a.anchorLoad ?? null,
+    a.blockId ?? null,
+    a.endsAt ?? null,
+  ];
+}
+
+/** The target moved between the caller's read and its write; a rule, not a SQLite fault. */
+function createChangedTargetError(id: string): Error {
+  return codedError(
+    'GOAL_TARGET_CHANGED',
+    `goal target ${id} was accepted, retired or re-derived since it was read; ` +
+      're-read it and accept again.',
+  );
+}
+
+function codedError(code: string, message: string): Error {
+  const err = new Error(message);
+  (err as Error & { code: string }).code = code;
   return err;
 }
 

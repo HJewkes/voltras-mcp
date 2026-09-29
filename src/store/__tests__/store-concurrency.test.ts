@@ -35,8 +35,10 @@ import {
   type AppendBlockScheduleInput,
   type ClaimUiActionOutcome,
   type DeclareCommitmentInput,
+  type GoalTargetAcceptance,
   type SessionStore,
   type StoredAdvisoryDecision,
+  type StoredGoalTarget,
   type StoredRep,
   type StoredSet,
   type StoredUiAction,
@@ -758,5 +760,240 @@ describe('T10: two derived advisory writes for one observation (VW-588)', () => 
     );
 
     expect(written).toBeUndefined();
+  });
+});
+
+// --- T11: goal target accept, propose, retire and chapter writes (VW-589) --
+
+const PROPOSAL_ID = 'proposal-1';
+const LATER = '2026-09-21T18:00:00.000Z';
+
+function proposalRow(id: string, derivedAt = AT): StoredGoalTarget {
+  return {
+    id,
+    priorityId: 'priority-1',
+    metric: 'e1rm_trend',
+    exerciseId: 'bench-press',
+    startValue: 100,
+    startMeasuredAt: AT,
+    bandLowPctPerWeek: 0.5,
+    bandHighPctPerWeek: 1,
+    committedValue: 103,
+    stretchValue: 106,
+    basis: 'rp_ramp',
+    infoLevel: 'ramp',
+    tierUsed: 'beginner',
+    tierProvisional: false,
+    dietPhaseAtDerivation: 'maintenance',
+    acknowledgedStretch: false,
+    derivedAt,
+    endsAt: '2026-11-01T00:00:00.000Z',
+  };
+}
+
+/** The T9 advisory and accepted target, plus one open proposal under the same priority. */
+async function seedProposal(store: SessionStore): Promise<void> {
+  await seedOpenAdvisoryAndTarget(store);
+  await store.putGoalTarget(proposalRow(PROPOSAL_ID));
+}
+
+const ACCEPTANCE: GoalTargetAcceptance = {
+  committedValue: 103,
+  stretchValue: 106,
+  acceptedBy: 'coach-default',
+  acknowledgedStretch: false,
+};
+const EXPECTED = { derivedAt: AT };
+const CLAIM = { decisionId: DECISION_ID, answer: ACCEPT, retire: RETIRE };
+
+async function proposal(reader: SessionStore): Promise<StoredGoalTarget | undefined> {
+  const rows = await reader.listGoalTargets({ userId: LOCAL_USER_ID }, { includeRetired: true });
+  return rows.find((row) => row.id === PROPOSAL_ID);
+}
+
+/** Re-derive the leg over its live proposal, or mint one. */
+function reDerive(live: readonly StoredGoalTarget[]): StoredGoalTarget[] {
+  const open = live.find((row) => row.acceptedBy === undefined && row.retiredAt === undefined);
+  return [proposalRow(open?.id ?? `minted-${String(live.length)}`, LATER)];
+}
+
+async function expectOfferOpen(reader: SessionStore): Promise<void> {
+  const [decision] = await reader.listAdvisoryDecisions(LOCAL_USER_ID);
+  expect(decision.userResponse).toBeUndefined();
+  const target = (await reader.listGoalTargets({ userId: LOCAL_USER_ID })).find(
+    (row) => row.id === TARGET_ID,
+  );
+  expect(target?.retiredAt).toBeUndefined();
+}
+
+describe('T11: goal target writes (VW-589)', () => {
+  it('accepts exactly one of two concurrent accepts, on one connection', async () => {
+    const store = await (await engineFor('t11-accept-one')).connect();
+    await seedProposal(store);
+
+    const results = await Promise.allSettled([
+      store.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED),
+      store.acceptGoalTarget(PROPOSAL_ID, { ...ACCEPTANCE, acceptedBy: 'user' }, EXPECTED),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(results[1]).toMatchObject({ reason: { code: 'GOAL_TARGET_CHANGED' } });
+    expect((await proposal(store))?.acceptedBy).toBe('coach-default');
+  });
+
+  it('accepts exactly one across two connections on one database', async () => {
+    const eng = await engineFor('t11-accept-two');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedProposal(a);
+
+    const results = await Promise.allSettled([
+      a.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED),
+      b.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+  });
+
+  it('refuses a stale derivation and leaves the claimed offer unanswered', async () => {
+    const eng = await engineFor('t11-stale');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedProposal(a);
+    await b.putGoalTargetsDerived('priority-1', reDerive);
+
+    await expect(
+      a.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED, CLAIM),
+    ).rejects.toMatchObject({ code: 'GOAL_TARGET_CHANGED' });
+
+    expect((await proposal(a))?.acceptedBy).toBeUndefined();
+    await expectOfferOpen(a);
+  });
+
+  it('refuses an accept of a retired target, and never un-retires it', async () => {
+    const store = await (await engineFor('t11-retired')).connect();
+    await seedProposal(store);
+    await store.retireGoalTarget(PROPOSAL_ID, 'abandoned', AT);
+
+    await expect(store.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED)).rejects.toMatchObject({
+      code: 'GOAL_TARGET_CHANGED',
+    });
+
+    expect(await proposal(store)).toMatchObject({ retiredAt: AT, outcome: 'abandoned' });
+  });
+
+  it('writes nothing when the offer claim lost', async () => {
+    const store = await (await engineFor('t11-claim')).connect();
+    await seedProposal(store);
+    await store.answerAdvisoryIfOpen(DECISION_ID, DECLINE);
+
+    const outcome = await store.acceptGoalTarget(PROPOSAL_ID, ACCEPTANCE, EXPECTED, CLAIM);
+
+    expect(outcome).toEqual({ kind: 'offer_answered' });
+    expect((await proposal(store))?.acceptedBy).toBeUndefined();
+  });
+
+  it('mints one proposal from two concurrent derivations, on one connection', async () => {
+    const store = await (await engineFor('t11-derive-one')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+
+    await Promise.all([
+      store.putGoalTargetsDerived('priority-1', reDerive),
+      store.putGoalTargetsDerived('priority-1', reDerive),
+    ]);
+
+    const open = (await store.listGoalTargets({ priorityId: 'priority-1' })).filter(
+      (row) => row.acceptedBy === undefined,
+    );
+    expect(open).toHaveLength(1);
+  });
+
+  it('mints one proposal across two connections on one database', async () => {
+    const eng = await engineFor('t11-derive-two');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedOpenAdvisoryAndTarget(a);
+
+    await Promise.all([
+      a.putGoalTargetsDerived('priority-1', reDerive),
+      b.putGoalTargetsDerived('priority-1', reDerive),
+    ]);
+
+    const open = (await b.listGoalTargets({ priorityId: 'priority-1' })).filter(
+      (row) => row.acceptedBy === undefined,
+    );
+    expect(open).toHaveLength(1);
+  });
+
+  it('refuses a retired priority before deriving', async () => {
+    const eng = await engineFor('t11-priority');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedOpenAdvisoryAndTarget(a);
+    await b.retirePriority('priority-1', AT);
+    let derived = false;
+
+    const written = a.putGoalTargetsDerived('priority-1', (live) => {
+      derived = true;
+      return reDerive(live);
+    });
+
+    await expect(written).rejects.toMatchObject({ code: 'PRIORITY_RETIRED' });
+    expect(derived).toBe(false);
+    expect(await a.listGoalTargets({ priorityId: 'priority-1' })).toEqual([]);
+  });
+
+  it('never writes a derivation over an accepted target', async () => {
+    const store = await (await engineFor('t11-accepted')).connect();
+    await seedOpenAdvisoryAndTarget(store);
+
+    const written = store.putGoalTargetsDerived('priority-1', () => [
+      { ...proposalRow(TARGET_ID, LATER), committedValue: 103, stretchValue: 106 },
+    ]);
+
+    await expect(written).rejects.toMatchObject({ code: 'GOAL_TARGET_CHANGED' });
+    const [target] = await store.listGoalTargets({ priorityId: 'priority-1' });
+    expect(target.derivedAt).toBe(AT);
+  });
+
+  it('stamps the given outcome on the targets a priority retire cascades to', async () => {
+    const store = await (await engineFor('t11-outcome')).connect();
+    await seedProposal(store);
+    await store.retireGoalTarget(PROPOSAL_ID, 'abandoned', AT);
+
+    await store.retirePriority('priority-1', LATER, 'met');
+
+    const rows = await store.listGoalTargets({ userId: LOCAL_USER_ID }, { includeRetired: true });
+    expect(rows.map((row) => [row.id, row.retiredAt, row.outcome]).sort()).toEqual([
+      [PROPOSAL_ID, AT, 'abandoned'],
+      [TARGET_ID, LATER, 'met'],
+    ]);
+  });
+
+  it('leaves the stamp on the last chapter written, across two connections', async () => {
+    const eng = await engineFor('t11-chapter');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedProposal(a);
+    const chapter = { userId: LOCAL_USER_ID, exerciseId: 'bench-press', declaredAt: AT };
+
+    const [, last] = await Promise.all([
+      a.startGoalChapter(PROPOSAL_ID, { ...chapter, startedAt: LATER }),
+      b.startGoalChapter(PROPOSAL_ID, { ...chapter, startedAt: AT }),
+    ]);
+
+    expect(last?.target.newChapterAt).toBe(AT);
+    expect((await proposal(a))?.newChapterAt).toBe(last?.chapter.startedAt);
+    expect(await a.listExerciseChapters(LOCAL_USER_ID, 'bench-press')).toHaveLength(2);
+  });
+
+  it('writes no chapter for a target that does not exist', async () => {
+    const store = await (await engineFor('t11-no-target')).connect();
+    await seedProposal(store);
+
+    const written = await store.startGoalChapter('missing', {
+      userId: LOCAL_USER_ID,
+      exerciseId: 'bench-press',
+      startedAt: AT,
+      declaredAt: AT,
+    });
+
+    expect(written).toBeUndefined();
+    expect(await store.listExerciseChapters(LOCAL_USER_ID)).toEqual([]);
   });
 });
