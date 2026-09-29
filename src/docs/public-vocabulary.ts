@@ -502,6 +502,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'decisionId',
   'declinedOffer',
   'GOAL_RECALIBRATION_WITHDRAWN',
+  // VW-587: a second answer to one advisory is refused, and `goal.retire` says so.
+  'ADVISORY_ALREADY_ANSWERED',
+  'offerAlreadyAnswered',
   // VW-459: `goal.declare_priorities` refuses a second whole-body priority for one ref.
   'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
