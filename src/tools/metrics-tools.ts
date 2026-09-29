@@ -147,7 +147,10 @@ import {
 import { movementClassForExerciseId, type MovementClass } from '../exercises/movement-class.js';
 import {
   countSetsByAttribution,
+  targetMuscles,
+  UNATTRIBUTED_MUSCLE,
   type AttributedSetCounts,
+  type SlugAttribution,
 } from '../exercises/muscle-attribution.js';
 import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
 import { attributionOfExercise } from '../exercises/seed-attribution.js';
@@ -959,6 +962,9 @@ type HistoryWeeklyVolumeInput = Extract<
 interface HistoryWeeklyVolumeResult {
   weekly: WeeklySummary[];
   byMuscleGroup: VolumeByMuscleGroup;
+  setsByMuscle: Record<string, number>;
+  doseSetsByMuscle: Record<string, number>;
+  muscleMapVersion: string;
   verdict: null;
 }
 
@@ -1033,7 +1039,7 @@ async function computeHistoryWeeklyVolume(
 ): Promise<HistoryWeeklyVolumeResult> {
   const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
   const fromIso = weeksAgoIso(weeks);
-  const toIso = new Date().toISOString();
+  const period = { from: fromIso, to: new Date().toISOString() };
   // Owner-only by default (VW-169) — `listSessions` filters `lifter IS NULL`
   // the same way `getSetsForExercise` does. No `exerciseId` here: this
   // pipeline rolls up EVERY exercise, unlike `history.trend`.
@@ -1077,18 +1083,43 @@ async function computeHistoryWeeklyVolume(
   const byMuscleGroup = getVolumeByMuscleGroup(
     muscleSessions,
     (exerciseId: string) => {
-      // B47 (VMCP-06.05, PR #263): target-only — the PRIMARY muscle group and
-      // nothing else, until VW-662 moves this onto the VW-561 table. A
-      // single-element array degenerates WA's own even-split-across-groups
-      // math to "all of it", which IS the target-only rule.
-      const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0];
-      return muscle === undefined ? undefined : { muscleGroups: [muscle] };
+      // VW-662: the landmark targets, so WA's even split gives a row half its
+      // tonnage on lats and half on upper_back and the parts still sum to the total.
+      const targets = targetMuscles(attributionOf(state, exerciseId));
+      return { muscleGroups: targets.length > 0 ? targets : [UNATTRIBUTED_MUSCLE] };
     },
-    { from: fromIso, to: toIso },
+    period,
   );
+  const counts = setsInPeriodByAttribution(state, muscleSessions, period);
 
   // THRESHOLDS LEAVE NULL — see the schema's `history.weekly_volume` comment.
-  return { weekly, byMuscleGroup, verdict: null };
+  return {
+    weekly,
+    byMuscleGroup,
+    setsByMuscle: counts.landmark,
+    doseSetsByMuscle: counts.dose,
+    muscleMapVersion: MUSCLE_MAP_VERSION,
+    verdict: null,
+  };
+}
+
+/**
+ * Both set reads over the per-exercise sessions `getVolumeByMuscleGroup` sums,
+ * inside the same inclusive bounds it applies to a session's start.
+ */
+function setsInPeriodByAttribution(
+  state: ServerState,
+  sessions: readonly ProcessedSession[],
+  period: { from: string; to: string },
+): AttributedSetCounts {
+  return countSetsByAttribution(
+    sessions
+      .filter((s) => s.startedAt >= period.from && s.startedAt <= period.to)
+      .map((s) => ({
+        rows: s.exerciseId === undefined ? [] : attributionOf(state, s.exerciseId),
+        sets: s.sets.length,
+      })),
+  );
 }
 
 /**
@@ -1542,14 +1573,17 @@ interface SessionVolumeResult {
  */
 function setsByAttribution(state: ServerState, sets: readonly StoredSet[]): AttributedSetCounts {
   return countSetsByAttribution(
-    [...workingSetsByExercise(sets, undefined)].map(([exerciseId, working]) => {
-      const exercise = state.exercises.getById(exerciseId);
-      return {
-        rows: exercise === undefined ? [] : attributionOfExercise(exercise),
-        sets: working.length,
-      };
-    }),
+    [...workingSetsByExercise(sets, undefined)].map(([exerciseId, working]) => ({
+      rows: attributionOf(state, exerciseId),
+      sets: working.length,
+    })),
   );
+}
+
+/** An exercise's weight-table rows; an id the catalog does not know has none. */
+function attributionOf(state: ServerState, exerciseId: string): SlugAttribution[] {
+  const exercise = state.exercises.getById(exerciseId);
+  return exercise === undefined ? [] : attributionOfExercise(exercise);
 }
 
 /**
@@ -2614,10 +2648,18 @@ const METRICS_COMPUTE_DESCRIPTION =
   '(rp:rp-s3-old-prs-irrelevant-reframe). ' +
   '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
-  "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +
-  "own `getWeeklySummaries`; `byMuscleGroup` is WA's `getVolumeByMuscleGroup`, attributed " +
-  "target-only to each exercise's PRIMARY muscle group only (B47). `verdict` is always " +
-  '`null` — `classifyWeeklyVolume` needs ' +
+  'working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, setsByMuscle, ' +
+  "doseSetsByMuscle, muscleMapVersion, verdict }`. `weekly` is WA's own " +
+  "`getWeeklySummaries`. `byMuscleGroup` is WA's `getVolumeByMuscleGroup` keyed by muscle " +
+  "slug: each exercise's tonnage splits evenly across its TARGET muscles (B47), so a row puts " +
+  'half on `lats` and half on `upper_back`, and the parts sum to its `totalVolumeLbs`. ' +
+  '`setsByMuscle` and `doseSetsByMuscle` read the same sets and window the way `session.volume` ' +
+  'does: the landmark read counts a set 1 toward each target muscle (a deadlift is one ' +
+  '`hamstrings` set), and the dose read adds each muscle its weight (the deadlift adds 0.5 to ' +
+  '`lats`). Compare only `setsByMuscle` with a volume landmark. `muscleMapVersion` stamps the ' +
+  'weight table used. An exercise the catalog does not know files its tonnage under ' +
+  '`unknown` in `byMuscleGroup` and its sets under `unknown` in `setsByMuscle`, so the ' +
+  'per-muscle tonnage still sums to `totalVolumeLbs`. `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
   'caller-supplied `VolumeLandmarks` that no source in this repo states for this athlete, so no ' +
   'landmark is invented here. A window with no working sets is NOT_FOUND. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +

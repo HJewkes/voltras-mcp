@@ -72,6 +72,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- `history.weekly_volume` reads the muscle weight table, the way `session.volume` does
+  (VW-662). Its tonnage breakdown is keyed by muscle (`front_delts` and `side_delts`, never
+  `shoulders`), and a row splits its tonnage evenly between `lats` and `upper_back`, so the
+  per-muscle parts still add up to the total. It also returns `setsByMuscle` (the count to
+  compare with a volume landmark), `doseSetsByMuscle` (the weighted dose count) and
+  `muscleMapVersion`.
 - A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
   horizon now continues past the named block through the program's later dated blocks, and
   undated weeks are split into 5-week blocks, the length the owner chose.

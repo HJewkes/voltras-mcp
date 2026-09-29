@@ -4,13 +4,13 @@
 // -> getWeeklySummaries/getVolumeByMuscleGroup, using WA's REAL analytics
 // functions (unmocked). Review focus per the brief:
 //   1. muscle-group attribution matches `session.volume`'s B47 target-only
-//      rule (muscleGroups[0]) — pinned by running both over the same sets.
+//      rule on the VW-561 table — pinned by running both over the same sets.
 //   2. guest, warmup/probe/technique, mock-adapter and zero-rep sets are all
 //      excluded, one test per exclusion.
 //   3. `verdict` is always `null` — no landmark, no threshold anywhere.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Phase } from '@voltras/workout-analytics';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setCatalog, type Phase } from '@voltras/workout-analytics';
 
 class FakeVoltraSDKError extends Error {
   readonly code: string;
@@ -23,10 +23,14 @@ class FakeVoltraSDKError extends Error {
 vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerMetricsTools } = await import('../metrics-tools.js');
+const { ExerciseService } = await import('../../exercises/exercise-service.js');
+const { MUSCLE_MAP_VERSION } = await import('../../exercises/muscle-map.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredRep, StoredSession, StoredSet } from '../../store/types.js';
+import { HISTORY_SEED_EXERCISES } from '../../exercises/history-seed-catalog.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { ToolResult } from '../helpers.js';
 
 const EMPTY_PHASE: Phase = {
@@ -115,14 +119,18 @@ interface MuscleCatalogEntry {
 function makeState(
   sessions: StoredSession[],
   setsBySession: ReadonlyMap<string, StoredSet[]>,
-  opts: { adapter?: string; catalog?: Record<string, MuscleCatalogEntry> } = {},
+  opts: {
+    adapter?: string;
+    catalog?: Record<string, MuscleCatalogEntry>;
+    exercises?: ServerState['exercises'];
+  } = {},
 ): ServerState {
   const store = {
     listSessions: vi.fn(async () => sessions),
     getSetsForSession: vi.fn(async (id: string) => setsBySession.get(id) ?? []),
   };
   const catalog = opts.catalog ?? {};
-  const exercises = { getById: vi.fn((id: string) => catalog[id]) };
+  const exercises = opts.exercises ?? { getById: vi.fn((id: string) => catalog[id]) };
   const config = { adapter: opts.adapter ?? 'node' };
   return { store, exercises, config } as unknown as ServerState;
 }
@@ -140,6 +148,9 @@ function parsePayload(result: ToolResult): unknown {
 interface WeeklyVolumeBody {
   weekly: { weekStart: string; sessionCount: number; totalVolumeLbs: number }[];
   byMuscleGroup: { byMuscleGroup: Record<string, number>; totalVolumeLbs: number };
+  setsByMuscle: Record<string, number>;
+  doseSetsByMuscle: Record<string, number>;
+  muscleMapVersion: string;
   verdict: null;
 }
 
@@ -349,9 +360,101 @@ describe('metrics.compute — history.weekly_volume', () => {
     const result = await callTool(tools, { pipeline: 'history.weekly_volume' });
 
     const body = parsePayload(result) as WeeklyVolumeBody;
-    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 200, back: 300 });
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 200, lats: 150, upper_back: 150 });
     // One physical session either way — sessionCount is not inflated by the
     // per-exercise split used for the muscle-group breakdown.
     expect(body.weekly[0]?.sessionCount).toBe(1);
+  });
+});
+
+describe('metrics.compute — history.weekly_volume on the muscle weight table', () => {
+  beforeAll(() => setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]));
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** One session per set, each set a different exercise, all in week 0. */
+  async function weeklyVolumeOf(sets: StoredSet[]): Promise<WeeklyVolumeBody> {
+    const sessions = sets.map((set) => makeSession(set.sessionId, set.startedAt, set.exerciseId));
+    const setsBySession = new Map(sets.map((set) => [set.sessionId, [set]]));
+    const state = makeState(sessions, setsBySession, { exercises: new ExerciseService() });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'history.weekly_volume' });
+
+    expect(result.isError, JSON.stringify(result.content)).toBeUndefined();
+    return parsePayload(result) as WeeklyVolumeBody;
+  }
+
+  it('keeps front and side delts apart for a week of overhead press, lateral raise and RDL', async () => {
+    const body = await weeklyVolumeOf([
+      makeSet('ohp', { exerciseId: 'cable-shoulder-press' }),
+      makeSet('raise', { exerciseId: 'cable-lateral-raise', weightLbs: 20 }),
+      makeSet('rdl', { exerciseId: 'cable-romanian-deadlift' }),
+    ]);
+
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({
+      front_delts: 200,
+      side_delts: 40,
+      hamstrings: 200,
+    });
+    expect(body.setsByMuscle).toEqual({ front_delts: 1, side_delts: 1, hamstrings: 1 });
+    expect(body.byMuscleGroup.byMuscleGroup).not.toHaveProperty('shoulders');
+    expect(body.setsByMuscle).not.toHaveProperty('shoulders');
+    expect(body.muscleMapVersion).toBe(MUSCLE_MAP_VERSION);
+  });
+
+  it('splits a row evenly between lats and upper back, and the parts sum to the total', async () => {
+    const body = await weeklyVolumeOf([
+      makeSet('row', { exerciseId: 'cable-row', weightLbs: 150 }),
+      makeSet('press', { exerciseId: 'cable-chest-press' }),
+    ]);
+
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ lats: 150, upper_back: 150, chest: 200 });
+    const perMuscleSum = Object.values(body.byMuscleGroup.byMuscleGroup).reduce((a, b) => a + b);
+    expect(perMuscleSum).toBe(body.byMuscleGroup.totalVolumeLbs);
+    expect(body.setsByMuscle).toEqual({ lats: 1, upper_back: 1, chest: 1 });
+  });
+
+  it('includes a session exactly on either edge of the window and excludes one just outside, in all three reads', async () => {
+    const now = Date.parse('2026-09-08T12:00:00.000Z');
+    const from = now - 12 * 7 * 24 * 60 * 60 * 1000;
+    const at = (ms: number): string => new Date(ms).toISOString();
+    const body = await weeklyVolumeOf([
+      makeSet('before-from', { exerciseId: 'cable-crunch', startedAt: at(from - 1) }),
+      makeSet('at-from', { exerciseId: 'cable-lateral-raise', startedAt: at(from) }),
+      makeSet('at-to', { exerciseId: 'cable-bicep-curl', startedAt: at(now) }),
+      makeSet('after-to', { exerciseId: 'cable-tricep-pushdown', startedAt: at(now + 1) }),
+    ]);
+
+    expect(body.setsByMuscle).toEqual({ side_delts: 1, biceps: 1 });
+    expect(body.doseSetsByMuscle).toEqual({ side_delts: 1, biceps: 1 });
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ side_delts: 200, biceps: 200 });
+    expect(body.byMuscleGroup.totalVolumeLbs).toBe(400);
+  });
+
+  it('files an exercise the catalog does not know under unknown, so the tonnage parts still sum to the total', async () => {
+    const body = await weeklyVolumeOf([
+      makeSet('known', { exerciseId: 'cable-chest-press' }),
+      makeSet('mystery', { exerciseId: 'not-in-catalog', weightLbs: 50 }),
+    ]);
+
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 200, unknown: 100 });
+    expect(body.byMuscleGroup.totalVolumeLbs).toBe(300);
+    expect(body.setsByMuscle).toEqual({ chest: 1, unknown: 1 });
+    expect(body.doseSetsByMuscle).not.toHaveProperty('unknown');
+  });
+
+  it('counts a barbell deadlift set on hamstrings, with half a lat set in the dose read', async () => {
+    const body = await weeklyVolumeOf([makeSet('dl', { exerciseId: 'barbell-deadlift' })]);
+
+    expect(body.setsByMuscle).toEqual({ hamstrings: 1 });
+    expect(body.doseSetsByMuscle.hamstrings).toBe(1);
+    expect(body.doseSetsByMuscle.lats).toBe(0.5);
   });
 });
