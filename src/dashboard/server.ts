@@ -1326,7 +1326,12 @@ function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value
 function hasActionStore(
   store: DashboardServerState['store'],
 ): store is DashboardServerState['store'] & ActionStore {
-  return typeof store.claimUiAction === 'function' && typeof store.completeUiAction === 'function';
+  return (
+    typeof store.claimUiAction === 'function' &&
+    typeof store.completeUiAction === 'function' &&
+    'transaction' in store &&
+    typeof store.transaction === 'function'
+  );
 }
 
 /**

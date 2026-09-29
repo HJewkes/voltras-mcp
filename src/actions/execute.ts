@@ -7,7 +7,7 @@
 //   new id                        -> claim, run the handler, complete, return
 //   same id + same input hash     -> return the STORED result, `replayed: true`
 //   same id + different input     -> 409 `action_id_reused`, nothing runs
-//   same id, row still `pending`  -> `indeterminate`, nothing runs
+//   same id, row still `pending`  -> `indeterminate`, nothing runs (a pre-VW-659 row)
 //
 // The input hash is taken over the RAW input, canonicalised: keys sorted and
 // explicit `undefined` dropped, so key order cannot split one submission into
@@ -17,24 +17,28 @@
 // `{phase, sneaky}` collide, replaying the first submission's success for the
 // second. Hashing raw can only ever err towards 409, which is the safe side.
 //
-// ── Two steps, not one transaction, and what that costs ──────────────────
+// ── One transaction, and what a failed handler leaves ──────────────────────
 //
-// The claim and the completion are two statements. They cannot be one
-// transaction: several store methods open their own (`declareDietPhase` is on
-// the allowlist's path) and the store has no SAVEPOINT nesting, so an outer
-// BEGIN around a handler fails outright.
+// The claim, the handler and the completion run inside one caller-owned
+// `store.transaction` (VW-659). Every store call the handler awaits joins it
+// as a savepoint, so the three commit together or not at all: a crash before
+// the commit leaves no row and no write, and a resubmit of that id runs.
 //
-// Claiming FIRST is what makes this safe rather than merely convenient. The
-// primary key refuses the second claim before any handler runs, so two racing
-// submits of one id cannot both execute — a guarantee a single transaction
-// would only reach by serialising every action.
+// A handler that reports an error has its writes rolled back to a savepoint
+// taken before it ran, and the error row is still recorded. So an `error` row
+// means nothing changed.
 //
-// The cost is one crash window. If the process dies after the handler's write
-// and before the completion, the row stays `pending` and the write may or may
-// not have landed. A replay then answers `indeterminate`, which says exactly
-// that: read the underlying state, do not resubmit under a new id. Nothing
-// sweeps pending rows to `error` at boot — that would assert an outcome nobody
-// knows, and the truthful record is the one worth keeping.
+// Two submits of one id queue behind each other, and the second finds the
+// first's completed row and replays it. Claiming FIRST still matters: the
+// primary key refuses a second claim from another process on the same file.
+//
+// A handler must await only the store. A transaction that spans an event-loop
+// turn lets other work on the shared connection run while it is open, and that
+// work throws rather than joining; `audited-actions-no-yield.test.ts` pins it.
+//
+// `pending` is unreachable now. It survives, with the `indeterminate` replay
+// below, for rows written before this change: nothing sweeps them to `error`,
+// because that would assert an outcome nobody knows.
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -54,6 +58,7 @@ import type {
 export interface ActionStore {
   claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome>;
   completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction>;
+  transaction<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 /**
@@ -154,12 +159,19 @@ export interface AuditedWrite {
 }
 
 /**
- * Claim the id, run the work, record the result. Shared by the tool actions
+ * Claim the id, run the work, record the result, as one transaction. Shared by the tool actions
  * and by the six plan-builder routes, so both gain the same audit row, the
  * same actor stamp and the same replay behaviour without the plan routes
  * having to pretend a `plan-api.ts` call is an MCP tool.
  */
 export async function executeAudited(
+  write: AuditedWrite,
+  deps: ExecuteActionDeps,
+): Promise<ActionOutcome> {
+  return deps.store.transaction(() => claimRunComplete(write, deps));
+}
+
+async function claimRunComplete(
   write: AuditedWrite,
   deps: ExecuteActionDeps,
 ): Promise<ActionOutcome> {
@@ -177,7 +189,7 @@ export async function executeAudited(
   if (claim.kind === 'taken') {
     return replayOutcome(claim.existing, write.inputHash, write.tier);
   }
-  const outcome = await write.run();
+  const outcome = await runKeepingOnlySuccess(write.run, deps.store);
   await deps.store.completeUiAction({
     actionId: write.actionId,
     resultStatus: outcome.ok ? 'ok' : 'error',
@@ -197,6 +209,30 @@ export async function executeAudited(
       ...(outcome.code === undefined ? {} : { error: outcome.code }),
     },
   };
+}
+
+/** Carries a non-ok outcome out of its savepoint, so the throw rolls the handler back. */
+class DiscardedOutcome extends Error {
+  constructor(readonly outcome: HandlerOutcome) {
+    super('the handler reported an error; its writes are rolled back');
+  }
+}
+
+/** Run the handler in a nested transaction that keeps its writes only when it reports ok. */
+async function runKeepingOnlySuccess(
+  run: AuditedWrite['run'],
+  store: ActionStore,
+): Promise<HandlerOutcome> {
+  try {
+    return await store.transaction(async () => {
+      const outcome = await run();
+      if (!outcome.ok) throw new DiscardedOutcome(outcome);
+      return outcome;
+    });
+  } catch (err) {
+    if (err instanceof DiscardedOutcome) return err.outcome;
+    throw err;
+  }
 }
 
 /** What a second submission of an id that already exists gets back. */
@@ -253,7 +289,7 @@ export interface HandlerOutcome {
  * Call the tool's own handler and read its `ToolResult`. Every handler is
  * `wrapHandler`-wrapped, so it returns a structured error rather than throwing
  * — but a throw is still recorded rather than escaping into the HTTP layer,
- * because an action that killed its handler must not leave a `pending` row.
+ * because an escaping throw would roll back the claim and leave no record.
  */
 async function runHandler(
   handler: CapturedTool['handler'],

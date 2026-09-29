@@ -203,15 +203,15 @@ function armTurnProbe(): { probe: TurnProbe; disarm: () => void } {
 }
 
 /**
- * The shape S3 wires into `executeAudited`: claim, handler and completion inside one
- * `store.transaction`, asserted to settle before the next event-loop turn.
+ * Run an audited action, whose claim, handler and completion `executeAudited` puts inside one
+ * `store.transaction`, and assert it settled before the next event-loop turn.
  */
 async function runInOneTurn(run: () => Promise<ActionOutcome>): Promise<ActionOutcome> {
   const warn = vi.spyOn(log, 'warn');
   const { probe, disarm } = armTurnProbe();
   let outcome: ActionOutcome;
   try {
-    outcome = await state.store.transaction(run);
+    outcome = await run();
   } finally {
     disarm();
   }

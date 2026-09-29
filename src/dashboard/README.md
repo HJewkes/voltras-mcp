@@ -143,32 +143,42 @@ the read that separates two walls.
 
 The client sends one `actionId` per SUBMIT, reused across retries.
 
-| Case                         | Answer                              | Did the handler run? |
-| ---------------------------- | ----------------------------------- | -------------------- |
-| New id                       | the result                          | once                 |
-| Same id, same input          | the STORED result, `replayed: true` | no                   |
-| Same id, different input     | 409 `action_id_reused`              | no                   |
-| Same id, row still `pending` | 409 `indeterminate`                 | no                   |
+| Case                       | Answer                              | Did the handler run? |
+| -------------------------- | ----------------------------------- | -------------------- |
+| New id                     | the result                          | once                 |
+| Same id, same input        | the STORED result, `replayed: true` | no                   |
+| Same id, different input   | 409 `action_id_reused`              | no                   |
+| Same id, old `pending` row | 409 `indeterminate`                 | no                   |
 
 The input hash is sha256 over a key-sorted rendering taken AFTER the tool's own
 parse, so key order and absent-versus-undefined cannot split one submission
 into two.
 
-### Two steps, and the crash window
+### One transaction, and what a failed handler leaves
 
-The claim and the completion are two statements, not one transaction. They
-cannot be one: `declareDietPhase` and six other store methods open their own
-transactions and the store has no SAVEPOINT nesting, so an outer `BEGIN` around
-a handler fails outright.
+The claim, the handler and the completion run inside one `store.transaction`
+(VW-659). Every store call the handler makes joins it as a savepoint, so they
+commit together or not at all. A crash before the commit leaves no row and no
+write, and a resubmit of that id runs.
 
-Claiming FIRST is what makes this safe. The primary key refuses the second claim
-before any handler runs, so two racing submits of one id cannot both execute.
+A handler that reports an error has its writes rolled back to a savepoint taken
+before it ran, and the `error` row is still recorded. An `error` row therefore
+means nothing changed.
 
-The cost is one window: a crash between the handler's write and the completion
-leaves the row `pending`, and whether the write landed is genuinely unknown. A
-replay then answers `indeterminate`, and the SPA surfaces that as "re-read
-state, do not resubmit". **Nothing sweeps pending rows at boot** — rewriting one
-to `error` would assert an outcome nobody knows. `listUiActions({ status:
+Two submits of one id queue behind each other: the second finds the first's
+completed row and replays it. Claiming first still matters, because the primary
+key refuses a second claim from another process on the same file.
+
+A handler must await only the store. A transaction that spans an event-loop
+turn lets other work on the shared connection run while it is open, and that
+work throws rather than joining. `audited-actions-no-yield.test.ts` pins every
+allowlisted action and plan route to one turn.
+
+`pending` is unreachable now. It survives for rows written before this change,
+when a crash between the two separate steps could leave a row claimed, and a
+replay of one answers `indeterminate`, which the SPA surfaces as "re-read state,
+do not resubmit". **Nothing sweeps pending rows at boot**: rewriting one to
+`error` would assert an outcome nobody knows. `listUiActions({ status:
 'pending' })` is the read for a later surface to show them.
 
 ### The six plan routes
