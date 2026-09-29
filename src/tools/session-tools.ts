@@ -173,8 +173,12 @@ const SESSION_GET_DESCRIPTION =
   'to inspect in full. A session with a workout template attached also carries `sessionPace`: ' +
   'the plan-derived `plannedMinutes` / `elapsedMinutes` / `plannedSetsRemaining` / ' +
   '`projectedEndAt` estimate, costing every planned set at its rep target and tempo plus its ' +
-  'rest (the goal default when the coach set none). It is an estimate from the plan, never a ' +
-  'measurement, and it is absent entirely for a session with no plan attached.';
+  'rest (the goal default when the coach set none), plus `state` (ahead, on_pace, behind, or ' +
+  'idle before the first working set), a signed `slipMinutes` (positive is behind) and, when ' +
+  'there is one, a `suggestion` to trim or add sets. Time alone drives the state. For a ' +
+  'finished session the clock is its end time, so the state is the final verdict. It is an ' +
+  'estimate from the plan, never a measurement, and it is absent entirely for a session with ' +
+  'no plan attached.';
 
 const SESSION_MARK_KIND_DESCRIPTION =
   'Say whether recorded work was real training or a bench test, for one session ' +

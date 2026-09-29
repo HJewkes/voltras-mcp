@@ -1706,7 +1706,7 @@ async function resolveSessionPace(
   state: DashboardServerState,
   gathered: GatheredSnapshotState,
 ): Promise<SessionPaceView | undefined> {
-  const { session, completedSets } = gathered;
+  const { session, completedSets, activeSet } = gathered;
   const { getAssignmentsForSession, getPlannedExercisesForTemplate } = state.store;
   if (session === undefined || !getAssignmentsForSession || !getPlannedExercisesForTemplate) {
     return undefined;
@@ -1725,7 +1725,7 @@ async function resolveSessionPace(
       nowMs: Date.now(),
       planned,
       completedWorkingSets: workingSetsForPace(completedSets),
-      liveSetActive: false,
+      liveSetActive: activeSet !== undefined,
     },
     state.exercises,
   );
@@ -1795,7 +1795,10 @@ function workingSetsForPace(completed: readonly CompletedSetRecord[]): Completed
         record.set.reps.length > 0 &&
         (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
     )
-    .map((record) => ({ endedAtMs: Date.parse(record.set.endedAt ?? record.set.startedAt) }));
+    .map((record) => ({
+      exerciseId: record.set.exerciseId,
+      endedAtMs: Date.parse(record.set.endedAt ?? record.set.startedAt),
+    }));
 }
 
 /**

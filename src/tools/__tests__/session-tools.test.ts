@@ -926,6 +926,47 @@ function makeStoredSet(
   };
 }
 
+describe('session.get pace for a finished session', () => {
+  it('uses endedAt as the clock and reports a final state', async () => {
+    const h = setup();
+    const session: StoredSession = {
+      id: 'sess-pace',
+      startedAt: '2025-01-01T10:00:00.000Z',
+      endedAt: '2025-01-01T12:00:00.000Z',
+    };
+    h.store.getSession.mockResolvedValueOnce(session);
+    (h.store as Record<string, unknown>).getSelfReportsForSession = vi.fn(async () => []);
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      makeStoredSet('s1', 'sess-pace', { exerciseId: 'bench-press' }),
+    ]);
+    h.store.getAssignmentsForSession.mockResolvedValueOnce([
+      {
+        id: 'asg-1',
+        sessionId: 'sess-pace',
+        workoutTemplateId: 't1',
+        assignedAt: '2025-01-01T10:00:00.000Z',
+      },
+    ]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([
+      {
+        id: 'pe1',
+        workoutTemplateId: 't1',
+        exerciseId: 'bench-press',
+        orderIndex: 0,
+        targetSets: 3,
+      },
+    ]);
+
+    const body = parseResult(await h.invoke('session.get', { id: 'sess-pace' })) as {
+      sessionPace: { state: string; elapsedMinutes: number; slipMinutes: number };
+    };
+
+    expect(body.sessionPace.elapsedMinutes).toBe(120);
+    expect(body.sessionPace.state).toBe('behind');
+    expect(body.sessionPace.slipMinutes).toBeGreaterThan(0);
+  });
+});
+
 describe('session.list', () => {
   let h: Harness;
   beforeEach(() => {

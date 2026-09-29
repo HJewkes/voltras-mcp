@@ -60,6 +60,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The session pace now reaches you live: the dashboard snapshot counts a streaming set as
+  work in progress, so the state leaves idle when your first set starts, and the trim or add
+  suggestion rides on `sessionPace` next to `state` and `slipMinutes` on both the snapshot and
+  `session.get`. A finished session reads its final verdict against its own end time. The
+  pacing guide gained a Session pace section on why time alone drives the state (VW-579).
+
 - A session's pace against its plan now says where you stand, not only how long is left:
   `sessionPace` on `session.get` and the dashboard snapshot carries a `state` (ahead, on
   pace, behind, or idle before your first working set) and a signed `slipMinutes`, positive

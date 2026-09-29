@@ -302,6 +302,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'elapsedMinutes',
   'plannedSetsRemaining',
   'projectedEndAt',
+  'slipMinutes',
+  'on_pace',
   'perRep',
   'pauseBottom',
   'pauseTop',

@@ -124,6 +124,28 @@ because the gap would describe the rig rather than you
 [Left and right](/concepts/technique-signals#left-and-right) covers the measurement, and the
 [bilateral guide](/guides/bilateral) covers the setup.
 
+## Session pace
+
+With a workout template attached, the session reports where it stands against the plan. The
+dashboard snapshot and `session.get` both carry it as `sessionPace`: a `state` (`ahead`,
+`on_pace`, `behind`, or `idle` before your first working set), a signed `slipMinutes` (positive
+when behind), and, when there is something to change, a `suggestion` to trim or add sets.
+
+**Time drives the state, and only time.** The plan gives every set a length: its work plus its
+rest. The state compares the clock since the session started with where the plan says you
+should be after the working sets you have logged. Rest inside the plan's own rest never counts
+against you, and slip within two minutes (or 5% of a long plan) reads as on pace. A streaming
+set counts as work in progress, so the state leaves `idle` as soon as the first set starts.
+
+Volume, load and fatigue do not move the state. A lighter set or a heavier one takes the same
+planned slot, and a hard set does not read as slow because it was hard. Those signals answer
+other questions, and the fatigue and volume views already answer them. Mixing them in would make
+"behind" mean several things at once, and a coach acting on it could not tell whether to
+shorten the rest or cut a set.
+
+For a finished session the clock is its end time, not today's. Reading an old session back
+gives the final verdict it ran at, not one that keeps growing.
+
 ## Next
 
 - [Read the fatigue card](/guides/dashboard-fatigue): the verdict word from Good to Slowing.
