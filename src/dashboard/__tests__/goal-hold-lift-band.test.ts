@@ -90,12 +90,21 @@ function actual(weekIndex: number, value: number): GoalActual {
 
 /** Two flat readings in weeks 2 and 3, judged in week 3. */
 function viewOf(band: GoalBand, value: number, readAs: GoalDietState, derivedUnder = readAs) {
+  return runViewOf(band, [actual(2, value), actual(3, value)], readAs, derivedUnder);
+}
+
+function runViewOf(
+  band: GoalBand,
+  actuals: GoalActual[],
+  readAs: GoalDietState,
+  derivedUnder = readAs,
+) {
   const input: GoalProgressInput = {
     priority: PRIORITY,
     target: targetFor(band, derivedUnder),
     band,
     calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
-    actuals: [actual(2, value), actual(3, value)],
+    actuals,
     weeks: WEEKS,
     now: WEEK_3,
     dietState: readAs,
@@ -170,5 +179,19 @@ describe('a recomposition lift band', () => {
     const view = viewOf(band, row.high + 5, RECOMPOSITION);
 
     expect(view.status).toBe('ahead');
+  });
+
+  // Measured from the midline, falling from above the band would read as closing on it.
+  it('reads behind on a fall from above the band to below its low edge', () => {
+    const view = runViewOf(band, [actual(2, row.at(4)), actual(3, row.at(-2.6))], RECOMPOSITION);
+
+    expect(view.status).toBe('behind');
+  });
+
+  it('reads on track while climbing toward its low edge from under it', () => {
+    const climb = [actual(1, row.at(-4)), actual(2, row.at(-3.3)), actual(3, row.at(-2.6))];
+    const view = runViewOf(band, climb, RECOMPOSITION);
+
+    expect(view.status).toBe('on_track');
   });
 });
