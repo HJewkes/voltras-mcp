@@ -353,6 +353,30 @@ describe('suggestPaceAdjustment', () => {
     expect(suggest('ahead', 3, [])).toMatchObject({ exerciseId: 'ex-a', sets: 2 });
   });
 
+  it('skips a finished in-progress exercise and adds to the next one with sets left', () => {
+    const rows = [
+      planned({ id: 'a', exerciseId: 'ex-a', orderIndex: 0, targetSets: 2, restSec: 60 }),
+      planned({ id: 'b', exerciseId: 'ex-b', orderIndex: 1, targetSets: 3, restSec: 60 }),
+      planned({ id: 'c', exerciseId: 'ex-c', orderIndex: 2, targetSets: 3, restSec: 60 }),
+    ];
+    expect(suggest('ahead', 5, logged('ex-a', 'ex-a'), rows)).toMatchObject({
+      kind: 'add',
+      exerciseId: 'ex-b',
+      sets: 2,
+    });
+  });
+
+  it('trims a partly done exercise no lower than the sets already logged', () => {
+    // ex-b has two of three sets logged and ex-a is in progress, so ex-b floors at two.
+    const result = suggest('behind', 9, logged('ex-b', 'ex-b', 'ex-a'));
+    expect(result).toMatchObject({
+      cuts: [
+        { exerciseId: 'ex-c', fromSets: 3, toSets: 1 },
+        { exerciseId: 'ex-b', fromSets: 3, toSets: 2 },
+      ],
+    });
+  });
+
   it('gives null when the headroom is smaller than one set', () => {
     expect(suggest('ahead', 0.9, logged('ex-b'))).toBeNull();
   });

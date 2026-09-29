@@ -278,7 +278,7 @@ interface ExerciseProgress {
  * is not behind or ahead or nothing is left to change. Behind trims from the last
  * exercise backward, one set at a time, never below one set and never the
  * exercise in progress. Ahead adds up to {@link PACE_ADD_MAX_SETS} sets to the
- * exercise in progress, else the next one with sets left, while they fit the
+ * exercise in progress while it has sets left, else the next one with sets left, while they fit the
  * headroom. Sets logged with no `exerciseId` count toward the plan total but are
  * never attributed to an exercise.
  */
@@ -304,17 +304,20 @@ function exerciseProgress(
   completed: readonly CompletedWorkingSet[],
   catalog: ExerciseCatalogLookup | undefined,
 ): ExerciseProgress[] {
-  const unattributed = new Map<string, number>();
+  const attributedLogged = new Map<string, number>();
   for (const set of completed) {
     if (set.exerciseId === undefined) continue;
-    unattributed.set(set.exerciseId, (unattributed.get(set.exerciseId) ?? 0) + 1);
+    attributedLogged.set(set.exerciseId, (attributedLogged.get(set.exerciseId) ?? 0) + 1);
   }
   return [...planned]
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .map((row) => {
       const targetSets = Math.max(0, Math.trunc(row.targetSets));
-      const loggedSets = Math.min(targetSets, unattributed.get(row.exerciseId) ?? 0);
-      unattributed.set(row.exerciseId, (unattributed.get(row.exerciseId) ?? 0) - loggedSets);
+      const loggedSets = Math.min(targetSets, attributedLogged.get(row.exerciseId) ?? 0);
+      attributedLogged.set(
+        row.exerciseId,
+        (attributedLogged.get(row.exerciseId) ?? 0) - loggedSets,
+      );
       const cost = rowSetCost(row, catalog);
       return {
         exerciseId: row.exerciseId,
@@ -364,9 +367,11 @@ function suggestAdd(
   progress: readonly ExerciseProgress[],
   current: string | undefined,
 ): PaceSuggestion | null {
+  const hasSetsLeft = (exercise: ExerciseProgress): boolean =>
+    exercise.targetSets > exercise.loggedSets;
   const target =
-    progress.find((exercise) => exercise.exerciseId === current) ??
-    progress.find((exercise) => exercise.targetSets > exercise.loggedSets);
+    progress.find((exercise) => exercise.exerciseId === current && hasSetsLeft(exercise)) ??
+    progress.find(hasSetsLeft);
   if (target === undefined || target.setSeconds <= 0) return null;
   const sets = Math.min(PACE_ADD_MAX_SETS, Math.floor(headroomSeconds / target.setSeconds));
   if (sets < 1) return null;
