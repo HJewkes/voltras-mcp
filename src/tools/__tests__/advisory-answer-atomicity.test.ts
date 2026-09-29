@@ -204,6 +204,7 @@ async function seedLiftHistory(
         endedAt: at,
         partial: false,
         weightLbs: 135,
+        trainingMode: 'Weight Training',
         setPurpose: 'working',
         reps: makeReps(lastSetId, 8),
       });

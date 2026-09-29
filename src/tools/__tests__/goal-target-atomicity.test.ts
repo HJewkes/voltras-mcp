@@ -162,6 +162,7 @@ async function seedLiftHistory(store: SessionStore, sessionCount: number): Promi
         endedAt: at,
         partial: false,
         weightLbs: 135,
+        trainingMode: 'Weight Training',
         setPurpose: 'working',
         reps: makeReps(lastSetId, 8),
       });
