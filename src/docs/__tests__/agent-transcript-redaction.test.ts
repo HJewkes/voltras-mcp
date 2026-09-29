@@ -50,6 +50,7 @@ const HEX_LOOKING = 'ab'.repeat(8);
 const MADE_UP_UUID = `${'a'.repeat(8)}-${'b'.repeat(4)}-4${'c'.repeat(3)}-8${'d'.repeat(3)}-${'e'.repeat(12)}`;
 const BASE64_LOOKING = `${'QmFzZTY0'.repeat(4)}==`;
 const BYTE_RANGE_ARRAY = Array.from({ length: 12 }, (_, index) => index * 20);
+const SHORT_HEX_LITERALS = [`id0x${'1'.repeat(4)}`, `v_0x${'1'.repeat(5)}`];
 
 function recording(steps: readonly RecordedStep[]): Recording {
   return {
@@ -123,6 +124,15 @@ describe('gate 1: tool allowlist', () => {
 
     expect(code).toBe('TOOL_REFUSED');
   });
+
+  it.each(['device..send_raw', 'device.send_RAW', 'device.sendRaw'])(
+    'refuses %s, a spelling of a refused tool, before any tools/list lookup',
+    (tool) => {
+      const code = refusalCode(() => buildTranscript(recording([callStep(tool, {})]), TOOLS_LIST));
+
+      expect(code).toBe('TOOL_REFUSED');
+    },
+  );
 
   it.each(['mock.configure', 'system.speak', 'truecoach.import_week', 'profile.get_body_metrics'])(
     'refuses %s outside the allowlist',
@@ -217,6 +227,11 @@ describe('gate 3: named result and push fields', () => {
     ['a base64-looking string', BASE64_LOOKING, 'VALUE_REFUSED'],
     ['a 12-element byte-range array', BYTE_RANGE_ARRAY, 'FIELD_NOT_PRIMITIVE'],
     ['a string over 60 chars', 'long '.repeat(13), 'VALUE_REFUSED'],
+    ...SHORT_HEX_LITERALS.map((literal) => [
+      `the short hex literal ${literal}`,
+      literal,
+      'VALUE_REFUSED',
+    ]),
   ])('refuses a named result field holding %s', (_label, value, expected) => {
     const steps = [callStep('set.start', {}, { status: value }, { showResult: ['status'] })];
 
@@ -315,6 +330,10 @@ describe('gate 5 and the final AC-11 walk', () => {
     ],
     ['a hex run in text', { seq: 0, kind: 'assistant', text: `see ${HEX_LOOKING}` }, 'hex run'],
     ['a base64 run in text', { seq: 0, kind: 'user', text: BASE64_LOOKING }, 'base64 run'],
+    ...SHORT_HEX_LITERALS.flatMap((literal) => [
+      [`${literal} in user text`, { seq: 0, kind: 'user', text: `try ${literal}` }, 'hex run'],
+      [`${literal} in assistant text`, { seq: 0, kind: 'assistant', text: literal }, 'hex run'],
+    ]),
   ])('refuses a hand-built transcript carrying %s', (_label, entry, reason) => {
     const transcript = {
       schema: 'voltras-agent-transcript/1',

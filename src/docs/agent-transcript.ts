@@ -177,6 +177,8 @@ const REFUSED_TOOLS = new Set(['device.send_raw']);
 export function assertToolAllowed(tool: string): void {
   const namespace = tool.split('.')[0] ?? '';
   if (REFUSED_TOOLS.has(tool)) throw new ScreenSafetyError('TOOL_REFUSED', `${tool} by name`);
+  if (DENIED_KEY.test(tool))
+    throw new ScreenSafetyError('TOOL_REFUSED', `${tool} has a denied word`);
   if (REFUSED_NAMESPACES.has(namespace)) {
     throw new ScreenSafetyError('TOOL_REFUSED', `${tool} in a refused namespace`);
   }
@@ -189,6 +191,7 @@ export function assertToolAllowed(tool: string): void {
 
 const DENIED_KEY = /frame|payload|bytes|raw|hex|opcode|register|command|buffer/i;
 const HEX_RUN = /(0x)?[0-9a-f]{6,}/i;
+const HEX_LITERAL = /0x[0-9a-f]{4,}/i;
 const BASE64_RUN = /[A-Za-z0-9+/]{25,}/;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -199,7 +202,7 @@ export function assertKeyAllowed(key: string): void {
 /** Why a string cannot be shown, or null. Length is checked by the caller. */
 function encodedShape(text: string): string | null {
   if (UUID.test(text)) return 'a UUID';
-  if (HEX_RUN.test(text)) return 'a hex run';
+  if (HEX_RUN.test(text) || HEX_LITERAL.test(text)) return 'a hex run';
   if (BASE64_RUN.test(text)) return 'a base64 run';
   if (findEncodedValues(text).length > 0) return 'an encoded value';
   return null;
