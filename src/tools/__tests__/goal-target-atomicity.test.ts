@@ -405,4 +405,22 @@ describe.each(VARIANTS)('goal.new_chapter twice at once, $name', (variant) => {
     expect(latest).toBe(later);
     expect((await targetRow(first, proposal.id))?.newChapterAt).toBe(latest);
   });
+
+  it('keeps the stamp on the latest chapter when a backdated one commits second', async () => {
+    const first = openStore();
+    const proposal = await seedProposal(first);
+    const [earlier, later] = [daysAgo(2), daysAgo(1)];
+    const competitor = toolsOver(variant.second(first));
+    const race = raced(first, CHAPTER_WRITE, 'before', () =>
+      ok(competitor, 'goal.new_chapter', { targetId: proposal.id, at: later }),
+    );
+
+    const stamped = await ok(race.call, 'goal.new_chapter', { targetId: proposal.id, at: earlier });
+
+    expect(race.fired()).toBe(true);
+    const latest = await first.chapterStartedAt(LOCAL_USER_ID, 'bench-press');
+    expect(latest).toBe(later);
+    expect((await targetRow(first, proposal.id))?.newChapterAt).toBe(latest);
+    expect(stamped.target).toMatchObject({ newChapterAt: later });
+  });
 });
