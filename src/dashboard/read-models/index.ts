@@ -155,7 +155,12 @@ export {
 
 export {
   buildSessionPaceView,
+  classifyPace,
   DEFAULT_SET_WORK_SECONDS,
+  PACE_TOLERANCE_FLOOR_SECONDS,
+  PACE_TOLERANCE_FRACTION,
+  type CompletedWorkingSet,
+  type PaceState,
   type SessionPaceInput,
   type SessionPaceView,
 } from './session-pace.js';

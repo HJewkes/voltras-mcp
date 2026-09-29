@@ -29,6 +29,26 @@ import type { ExerciseCatalogLookup } from './session-plan.js';
  */
 export const DEFAULT_SET_WORK_SECONDS = 40;
 
+/** Slip inside this many seconds reads as on pace, however short the plan (VMCP-02.76). */
+export const PACE_TOLERANCE_FLOOR_SECONDS = 120;
+
+/** Slip inside this share of the planned session reads as on pace, when it beats the floor. */
+export const PACE_TOLERANCE_FRACTION = 0.05;
+
+/**
+ * Where the session stands against its plan. `idle` means no working set is
+ * logged and none is streaming: the clock since `session.start` is setup time,
+ * not a pace signal, so idle is never reported as behind.
+ */
+export type PaceState = 'ahead' | 'on_pace' | 'behind' | 'idle';
+
+/** One logged working set, as far as pace needs it. */
+export interface CompletedWorkingSet {
+  exerciseId?: string | undefined;
+  /** When the set ended, ms since epoch. */
+  endedAtMs: number;
+}
+
 /** The session's pace against its plan. Every field is plan-derived, never measured. */
 export interface SessionPaceView {
   /** Estimated total session length, minutes: every planned set's work plus its rest. */
@@ -39,6 +59,10 @@ export interface SessionPaceView {
   plannedSetsRemaining: number;
   /** ISO timestamp the remaining planned sets project the session to end at. */
   projectedEndAt: string;
+  /** Ahead of, on, or behind the plan's cadence; `idle` before the first set. */
+  state: PaceState;
+  /** Signed delay against the plan, minutes: positive is behind, negative ahead, 0 when idle. */
+  slipMinutes: number;
 }
 
 /** Everything `buildSessionPaceView` needs, already resolved out of the store. */
@@ -52,9 +76,11 @@ export interface SessionPaceInput {
   /**
    * Working sets already logged this session. Warm-up / probe / technique sets
    * are real and logged but do not advance the plan, the same rule the rail's
-   * "sets done" figure uses (VW-260).
+   * "sets done" figure uses (VW-260). The count is the list's length.
    */
-  completedWorkingSets: number;
+  completedWorkingSets: readonly CompletedWorkingSet[];
+  /** A set is streaming right now, so any rest before it is over. */
+  liveSetActive: boolean;
 }
 
 /** One planned set's estimated cost: the lift itself, then the rest after it. */
@@ -82,13 +108,62 @@ export function buildSessionPaceView(
   const costs = plannedSetCosts(input.planned, catalog);
   if (costs.length === 0) return null;
 
-  const done = Math.max(0, Math.trunc(input.completedWorkingSets));
+  const done = input.completedWorkingSets.length;
+  const plannedSeconds = remainingSeconds(costs, 0);
+  const idle = done === 0 && !input.liveSetActive;
+  const slipSeconds = idle ? 0 : computeSlipSeconds(input, startedMs, costs);
   return {
-    plannedMinutes: toMinutes(remainingSeconds(costs, 0)),
+    plannedMinutes: toMinutes(plannedSeconds),
     elapsedMinutes: toMinutes(Math.max(0, input.nowMs - startedMs) / 1000),
     plannedSetsRemaining: Math.max(0, costs.length - done),
     projectedEndAt: new Date(input.nowMs + remainingSeconds(costs, done) * 1000).toISOString(),
+    state: classifyPace(slipSeconds, plannedSeconds, idle),
+    slipMinutes: toSignedMinutes(slipSeconds),
   };
+}
+
+/**
+ * Seconds the session runs behind its plan (negative when ahead): how late the
+ * last working set ended against the plan's cadence, plus any rest taken beyond
+ * the rest that set owed. Rest inside the owed rest is not slip, so a lifter 20 s
+ * into a 90 s rest does not read as ahead. A streaming set means the rest is
+ * over; once the plan is met there is no next set to rest for.
+ */
+function computeSlipSeconds(
+  input: SessionPaceInput,
+  startedMs: number,
+  costs: readonly PlannedSetCost[],
+): number {
+  const done = Math.min(input.completedWorkingSets.length, costs.length);
+  const endedAts = input.completedWorkingSets
+    .map((set) => set.endedAtMs)
+    .filter((ms) => Number.isFinite(ms));
+  const lastEndedMs = endedAts.length > 0 ? Math.max(...endedAts) : startedMs;
+  const plannedThroughLast = remainingSeconds(costs.slice(0, done), 0);
+  const lateness = (lastEndedMs - startedMs) / 1000 - plannedThroughLast;
+  if (input.liveSetActive || done === 0 || done >= costs.length) return lateness;
+  const restTaken = Math.max(0, input.nowMs - lastEndedMs) / 1000;
+  return lateness + Math.max(0, restTaken - costs[done - 1]!.restSeconds);
+}
+
+/**
+ * The pace state for a slip. Slip within the tolerance, the larger of
+ * {@link PACE_TOLERANCE_FLOOR_SECONDS} and {@link PACE_TOLERANCE_FRACTION} of the
+ * planned session, is on pace; exactly the tolerance still is.
+ */
+export function classifyPace(
+  slipSeconds: number,
+  plannedSeconds: number,
+  idle: boolean,
+): PaceState {
+  if (idle) return 'idle';
+  const tolerance = Math.max(
+    PACE_TOLERANCE_FLOOR_SECONDS,
+    PACE_TOLERANCE_FRACTION * plannedSeconds,
+  );
+  if (slipSeconds > tolerance) return 'behind';
+  if (slipSeconds < -tolerance) return 'ahead';
+  return 'on_pace';
 }
 
 /**
@@ -147,4 +222,9 @@ function remainingSeconds(costs: readonly PlannedSetCost[], from: number): numbe
 
 function toMinutes(seconds: number): number {
   return Math.round(seconds / 60);
+}
+
+/** Rounds half away from zero, so a slip reads the same magnitude either side, and never -0. */
+function toSignedMinutes(seconds: number): number {
+  return Math.sign(seconds) * Math.round(Math.abs(seconds) / 60) + 0;
 }
