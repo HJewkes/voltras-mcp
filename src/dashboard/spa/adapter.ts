@@ -28,6 +28,7 @@ import type { Device, DeviceRowState, SessionState } from '@titan-design/react-u
 // (VMCP-02.84) without pulling the store's runtime (sqlite, node:sqlite) into
 // this browser bundle.
 import type { SetPurpose } from '../../store/types.js';
+import type { Tier, TierConfidence, TierSource } from '../../tools/tier-signal.js';
 // Type-only, same rationale: the declared setup card (VW-275) mirrors
 // `store/types.ts`'s `SetupCard` without a runtime dependency.
 import type { SetupCard } from '../../store/types.js';
@@ -122,6 +123,13 @@ export interface PlannedExerciseView {
   active: boolean;
 }
 
+/** The lifter's tier signal, matching `/api/session-plan`'s `prescription.tier`. */
+export interface TierView {
+  tier: Tier;
+  confidence: TierConfidence;
+  source: TierSource;
+}
+
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
@@ -151,6 +159,8 @@ export interface PrescriptionView {
    * can't resolve the full template → week → block chain.
    */
   title?: string;
+  /** The lifter's tier signal (VW-668). Absent when the server's tier read failed. */
+  tier?: TierView;
 }
 
 /** Client-side view of a single device entry in the snapshot. */

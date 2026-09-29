@@ -159,6 +159,7 @@ import {
   type SnapshotCompletedSet,
   type SnapshotSet,
   type SnapshotResponse,
+  type TierView,
 } from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
 import {
@@ -203,6 +204,7 @@ import {
 } from './goal-progress-api.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { log } from '../logger.js';
+import { getTierSignal, type TierSignalState } from '../tools/tier-signal.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
   DeviceSnapshot,
@@ -1870,10 +1872,41 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     const match = planned.find((p) => p.exerciseId === exerciseId);
     if (match === undefined) continue;
     const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
-    const rows: SessionPlanRows = { activeExerciseId: exerciseId, match, planned, title };
+    const tier = await readTierView(store);
+    const rows: SessionPlanRows = {
+      activeExerciseId: exerciseId,
+      match,
+      planned,
+      title,
+      ...(tier !== undefined && { tier }),
+    };
     return buildSessionPlanView(rows, state.exercises);
   }
   return null;
+}
+
+/** @see hasPlanStore — same narrowing, for the tier read on the plan channel (VW-668). */
+function hasTierStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & TierSignalState['store'] {
+  return (
+    typeof store.getTrainingProfile === 'function' &&
+    typeof store.listTrainingDayInstants === 'function' &&
+    typeof store.getSessionDateSpan === 'function' &&
+    typeof store.listSessionReviewRows === 'function'
+  );
+}
+
+/** The tier signal as of now; fails soft, so a tier-read error never blanks the prescription. */
+async function readTierView(store: DashboardServerState['store']): Promise<TierView | undefined> {
+  if (!hasTierStore(store)) return undefined;
+  try {
+    const { tier, confidence, source } = await getTierSignal({ store });
+    return { tier, confidence, source };
+  } catch (err) {
+    log.debug('session-plan: tier read failed; omitting the tier', err);
+    return undefined;
+  }
 }
 
 /**
