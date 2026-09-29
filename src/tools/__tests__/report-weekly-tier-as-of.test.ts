@@ -1,7 +1,7 @@
 // report.weekly reads the tier signal as of the report's instant (VW-575).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import type * as TierSignalModule from '../tier-signal.js';
 
@@ -21,13 +21,13 @@ vi.mock('../tier-signal.js', async (importOriginal) => {
 const { buildWeeklyReport } = await import('../report-tools.js');
 
 describe('report.weekly tier signal', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(async () => {
     tierReads.calls.length = 0;
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-28T12:00:00.000Z'));
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putTrainingProgram({
       id: 'prog-1',
       name: 'Base',
