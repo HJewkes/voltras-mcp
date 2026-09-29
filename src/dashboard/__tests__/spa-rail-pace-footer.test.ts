@@ -24,6 +24,8 @@ const pace = (over: Partial<SessionPaceView> = {}): SessionPaceView => ({
   elapsedMinutes: 18,
   plannedSetsRemaining: 9,
   projectedEndAt: '2026-05-09T13:02:00.000Z',
+  state: 'on_pace',
+  slipMinutes: 0,
   ...over,
 });
 

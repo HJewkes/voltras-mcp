@@ -147,6 +147,7 @@ import {
   withEffort,
   resolveSummarySessionId,
   startOfCalendarWeekIso,
+  type CompletedWorkingSet,
   type DashboardSessionStore,
   type DeviceEntry,
   type MusclePlanTemplateRow,
@@ -1723,7 +1724,8 @@ async function resolveSessionPace(
       startedAt: session.startedAt,
       nowMs: Date.now(),
       planned,
-      completedWorkingSets: countWorkingSets(completedSets),
+      completedWorkingSets: workingSetsForPace(completedSets),
+      liveSetActive: false,
     },
     state.exercises,
   );
@@ -1786,12 +1788,14 @@ function findPlannedForDashboard(
  * inactivity watchdog force-closed, which the rail already drops from its own
  * "sets done" tally. Counting one would make the two disagree.
  */
-function countWorkingSets(completed: readonly CompletedSetRecord[]): number {
-  return completed.filter(
-    (record) =>
-      record.set.reps.length > 0 &&
-      (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
-  ).length;
+function workingSetsForPace(completed: readonly CompletedSetRecord[]): CompletedWorkingSet[] {
+  return completed
+    .filter(
+      (record) =>
+        record.set.reps.length > 0 &&
+        (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
+    )
+    .map((record) => ({ endedAtMs: Date.parse(record.set.endedAt ?? record.set.startedAt) }));
 }
 
 /**

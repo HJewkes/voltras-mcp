@@ -944,10 +944,13 @@ async function resolveSessionPace(
       planned,
       // Warm-up / probe / technique rungs are real and stored but do not advance
       // the plan (VW-260), and neither does a 0-rep set the watchdog force-closed.
-      completedWorkingSets: sets.filter(
-        (set) =>
-          set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
-      ).length,
+      completedWorkingSets: sets
+        .filter(
+          (set) =>
+            set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
+        )
+        .map((set) => ({ exerciseId: set.exerciseId, endedAtMs: Date.parse(set.endedAt) })),
+      liveSetActive: false,
     },
     state.exercises,
   );
