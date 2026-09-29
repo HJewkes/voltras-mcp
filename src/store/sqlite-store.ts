@@ -2731,6 +2731,22 @@ function blockScheduleInvalid(blockId: string, problem: string): Error {
   return err;
 }
 
+function isThenable(value: unknown): boolean {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function asyncTransactionRefused(): Error {
+  const err = new Error(
+    'A store transaction callback returned a promise; store transactions must stay synchronous.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_ASYNC';
+  return err;
+}
+
 interface GoalTargetRow {
   id: string;
   priority_id: string;
@@ -3099,9 +3115,34 @@ interface ProgramAssignmentRow {
 export class SqliteSessionStore implements SessionStore {
   private readonly db: DatabaseSync;
   private closed = false;
+  private transactionDepth = 0;
 
   private constructor(db: DatabaseSync) {
     this.db = db;
+  }
+
+  /**
+   * The one way a store method opens a transaction (VW-512). At depth 0 it takes
+   * the write lock up front (BEGIN IMMEDIATE); inside an open one it is a depth-numbered savepoint, so
+   * an inner throw undoes only the inner writes and the caller decides the rest.
+   * Synchronous by construction: a callback that returns a thenable is refused.
+   */
+  private atomically<T>(fn: () => T): T {
+    const depth = this.transactionDepth;
+    const savepoint = `vmcp_sp_${depth}`;
+    this.db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
+    this.transactionDepth = depth + 1;
+    try {
+      const result = fn();
+      if (isThenable(result)) throw asyncTransactionRefused();
+      this.db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+      return result;
+    } catch (err) {
+      this.db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+      throw err;
+    } finally {
+      this.transactionDepth = depth;
+    }
   }
 
   /**
@@ -3200,19 +3241,16 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
-        | SessionRow
-        | undefined;
-      const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
-      if (next !== undefined) this.writeSessionPatch(next);
-      this.db.exec('COMMIT');
-      return Promise.resolve(next);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
+          | SessionRow
+          | undefined;
+        const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
+        if (next !== undefined) this.writeSessionPatch(next);
+        return next;
+      }),
+    );
   }
 
   /** The patchable columns only; the rest of the row stays as another writer left it. */
@@ -3325,8 +3363,7 @@ export class SqliteSessionStore implements SessionStore {
       `INSERT INTO reps (id, set_id, rep_index, payload) VALUES (?, ?, ?, ?)`,
     );
 
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       upsertSet.run(
         s.id,
         s.sessionId,
@@ -3385,11 +3422,7 @@ export class SqliteSessionStore implements SessionStore {
           serializeRepPayload(rep, `SqliteSessionStore.putSet: rep ${rep.id}`),
         );
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve();
   }
 
@@ -3409,18 +3442,14 @@ export class SqliteSessionStore implements SessionStore {
 
   async patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined> {
     // One column, never a `putSet` round-trip: that re-inserts the reps it read (VW-536).
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = this.db
-        .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
-        .get(lifter, setId) as SetRow | undefined;
-      const patched = row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
-      this.db.exec('COMMIT');
-      return Promise.resolve(patched);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db
+          .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
+          .get(lifter, setId) as SetRow | undefined;
+        return row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      }),
+    );
   }
 
   async listSessions(filter: SessionListFilter): Promise<StoredSession[]> {
@@ -3554,23 +3583,20 @@ export class SqliteSessionStore implements SessionStore {
   async setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number> {
     if (sessionIds.length === 0) return Promise.resolve(0);
     const placeholders = sessionIds.map(() => '?').join(', ');
-    this.db.exec('BEGIN');
-    try {
-      // One transaction over both tables. `sets.kind` is denormalised from the
-      // session, so a partial write would leave the set-level readers and the
-      // session-level ones disagreeing about the same bout.
-      const sessions = this.db
-        .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
-        .run(kind, ...sessionIds);
-      this.db
-        .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
-        .run(kind, ...sessionIds);
-      this.db.exec('COMMIT');
-      return Promise.resolve(Number(sessions.changes));
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        // One transaction over both tables. `sets.kind` is denormalised from the
+        // session, so a partial write would leave the set-level readers and the
+        // session-level ones disagreeing about the same bout.
+        const sessions = this.db
+          .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+          .run(kind, ...sessionIds);
+        this.db
+          .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+          .run(kind, ...sessionIds);
+        return Number(sessions.changes);
+      }),
+    );
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -3884,8 +3910,7 @@ export class SqliteSessionStore implements SessionStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       upsertMeasurement.run(
         m.id,
         m.measuredAt,
@@ -3919,11 +3944,7 @@ export class SqliteSessionStore implements SessionStore {
           );
         }
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve();
   }
 
@@ -4036,16 +4057,12 @@ export class SqliteSessionStore implements SessionStore {
   ): Promise<StoredBlockSchedule> {
     const problem = scheduleProblem(schedule);
     if (problem !== null) throw blockScheduleInvalid(schedule.blockId, problem);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.writeTrainingBlock(b);
-      const row = this.insertBlockSchedule(schedule);
-      this.db.exec('COMMIT');
-      return Promise.resolve(row);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        this.writeTrainingBlock(b);
+        return this.insertBlockSchedule(schedule);
+      }),
+    );
   }
 
   private writeTrainingBlock(b: StoredTrainingBlock): void {
@@ -4216,19 +4233,14 @@ export class SqliteSessionStore implements SessionStore {
     const result = emptyPlanImportResult();
     const upsertTemplate = this.db.prepare(WORKOUT_TEMPLATE_UPSERT_SQL);
     const upsertExercise = this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL);
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       for (const template of templates) {
         const id = this.#applyImportTemplate(template, upsertTemplate, result);
         for (const exercise of template.exercises) {
           this.#applyImportExercise(exercise, id, upsertExercise, result);
         }
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve(result);
   }
 
@@ -4338,16 +4350,13 @@ export class SqliteSessionStore implements SessionStore {
   async putProgramAssignmentIfAbsent(
     a: StoredProgramAssignment,
   ): Promise<{ assignment: StoredProgramAssignment; created: boolean }> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const existing = this.assignmentFor(a);
-      if (existing === undefined) this.writeProgramAssignment(a);
-      this.db.exec('COMMIT');
-      return Promise.resolve({ assignment: existing ?? a, created: existing === undefined });
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const existing = this.assignmentFor(a);
+        if (existing === undefined) this.writeProgramAssignment(a);
+        return { assignment: existing ?? a, created: existing === undefined };
+      }),
+    );
   }
 
   /** The session's earliest link to the same planned lift, or else the same template. */
@@ -4502,8 +4511,7 @@ export class SqliteSessionStore implements SessionStore {
     // One transaction, three statements. Halfway through, the timeline either
     // has two open ranges or a hole — both are states a reader would report
     // as fact, so the window in which they exist must not be observable.
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       // Fully superseded by the new open range, so a DELETE rather than a
       // truncation: shortening them to zero length would leave rows that
       // cover no instant and answer no question.
@@ -4530,11 +4538,7 @@ export class SqliteSessionStore implements SessionStore {
           declared.declaredAt,
           declared.recompMode ?? null,
         );
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve(declared);
   }
 
@@ -4550,15 +4554,9 @@ export class SqliteSessionStore implements SessionStore {
       const problem = scheduleProblem(input);
       if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
     }
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const rows = inputs.map((input) => this.insertBlockSchedule(input));
-      this.db.exec('COMMIT');
-      return Promise.resolve(rows);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => inputs.map((input) => this.insertBlockSchedule(input))),
+    );
   }
 
   private insertBlockSchedule(input: AppendBlockScheduleInput): StoredBlockSchedule {
@@ -4580,21 +4578,18 @@ export class SqliteSessionStore implements SessionStore {
   async deriveBlockSchedules<T>(
     derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
   ): Promise<{ rows: StoredBlockSchedule[]; result: T }> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const derived = derive(this.scheduledBlocks());
-      for (const input of derived.rows) {
-        const problem = scheduleProblem(input);
-        if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
-      }
-      if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
-      const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
-      this.db.exec('COMMIT');
-      return Promise.resolve({ rows, result: derived.result });
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const derived = derive(this.scheduledBlocks());
+        for (const input of derived.rows) {
+          const problem = scheduleProblem(input);
+          if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+        }
+        if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
+        const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
+        return { rows, result: derived.result };
+      }),
+    );
   }
 
   /** Every block in program order, with its live row and whether its program is archived. */
@@ -4637,19 +4632,14 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
-      const declared =
-        latest !== undefined && sameCommitmentContent(latest, input)
+    return Promise.resolve(
+      this.atomically(() => {
+        const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
+        return latest !== undefined && sameCommitmentContent(latest, input)
           ? { commitment: latest, unchanged: true }
           : { commitment: this.insertCommitmentRevision(input, latest), unchanged: false };
-      this.db.exec('COMMIT');
-      return Promise.resolve(declared);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+      }),
+    );
   }
 
   private latestCommitmentRevision(userId: string, weekOf: string): StoredCommitment | undefined {
@@ -5064,15 +5054,9 @@ export class SqliteSessionStore implements SessionStore {
     userId: string,
     derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
   ): Promise<StoredPriority[]> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const written = derive(this.priorities(userId)).map((row) => this.writePriority(row));
-      this.db.exec('COMMIT');
-      return Promise.resolve(written);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => derive(this.priorities(userId)).map((row) => this.writePriority(row))),
+    );
   }
 
   async listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]> {
@@ -5100,8 +5084,7 @@ export class SqliteSessionStore implements SessionStore {
    * no-op instead of a rewrite of when this ended.
    */
   async retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined> {
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       this.db
         .prepare(`UPDATE priorities SET retired_at = ? WHERE id = ? AND retired_at IS NULL`)
         .run(retiredAt, id);
@@ -5111,11 +5094,7 @@ export class SqliteSessionStore implements SessionStore {
              WHERE priority_id = ? AND retired_at IS NULL`,
         )
         .run(retiredAt, id);
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     const row = this.db.prepare(`SELECT * FROM priorities WHERE id = ?`).get(id) as
       | PriorityRow
       | undefined;
