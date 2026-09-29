@@ -1195,10 +1195,9 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
     }
   });
 
-  it('clears the label on a re-put rather than leaving the old one behind', async () => {
-    // The DO UPDATE half of the upsert: a column present in the INSERT but
-    // missing from the update list silently never updates, which is invisible
-    // until a relabel has to move a set back to the owner.
+  it('hands a set back to the owner by patch, and a session by re-put', async () => {
+    // A set re-put keeps its stored label (VW-583), so the set goes back through
+    // `patchSetLifter`; the session's DO UPDATE half still rewrites its label.
     const store = SqliteSessionStore.open(':memory:');
     try {
       await store.putSession({
@@ -1218,8 +1217,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
       };
       await store.putSet(set);
 
-      const { lifter: _dropped, ...ownerSet } = set;
-      await store.putSet(ownerSet);
+      await store.patchSetLifter('set-1', null);
       await store.putSession({ kind: 'training', id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
 
       expect(await store.getSet('set-1')).not.toHaveProperty('lifter');
