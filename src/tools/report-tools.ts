@@ -503,7 +503,7 @@ export async function buildWeeklyReport(
     progression: await buildProgressionLines(state, endedSessions, to),
     flags: await buildFlags(state, endedSessions),
     checkIn: await buildCheckIn(state, input, from, to),
-    goals: await buildGoalLines(state, to),
+    goals: await buildGoalLines(state, to, input.lifter),
   };
 }
 

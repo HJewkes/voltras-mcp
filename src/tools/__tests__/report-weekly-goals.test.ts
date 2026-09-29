@@ -176,4 +176,56 @@ describe('report.weekly goal lines', () => {
     expect(goals.filter((line) => line.targetId !== undefined)).toHaveLength(2);
     expect(rollup?.text).toMatch(/^goal: arms, 1 of 2 primary lifts on track/);
   });
+
+  it('omits the goals for a named lifter even when the owner has accepted targets', async () => {
+    await seedHistory(store, 'cable-row', [170, 172, 174, 176]);
+    await store.putPriority(priority({ id: 'p1' }));
+    await store.putGoalTarget(target({ id: 't1', priorityId: 'p1' }));
+
+    const report = await buildWeeklyReport(makeState(store), { to: TO, lifter: 'guest-x' });
+
+    expect(report.goals).toEqual([]);
+    expect(renderWeeklyMarkdown(report)).not.toContain('## Goals');
+  });
+
+  it('leaves out a target derived after the report range ends', async () => {
+    await seedHistory(store, 'cable-row', [170, 172, 174, 176]);
+    await store.putPriority(priority({ id: 'p1' }));
+    await store.putGoalTarget(
+      target({ id: 't-late', priorityId: 'p1', derivedAt: '2026-10-05T00:00:00.000Z' }),
+    );
+
+    const report = await buildWeeklyReport(makeState(store), { to: TO });
+
+    expect(report.goals).toEqual([]);
+  });
+
+  it('keeps a target that was retired after the report range ends', async () => {
+    await seedHistory(store, 'cable-row', [170, 172, 174, 176]);
+    await store.putPriority(priority({ id: 'p1' }));
+    await store.putGoalTarget(
+      target({
+        id: 't-retired',
+        priorityId: 'p1',
+        retiredAt: '2026-10-05T00:00:00.000Z',
+        outcome: 'abandoned',
+      }),
+    );
+
+    const report = await buildWeeklyReport(makeState(store), { to: TO });
+
+    expect(report.goals.map((line) => line.targetId)).toEqual(['t-retired']);
+  });
+
+  it('keeps a priority retired after the range ends and skips one declared after it', async () => {
+    await seedHistory(store, 'cable-row', [170, 172, 174, 176]);
+    await store.putPriority(priority({ id: 'p-old', retiredAt: '2026-10-05T00:00:00.000Z' }));
+    await store.putPriority(priority({ id: 'p-new', declaredAt: '2026-10-05T00:00:00.000Z' }));
+    await store.putGoalTarget(target({ id: 't-old', priorityId: 'p-old' }));
+    await store.putGoalTarget(target({ id: 't-new', priorityId: 'p-new' }));
+
+    const report = await buildWeeklyReport(makeState(store), { to: TO });
+
+    expect(report.goals.map((line) => line.targetId)).toEqual(['t-old']);
+  });
 });

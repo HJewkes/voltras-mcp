@@ -22,18 +22,45 @@ export interface WeeklyGoalLine {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** One line per accepted target of every live priority, plus a rollup line per muscle priority. */
-export async function buildGoalLines(state: ServerState, to: string): Promise<WeeklyGoalLine[]> {
-  const priorities = await state.store.listPriorities(LOCAL_USER_ID);
+/**
+ * One line per accepted target of every priority live at `to`, plus a rollup line per muscle
+ * priority. Goals belong to the owner, so a report scoped to a named lifter has none. A target
+ * counts from its `derivedAt` (no accept time is stored) until its `retiredAt`.
+ */
+export async function buildGoalLines(
+  state: ServerState,
+  to: string,
+  lifter: string | undefined,
+): Promise<WeeklyGoalLine[]> {
+  if (lifter !== undefined) return [];
+  const store = withRetiredTargets(state.store);
+  const priorities = await state.store.listPriorities(LOCAL_USER_ID, { includeRetired: true });
   const lines: WeeklyGoalLine[] = [];
-  for (const priority of priorities) {
-    const views = (await fetchGoalProgressViews(state.store, priority, new Date(to))).filter(
-      (view) => view.target.acceptedBy !== undefined,
+  for (const priority of priorities.filter((row) => liveAt(row.declaredAt, row.retiredAt, to))) {
+    const views = (await fetchGoalProgressViews(store, priority, new Date(to))).filter(
+      (view) =>
+        view.target.acceptedBy !== undefined &&
+        liveAt(view.target.derivedAt, view.target.retiredAt, to),
     );
     for (const view of views) lines.push(targetLine(state, view));
     if (priority.kind === 'muscle' && views.length > 0) lines.push(rollupLine(views));
   }
   return lines;
+}
+
+/** Started at or before `at`, and not retired until after it. */
+function liveAt(startedAt: string, retiredAt: string | undefined, at: string): boolean {
+  return startedAt <= at && (retiredAt === undefined || retiredAt > at);
+}
+
+/** The progress read lists live targets only; a report as of an earlier date needs the retired ones too. */
+function withRetiredTargets(store: ServerState['store']): ServerState['store'] {
+  return Object.create(store, {
+    listGoalTargets: {
+      value: (selector: Parameters<ServerState['store']['listGoalTargets']>[0]) =>
+        store.listGoalTargets(selector, { includeRetired: true }),
+    },
+  }) as ServerState['store'];
 }
 
 function targetLine(state: ServerState, view: GoalProgressView): WeeklyGoalLine {

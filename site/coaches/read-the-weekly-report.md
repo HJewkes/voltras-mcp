@@ -169,7 +169,9 @@ The status is the word the goals page shows for that target, read from the same 
 the report never re-judges it: `on track`, `ahead`, `behind`, `stalled`, `calibrating`,
 `deload week, no verdict`, or `behind, tolerated for the diet phase`. A muscle priority adds a
 rollup line counting how many of its lifts are on track. Proposals the lifter has not accepted
-are left out, and with no priorities the whole section is omitted.
+are left out, and with no priorities the whole section is omitted. Goals belong to the owner, so
+a report scoped to a named `lifter` has none. The section reads as of the range's end: a target
+counts from the day it was derived until it was retired.
 
 ## Calling it
 
