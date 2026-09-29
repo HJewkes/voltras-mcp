@@ -43,6 +43,9 @@ import { openTestStore } from '../../store/__tests__/open-test-store.js';
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
 const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
 
+// Each cache miss opens a store and walks the migration ladder: 0.5 s to 2 s under 14 CPU burners, 5.5 s seen on CI.
+vi.setConfig({ testTimeout: SEED_ALL_STATES_TIMEOUT_MS });
+
 // `now` feeds a whole-body target's startMeasuredAt as a raw day offset (preview-seeds.ts,
 // seedWholeBodyGoal), not a calendar-week-aligned one, so its meso week position flips with
 // the real weekday the suite runs on; freeze it to the weekday this fixture was written against.
@@ -60,8 +63,14 @@ afterEach(() => {
   }
 });
 
+// Views are plain data and never mutated; one seed per state and clock serves every test.
+const viewCache = new Map<string, GoalProgressView>();
+
 /** Seed one state into a throwaway store and project it exactly as the route does. */
 async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
+  const key = `${state.name}@${Date.now()}`;
+  const cached = viewCache.get(key);
+  if (cached) return cached;
   const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
   scratchDirs.push(dir);
   const store = openTestStore({ path: join(dir, 'preview.sqlite') });
@@ -72,6 +81,7 @@ async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
     expect(priorities).toHaveLength(1);
     const views = await fetchGoalProgressViews(store, priorities[0]!, now);
     expect(views).toHaveLength(1);
+    viewCache.set(key, views[0]!);
     return views[0]!;
   } finally {
     store.close();
