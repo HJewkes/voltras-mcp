@@ -17,7 +17,7 @@ warranted", and the fast-path fell through to `publishVoiceInput`. The operator
 saw a plain `voice_input` carrying the transcript "Stop.", indistinguishable from
 ordinary speech. No error, no warning, no log line. **The cable stayed loaded.**
 
-Reproduced twice on VTR-212006 bound to slot `right` (169 ms / 162 ms latency,
+Reproduced twice on one device bound to slot `right` (169 ms / 162 ms latency,
 active set present both times). Phase 3b passed 8/8 on 2026-08-01 only because
 that session used the default `primary` slot.
 
@@ -104,7 +104,7 @@ New/changed tests:
 
 ## Still needs hardware verification (I could not run this — no device)
 
-1. **The original repro, inverted.** VTR-212006 bound to slot `right`, session +
+1. **The original repro, inverted.** The same device bound to slot `right`, session +
    set active, say "Stop." → the cable must go slack and a
    `deterministic_stop_triggered` with `slot: right` must arrive inline.
 2. **Bilateral sweep on real hardware.** Both units bound (`left` + `right`),

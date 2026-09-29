@@ -6,9 +6,10 @@
 // The rule is off for this directory (it is a test path, deferred to w5-13), so
 // the fixtures below do not trip it on their way past.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ESLint } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
@@ -130,31 +131,27 @@ describe('the exemption list', () => {
   const DIRECTIVE =
     /eslint-disable(?:-next-line|-line)?\s+voltras\/no-protocol-detail\s+--\s+([^\n]*)/g;
 
-  function sourceFiles(dir: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) sourceFiles(path, out);
-      else if (/\.(ts|tsx|cjs|mjs)$/.test(path)) out.push(path);
-    }
-    return out;
+  // Every tracked file either pass reads, markdown included, since a directive
+  // written as an HTML comment exempts a line from the text pass (VW-497).
+  function trackedFiles(): string[] {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter((path) => /\.(ts|tsx|cjs|mjs|md)$/.test(path));
   }
 
-  // scripts/ is in scope alongside src/ since the widened scan covers it too (VW-497).
   it('is exactly these four sites, and nothing else', () => {
     const sites: string[] = [];
-    for (const root of ['src', 'scripts']) {
-      for (const file of sourceFiles(join(REPO_ROOT, root))) {
-        const text = readFileSync(file, 'utf8');
-        for (const match of text.matchAll(DIRECTIVE)) {
-          sites.push(`${relative(REPO_ROOT, file)} — ${match[1].trim()}`);
-        }
+    for (const file of trackedFiles()) {
+      const text = readFileSync(join(REPO_ROOT, file), 'utf8');
+      for (const match of text.matchAll(DIRECTIVE)) {
+        sites.push(`${file} — ${match[1].replace(/\s*-->$/, '').trim()}`);
       }
     }
     expect(sites).toEqual([
+      'WISHLIST.md — a commit sha, not a device value (VW-497)',
       'src/tools/device-tools.ts — the hex alphabet, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
-      'scripts/check-docs.mjs — a reviewed docs exception recorded as data, not a device value (VW-497)',
     ]);
   });
 });

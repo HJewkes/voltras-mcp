@@ -474,8 +474,8 @@ has already gone out, `idle_rep_reclaimed` follows:
 
 ```jsonc
 {
-  "summary": "1 idle rep already reported as idle now belongs to set 3f2a1b04 (auto-armed). Session total idle: 0.",
-  "idle_rep_reclaimed": { "count": 1, "set_id": "3f2a1b04-…", "slot": "primary" },
+  "summary": "1 idle rep already reported as idle now belongs to set 00000042 (auto-armed). Session total idle: 0.",
+  "idle_rep_reclaimed": { "count": 1, "set_id": "00000042-…", "slot": "primary" },
   "idle_rep_count": 0,
 }
 ```
