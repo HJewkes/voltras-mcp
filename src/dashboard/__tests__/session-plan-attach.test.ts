@@ -98,7 +98,9 @@ function stateWith(assignments: StoredProgramAssignment[]): DashboardServerState
         },
       ],
     ]),
-    exercises: { getById: (id) => ({ name: id === 'bench' ? 'Bench Press' : id }) },
+    exercises: {
+      getById: (id) => ({ name: id === 'bench' ? 'Bench Press' : id, muscleGroups: [] }),
+    },
     store: {
       listSessions: () => Promise.resolve([]),
       getAssignmentsForSession: () => Promise.resolve(assignments),

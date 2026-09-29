@@ -132,8 +132,11 @@ export interface TierView {
 
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
-  /** Where the targets come from: a plan the coach attached. */
-  source: 'prescribed';
+  /**
+   * Where the targets come from: a plan the coach attached. The server always sends it;
+   * optional here so payloads and fixtures that predate it still type.
+   */
+  source?: 'prescribed';
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;
