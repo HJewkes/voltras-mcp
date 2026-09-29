@@ -47,6 +47,7 @@ import {
   type PlanWarning,
 } from '../plan/lint-plan.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
+import { targetMusclesOf } from './metrics-tools.js';
 import {
   dietPhaseTolerance,
   toleranceEffect,
@@ -163,7 +164,9 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot ' +
   'in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over ' +
   'the WHOLE template after the insert (sets per exercise, and hard sets per muscle per ' +
-  "session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template " +
+  "session, counted in full toward each TARGET muscle slug of the exercise's weight table: " +
+  'an overhead press counts toward `front_delts` only, a row toward both `lats` and ' +
+  '`upper_back`, and a chest press adds nothing to a delt), PLUS three cross-template ' +
   'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
   'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
   'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
@@ -878,13 +881,12 @@ async function lintPriorityMuscle(
   });
 }
 
-/** Per-muscle lint is target-only (B47): `muscleGroups[0]`, never the secondaries. */
+/** Per-muscle lint is target-only (B47): the weight table's targets, never a dose row. */
 function toLintExercise(state: ServerState, e: StoredPlannedExercise): LintPlanExercise {
-  const muscleGroup = state.exercises.getById(e.exerciseId)?.muscleGroups[0];
   return {
     exerciseId: e.exerciseId,
     targetSets: e.targetSets,
-    ...(muscleGroup !== undefined ? { muscleGroup } : {}),
+    muscleGroups: targetMusclesOf(state, e.exerciseId),
   };
 }
 

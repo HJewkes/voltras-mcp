@@ -19,7 +19,7 @@ import {
 const CONFIDENT = 'confident' as const;
 
 function exercise(over: Partial<LintPlanExercise> = {}): LintPlanExercise {
-  return { exerciseId: 'cable-fly', targetSets: 3, muscleGroup: 'chest', ...over };
+  return { exerciseId: 'cable-fly', targetSets: 3, muscleGroups: ['chest'], ...over };
 }
 
 describe('sets per exercise', () => {
@@ -149,8 +149,8 @@ describe('sets per muscle per session', () => {
 
   it('keeps different muscle groups in separate buckets', () => {
     const exercises = [
-      exercise({ exerciseId: 'bench-press', targetSets: 5, muscleGroup: 'chest' }),
-      exercise({ exerciseId: 'cable-row', targetSets: 5, muscleGroup: 'back' }),
+      exercise({ exerciseId: 'bench-press', targetSets: 5, muscleGroups: ['chest'] }),
+      exercise({ exerciseId: 'cable-row', targetSets: 5, muscleGroups: ['lats'] }),
     ];
 
     const warnings = lintPlan({ exercises, tier: 'beginner', confidence: CONFIDENT });
@@ -172,12 +172,39 @@ describe('sets per muscle per session', () => {
   it('skips an exercise whose muscle group could not be resolved', () => {
     const exercises = [
       exercise({ exerciseId: 'bench-press', targetSets: 5 }),
-      { exerciseId: 'mystery-machine', targetSets: 4 },
+      { exerciseId: 'mystery-machine', targetSets: 4, muscleGroups: [] },
     ];
 
     const warnings = lintPlan({ exercises, tier: 'beginner', confidence: CONFIDENT });
 
     expect(warnings).toEqual([]);
+  });
+
+  it('counts a two-target exercise in full toward each target', () => {
+    const exercises = [
+      exercise({ exerciseId: 'cable-row', targetSets: 5, muscleGroups: ['lats', 'upper_back'] }),
+      exercise({ exerciseId: 'lat-pulldown', targetSets: 4, muscleGroups: ['lats'] }),
+      exercise({ exerciseId: 'face-pull', targetSets: 4, muscleGroups: ['upper_back'] }),
+    ];
+
+    const warnings = lintPlan({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    expect(warnings.map((w) => [w.muscleGroup, w.observed])).toEqual([
+      ['lats', 9],
+      ['upper_back', 9],
+    ]);
+  });
+
+  it('names a slug with spaces in the warning copy', () => {
+    const exercises = [exercise({ targetSets: 9, muscleGroups: ['front_delts'] })];
+
+    const warnings = lintPlan({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    const perMuscle = warnings.find(
+      (w) => w.code === 'sets_per_muscle_per_session_over_tier_ceiling',
+    );
+    expect(perMuscle?.muscleGroup).toBe('front_delts');
+    expect(perMuscle?.message).toContain('9 sets for front delts in this session');
   });
 });
 
@@ -298,15 +325,15 @@ describe('meso_length_grew_mid_block', () => {
 describe('priority_muscle_changed_mid_block', () => {
   it('warns when the top-set muscle differs between week 1 and a later week', () => {
     const warnings = lintPriorityMuscleChangedMidBlock({
-      week1Exercises: [exercise({ muscleGroup: 'chest', targetSets: 10 })],
-      laterWeekExercises: [exercise({ muscleGroup: 'back', targetSets: 10 })],
+      week1Exercises: [exercise({ muscleGroups: ['chest'], targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroups: ['lats'], targetSets: 10 })],
       laterWeekOrderIndex: 2,
     });
 
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({
       code: 'priority_muscle_changed_mid_block',
-      muscleGroup: 'back',
+      muscleGroup: 'lats',
     });
     expect(warnings[0].message).toContain('Week 1');
     expect(warnings[0].message).toContain('week 3');
@@ -314,8 +341,8 @@ describe('priority_muscle_changed_mid_block', () => {
 
   it('says nothing when the priority muscle is unchanged', () => {
     const warnings = lintPriorityMuscleChangedMidBlock({
-      week1Exercises: [exercise({ muscleGroup: 'chest', targetSets: 10 })],
-      laterWeekExercises: [exercise({ muscleGroup: 'chest', targetSets: 6 })],
+      week1Exercises: [exercise({ muscleGroups: ['chest'], targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroups: ['chest'], targetSets: 6 })],
       laterWeekOrderIndex: 1,
     });
 
@@ -325,10 +352,10 @@ describe('priority_muscle_changed_mid_block', () => {
   it('says nothing when either week has a tie for the top muscle', () => {
     const warnings = lintPriorityMuscleChangedMidBlock({
       week1Exercises: [
-        exercise({ muscleGroup: 'chest', targetSets: 5 }),
-        exercise({ muscleGroup: 'back', targetSets: 5 }),
+        exercise({ muscleGroups: ['chest'], targetSets: 5 }),
+        exercise({ muscleGroups: ['lats'], targetSets: 5 }),
       ],
-      laterWeekExercises: [exercise({ muscleGroup: 'back', targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroups: ['lats'], targetSets: 10 })],
       laterWeekOrderIndex: 1,
     });
 
@@ -340,8 +367,8 @@ describe('same_muscle_high_volume_consecutive_days', () => {
   it('warns when the same muscle is over the session ceiling on two consecutive templates', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
-        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
-        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
       ],
       tier: 'beginner',
       confidence: CONFIDENT,
@@ -362,8 +389,8 @@ describe('same_muscle_high_volume_consecutive_days', () => {
   it('says nothing when only one of the two consecutive templates is over ceiling', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
-        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
-        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 3 })] },
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 3 })] },
       ],
       tier: 'beginner',
       confidence: CONFIDENT,
@@ -375,9 +402,9 @@ describe('same_muscle_high_volume_consecutive_days', () => {
   it('says nothing for non-consecutive templates separated by a day with no overlap check', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
-        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
-        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'back', targetSets: 9 })] },
-        { dayLabel: 'Wed', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ['lats'], targetSets: 9 })] },
+        { dayLabel: 'Wed', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
       ],
       tier: 'beginner',
       confidence: CONFIDENT,
@@ -389,8 +416,8 @@ describe('same_muscle_high_volume_consecutive_days', () => {
   it('skips a pair where one template has no dayLabel', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
-        { exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
-        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 9 })] },
       ],
       tier: 'beginner',
       confidence: CONFIDENT,
@@ -402,8 +429,8 @@ describe('same_muscle_high_volume_consecutive_days', () => {
   it('never warns at the advanced tier, which has no per-session ceiling', () => {
     const warnings = lintSameMuscleHighVolumeConsecutiveDays({
       templates: [
-        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 20 })] },
-        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 20 })] },
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 20 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroups: ['chest'], targetSets: 20 })] },
       ],
       tier: 'advanced',
       confidence: CONFIDENT,

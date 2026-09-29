@@ -2,7 +2,7 @@
 // (VMCP-06.03 / RP backlog B31).
 //
 // Pure and store-free by construction: the caller reads the tier once, resolves
-// each exercise's primary muscle group, and hands this function a flat list.
+// each exercise's target muscles, and hands this function a flat list.
 // That is what makes the ceilings testable without a database and what keeps
 // the plan write path unable to fail because of a lint.
 //
@@ -57,8 +57,8 @@ export interface PlanWarning {
 export interface LintPlanExercise {
   exerciseId: string;
   targetSets: number;
-  /** PRIMARY muscle group only (`muscleGroups[0]`); absent skips the per-muscle lint. */
-  muscleGroup?: string;
+  /** Landmark target slugs (B47); a set counts toward each. Empty skips the per-muscle lint. */
+  muscleGroups: readonly string[];
   /** Which session within the plan. Absent means "the one session being linted". */
   dayIndex?: number;
 }
@@ -175,7 +175,7 @@ function lintSetsPerMuscle(exercises: LintPlanExercise[], tier: Tier): PlanWarni
     .filter((bucket) => bucket.sets > ceiling)
     .map((bucket) => ({
       code: 'sets_per_muscle_per_session_over_tier_ceiling' as const,
-      message: setsPerMuscleMessage(bucket.muscleGroup, bucket.sets, tier, ceiling),
+      message: setsPerMuscleMessage(muscleLabel(bucket.muscleGroup), bucket.sets, tier, ceiling),
       muscleGroup: bucket.muscleGroup,
       observed: bucket.sets,
       ceiling,
@@ -184,20 +184,26 @@ function lintSetsPerMuscle(exercises: LintPlanExercise[], tier: Tier): PlanWarni
 }
 
 /**
- * Hard sets per (session, primary muscle group). Exercises with no resolved
- * muscle group are skipped rather than pooled under a placeholder — a bucket
- * of "unknown" would produce a warning naming no muscle anyone can act on.
+ * Hard sets per (session, target muscle). Exercises with no resolved target
+ * are skipped rather than pooled under a placeholder — a bucket of "unknown"
+ * would produce a warning naming no muscle anyone can act on.
  */
 function setsByMuscleAndDay(exercises: LintPlanExercise[]): Map<string, MuscleDayBucket> {
   const totals = new Map<string, MuscleDayBucket>();
   for (const e of exercises) {
-    if (e.muscleGroup === undefined) continue;
-    const key = `${e.dayIndex ?? 0} ${e.muscleGroup}`;
-    const bucket = totals.get(key) ?? { muscleGroup: e.muscleGroup, sets: 0 };
-    bucket.sets += e.targetSets;
-    totals.set(key, bucket);
+    for (const muscleGroup of e.muscleGroups) {
+      const key = `${e.dayIndex ?? 0} ${muscleGroup}`;
+      const bucket = totals.get(key) ?? { muscleGroup, sets: 0 };
+      bucket.sets += e.targetSets;
+      totals.set(key, bucket);
+    }
   }
   return totals;
+}
+
+/** A slug as warning copy reads it: `front_delts` becomes `front delts`. */
+function muscleLabel(slug: string): string {
+  return slug.replaceAll('_', ' ');
 }
 
 function setsPerMuscleMessage(
@@ -223,12 +229,13 @@ function setsPerMuscleMessage(
   );
 }
 
-/** Sums `targetSets` by muscle group across a flat list, ignoring `dayIndex`. */
+/** Sums `targetSets` into each target muscle across a flat list, ignoring `dayIndex`. */
 function totalsByMuscle(exercises: LintPlanExercise[]): Map<string, number> {
   const totals = new Map<string, number>();
   for (const e of exercises) {
-    if (e.muscleGroup === undefined) continue;
-    totals.set(e.muscleGroup, (totals.get(e.muscleGroup) ?? 0) + e.targetSets);
+    for (const muscleGroup of e.muscleGroups) {
+      totals.set(muscleGroup, (totals.get(muscleGroup) ?? 0) + e.targetSets);
+    }
   }
   return totals;
 }
@@ -253,7 +260,7 @@ export function lintWeeklyVolume(input: LintWeeklyVolumeInput): PlanWarning[] {
     .filter(([, sets]) => sets > ceiling)
     .map(([muscleGroup, sets]) => ({
       code: 'hard_sets_per_muscle_per_week_over_tier_ceiling' as const,
-      message: weeklyVolumeMessage(muscleGroup, sets, input.tier, ceiling),
+      message: weeklyVolumeMessage(muscleLabel(muscleGroup), sets, input.tier, ceiling),
       muscleGroup,
       observed: sets,
       ceiling,
@@ -330,9 +337,10 @@ export function lintPriorityMuscleChangedMidBlock(input: LintPriorityMuscleInput
     {
       code: 'priority_muscle_changed_mid_block',
       message:
-        `Week 1 of this block prioritized ${week1Top} (the most planned sets), but week ` +
-        `${input.laterWeekOrderIndex + 1} prioritizes ${laterTop} instead. A block's priority ` +
-        'muscle is normally set once for the whole mesocycle — if this shift is intentional, ' +
+        `Week 1 of this block prioritized ${muscleLabel(week1Top)} (the most planned sets), but ` +
+        `week ${input.laterWeekOrderIndex + 1} prioritizes ${muscleLabel(laterTop)} instead. ` +
+        "A block's priority muscle is normally set once for the whole mesocycle — if this " +
+        'shift is intentional, ' +
         'it usually means this is really the start of a new block rather than a change inside ' +
         'this one.',
       muscleGroup: laterTop,
@@ -417,7 +425,7 @@ function consecutiveDayWarnings(
     warnings.push({
       code: 'same_muscle_high_volume_consecutive_days',
       message:
-        `${muscleGroup} is over the ${tier} per-session ceiling of ${ceiling} sets on both ` +
+        `${muscleLabel(muscleGroup)} is over the ${tier} per-session ceiling of ${ceiling} sets on both ` +
         `${dayA} (${aSets}) and the very next day, ${dayB} (${bSets}). Back-to-back ` +
         'high-volume days for the same muscle cut into the recovery window that ceiling is ' +
         "built around. Consider resequencing, or lowering one day's volume toward the ceiling.",

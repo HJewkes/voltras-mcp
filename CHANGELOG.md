@@ -86,6 +86,11 @@ entry is written from the user's point of view is a review question, not a check
   muscle from the weight table (VW-664, #559). A lateral raise no longer backs an overhead press
   (side delts against front delts), and a lat pulldown now backs a cable row (both target
   the lats).
+- Plan warnings from `plan.exercise.create` count sets per muscle from the weight table
+  (VW-665). An overhead press and a lateral raise on one day no longer pool into one
+  shoulders total, a chest press adds nothing to the delts, and a row counts toward both
+  `lats` and `upper_back`. A warning's `muscleGroup` is a muscle slug (`front_delts`, never
+  `shoulders`) and its message says "front delts".
 - A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
   horizon now continues past the named block through the program's later dated blocks, and
   undated weeks are split into 5-week blocks, the length the owner chose.
