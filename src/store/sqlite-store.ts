@@ -3302,6 +3302,10 @@ export class SqliteSessionStore implements SessionStore {
     // which is invisible until a force-end/re-end retry writes the wrong value.
     // `is_warmup` is absent by design — it is a generated column as of v6 and
     // SQLite rejects writes to it; `set_purpose` is the stored value.
+    // Two deliberate exceptions (VW-583): `lifter` is written on insert only,
+    // because `patchSetLifter` owns a stored set's label, and a re-put carrying
+    // no group keeps the one `patchSetBilateralGroup` stamped. A re-put comes
+    // from a live snapshot that sees neither write.
     const upsertSet = this.db.prepare(
       `INSERT INTO sets
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
@@ -3338,7 +3342,6 @@ export class SqliteSessionStore implements SessionStore {
          velocity_units = excluded.velocity_units,
          auto_created_by = excluded.auto_created_by,
          upgraded = excluded.upgraded,
-         lifter = excluded.lifter,
          kind = excluded.kind,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
@@ -3346,8 +3349,9 @@ export class SqliteSessionStore implements SessionStore {
          firmware_peak_force_lbs = excluded.firmware_peak_force_lbs,
          firmware_peak_power = excluded.firmware_peak_power,
          firmware_reps_json = excluded.firmware_reps_json,
-         bilateral_group_id = excluded.bilateral_group_id,
-         group_source = excluded.group_source,
+         bilateral_group_id = coalesce(excluded.bilateral_group_id, sets.bilateral_group_id),
+         group_source = CASE WHEN excluded.bilateral_group_id IS NULL
+                             THEN sets.group_source ELSE excluded.group_source END,
          chains_lbs = excluded.chains_lbs,
          damper_level = excluded.damper_level,
          eccentric_pct = excluded.eccentric_pct,
@@ -3447,6 +3451,24 @@ export class SqliteSessionStore implements SessionStore {
         const row = this.db
           .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
           .get(lifter, setId) as SetRow | undefined;
+        return row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      }),
+    );
+  }
+
+  async patchSetBilateralGroup(
+    setId: string,
+    groupId: string,
+    source: 'live' | 'inferred',
+  ): Promise<StoredSet | undefined> {
+    // Two columns, never a `putSet` round-trip: that re-inserts the reps it read (VW-583).
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db
+          .prepare(
+            `UPDATE sets SET bilateral_group_id = ?, group_source = ? WHERE id = ? RETURNING *`,
+          )
+          .get(groupId, source, setId) as SetRow | undefined;
         return row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
       }),
     );

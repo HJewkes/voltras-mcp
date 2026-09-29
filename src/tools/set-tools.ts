@@ -1100,7 +1100,7 @@ export async function finalizeSet(
   });
   // Schema v7 grouping: reconcile BEFORE the first write so this side's row
   // carries its `bilateralGroupId` from the outset. The partner's row was
-  // written during its own close, so it needs a read-modify-write (below).
+  // written during its own close, so it takes a column patch (below).
   const match = state.bilateralReconciler?.record(toBilateralClose(slotId, unGrouped));
   const stored: StoredSet =
     match !== undefined
@@ -1283,10 +1283,8 @@ function toBilateralClose(slotId: string, stored: StoredSet): BilateralSetClose 
 
 /**
  * Stamp the shared group id onto the partner side, whose row was already
- * persisted during its own close. Safe to re-put: `putSet` upserts via
- * `ON CONFLICT(id) DO UPDATE`, so the set's FK children survive — but it does
- * replace the rep array by design, which is why the reps read back are written
- * straight through unchanged.
+ * persisted during its own close. A column patch, so a rep write or a relabel
+ * that reached the partner row first survives the stamp (VW-583).
  *
  * Never rethrows: persisting the user's work is the store's primary job, and a
  * failed back-stamp must not fail the close that is happening now. A missing
@@ -1298,12 +1296,10 @@ async function stampPartnerGroup(
   groupId: string,
 ): Promise<void> {
   try {
-    const partner = await state.store.getSet(partnerSetId);
+    const partner = await state.store.patchSetBilateralGroup(partnerSetId, groupId, 'live');
     if (partner === undefined) {
       log.warn(`bilateral grouping: partner set ${partnerSetId} not found, group left one-sided`);
-      return;
     }
-    await state.store.putSet({ ...partner, bilateralGroupId: groupId, groupSource: 'live' });
   } catch (err) {
     log.warn(`bilateral grouping: failed to stamp partner set ${partnerSetId}`, err);
   }

@@ -117,6 +117,11 @@ entry is written from the user's point of view is a review question, not a check
   the whole set back as it had read it, reps included, so a set whose reps were saved by
   another session in that moment lost them. It now changes the lifter label and nothing
   else (VW-536).
+- Closing one side of a two-device set can no longer undo the other side's reps or label.
+  Pairing the two sides wrote the other side's set back as it had read it, so reps or a
+  `set.update` relabel saved in that moment were lost. Re-saving a set after a disconnect
+  also no longer clears a lifter label or a pairing made since it was first saved
+  (VW-583).
 - A block's dates now keep every change made to them from two sessions at once. A missed
   week recorded while another session skipped a different week, resized the block or
   re-imported it from TrueCoach could vanish from the calendar, while the schedule history

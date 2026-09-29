@@ -130,6 +130,7 @@ function makeStore(): SessionStore & {
   listSessions: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
   getSet: ReturnType<typeof vi.fn>;
+  patchSetBilateralGroup: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
   harvestFailureAnchor: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
@@ -142,6 +143,7 @@ function makeStore(): SessionStore & {
     putSet: vi.fn(async () => {}),
     getSession: vi.fn(async () => undefined),
     getSet: vi.fn(async () => undefined),
+    patchSetBilateralGroup: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
     putTrainingProgram: vi.fn(async () => {}),
@@ -2976,6 +2978,13 @@ describe('bilateral group id at finalize', () => {
     h.store.putSet.mockImplementation(async (s: StoredSet) => {
       rows.set(s.id, s);
     });
+    h.store.patchSetBilateralGroup.mockImplementation(
+      async (id: string, bilateralGroupId: string, groupSource: 'live') => {
+        const row = rows.get(id);
+        if (row !== undefined) rows.set(id, { ...row, bilateralGroupId, groupSource });
+        return rows.get(id);
+      },
+    );
     return rows;
   }
 
@@ -3063,7 +3072,7 @@ describe('bilateral group id at finalize', () => {
     expect(stored.groupSource).toBeUndefined();
   });
 
-  it("preserves the partner's reps across the re-put", async () => {
+  it("preserves the partner's reps across the stamp", async () => {
     const h = setup();
     const rows = backWithMap(h, [partnerRow(12)]);
 
@@ -3074,13 +3083,10 @@ describe('bilateral group id at finalize', () => {
     expect(partner?.reps.map((r) => r.index)).toEqual([...Array(12).keys()]);
   });
 
-  it('persists the closing set even when the partner re-put throws', async () => {
+  it('persists the closing set even when the partner stamp throws', async () => {
     const h = setup();
     const rows = backWithMap(h, [partnerRow(12)]);
-    h.store.putSet.mockImplementation(async (s: StoredSet) => {
-      if (s.id === PARTNER_ID) throw new Error('partner row vanished');
-      rows.set(s.id, s);
-    });
+    h.store.patchSetBilateralGroup.mockRejectedValue(new Error('partner row vanished'));
 
     await closePairedSet(h, 11, 12);
 

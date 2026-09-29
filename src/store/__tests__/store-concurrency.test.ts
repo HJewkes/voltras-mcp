@@ -435,3 +435,55 @@ describe('T6: putSet for one id from two writers (H5)', () => {
     await expectWholeSet(b);
   });
 });
+
+// --- T6b: a set re-put keeps the label and group another writer patched (VW-583)
+
+async function patchLabelAndGroup(writer: SessionStore): Promise<void> {
+  await writer.patchSetLifter('set-1', 'Jordan');
+  await writer.patchSetBilateralGroup('set-1', 'group-1', 'live');
+}
+
+async function expectPatchesKept(reader: SessionStore): Promise<void> {
+  const stored = await reader.getSet('set-1');
+  expect(stored?.reps).toHaveLength(WRITER_B_REPS);
+  expect(stored?.lifter).toBe('Jordan');
+  expect(stored?.bilateralGroupId).toBe('group-1');
+  expect(stored?.groupSource).toBe('live');
+}
+
+describe('T6b: a set re-put after a relabel and a group stamp (VW-583)', () => {
+  it('keeps both on one connection', async () => {
+    const store = await (await engineFor('t6b-one')).connect();
+    await seedSetWithDependant(store);
+    await patchLabelAndGroup(store);
+
+    await store.putSet(setOf(WRITER_B_REPS));
+
+    await expectPatchesKept(store);
+  });
+
+  it('keeps both when a second connection patched them', async () => {
+    const eng = await engineFor('t6b-two');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedSetWithDependant(a);
+    await patchLabelAndGroup(b);
+
+    await a.putSet(setOf(WRITER_B_REPS));
+
+    await expectPatchesKept(b);
+  });
+
+  it('still writes a group the re-put carries', async () => {
+    const store = await (await engineFor('t6b-regroup')).connect();
+    await seedSetWithDependant(store);
+    await patchLabelAndGroup(store);
+
+    await store.putSet({
+      ...setOf(WRITER_B_REPS),
+      bilateralGroupId: 'group-2',
+      groupSource: 'live',
+    });
+
+    expect((await store.getSet('set-1'))?.bilateralGroupId).toBe('group-2');
+  });
+});

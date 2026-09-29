@@ -1926,6 +1926,9 @@ export interface SessionStore extends ExerciseSetupStore {
    * re-put on retry paths (force-end on disconnect followed by an explicit
    * re-end), and a delete-then-insert would take the set's `reps` with it on
    * any schema where that edge is declared. Upsert in place.
+   *
+   * A re-put never changes an existing row's `lifter` ({@link patchSetLifter} owns it), and
+   * one that carries no bilateral group keeps the group already stamped (VW-583).
    */
   putSet(s: StoredSet): Promise<void>;
 
@@ -1946,6 +1949,17 @@ export interface SessionStore extends ExerciseSetupStore {
    * (VW-536). `null` hands the set back to the owner.
    */
   patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined>;
+
+  /**
+   * Stamp one stored set's bilateral group and return it as it now stands, or `undefined` when
+   * no row matches. Writes the two group columns and nothing else, so the stamp can never roll
+   * back reps or a label another writer persisted (VW-583).
+   */
+  patchSetBilateralGroup(
+    setId: string,
+    groupId: string,
+    source: 'live' | 'inferred',
+  ): Promise<StoredSet | undefined>;
 
   /** Filtered/paginated session listing. */
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
