@@ -31,6 +31,7 @@
 //   - the explicit lists below — not rendered, and editing one is itself the
 //     review gate.
 
+import { TITAN_MUSCLE_GROUPS } from '../exercises/muscle-map.js';
 import { normalizeIdentifier } from './protocol-guard.js';
 
 /** Identifier-shaped tokens, however spelled, for vocabulary harvesting. */
@@ -325,6 +326,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'romVsBaselinePct',
   'setsByMuscle',
   'setsByTargetMuscle',
+  // VW-661: `session.volume`'s dose read and the weight-table stamp beside it.
+  'doseSetsByMuscle',
+  'muscleMapVersion',
   'setsPerExercise',
   // VW-327: `profile.get_body_metrics`'s trailing 7-day bodyweight mean.
   'sevenDayMeanBodyweightLbs',
@@ -651,5 +655,7 @@ export function derivePublicVocabulary(sources: VocabularySources): Set<string> 
   for (const name of DOCUMENTED_RESULT_FIELDS) vocabulary.add(normalizeIdentifier(name));
   for (const name of ANALYTICS_PIPELINE_IDS) vocabulary.add(normalizeIdentifier(name));
   for (const name of EXTERNAL_NAMES) vocabulary.add(normalizeIdentifier(name));
+  // VW-661: muscle slugs are the keys `session.volume` returns.
+  for (const name of TITAN_MUSCLE_GROUPS) vocabulary.add(normalizeIdentifier(name));
   return vocabulary;
 }

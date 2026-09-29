@@ -123,7 +123,7 @@ describe('getTierSignal', () => {
   });
 
   it('counts only sessions that started at or before asOf (VW-575)', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await seedSessions(store, 24, 90);
     await store.putTrainingProfile({
       userId: LOCAL_USER_ID,
