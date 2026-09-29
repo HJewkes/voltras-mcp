@@ -80,7 +80,7 @@ entry is written from the user's point of view is a review question, not a check
   `muscleMapVersion`.
 - The corroboration note in the comparability block of `session.readiness`,
   `session.strength` and `progression.get_for_exercise` counts exercises that share a target
-  muscle from the weight table (VW-664). A lateral raise no longer backs an overhead press
+  muscle from the weight table (VW-664, #559). A lateral raise no longer backs an overhead press
   (side delts against front delts), and a lat pulldown now backs a cable row (both target
   the lats).
 - A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
