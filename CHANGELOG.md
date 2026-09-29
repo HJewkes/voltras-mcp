@@ -126,6 +126,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- The plan lint again warns when a block's priority muscle shifts between week 1 and a later
+  week in a row-based plan. A lift that trains two muscles ties them for the top spot, and
+  the warning stayed silent on every tie; it now compares the tied muscles and warns only when
+  the two weeks share none (VW-698).
+
 - Two answers to one goal offer or weekly-review proposal no longer both report success. The
   first answer is kept, and a later one is refused with `ADVISORY_ALREADY_ANSWERED`, naming
   the answer that stands (`goal.retire` on an offer returns `offerAlreadyAnswered: true`).
