@@ -18,6 +18,7 @@
 // set row and replaces the entire rep array, so retries (e.g. force-end on
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
@@ -2749,6 +2750,43 @@ function asyncTransactionRefused(): Error {
   return err;
 }
 
+function nestedTransactionOverlap(): Error {
+  const err = new Error(
+    'A nested store transaction was opened beside another one still open; nest them in sequence.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_OVERLAP';
+  return err;
+}
+
+/** How long a caller transaction may stay open before it logs that it is holding the store. */
+export const TRANSACTION_STALL_WARN_MS = 30_000;
+
+/** The owner of the open caller transaction, and the level its code runs at. */
+interface TransactionFrame {
+  readonly owner: object;
+  readonly depth: number;
+}
+
+function transactionBusy(): Error {
+  const err = new Error(
+    'The store is inside a caller-owned transaction, and this call came from outside it.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_BUSY';
+  return err;
+}
+
+/** Opens one transaction level: the transaction itself at depth 0, a numbered savepoint above it. */
+function enterTransactionLevel(db: DatabaseSync, depth: number): void {
+  db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT vmcp_sp_${depth}`);
+}
+
+/** Closes the level `enterTransactionLevel` opened at `depth`, keeping or discarding its writes. */
+function leaveTransactionLevel(db: DatabaseSync, depth: number, keep: boolean): void {
+  const savepoint = `vmcp_sp_${depth}`;
+  if (keep) db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+  else db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+}
+
 interface GoalTargetRow {
   id: string;
   priority_id: string;
@@ -3115,12 +3153,25 @@ interface ProgramAssignmentRow {
 
 /** SQLite-backed implementation of `SessionStore`. */
 export class SqliteSessionStore implements SessionStore {
-  private readonly db: DatabaseSync;
+  private readonly connection: DatabaseSync;
   private closed = false;
   private transactionDepth = 0;
+  private readonly transactionFrame = new AsyncLocalStorage<TransactionFrame>();
+  private openOwner: object | undefined;
+  private transactionQueue: Promise<void> = Promise.resolve();
 
   private constructor(db: DatabaseSync) {
-    this.db = db;
+    this.connection = db;
+  }
+
+  /** Every statement goes through here, so a foreign context cannot join an open caller transaction. */
+  private get db(): DatabaseSync {
+    if (this.openOwner !== undefined && !this.insideOpenTransaction()) throw transactionBusy();
+    return this.connection;
+  }
+
+  private insideOpenTransaction(): boolean {
+    return this.transactionFrame.getStore()?.owner === this.openOwner;
   }
 
   /**
@@ -3131,16 +3182,77 @@ export class SqliteSessionStore implements SessionStore {
    */
   private atomically<T>(fn: () => T): T {
     const depth = this.transactionDepth;
-    const savepoint = `vmcp_sp_${depth}`;
-    this.db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
+    enterTransactionLevel(this.db, depth);
     this.transactionDepth = depth + 1;
     try {
       const result = fn();
       if (isThenable(result)) throw asyncTransactionRefused();
-      this.db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+      leaveTransactionLevel(this.connection, depth, true);
       return result;
     } catch (err) {
-      this.db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+      leaveTransactionLevel(this.connection, depth, false);
+      throw err;
+    } finally {
+      this.transactionDepth = depth;
+    }
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.openOwner !== undefined && this.insideOpenTransaction()) {
+      return this.nestedTransaction(fn);
+    }
+    const previous = this.transactionQueue;
+    let releaseTurn!: () => void;
+    this.transactionQueue = new Promise<void>((resolve) => (releaseTurn = resolve));
+    await previous;
+    try {
+      return await this.ownedTransaction(fn);
+    } finally {
+      releaseTurn();
+    }
+  }
+
+  private async ownedTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    enterTransactionLevel(this.db, 0);
+    this.transactionDepth = 1;
+    const owner = {};
+    this.openOwner = owner;
+    const yieldSentinel = setImmediate(() =>
+      log.warn('store.transaction spanned an event-loop turn; foreign store calls during it throw'),
+    );
+    const stallSentinel = setTimeout(() => {
+      log.warn(
+        `store.transaction still open after ${TRANSACTION_STALL_WARN_MS} ms; the store is held`,
+      );
+    }, TRANSACTION_STALL_WARN_MS);
+    stallSentinel.unref();
+    try {
+      const result = await this.transactionFrame.run({ owner, depth: 1 }, fn);
+      leaveTransactionLevel(this.connection, 0, true);
+      return result;
+    } catch (err) {
+      leaveTransactionLevel(this.connection, 0, false);
+      throw err;
+    } finally {
+      clearImmediate(yieldSentinel);
+      clearTimeout(stallSentinel);
+      this.openOwner = undefined;
+      this.transactionDepth = 0;
+    }
+  }
+
+  private async nestedTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    const depth = this.transactionDepth;
+    const frame = this.transactionFrame.getStore()!;
+    if (frame.depth !== depth) throw nestedTransactionOverlap();
+    enterTransactionLevel(this.connection, depth);
+    this.transactionDepth = depth + 1;
+    try {
+      const result = await this.transactionFrame.run({ owner: frame.owner, depth: depth + 1 }, fn);
+      leaveTransactionLevel(this.connection, depth, true);
+      return result;
+    } catch (err) {
+      leaveTransactionLevel(this.connection, depth, false);
       throw err;
     } finally {
       this.transactionDepth = depth;
@@ -5844,7 +5956,7 @@ export class SqliteSessionStore implements SessionStore {
     if (this.closed) return Promise.resolve();
     this.closed = true;
     try {
-      this.db.close();
+      this.connection.close();
     } catch (err) {
       log.warn('SqliteSessionStore.close() failed', err);
     }
