@@ -61,6 +61,7 @@ import {
   type StoredSide,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { targetMusclesOf } from './metrics-tools.js';
 
 const DEFAULT_LOOKBACK_WEEKS = 8;
 const DEFAULT_LIMIT = 20;
@@ -351,7 +352,8 @@ async function pickProgressionBasis(
  * VW-211: wires the comparability v2 subject fields' store reads to this
  * server's store and exercise catalog — same wiring as
  * `metrics-tools.ts`'s `comparabilitySubjectFetchers`, duplicated rather than
- * shared so this file's store access stays self-contained.
+ * shared so this file's store access stays self-contained. The muscle lookup
+ * is the one shared piece, so both tools corroborate on the same target slugs.
  */
 function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectFetchers {
   return {
@@ -367,7 +369,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
       (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
         (s) => s.exerciseId,
       ),
-    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    targetMusclesOf: (exerciseId) => targetMusclesOf(state, exerciseId),
     getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
     getChapterStartedAt: (exerciseId) => state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
   };
