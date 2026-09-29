@@ -72,17 +72,13 @@ which is worse than an absent one:
 - `coach_line` — a spoken line is addressed to the person, not to a device. Even a cue
   triggered by one slot's set is heard by the whole room.
 
-Two more events carry slot information, but not under the `slot` key, so a consumer
-filtering on `slot` silently drops them even though each one knows exactly which
-device(s) it concerns:
+Three events also carry `slot_id`, and all three carry `slot` too. Filter on `slot`;
+`slot_id` repeats it:
 
-- `bilateral_divergence` — `slot_id` and `partner_slot_id` name the two slots being
-  compared.
-- `weight_implied_mismatch` — `slot_id` names the one slot involved.
-
-This is a known inconsistency, not addressed by this change — it is tracked as a
-follow-up to reconcile `slot_id` / `partner_slot_id` with the `slot` key everything else
-filters on.
+- `bilateral_divergence` — `slot` and `slot_id` name the side whose close fired the
+  event; `partner_slot_id` names the other side.
+- `weight_implied_mismatch` — `slot` and `slot_id` name the one slot involved.
+- `setting_coerced` — `slot` and `slot_id` name the slot whose setting was coerced.
 
 ## Events
 
