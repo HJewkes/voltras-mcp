@@ -4,7 +4,7 @@
 //
 // Seeded and deterministic. Draws lifters (full, half and quarter ramp, flat,
 // falling, and a flatline after a six-week climb) at start loads 40/135/315 lb
-// with the real `plateauReferenceStepLbs` (or, with `--ramp-class`, the goal
+// climbing the real `plateauReferenceStepLbs` (or, with `--lifter-ramp`, the goal
 // ramp's `programmedRampStepLbs` for that class), noise ±1.5/3/5 lb (uniform and
 // gaussian) and 1/2/3 sessions a week, then reads every candidate once a week
 // the way `history.trend` would: weekly top-load points, 12-week lookback.
@@ -12,11 +12,16 @@
 // Usage:
 //   npm run build && node scripts/flatline-sim.mjs            # markdown to stdout
 //   node scripts/flatline-sim.mjs --draws 4000 --json out.json
-//   node scripts/flatline-sim.mjs --ramp-class isolation   # or upper_compound, lower_compound
+//   node scripts/flatline-sim.mjs --lifter-ramp isolation --rule reference
+//   node scripts/flatline-sim.mjs --lifter-ramp isolation --rule hybrid   # or class
+//   node scripts/flatline-sim.mjs --lifter-ramp reference --rule hybrid --rule-class isolation
+//   node scripts/flatline-sim.mjs --ramp-class isolation   # = --lifter-ramp isolation --rule class
 //   node scripts/flatline-sim.mjs --measured-pct 0.5       # a measured slope in percent of load a week
 //
-// Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs. The
-// real `flatline()` from dist/ is checked read for read against the row named
+// `--rule` picks the step every row judges by: reference, class, or hybrid
+// (VW-490 R7c's step, min of the two); the light_min_35d row on `--rule hybrid`
+// is R7c itself. Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs.
+// The real `flatline()` from dist/ is checked read for read against the row named
 // by `--shipped-as`, on the first 25 draws of every cell, and the run throws on
 // a disagreement.
 
@@ -52,19 +57,56 @@ function argument(name, fallback) {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
-/** VW-482: `--ramp-class` swaps the stall rule's reference step for the goal ramp's intermediate step. */
-const RAMP_CLASS = argument('ramp-class', null);
+const RAMP_CLASSES = ['isolation', 'upper_compound', 'lower_compound'];
+const RULES = ['reference', 'class', 'hybrid'];
+const classStep = (rampClass) => (loadLbs) =>
+  programmedRampStepLbs(loadLbs, rampClass, 'intermediate');
+
+function oneOf(name, value, allowed) {
+  if (value !== null && !allowed.includes(value))
+    throw new Error(`--${name} must be one of ${allowed.join(', ')}; got '${value}'`);
+  return value;
+}
+
+/** VW-482: `--ramp-class` is shorthand for a lifter on that class ramp judged by the class step. */
+const RAMP_CLASS = oneOf('ramp-class', argument('ramp-class', null), RAMP_CLASSES);
 /** VW-558 H4: `--measured-pct` judges against a lifter's own measured weekly slope, with no floor. */
 const MEASURED_PCT = argument('measured-pct', null);
-function chooseStep() {
+/** VW-671: the lifter's climb, apart from the step the stall rule judges it by. */
+const LIFTER_RAMP = oneOf('lifter-ramp', argument('lifter-ramp', RAMP_CLASS ?? 'reference'), [
+  'reference',
+  ...RAMP_CLASSES,
+]);
+const RULE = oneOf('rule', argument('rule', RAMP_CLASS === null ? 'reference' : 'class'), RULES);
+const RULE_CLASS = oneOf(
+  'rule-class',
+  argument('rule-class', LIFTER_RAMP === 'reference' ? null : LIFTER_RAMP),
+  RAMP_CLASSES,
+);
+if (RULE !== 'reference' && RULE_CLASS === null)
+  throw new Error(`--rule ${RULE} needs a class: pass --rule-class or a class --lifter-ramp`);
+
+function chooseLifterStep() {
   if (MEASURED_PCT !== null) return (loadLbs) => (loadLbs * Number(MEASURED_PCT)) / 100;
-  if (RAMP_CLASS !== null)
-    return (loadLbs) => programmedRampStepLbs(loadLbs, RAMP_CLASS, 'intermediate');
-  return plateauReferenceStepLbs;
+  return LIFTER_RAMP === 'reference' ? plateauReferenceStepLbs : classStep(LIFTER_RAMP);
 }
-const stepAt = chooseStep();
+
+/** `hybrid` is VW-490 R7c's step: the smaller of the reference and the class step. */
+function chooseRuleStep() {
+  if (MEASURED_PCT !== null) return chooseLifterStep();
+  if (RULE === 'reference') return plateauReferenceStepLbs;
+  if (RULE === 'class') return classStep(RULE_CLASS);
+  const byClass = classStep(RULE_CLASS);
+  return (loadLbs) => Math.min(plateauReferenceStepLbs(loadLbs), byClass(loadLbs));
+}
+const lifterStepAt = chooseLifterStep();
+const stepAt = chooseRuleStep();
+const describe = (ramp) => (ramp === 'reference' ? 'plateau reference' : `${ramp} class`);
 const STEP_LABEL =
-  MEASURED_PCT !== null ? `measured ${MEASURED_PCT}%/wk` : (RAMP_CLASS ?? 'plateau reference');
+  MEASURED_PCT !== null
+    ? `measured ${MEASURED_PCT}%/wk`
+    : `lifter climbs the ${describe(LIFTER_RAMP)} step; rule '${RULE}'` +
+      (RULE === 'reference' ? '' : ` on the ${RULE_CLASS} class`);
 
 function shippedVerdict(points, smoothing) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
@@ -119,7 +161,7 @@ function drawPoints(cell, random) {
   const fractions = late
     ? core.lateFlatlineFractions(CLIMB_WEEKS, weeks)
     : core.LIFTERS[cell.lifter](weeks);
-  const loads = core.trueLoads(cell.startLbs, fractions, stepAt);
+  const loads = core.trueLoads(cell.startLbs, fractions, lifterStepAt);
   const noise = core.noiseSampler(cell.noiseKind, cell.noiseLbs, random);
   return core.weeklyTopLoads(loads, cell.sessionsPerWeek, noise);
 }
@@ -277,7 +319,7 @@ function assertGateMatchesWa() {
   const random = core.seededRandom(1);
   for (let draw = 0; draw < 2000; draw++) {
     const noise = core.noiseSampler('uniform', 5, random);
-    const loads = core.trueLoads(100, core.LIFTERS.half_ramp(3 + (draw % 8)), stepAt);
+    const loads = core.trueLoads(100, core.LIFTERS.half_ramp(3 + (draw % 8)), lifterStepAt);
     const points = core.weeklyTopLoads(loads, 1, noise);
     const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
     const wa = detectPlateau(series, core.WA_THRESHOLD_PCT, 0);
