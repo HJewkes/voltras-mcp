@@ -126,6 +126,11 @@ entry is written from the user's point of view is a review question, not a check
   the answer that stands (`goal.retire` on an offer returns `offerAlreadyAnswered: true`).
   An accepted recalibration target can no longer be retired by a withdrawal that arrived
   second (VW-587).
+- Two goal proposals or weekly reviews at once no longer double an offer. Two
+  `goal.propose_targets` calls could each offer a recalibrated target for one starting ramp,
+  and two `goal.weekly_review` runs of one week could each record a rate proposal. Each now
+  lands as one. A review or proposal that refreshes an offer also keeps an answer given
+  meanwhile, where it used to reopen a declined offer or clear an accepted proposal (VW-588).
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
   of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
   priority of their own, and the goals page then drew one goal twice. The second now folds

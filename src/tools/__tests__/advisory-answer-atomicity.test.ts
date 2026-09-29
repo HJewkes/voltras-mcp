@@ -1,4 +1,5 @@
-// VW-587: two answers to one advisory, driven through the goal tools.
+// VW-587 and VW-588: two answers to one advisory, and a refresh racing another write:
+// each driven through the goal tools.
 //
 // Each case runs in the two variants of `partner-stamp-atomicity.test.ts`: the
 // competing call on the same store, and on a second store over the same temp
