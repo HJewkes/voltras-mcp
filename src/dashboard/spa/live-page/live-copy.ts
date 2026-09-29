@@ -40,3 +40,17 @@ export function restBasisCaption(basis: {
   if (basis.source === 'intent_default') return base;
   return `${base} +${basis.extensionSeconds} s`;
 }
+
+/** The basis `derivePrescription` gives a coach-written RPE. */
+const PLAN_EFFORT_BASIS = 'plan';
+
+/**
+ * The effort target caption under the prescription lockup (VW-670), labelled as a target so
+ * it never reads as a reading (VW-485). A tier nobody declared is marked assumed. Null hides it.
+ */
+export function effortCaption(effort: { text: string; basis: string } | null): string | null {
+  if (effort === null) return null;
+  if (effort.basis === PLAN_EFFORT_BASIS) return `Target ${effort.text}`;
+  if (effort.basis.includes(' tier (assumed)')) return `${effort.text} (assumed tier)`;
+  return effort.text;
+}
