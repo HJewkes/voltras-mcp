@@ -242,6 +242,7 @@ function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExer
     name: e.name,
     plannedSets: e.sets,
     targetReps: e.repsLow ?? null,
+    repsHigh: e.repsHigh ?? null,
     repsLabel: formatRepsRange(e.repsLow, e.repsHigh),
     weightLbs: e.weightLbs ?? null,
     active: e.active,

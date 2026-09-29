@@ -149,6 +149,8 @@ export interface PlannedExerciseModel {
   plannedSets: number;
   /** Rep target sizing an upcoming row's `todo` columns; null when no rep range. */
   targetReps: number | null;
+  /** The range's top as a number, so a strip can draw it; absent or null for a single count. */
+  repsHigh?: number | null;
   /** Preformatted reps cell for the rail summary: `"8–10"`, `8`, or the em-dash. */
   repsLabel: number | string;
   /** Null when the plan prescribes no working weight. */
@@ -467,14 +469,25 @@ function plannedRepTarget(session: SessionModel): number | string | null {
  * The rep COUNT to size a strip column by — the same plan-first sourcing as
  * {@link plannedRepTarget}, but numeric.
  *
- * A prescribed RANGE collapses to its committed floor (`repsLow`): those are the reps the
- * set is definitely expected to carry. The reps between the floor and the range's top are
- * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
- * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
+ * A prescribed RANGE sizes the committed columns by its floor (`repsLow`), the reps the set
+ * is definitely expected to carry; {@link plannedRepRange} carries the top so the strip can
+ * draw the reps between the two as a range rather than as missing columns.
  */
 export function plannedRepCount(session: SessionModel): number | null {
   const active = session.plannedExercises.find((e) => e.active);
   return active?.targetReps ?? session.targetReps;
+}
+
+/**
+ * The active exercise's prescribed rep range for titan's `SetStrip`, or `{}` when the plan
+ * states a single count or no high bound. A high at or below the floor is not a range.
+ */
+export function plannedRepRange(session: SessionModel): { repsLow?: number; repsHigh?: number } {
+  const active = session.plannedExercises.find((e) => e.active);
+  const low = active?.targetReps ?? null;
+  const high = active?.repsHigh ?? null;
+  if (low === null || high === null || high <= low) return {};
+  return { repsLow: low, repsHigh: high };
 }
 
 /**
@@ -593,6 +606,7 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
       status: 'active',
       velocities: velocityRatios(live.repVelocities),
       planned: plannedRepCount(session) ?? live.repVelocities.length,
+      ...plannedRepRange(session),
     });
   }
   // Any planned sets beyond those done + the one in progress. Skipped entirely without a
@@ -602,7 +616,7 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
   const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
   if (targetReps !== null) {
     for (let i = 0; i < remaining; i++) {
-      setStates.push({ status: 'todo', planned: targetReps });
+      setStates.push({ status: 'todo', planned: targetReps, ...plannedRepRange(session) });
     }
   }
   return setStates;
