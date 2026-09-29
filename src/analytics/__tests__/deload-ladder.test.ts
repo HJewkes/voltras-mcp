@@ -104,6 +104,40 @@ describe('selectDeloadRung', () => {
 
     expect(advisory.status).toBe('watching');
     expect(advisory.rung).toBeNull();
+    expect(advisory.reasoning).toContain('glutes has a confirmation older than the rolling 7 days');
+    expect(advisory.userMessage).toContain('more than 7 days ago');
+    expect(advisory.userMessage).not.toContain('One session is noise');
+  });
+
+  it('does not count a future-dated confirmation toward the rung', () => {
+    const muscles = [confirmed('quads', 1), confirmed('lats', -1)];
+
+    const advisory = selectDeloadRung(input({ muscles }));
+
+    expect(advisory.rung).toBe('recovery_session');
+    expect(advisory.reasoning).not.toContain('lats');
+  });
+
+  it('does not count an unparseable confirmation toward the rung', () => {
+    const unparseable: DeloadMuscleSignal = {
+      muscle: 'lats',
+      state: 'confirmed',
+      confirmedAt: 'not-a-date',
+      evidence: evidence('ex-lats'),
+    };
+
+    const advisory = selectDeloadRung(input({ muscles: [confirmed('quads', 1), unparseable] }));
+
+    expect(advisory.rung).toBe('recovery_session');
+    expect(advisory.reasoning).not.toContain('lats');
+  });
+
+  it('watches without a rung when the only confirmation is future-dated', () => {
+    const advisory = selectDeloadRung(input({ muscles: [confirmed('lats', -1)] }));
+
+    expect(advisory.status).toBe('watching');
+    expect(advisory.rung).toBeNull();
+    expect(advisory.reasoning).toContain('cannot be placed in the window');
   });
 
   it('reports inconclusive when every muscle is inconclusive', () => {

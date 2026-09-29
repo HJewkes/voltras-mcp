@@ -108,26 +108,47 @@ export function selectDeloadRung(input: DeloadLadderInput): DeloadAdvisory {
 
 function decide(input: DeloadLadderInput): Verdict {
   if (input.currentWeekIsDeload) return suppressedVerdict();
-  const inWindow = confirmedInWindow(input.muscles, input.now);
-  if (inWindow.length > 0) return adviseVerdict(inWindow);
-  const watched = input.muscles.filter(
-    (signal) => signal.state !== 'clear' && signal.state !== 'inconclusive',
-  );
-  if (watched.length > 0) return watchingVerdict(watched.map((signal) => signal.muscle));
-  if (input.muscles.some((signal) => signal.state === 'clear')) return clearVerdict();
+  const byWindow = groupByWindow(input.muscles, input.now);
+  if (byWindow.inWindow.length > 0) return adviseVerdict(byWindow.inWindow);
+  const provisional = musclesIn(input.muscles, 'provisional');
+  if (provisional.length + byWindow.stale.length + byWindow.unplaced.length > 0) {
+    return watchingVerdict({ provisional, stale: byWindow.stale, unplaced: byWindow.unplaced });
+  }
+  if (musclesIn(input.muscles, 'clear').length > 0) return clearVerdict();
   return inconclusiveVerdict(input.muscles.length);
 }
 
-/** Muscles confirmed no later than `now` and no earlier than the rolling window allows. */
-function confirmedInWindow(muscles: readonly DeloadMuscleSignal[], now: Date): string[] {
+function musclesIn(
+  muscles: readonly DeloadMuscleSignal[],
+  state: MusclePerformanceState,
+): string[] {
+  return muscles.filter((signal) => signal.state === state).map((signal) => signal.muscle);
+}
+
+interface WatchedMuscles {
+  /** A single miss. */
+  provisional: string[];
+  /** Confirmed, but longer ago than the rolling window. */
+  stale: string[];
+  /** Confirmed at an instant after `now` or one that does not parse. */
+  unplaced: string[];
+}
+
+/** Sorts confirmed muscles by where their confirmation instant falls against the window ending at `now`. */
+function groupByWindow(
+  muscles: readonly DeloadMuscleSignal[],
+  now: Date,
+): Omit<WatchedMuscles, 'provisional'> & { inWindow: string[] } {
   const windowMs = DELOAD_LADDER_CONSTANTS.rollingWindowDays * DAY_MS;
-  return muscles
-    .filter((signal) => {
-      if (signal.state !== 'confirmed') return false;
-      const ageMs = now.getTime() - Date.parse(signal.confirmedAt);
-      return ageMs >= 0 && ageMs <= windowMs;
-    })
-    .map((signal) => signal.muscle);
+  const groups = { inWindow: [] as string[], stale: [] as string[], unplaced: [] as string[] };
+  for (const signal of muscles) {
+    if (signal.state !== 'confirmed') continue;
+    const ageMs = now.getTime() - Date.parse(signal.confirmedAt);
+    if (Number.isNaN(ageMs) || ageMs < 0) groups.unplaced.push(signal.muscle);
+    else if (ageMs > windowMs) groups.stale.push(signal.muscle);
+    else groups.inWindow.push(signal.muscle);
+  }
+  return groups;
 }
 
 function adviseVerdict(confirmed: string[]): Verdict {
@@ -149,13 +170,35 @@ function adviseVerdict(confirmed: string[]): Verdict {
   };
 }
 
-function watchingVerdict(muscles: string[]): Verdict {
-  const names = listMuscles(muscles);
+function watchingVerdict(watched: WatchedMuscles): Verdict {
+  const days = DELOAD_LADDER_CONSTANTS.rollingWindowDays;
+  const causes: Array<[string[], string, string]> = [
+    [
+      watched.provisional,
+      'a single miss',
+      'came in below the week before on one session. One session is noise; the next session of that muscle shows whether it repeats',
+    ],
+    [
+      watched.stale,
+      `a confirmation older than the rolling ${days} days`,
+      `came in below the week before on two sessions in a row, but that was more than ${days} days ago, so it no longer points at a recovery rung; the next session of that muscle shows whether it is still declining`,
+    ],
+    [
+      watched.unplaced,
+      'a confirmation whose instant cannot be placed in the window',
+      'came in below the week before on two sessions in a row, but the date of that confirmation could not be placed in the last week, so it does not point at a recovery rung',
+    ],
+  ];
+  const present = causes.filter(([muscles]) => muscles.length > 0);
+  const reasons = present.map(
+    ([muscles, cause]) => `${listMuscles(muscles)} ${verb(muscles, 'has', 'have')} ${cause}`,
+  );
+  const messages = present.map(([muscles, , message]) => `${listMuscles(muscles)} ${message}.`);
   return {
     status: 'watching',
     rung: null,
-    reasoning: `No muscle has a confirmation inside the rolling ${DELOAD_LADDER_CONSTANTS.rollingWindowDays} days. ${names} ${verb(muscles, 'has', 'have')} a single miss or an older confirmation, so nothing is advised yet.`,
-    userMessage: `${names} came in below the week before, but not on two sessions in a row this week. One session is noise; the next session of that muscle shows whether it repeats.`,
+    reasoning: `No muscle has a confirmation inside the rolling ${days} days. ${reasons.join('; ')}, so nothing is advised yet.`,
+    userMessage: messages.join(' '),
   };
 }
 
