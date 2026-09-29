@@ -50,6 +50,7 @@ import {
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { alreadyAnsweredError, answerIfOpen } from './advisory-answer.js';
+import { localMidnightIso } from '../analytics/training-days.js';
 import { mostRecentSundayIso, readWeeklyCheckin, type WeeklyCheckin } from './profile-tools.js';
 
 /** The advisory this tool issues, in `advisory_decisions.code`. */
@@ -57,8 +58,6 @@ export const BODYWEIGHT_RATE_ADVISORY_CODE = 'bodyweight_rate_reproposal';
 
 /** Bumped when the loop below changes, so old answers stay re-scorable. */
 export const BODYWEIGHT_RATE_ADVISORY_VERSION = 'bodyweight-rate-advisory@1.0.0';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 class ToolError extends Error {
   readonly code: string;
@@ -162,13 +161,20 @@ export async function runWeeklyReview(
   return { ...(await review(state, context, response)), planning };
 }
 
+/** The instant the local week that starts on `weekOf` ends: the next local Sunday's midnight. */
+function localWeekEndIso(weekOf: string): string {
+  const nextSunday = new Date(`${weekOf}T00:00:00.000Z`);
+  nextSunday.setUTCDate(nextSunday.getUTCDate() + 7);
+  return localMidnightIso(nextSunday.toISOString().slice(0, 10));
+}
+
 /**
  * The instant the trend is computed as of: now, or the end of `weekOf` when a
  * past week is being reviewed. A back-dated review must not read a series the
  * week it is judging had not produced yet.
  */
 function reviewInstant(weekOf: string, now: Date): string {
-  const weekEnd = Date.parse(`${weekOf}T00:00:00.000Z`) + 7 * DAY_MS;
+  const weekEnd = Date.parse(localWeekEndIso(weekOf));
   return new Date(Math.min(now.getTime(), weekEnd)).toISOString();
 }
 
@@ -336,7 +342,7 @@ async function lastProposalBefore(
   weekOf: string,
 ): Promise<string | null> {
   const rows = await listDecisions(state);
-  const anchor = `${weekOf}T00:00:00.000Z`;
+  const anchor = localMidnightIso(weekOf);
   return rows.find((row) => row.issuedAt < anchor)?.issuedAt ?? null;
 }
 

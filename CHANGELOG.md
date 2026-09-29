@@ -37,6 +37,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- The weekly check-in and the Sunday review now anchor to your local Sunday. West of UTC, a
+  Saturday-evening check-in used to land in the following week, because the anchor counted
+  back from the UTC weekday. The review's end-of-week cutoff and its "last proposal before
+  this week" edge now sit on local midnight too (VW-508).
+
 - The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
   16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
   top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
