@@ -993,6 +993,8 @@ class FakeActionRows {
     this.rows.set(id, row);
     return Promise.resolve(row);
   };
+
+  transaction = <T>(fn: () => Promise<T>): Promise<T> => fn();
 }
 
 /** A captured tool the action route can run, counting its calls. */
@@ -1028,6 +1030,7 @@ function actionState(
   };
   mutable.store.claimUiAction = audit.claimUiAction;
   mutable.store.completeUiAction = audit.completeUiAction;
+  mutable.store.transaction = audit.transaction;
   if (tools !== undefined) mutable.actionTools = tools;
   return state;
 }
