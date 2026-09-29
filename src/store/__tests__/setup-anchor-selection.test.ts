@@ -91,6 +91,7 @@ function failureSet(
     endedAt: opts.at,
     partial: false,
     weightLbs: 170,
+    trainingMode: 'Weight Training',
     setIndexInSession: 1,
     reps: velocities.map((v, i) => makeRep(id, i, v, opts.romM)),
   };

@@ -134,6 +134,7 @@ async function benchSession(id: string, at: string, weightLbs = 135): Promise<vo
       endedAt: at,
       partial: false,
       weightLbs,
+      trainingMode: 'Weight Training',
       setPurpose: 'working',
       reps: reps(`${id}-${suffix}`),
     });

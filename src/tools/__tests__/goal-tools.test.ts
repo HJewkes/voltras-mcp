@@ -166,6 +166,7 @@ async function seedLiftHistory(
         endedAt: at,
         partial: false,
         weightLbs: options.weightLbs,
+        trainingMode: 'Weight Training',
         setPurpose: 'working',
         reps: makeReps(lastSetId, options.reps),
       };

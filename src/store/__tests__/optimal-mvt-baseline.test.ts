@@ -118,6 +118,7 @@ function toStoredSet(spec: SetSpec, session: SessionSpec): StoredSet {
     endedAt: session.startedAt,
     partial: false,
     weightLbs: spec.loadLbs,
+    trainingMode: 'Weight Training',
     setIndexInSession: 1,
     reps: Array.from({ length: spec.reps }, (_, i) => rep(spec.id, i, spec.velocity)),
   };

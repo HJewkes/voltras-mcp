@@ -93,6 +93,7 @@ function makeSet(
     startedAt: daysAgo(3),
     endedAt: daysAgo(3),
     partial: false,
+    trainingMode: 'Weight Training',
     reps: Array.from({ length: repCount }, (_, i) => makeRep(overrides.id, i, repDurationSec)),
     ...overrides,
   };

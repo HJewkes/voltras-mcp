@@ -59,6 +59,7 @@ function decaySet(id: string, sessionId: string, terminal: number, startedAt: st
     endedAt: startedAt,
     partial: false,
     weightLbs: 170,
+    trainingMode: 'Weight Training',
     setIndexInSession: 1,
     reps: velocities.map((v, i) => rep(id, i, v, 0.5)),
   };
@@ -107,6 +108,37 @@ describe('SqliteSessionStore — failure-anchor harvest', () => {
         load_lbs: 170,
       });
       expect(rows[0].terminal_velocity_mps).toBeCloseTo(0.4, 5);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('ignores a chains or eccentric-overload anchor when deriving the baseline', async () => {
+    // Two constant-load failures plus a chains failure and an eccentric-overload
+    // failure. Counting all four would promote the key; the two that are not
+    // constant load must not move it.
+    const first = daysAgo(9);
+    const second = daysAgo(2);
+    const sets = [
+      { set: decaySet('set-a', 'sess-1', 0.4, first), sessionStartedAt: first },
+      { set: decaySet('set-b', 'sess-2', 0.42, second), sessionStartedAt: second },
+      {
+        set: { ...decaySet('set-c', 'sess-2', 0.41, second), chainsLbs: 20 },
+        sessionStartedAt: second,
+      },
+      {
+        set: { ...decaySet('set-d', 'sess-1', 0.41, first), eccentricPct: 30 },
+        sessionStartedAt: first,
+      },
+    ];
+    const store = await openWith(sets);
+    try {
+      for (const { set } of sets) expect(await store.harvestFailureAnchor(set)).toBe('failure');
+
+      const baseline = await store.recalcBaseline({ userId: LOCAL_USER_ID, exerciseId: 'row' });
+
+      expect(baseline.anchorCount).toBe(2);
+      expect(baseline.state).not.toBe('CALIBRATED');
     } finally {
       await store.close();
     }

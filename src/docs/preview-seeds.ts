@@ -520,7 +520,7 @@ function workingSet(
     slot: 'primary',
     setPurpose: 'working',
     weightLbs,
-    trainingMode: 'weight',
+    trainingMode: 'Weight Training',
     source: 'local',
     reps: grindingReps(id, reps),
   };

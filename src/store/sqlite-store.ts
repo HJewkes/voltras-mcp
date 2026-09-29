@@ -30,6 +30,7 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
+import { resistanceFamilyOf } from '../analytics/resistance-family.js';
 import {
   fitRirVelocityModel,
   RIR_VELOCITY_MODEL_VERSION,
@@ -3048,8 +3049,26 @@ const EMPTY_RIR_VELOCITY_FIT: RirVelocityFit = {
   reason: 'no recorded set carries both a load and a rep, so there is no reference 1RM',
 };
 
+/** A stored set's resistance settings, as the family classifier reads them. */
+function isConstantLoadAnchor(row: FailureAnchorJoinRow): boolean {
+  return (
+    resistanceFamilyOf({
+      trainingMode: row.training_mode ?? undefined,
+      chainsLbs: row.chains_lbs ?? undefined,
+      inverseChainsLbs: row.inverse_chains_lbs ?? undefined,
+      eccentricPct: row.eccentric_pct ?? undefined,
+      damperLevel: row.damper_level ?? undefined,
+    }) === 'constant'
+  );
+}
+
 /** `failure_anchors` joined to its set row for the session bucket. */
 interface FailureAnchorJoinRow {
+  training_mode: string | null;
+  chains_lbs: number | null;
+  inverse_chains_lbs: number | null;
+  eccentric_pct: number | null;
+  damper_level: number | null;
   session_id: string | null;
   observed_at: string;
   terminal_velocity_mps: number | null;
@@ -5662,7 +5681,9 @@ export class SqliteSessionStore implements SessionStore {
     };
     // VW-299: the MVT fit reads the same working sets the state machine does,
     // so the threshold and the confidence behind it describe one corpus.
-    const fit = fitOptimalMvt(toMvtObservations(sets, this.failureSetIds(key)));
+    const constantIds = new Set(constantLoadSets(sets).map((set) => set.id));
+    const failureIds = [...this.failureSetIds(key)].filter((id) => constantIds.has(id));
+    const fit = fitOptimalMvt(toMvtObservations(sets, new Set(failureIds)));
     const now = new Date();
     const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString(), fit);
     this.upsertBaseline(row);
@@ -5755,6 +5776,11 @@ export class SqliteSessionStore implements SessionStore {
     // pooled key therefore keeps counting the whole pool, and preference by
     // setup happens after the fetch.
     //
+    // VW-541: an anchor counts only when its set met constant load, read from
+    // the set's own settings now rather than stored beside the verdict. A
+    // chains or eccentric-overload stall is real velocity loss, but the
+    // baseline reads it as a constant-load terminal velocity.
+    //
     // VW-489: `s.kind = 'training'` also makes the LEFT JOIN below effectively
     // inner. An anchor whose set row is gone can no longer be SHOWN to be
     // training, and an unprovable anchor must not calibrate a baseline.
@@ -5771,7 +5797,8 @@ export class SqliteSessionStore implements SessionStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT s.session_id AS session_id, fa.observed_at AS observed_at,
+        `SELECT s.training_mode, s.chains_lbs, s.inverse_chains_lbs, s.eccentric_pct,
+                s.damper_level, s.session_id AS session_id, fa.observed_at AS observed_at,
                 fa.terminal_velocity_mps AS terminal_velocity_mps,
                 fa.setup_id AS setup_id
            FROM failure_anchors fa
@@ -5782,7 +5809,7 @@ export class SqliteSessionStore implements SessionStore {
       .all(...params) as unknown as FailureAnchorJoinRow[];
     return selectSetupAnchors(
       key.setupId,
-      rows.map((row) => {
+      rows.filter(isConstantLoadAnchor).map((row) => {
         const out: AnchorObservation = {
           sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
           observedAt: row.observed_at,

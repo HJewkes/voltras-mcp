@@ -72,6 +72,7 @@ function decaySet(id: string, sessionId: string, at: string, weightLbs: number):
     endedAt: at,
     partial: false,
     weightLbs,
+    trainingMode: 'Weight Training',
     setIndexInSession: 1,
     reps: velocities.map((v, i) => rep(id, i, v)),
   };

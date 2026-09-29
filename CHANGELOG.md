@@ -42,6 +42,13 @@ entry is written from the user's point of view is a review question, not a check
   back from the UTC weekday. The review's end-of-week cutoff and its "last proposal before
   this week" edge now sit on local midnight too (VW-508).
 
+- A baseline no longer counts a failure from a set that was not constant load. Damper and
+  isokinetic sets, where speed says nothing about how close you were to failing, are no longer
+  read as failure anchors. Chains and eccentric-overload stalls are still recorded but stay out of
+  the baseline and its fitted velocity threshold, because a constant-load profile does not
+  transfer to them. `baselines.recalc { reharvest: true }` re-labels history under the new
+  rule (VW-541).
+
 - The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
   16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
   top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
