@@ -72,11 +72,23 @@ string literals (and templates with no `${}`) before scanning, so
 `'0x' + '1f'` is caught. It does not catch:
 
 - a value built from variables or calls (`PREFIX + digits`, `[a, b].join('')`,
-  `String.fromCharCode(...)`); nothing is evaluated;
+  `.concat()`, `+=`, tagged templates, `String.fromCharCode(...)`); nothing
+  is evaluated;
+- a chain piece that is not a bare string literal: a number literal, a piece
+  wrapped in TypeScript `as` or `satisfies`, or a template holding a literal
+  inside `${}`. Each one breaks the run of joined literals at that point;
+- one literal split by a backslash-newline continuation, which is a single
+  literal, not a chain;
+- a value spelled in escape sequences inside one literal: the whole-text
+  scan reads the escapes as written and the join only runs across pieces;
 - prose provenance: a sentence saying where a value came from, or what a
   register does, without quoting a value or a private path;
 - deliberate evasion: anyone set on it can spell a value in a shape the rule
   does not know. The rule is for accidents, not adversaries.
+
+The join has one known false-positive shape: a short word made of hex
+letters joined to a digit (`'add' + '1'`, `'feed' + '2'`) reads as a bare
+hex run. Put a separator between the word and the number.
 
 `npm run lint:text-confidentiality` runs the same detector over the raw
 text of markdown, site sources and non-JS files. It reads text, not a

@@ -25,18 +25,31 @@
 //     nothing here should be read as covering it.
 //   - It folds a CONCATENATION OF STRING LITERALS (VW-224). `'0x' + '1f'` and a
 //     line-wrapped `'a9c7' + 'f00d'` are joined, adjacent literal pieces at a
-//     time, and scanned as one string. A finding reported this way is one that
-//     crosses a join; a finding inside one piece is already reported above.
+//     time, and scanned as one string. A finding reported this way crosses a
+//     join and touches no piece whose source text the whole-text pass already
+//     reported, so one value is not reported twice.
 //
 // What it does NOT catch (VW-224):
 //
-//   - A value built from VARIABLES OR CALLS. `PREFIX + digits`, `[a, b].join()`
-//     and `String.fromCharCode(...)` are never evaluated; only adjacent string
-//     and expression-free template literals are folded.
+//   - A value built from VARIABLES OR CALLS. `PREFIX + digits`, `[a, b].join()`,
+//     `.concat()`, `+=` and tagged templates are never evaluated; only adjacent
+//     string and expression-free template literals in one `+` chain are folded.
+//   - A chain piece that is not a bare string literal: a NUMBER literal, a piece
+//     wrapped in TypeScript `as` or `satisfies`, or a template holding a literal
+//     inside `${}`. Each one breaks the run of literals at that point.
+//   - ONE literal split by a backslash-newline continuation. It is a single
+//     literal, not a chain, and the whole-text pass sees the backslash break.
+//   - A value spelled in ESCAPES. The whole-text pass reads the raw spelling and
+//     the join reads cooked values, so a value that appears only as escape
+//     sequences inside one literal is seen by neither.
 //   - PROSE PROVENANCE: a sentence saying where a value came from, or what a
 //     register does, without quoting a value or a private path.
 //   - DELIBERATE EVASION. Anyone evading the rule can always spell a value in a
 //     shape it does not know; the threat model is accidental disclosure.
+//
+// A known false-positive shape of the join: a short hex-letter word joined to a
+// digit (`'add' + '1'`, `'feed' + '2'`) reads as a bare hex run. None exist in
+// this repo today, and a separator between the word and the number avoids it.
 //
 // Naming these limits is the point. A guard that is silently narrower than it
 // looks is the failure this campaign is named after: a `[redacted]` marker
@@ -195,25 +208,44 @@ function chainOperands(node) {
   return [...chainOperands(node.left), ...chainOperands(node.right)];
 }
 
-/** Runs of adjacent literal pieces, each as its pieces' texts, in source order. */
-function literalRuns(operands) {
+/**
+ * Runs of adjacent literal pieces in source order. Each piece keeps its cooked
+ * text and whether the whole-text pass already reported its raw spelling.
+ */
+function literalRuns(operands, sourceCode) {
   const runs = [[]];
   for (const operand of operands) {
     const text = literalText(operand);
     if (text === null) runs.push([]);
-    else runs.at(-1).push(text);
+    else
+      runs
+        .at(-1)
+        .push({ text, reported: findProtocolDetail(sourceCode.getText(operand)).length > 0 });
   }
   return runs.filter((run) => run.length > 1);
 }
 
-/** The first shape that only exists once `pieces` are joined, or `undefined`. */
-function shapeAcrossJoin(pieces) {
-  const joins = [];
+/** Each piece's `[start, end)` span in the joined text. */
+function pieceSpans(pieces) {
   let offset = 0;
-  for (const piece of pieces.slice(0, -1)) joins.push((offset += piece.length));
-  return findProtocolDetail(pieces.join('')).find(({ index, length }) =>
-    joins.some((join) => join > index && join < index + length),
-  );
+  return pieces.map(({ text, reported }) => ({
+    start: offset,
+    end: (offset += text.length),
+    reported,
+  }));
+}
+
+/**
+ * The first shape that only exists once `pieces` are joined, or `undefined`.
+ * A shape touching a piece the whole-text pass already reported is skipped.
+ */
+function shapeAcrossJoin(pieces) {
+  const spans = pieceSpans(pieces);
+  return findProtocolDetail(pieces.map((piece) => piece.text).join('')).find((finding) => {
+    const end = finding.index + finding.length;
+    const touched = spans.filter((span) => span.start < end && finding.index < span.end);
+    return touched.length > 1 && !touched.some((span) => span.reported);
+  });
 }
 
 const MESSAGES = {
@@ -255,7 +287,9 @@ const rule = {
       },
       BinaryExpression(node) {
         if (node.operator !== '+' || isConcatenation(node.parent)) return;
-        const finding = literalRuns(chainOperands(node)).map(shapeAcrossJoin).find(Boolean);
+        const finding = literalRuns(chainOperands(node), context.sourceCode)
+          .map(shapeAcrossJoin)
+          .find(Boolean);
         if (!finding) return;
         context.report({
           node,

@@ -125,6 +125,16 @@ describe('a value split across a concatenation (VW-224)', () => {
     expect(messagesFor(`const v = '${prefix}${PAIR}' + ' units';`)).toHaveLength(1);
   });
 
+  it('does not report a value a second time when the join extends it', () => {
+    expect(messagesFor(`const v = '${prefix}${PAIR}' + '${OTHER}';`)).toHaveLength(1);
+  });
+
+  it('reports a split value whose first piece is spelled in an escape', () => {
+    const escapedZero = `\\x${'0'.charCodeAt(0).toString(16)}`;
+    const code = `const v = '${escapedZero}x' + '${PAIR}';`;
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
   it.each([
     ['a snake_case name built in pieces', "const v = 'max_' + 'force_' + 'lbs';"],
     ['ordinary words', "const v = 'Set ' + 'complete' + ', rest ' + 'now';"],
