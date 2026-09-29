@@ -146,6 +146,14 @@ export function isCorridor(band: GoalBand): boolean {
   return band.direction === 'hold' && (band.corridorPct ?? 0) > 0;
 }
 
+/**
+ * A lift held through a diet phase: a `hold` rate band with no corridor. Every
+ * metric that reaches this shape is more-is-better, so it reads with the `up` rules (VW-486).
+ */
+export function isOneSidedHold(band: GoalBand): boolean {
+  return band.direction === 'hold' && band.corridorPct === null;
+}
+
 /** Which side of its corridor a reading sits on, or `null` inside it. */
 export function corridorSideOf(
   expected: GoalBandExpectation,
@@ -165,14 +173,14 @@ function holdToleranceOf(band: GoalBand): number {
 export function behindEdge(committedEdge: number, value: number, band: GoalBand): boolean {
   const tolerance = holdToleranceOf(band);
   if (band.direction === 'down') return value > committedEdge + tolerance;
-  if (band.direction === 'hold') return false;
+  if (band.direction === 'hold' && !isOneSidedHold(band)) return false;
   return value < committedEdge - tolerance;
 }
 
-/** Past the stretch edge. A `hold` goal has no stretch to pass. */
+/** Past the stretch edge. A two-sided `hold` goal has no stretch to pass. */
 export function aheadOfEdge(stretchEdge: number, value: number, band: GoalBand): boolean {
   if (band.direction === 'down') return value < stretchEdge;
-  if (band.direction === 'hold') return false;
+  if (band.direction === 'hold' && !isOneSidedHold(band)) return false;
   return value > stretchEdge;
 }
 
