@@ -78,6 +78,7 @@ describe('what the guard does not fire on', () => {
     ['ordinary prose', '// A read-only, best-effort back-fill of the self-report.'],
     ['a snake_case identifier', 'const set_weight_lbs = 1;'],
     ['a snake_case event name', "const name = 'on_per_rep';"],
+    ['a multi-line source citation', '// see `scripts/drive.mjs:28-45,94`'],
   ])('lets %s through', (_label, text) => {
     expect(find(text)).toEqual([]);
   });

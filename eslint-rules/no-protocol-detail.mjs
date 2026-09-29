@@ -71,6 +71,15 @@ const TEXT_PATTERNS = [
 const CLOCK_SHAPE = /^\d{2}(?:[:.]\d{2})+$/;
 
 /**
+ * A source citation naming several lines: decimal, and mixing a range dash with
+ * a list comma, where a byte run keeps one separator. The docs guard's
+ * `isLineRangeList` draws the same line, so a citation passes both layers.
+ */
+function isLineRangeList(token) {
+  return /^\d+(?:[-,]\d+)+$/.test(token) && token.includes('-') && token.includes(',');
+}
+
+/**
  * The boundaries a value can hide behind inside an identifier: separators, and
  * the two case transitions. `(?<=[A-Z0-9])(?=[A-Z][a-z])` is what splits
  * `probeA9C7Latch` into `probe` / `A9C7` / `Latch` rather than leaving the run
@@ -133,7 +142,8 @@ export function findProtocolDetail(text) {
   const findings = [];
   for (const { kind, regexp } of TEXT_PATTERNS) {
     for (const match of text.matchAll(regexp)) {
-      if (kind === 'byte-sequence' && CLOCK_SHAPE.test(match[0])) continue;
+      if (kind === 'byte-sequence' && (CLOCK_SHAPE.test(match[0]) || isLineRangeList(match[0])))
+        continue;
       findings.push({ kind, index: match.index, length: match[0].length });
     }
   }
