@@ -24,6 +24,8 @@
 // The real `flatline()` from dist/ is checked read for read against the row named
 // by `--shipped-as`, on the first 25 draws of every cell, and the run throws on
 // a disagreement.
+//
+// `--retro <path>` (VW-672) prints the historical recall count only; `--help` has the input shape.
 
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -83,7 +85,29 @@ const RULE_CLASS = oneOf(
   argument('rule-class', LIFTER_RAMP === 'reference' ? null : LIFTER_RAMP),
   RAMP_CLASSES,
 );
-if (RULE !== 'reference' && RULE_CLASS === null)
+/** VW-672: the retro-data file for the historical recall count. */
+const HELP = `Usage: node scripts/flatline-sim.mjs --retro <path-to-retro-file> [--rule reference|class|hybrid]
+
+Reads the retro-data JSON that \`npm run retro:truecoach -- ... --json <file>\` writes and prints
+one line, "k of n historical flatlines fire (--rule <rule>)", and nothing else.
+
+Input shape (other keys are ignored; anything else malformed fails the run):
+  { "lifts": [ { "family": string,
+                 "sessions": [ { "date": "YYYY-MM-DD", "topLoad": number, "e1rm": number | null } ],
+                 "plateaus": [ { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD",
+                                 "rule": "flatline" | "wa_window" } ] } ] }
+Sessions are in date order, one a day. Each "flatline" plateau is one historical flatline.
+
+A window fires when the rule reads the lift's e1RM history, up to any session inside the window,
+flat, with the step read at the median top load of the lift's valued sessions: the retro tool's
+own labelling. --rule class and hybrid take the class from the family the way
+\`sim:goal-ramp --retro\` does (squat and deadlift lower compound, the rest upper compound) at the
+intermediate tier. hybrid is VW-490 R7c: the smaller step, and the light_min_35d row.
+Every read is also checked against the real flatline() at the rule's step; a disagreement throws.
+Without --retro the script runs the synthetic grid; see the header of this file.
+`;
+const RETRO = argument('retro', null);
+if (RULE !== 'reference' && RULE_CLASS === null && RETRO === null)
   throw new Error(`--rule ${RULE} needs a class: pass --rule-class or a class --lifter-ramp`);
 
 function chooseLifterStep() {
@@ -108,9 +132,12 @@ const STEP_LABEL =
     : `lifter climbs the ${describe(LIFTER_RAMP)} step; rule '${RULE}'` +
       (RULE === 'reference' ? '' : ` on the ${RULE_CLASS} class`);
 
-function shippedVerdict(points, smoothing) {
+function shippedVerdict(
+  points,
+  smoothing,
+  expectedStepLbsPerWeek = stepAt(points[points.length - 1].v),
+) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
-  const expectedStepLbsPerWeek = stepAt(points[points.length - 1].v);
   const options = { expectedStepLbsPerWeek, minDays: core.MIN_DAYS, smoothing };
   return flatline(series, options) !== null;
 }
@@ -355,20 +382,46 @@ function report(results, draws) {
   return sections.join('\n\n');
 }
 
-assertGateMatchesWa();
-const draws = Number(argument('draws', '1000'));
-const results = runGrid(draws);
-const jsonPath = argument('json', null);
-if (jsonPath !== null) {
-  const slim = results.map(({ cell, tallies }) => ({
-    cell,
-    tallies: Object.fromEntries(
-      Object.entries(tallies).map(([name, tally]) => [
-        name,
-        { ...tally, ...delayStats(tally), firstFlatRead: undefined },
-      ]),
-    ),
-  }));
-  writeFileSync(jsonPath, JSON.stringify({ draws, results: slim }, null, 2));
+/** The step `--rule` judges a retro lift by, at its median top load. */
+function retroStep({ loadLbs, rampClass }) {
+  const reference = plateauReferenceStepLbs(loadLbs);
+  if (RULE === 'reference') return reference;
+  const byClass = programmedRampStepLbs(loadLbs, rampClass, 'intermediate');
+  return RULE === 'class' ? byClass : Math.min(reference, byClass);
 }
-process.stdout.write(`${report(results, draws)}\n`);
+
+/** The shipped row must match `flatline()` on every retro read, or the count is about a different rule. */
+function retroFires(points, retroCase) {
+  const step = retroStep(retroCase);
+  const shipped = shippedVerdict(points, undefined, step);
+  if (core.readsFlat(points, step, core.STRATEGIES[SHIPPED_AS]) !== shipped)
+    throw new Error(`flatline() disagrees with '${SHIPPED_AS}' on a retro read`);
+  return RULE === 'hybrid' ? core.readsFlat(points, step, core.STRATEGIES.light_min_35d) : shipped;
+}
+
+function runSyntheticGrid() {
+  assertGateMatchesWa();
+  const draws = Number(argument('draws', '1000'));
+  const results = runGrid(draws);
+  const jsonPath = argument('json', null);
+  if (jsonPath !== null) {
+    const slim = results.map(({ cell, tallies }) => ({
+      cell,
+      tallies: Object.fromEntries(
+        Object.entries(tallies).map(([name, tally]) => [
+          name,
+          { ...tally, ...delayStats(tally), firstFlatRead: undefined },
+        ]),
+      ),
+    }));
+    writeFileSync(jsonPath, JSON.stringify({ draws, results: slim }, null, 2));
+  }
+  process.stdout.write(`${report(results, draws)}\n`);
+}
+
+if (process.argv.includes('--help')) process.stdout.write(HELP);
+else if (RETRO !== null)
+  process.stdout.write(
+    `${core.recallLine(core.retroRecall(core.loadRetro(RETRO), retroFires), RULE)}\n`,
+  );
+else runSyntheticGrid();
