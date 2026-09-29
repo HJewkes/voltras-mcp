@@ -2,8 +2,7 @@ import * as analytics from '@voltras/workout-analytics';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CatalogNotLoadedError, rampClassForExerciseId, rampClassOf } from '../ramp-class.js';
-import { HISTORY_SEED_EXERCISES } from '../history-seed-catalog.js';
-import { SEED_CABLE_EXERCISES } from '../seed-catalog.js';
+import { loadSeedCatalog } from './load-seed-catalog.js';
 
 describe('rampClassOf', () => {
   it('reads any isolation-typed exercise as isolation, whatever its pattern', () => {
@@ -32,8 +31,6 @@ describe('rampClassOf', () => {
 
 const setCatalog = (rows: unknown[]): void =>
   (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(rows);
-const loadSeedCatalog = (): void =>
-  setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
 
 describe('rampClassForExerciseId on an unloaded catalog', () => {
   beforeEach(() => setCatalog([]));

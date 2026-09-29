@@ -13,8 +13,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID, type StoredGoalTarget, type StoredRep } from '../../store/types.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
@@ -245,6 +246,8 @@ async function targetRow(store: SessionStore, id: string): Promise<StoredGoalTar
 }
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+beforeAll(loadSeedCatalog);
 
 describe.each(VARIANTS)('goal.accept_target racing another write, $name', (variant) => {
   it('leaves a target retired when the retire lands between the read and the accept', async () => {
