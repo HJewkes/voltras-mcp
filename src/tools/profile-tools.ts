@@ -28,6 +28,7 @@ import {
   type BodyFatTier,
   type SameDeviceDelta,
 } from '../analytics/body-fat-sources.js';
+import { localDate } from '../analytics/training-days.js';
 import { onboardingGaps, type OnboardingGaps } from '../profile/onboarding-gaps.js';
 import {
   startingPrescription,
@@ -706,13 +707,15 @@ export interface WeeklyCheckinReadState {
 
 /**
  * The most recent Sunday on or before `now`, as an ISO date (`YYYY-MM-DD`).
- * UTC-based and deterministic: `now`'s own day-of-week (`getUTCDay()`, 0 for
- * Sunday) is how far back to walk.
+ * Local-calendar based (VW-508): the lifter's own day-of-week (`getDay()`, 0 for
+ * Sunday) is how far back to walk, so Saturday evening west of UTC stays in the
+ * week it belongs to. The date is written through `localDate`, like every other
+ * lifter-facing day.
  */
 export function mostRecentSundayIso(now: Date): string {
   const sunday = new Date(now);
-  sunday.setUTCDate(now.getUTCDate() - now.getUTCDay());
-  return sunday.toISOString().slice(0, 10);
+  sunday.setDate(now.getDate() - now.getDay());
+  return localDate(sunday.toISOString());
 }
 
 /** The row `recordedAt` every field of one `weekOf` shares — midnight UTC on that date. */
