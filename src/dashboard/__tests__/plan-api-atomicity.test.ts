@@ -98,6 +98,12 @@ describe.each([1, 2] as const)('planned-exercise PATCH with %i connection(s)', (
     expect(rejected[0]).toMatchObject({ reason: { code: 'invalid_input' } });
     const stored = await a.getPlannedExercise(ROW_ID);
     expect(stored!.targetRepsLow!).toBeLessThanOrEqual(stored!.targetRepsHigh!);
+    expect([stored!.targetRepsLow, stored!.targetRepsHigh]).toSatisfy((band: number[]) =>
+      [
+        [9, 10],
+        [6, 7],
+      ].some(([low, high]) => band[0] === low && band[1] === high),
+    );
   });
 
   it('writes nothing when the patch fails validation', async () => {
@@ -143,5 +149,26 @@ describe.each([1, 2] as const)('block week scaffold with %i connection(s)', (con
     expect(replies.filter((reply) => reply.isError)).toHaveLength(1);
     expect(replies.find((reply) => reply.isError)!.body).toMatchObject({ code: 'WEEKS_EXIST' });
     expect(await a.getTrainingWeeksForBlock('blk')).toHaveLength(4);
+  });
+
+  it('writes nothing for the rejected create, so the block still matches its weeks', async () => {
+    const [a, b] = storePair(connections);
+    const [callA, callB] = [planToolsOn(a), planToolsOn(b)];
+    await callA('plan.program.create', { id: 'prog', name: 'Return' });
+    const create = (call: Call, weeksCount: number) =>
+      call('plan.block.create', {
+        id: 'blk',
+        programId: 'prog',
+        orderIndex: 0,
+        name: 'Orientation',
+        weeksCount,
+        scaffoldWeeks: true,
+      });
+
+    const replies = await Promise.all([create(callA, 4), create(callB, 6)]);
+
+    expect(replies.filter((reply) => reply.isError)).toHaveLength(1);
+    const weeks = await a.getTrainingWeeksForBlock('blk');
+    expect((await a.getTrainingBlocksForProgram('prog'))[0]!.weeksCount).toBe(weeks.length);
   });
 });

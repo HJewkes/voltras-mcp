@@ -70,6 +70,7 @@ import { computePercentIncrement } from '../analytics/percent-increment.js';
 import {
   LOCAL_USER_ID,
   type AppendBlockScheduleInput,
+  type StoredBlockSchedule,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredSet,
@@ -564,9 +565,9 @@ async function createBlock(
   const today = todayLocal();
   const dating = await checkBlockCreate(state, previous, block, input, today);
   const written =
-    dating === null ? null : await state.store.putTrainingBlockWithSchedule(block, dating);
-  if (dating === null) await state.store.putTrainingBlock(block);
-  if (input.scaffoldWeeks === true) await scaffoldWeeks(state, block, input.deloadWeeks ?? []);
+    input.scaffoldWeeks === true
+      ? await scaffoldBlock(state, block, input.deloadWeeks ?? [], dating)
+      : await putBlock(state, block, dating);
   const warnings = await lintMesoLength(state, previous, block);
   return {
     block,
@@ -615,12 +616,23 @@ async function checkBlockCreate(
   return datingRow(state, block, input.startsOn, today, input.reason);
 }
 
-/** One plan week row per week of the block, "Week 1" onwards, flagging the named deloads. */
-async function scaffoldWeeks(
+async function putBlock(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  dating: AppendBlockScheduleInput | null,
+): Promise<StoredBlockSchedule | null> {
+  if (dating !== null) return state.store.putTrainingBlockWithSchedule(block, dating);
+  await state.store.putTrainingBlock(block);
+  return null;
+}
+
+/** The block, its dating row and one plan week per week ("Week 1" onwards), written as one unit. */
+async function scaffoldBlock(
   state: ServerState,
   block: StoredTrainingBlock,
   deloadWeeks: readonly number[],
-): Promise<void> {
+  dating: AppendBlockScheduleInput | null,
+): Promise<StoredBlockSchedule | null> {
   const weeks: StoredTrainingWeek[] = [];
   for (let n = 1; n <= block.weeksCount; n++) {
     weeks.push({
@@ -631,7 +643,7 @@ async function scaffoldWeeks(
       isDeload: deloadWeeks.includes(n),
     });
   }
-  await state.store.scaffoldTrainingWeeks(block.id, weeks);
+  return state.store.scaffoldTrainingWeeks(block, weeks, dating ?? undefined);
 }
 
 /**

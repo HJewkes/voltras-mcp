@@ -1001,6 +1001,14 @@ describe('T11: goal target writes (VW-589)', () => {
   });
 });
 
+const BLOCK_T12 = {
+  id: 'block-t12',
+  programId: 'prog-block-t12',
+  orderIndex: 0,
+  name: 'Orientation',
+  weeksCount: 3,
+};
+
 describe('T12: planned-exercise patch and week scaffold (VW-585)', () => {
   const week = (id: string, orderIndex: number) => ({
     id,
@@ -1061,8 +1069,8 @@ describe('T12: planned-exercise patch and week scaffold (VW-585)', () => {
     const weeks = (tag: string) => [0, 1, 2].map((i) => week(`${tag}-${String(i)}`, i));
 
     const results = await Promise.allSettled([
-      a.scaffoldTrainingWeeks('block-t12', weeks('a')),
-      b.scaffoldTrainingWeeks('block-t12', weeks('b')),
+      a.scaffoldTrainingWeeks(BLOCK_T12, weeks('a')),
+      b.scaffoldTrainingWeeks(BLOCK_T12, weeks('b')),
     ]);
 
     expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);

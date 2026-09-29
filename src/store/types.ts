@@ -2256,10 +2256,15 @@ export interface SessionStore extends ExerciseSetupStore {
   /** Upsert a week within a block. */
   putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
   /**
-   * Insert every week of a block's scaffold in one transaction. Throws a `WEEKS_EXIST` error,
-   * writing nothing, when the block already has any week, so a retried create cannot double them.
+   * Upsert a block, append its dating row when one is given, and insert every week of its scaffold,
+   * in one transaction. Throws a `WEEKS_EXIST` error, writing nothing, when the block already has
+   * any week, so a retried create cannot double the weeks or leave the block edited without them.
    */
-  scaffoldTrainingWeeks(blockId: string, weeks: readonly StoredTrainingWeek[]): Promise<void>;
+  scaffoldTrainingWeeks(
+    block: StoredTrainingBlock,
+    weeks: readonly StoredTrainingWeek[],
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null>;
   /** Look up a week by id; `undefined` when no row matches. */
   getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   /** Return every week in a block, ordered by `orderIndex` ascending. */

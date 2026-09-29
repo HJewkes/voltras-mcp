@@ -4351,17 +4351,26 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async scaffoldTrainingWeeks(
-    blockId: string,
+    block: StoredTrainingBlock,
     weeks: readonly StoredTrainingWeek[],
-  ): Promise<void> {
-    this.atomically(() => {
-      const existing = this.db
-        .prepare(`SELECT 1 FROM training_weeks WHERE block_id = ? LIMIT 1`)
-        .get(blockId);
-      if (existing !== undefined) throw weeksExist(blockId);
-      for (const week of weeks) this.writeTrainingWeek(week);
-    });
-    return Promise.resolve();
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null> {
+    const problem = schedule === undefined ? null : scheduleProblem(schedule);
+    if (schedule !== undefined && problem !== null) {
+      throw blockScheduleInvalid(schedule.blockId, problem);
+    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const existing = this.db
+          .prepare(`SELECT 1 FROM training_weeks WHERE block_id = ? LIMIT 1`)
+          .get(block.id);
+        if (existing !== undefined) throw weeksExist(block.id);
+        this.writeTrainingBlock(block);
+        const written = schedule === undefined ? null : this.insertBlockSchedule(schedule);
+        for (const week of weeks) this.writeTrainingWeek(week);
+        return written;
+      }),
+    );
   }
 
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
