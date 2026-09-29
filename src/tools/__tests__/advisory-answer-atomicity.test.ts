@@ -95,10 +95,16 @@ async function ok(call: Call, name: string, args?: unknown): Promise<Record<stri
   return reply.body;
 }
 
-/** `store`, with `fire` run once around its `nth` call of `method`. */
+type HookedMethod =
+  | 'listAdvisoryDecisions'
+  | 'answerAdvisoryIfOpen'
+  | 'putAdvisoryDecision'
+  | 'putAdvisoryDerived';
+
+/** `store`, with `fire` run once around its `nth` call of any of `methods`. */
 function interleaved(
   store: SessionStore,
-  method: 'listAdvisoryDecisions' | 'answerAdvisoryIfOpen',
+  methods: HookedMethod | readonly HookedMethod[],
   at: { nth: number; when: 'before' | 'after' },
   fire: () => Promise<unknown>,
 ): SessionStore {
@@ -108,7 +114,7 @@ function interleaved(
       const value: unknown = Reflect.get(target, prop);
       if (typeof value !== 'function') return value;
       const bound = (value as (...args: unknown[]) => Promise<unknown>).bind(target);
-      if (prop !== method) return bound;
+      if (!([] as readonly unknown[]).concat(methods).includes(prop)) return bound;
       return async (...args: unknown[]) => {
         calls += 1;
         const due = calls === at.nth;
@@ -341,5 +347,169 @@ describe.each(VARIANTS)('an offer answered from two sides, $name', (variant) => 
     const decision = await offerDecision(first);
     expect(decision.userResponse).toBe('ignored');
     expect(decision.inputs.withdrawnAt).toEqual(expect.any(String));
+  });
+});
+
+// --- VW-588: a refresh racing another write ---------------------------------
+
+/** A starting ramp accepted cold, with enough history since to calibrate it, and no offer yet. */
+async function seedCalibratedRamp(store: SessionStore): Promise<string> {
+  const call = toolsOver(store);
+  await seedLiftHistory(store, 1);
+  const declared = await ok(call, 'goal.declare_priorities', {
+    items: [{ kind: 'lift', ref: 'bench-press', level: 'specialize' }],
+    horizonWeeks: 6,
+  });
+  const priorityId = (declared.priorities as { id: string }[])[0].id;
+  const proposed = await ok(call, 'goal.propose_targets', { priorityId });
+  await ok(call, 'goal.accept_target', {
+    targetId: (proposed.targets as { targetId: string }[])[0].targetId,
+  });
+  await seedLiftHistory(store, 2, true);
+  return priorityId;
+}
+
+async function offerDecisions(store: SessionStore) {
+  return store.listAdvisoryDecisions(LOCAL_USER_ID, { code: RECALIBRATION_OFFER_CODE });
+}
+
+// The advisory write, however it is made: the competing call lands after every read before it.
+const ADVISORY_WRITE = ['putAdvisoryDecision', 'putAdvisoryDerived'] as const;
+const BEFORE_WRITE = { nth: 1, when: 'before' } as const;
+
+/** `store` with `fire` run just before its advisory write; `fired` says whether the race ran. */
+function racedBeforeWrite(
+  store: SessionStore,
+  fire: () => Promise<unknown>,
+): { store: SessionStore; fired: () => boolean } {
+  let ran = false;
+  const hooked = interleaved(store, ADVISORY_WRITE, BEFORE_WRITE, async () => {
+    ran = true;
+    await fire();
+  });
+  return { store: hooked, fired: () => ran };
+}
+
+describe.each(VARIANTS)('two recalibration passes at once, $name', (variant) => {
+  it('leaves one open offer when two goal.propose_targets race', async () => {
+    const first = openStore();
+    const priorityId = await seedCalibratedRamp(first);
+    const competitor = toolsOver(variant.second(first));
+    const race = racedBeforeWrite(first, () =>
+      ok(competitor, 'goal.propose_targets', { priorityId }),
+    );
+
+    await ok(toolsOver(race.store), 'goal.propose_targets', { priorityId });
+
+    expect(race.fired()).toBe(true);
+    const open = (await offerDecisions(first)).filter((row) => row.userResponse === undefined);
+    expect(open).toHaveLength(1);
+    const live = await first.listGoalTargets({ priorityId });
+    expect(live.filter((row) => row.acceptedBy === undefined)).toHaveLength(1);
+  });
+
+  it('never reopens an offer declined while the refresh derived it', async () => {
+    const first = openStore();
+    const fixture = await seedOpenOffer(first);
+    const priorityId = (await targetRow(first, fixture.rampId))!.priorityId;
+    const decliner = toolsOver(variant.second(first));
+    const race = racedBeforeWrite(first, () =>
+      ok(decliner, 'goal.retire', { targetId: fixture.offerTargetId, outcome: 'abandoned' }),
+    );
+
+    const refreshed = await ok(toolsOver(race.store), 'goal.propose_targets', { priorityId });
+
+    expect(race.fired()).toBe(true);
+    expect(refreshed.recalibrationOffers).toEqual([]);
+    expect((await offerDecision(first)).userResponse).toBe('declined');
+    expect((await targetRow(first, fixture.offerTargetId))?.outcome).toBe('abandoned');
+  });
+});
+
+const PHASE_DAYS = 70;
+const START_WEIGHT_LBS = 200;
+
+/** A fat-loss phase, an accepted bodyweight target and a series slower than its line. */
+async function seedRateAdvisory(store: SessionStore): Promise<void> {
+  await store.declareDietPhase({
+    userId: LOCAL_USER_ID,
+    phase: 'fat-loss',
+    startedAt: daysAgo(PHASE_DAYS),
+    declaredAt: daysAgo(PHASE_DAYS),
+  });
+  await store.putPriority({
+    id: 'priority-bodyweight',
+    userId: LOCAL_USER_ID,
+    horizonWeeks: 12,
+    kind: 'muscle',
+    ref: 'whole-body',
+    level: 'maintain',
+    declaredAt: daysAgo(PHASE_DAYS),
+    mesosHeld: 0,
+  });
+  await store.putGoalTarget({
+    id: 'target-bodyweight',
+    priorityId: 'priority-bodyweight',
+    metric: 'bodyweight',
+    startValue: START_WEIGHT_LBS,
+    startMeasuredAt: daysAgo(PHASE_DAYS),
+    bandLowPctPerWeek: -0.5,
+    bandHighPctPerWeek: -1,
+    committedValue: 190,
+    stretchValue: 180,
+    basis: 'rp_ramp',
+    infoLevel: 'ramp',
+    tierUsed: 'intermediate',
+    tierProvisional: false,
+    dietPhaseAtDerivation: 'fat-loss',
+    acceptedBy: 'coach-default',
+    acknowledgedStretch: false,
+    derivedAt: daysAgo(PHASE_DAYS),
+    endsAt: daysAgo(-14),
+  });
+  for (let day = 0; day <= PHASE_DAYS; day += 1) {
+    await store.putBodyMetric({
+      userId: LOCAL_USER_ID,
+      measuredAt: daysAgo(PHASE_DAYS - day),
+      bodyweightLbs: START_WEIGHT_LBS - (0.6 * day) / 7,
+    });
+  }
+}
+
+async function rateDecisions(store: SessionStore) {
+  return store.listAdvisoryDecisions(LOCAL_USER_ID, { code: BODYWEIGHT_RATE_ADVISORY_CODE });
+}
+
+describe.each(VARIANTS)('a weekly review racing another write, $name', (variant) => {
+  it('writes one row when two reviews of one week race', async () => {
+    const first = openStore();
+    await seedRateAdvisory(first);
+    const competitor = toolsOver(variant.second(first));
+    const race = racedBeforeWrite(first, () => ok(competitor, 'goal.weekly_review'));
+
+    const review = await ok(toolsOver(race.store), 'goal.weekly_review');
+
+    expect(race.fired()).toBe(true);
+    expect(review.proposal).not.toBeNull();
+    expect(await rateDecisions(first)).toHaveLength(1);
+  });
+
+  it('keeps a response recorded while a refresh of the week derived it', async () => {
+    const first = openStore();
+    await seedRateAdvisory(first);
+    await ok(toolsOver(first), 'goal.weekly_review');
+    const responder = toolsOver(variant.second(first));
+    const race = racedBeforeWrite(first, () =>
+      ok(responder, 'goal.weekly_review', { response: 'accepted' }),
+    );
+
+    const refreshed = await ok(toolsOver(race.store), 'goal.weekly_review');
+
+    expect(race.fired()).toBe(true);
+    expect(refreshed.proposal).toMatchObject({ userResponse: 'accepted' });
+    const rows = await rateDecisions(first);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userResponse).toBe('accepted');
+    expect(rows[0].respondedAt).toEqual(expect.any(String));
   });
 });

@@ -37,6 +37,7 @@ import {
 } from './advisory-answer.js';
 import {
   LOCAL_USER_ID,
+  type AdvisoryDerivation,
   type BaselineState,
   type StoredAdvisoryDecision,
   type StoredGoalTarget,
@@ -158,7 +159,7 @@ async function reconcileOne(
     if (open !== undefined) await withdrawOffer(state, open, now);
     return undefined;
   }
-  return writeOffer(state, inFrame, target, framed, open, now);
+  return writeOffer(state, inFrame, target, framed, now);
 }
 
 function gapOf(evidence: CalibrationEvidence): ReturnType<typeof calibrationGapOf> {
@@ -179,35 +180,58 @@ async function readEvidence(
 /**
  * The offer is the band re-derived inside the ramp's own frame (VW-449's
  * `deriveTargetInFrame`): its start value on week 1 of its block, today's info
- * level and, where earned, today's fitted slope.
+ * level and, where earned, today's fitted slope. Only the band is derived out
+ * here; whether to offer is decided against the live offers at the write (VW-588).
  */
 async function writeOffer(
   state: ServerState,
   context: GoalDerivationContext,
   target: StoredGoalTarget,
   derived: DerivedTarget,
-  open: StoredAdvisoryDecision | undefined,
   now: string,
-): Promise<RecalibrationOffer> {
+): Promise<RecalibrationOffer | undefined> {
+  const written = await state.store.putAdvisoryDerived(
+    LOCAL_USER_ID,
+    RECALIBRATION_OFFER_CODE,
+    (live) => offerDerivation(live, context, target, derived, now),
+    { whileTargetLive: target.id },
+  );
+  if (written?.decision === undefined || written.goalTarget === undefined) return undefined;
+  return offerOf(written.decision, target, written.goalTarget, derived);
+}
+
+/** A declined ramp gets nothing; an open offer is refreshed in place; otherwise one is minted. */
+function offerDerivation(
+  live: readonly StoredAdvisoryDecision[],
+  context: GoalDerivationContext,
+  target: StoredGoalTarget,
+  derived: DerivedTarget,
+  now: string,
+): AdvisoryDerivation<null> {
+  const mine = live.filter((decision) => offerInputsOf(decision).targetId === target.id);
+  if (mine.some((decision) => decision.userResponse === 'declined')) return { result: null };
+  const open = mine.find((decision) => decision.userResponse === undefined);
   const offerTargetId = open === undefined ? randomUUID() : offerInputsOf(open).offerTargetId;
-  const row = await state.store.putGoalTarget(framedRow(target, derived, context, offerTargetId));
   const inputs: RecalibrationOfferInputs = {
     targetId: target.id,
     offerTargetId,
-    committedValue: row.committedValue,
-    stretchValue: row.stretchValue,
+    committedValue: derived.band.committedValue,
+    stretchValue: derived.band.stretchValue,
   };
-  const decision = await state.store.putAdvisoryDecision({
-    ...(open === undefined ? {} : { id: open.id }),
-    userId: LOCAL_USER_ID,
-    code: RECALIBRATION_OFFER_CODE,
-    issuedAt: open?.issuedAt ?? now,
-    inputs: { ...inputs },
-    thresholds: { minMatchedSessionsForRamp: GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp },
-    algorithmVersion: RECALIBRATION_OFFER_VERSION,
-    verdict: 'recalibrated_target_offered',
-  });
-  return offerOf(decision, target, row, derived);
+  return {
+    goalTarget: framedRow(target, derived, context, offerTargetId),
+    decision: {
+      ...(open === undefined ? {} : { id: open.id }),
+      userId: LOCAL_USER_ID,
+      code: RECALIBRATION_OFFER_CODE,
+      issuedAt: open?.issuedAt ?? now,
+      inputs: { ...inputs },
+      thresholds: { minMatchedSessionsForRamp: GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp },
+      algorithmVersion: RECALIBRATION_OFFER_VERSION,
+      verdict: 'recalibrated_target_offered',
+    },
+    result: null,
+  };
 }
 
 /** The offer row: the accepted target's frame, the fresh band's numbers. */

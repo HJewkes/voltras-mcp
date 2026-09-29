@@ -42,6 +42,7 @@ import type { ServerState } from '../state/server-state.js';
 import type { DietPhase, RecompMode } from '../store/diet-phase.js';
 import {
   LOCAL_USER_ID,
+  type AdvisoryDerivation,
   type SessionStore,
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
@@ -367,64 +368,81 @@ interface EmitResult {
 /**
  * Record the proposal, unless there is none to record or the lifter already
  * declined this observation. A vetoed week emits no text and so writes
- * nothing: a proposal nobody made is not a row.
+ * nothing: a proposal nobody made is not a row. The dedupe and the decline
+ * check run against the live rows at the write (VW-588), so two reviews of one
+ * week cannot both miss the other's row.
  */
 async function emit(
   state: ServerState,
   context: ReviewContext,
   advisory: BodyweightRateAdvisory,
 ): Promise<EmitResult> {
-  if (advisory.advisory === null) return { proposal: null, suppressedByDecline: false, notes: [] };
+  if (advisory.advisory === null) return { proposal: null, ...blank() };
   const key = observationKey(context.weekOf, advisory.urgencyRank);
-  const existing = (await listDecisions(state)).filter((row) => row.inputs.observationKey === key);
-  const declined = existing.find((row) => row.userResponse === 'declined');
-  if (declined !== undefined) {
-    return {
-      proposal: null,
-      suppressedByDecline: true,
-      notes: [
-        'You already declined this week’s rate proposal at this urgency, so it is not raised ' +
-          'again. It can return next week, or sooner if the signal crosses into a wider band.',
-      ],
-    };
-  }
-  return { proposal: await write(state, context, advisory, existing[0], key), ...blank() };
+  const written = await state.store.putAdvisoryDerived(
+    LOCAL_USER_ID,
+    BODYWEIGHT_RATE_ADVISORY_CODE,
+    (live) => proposalDerivation(live, context, advisory, key),
+    { whileTargetLive: context.target.id },
+  );
+  if (written === undefined) return { proposal: null, ...blank() };
+  if (written.decision === undefined) return declinedResult();
+  return { proposal: proposalOf(written.decision), ...blank() };
 }
 
 function blank(): { suppressedByDecline: boolean; notes: string[] } {
   return { suppressedByDecline: false, notes: [] };
 }
 
+function declinedResult(): EmitResult {
+  return {
+    proposal: null,
+    suppressedByDecline: true,
+    notes: [
+      'You already declined this week’s rate proposal at this urgency, so it is not raised ' +
+        'again. It can return next week, or sooner if the signal crosses into a wider band.',
+    ],
+  };
+}
+
 /**
  * One row per observation: a repeat of the same week at the same urgency
  * updates the row that fired rather than adding a second one, and keeps the
- * answer already on it.
+ * answer the live row carries, never the one read before the derivation.
  */
-async function write(
-  state: ServerState,
+function proposalDerivation(
+  live: readonly StoredAdvisoryDecision[],
   context: ReviewContext,
   advisory: BodyweightRateAdvisory,
-  existing: StoredAdvisoryDecision | undefined,
   key: string,
-): Promise<WeeklyReviewProposal> {
-  const saved = await state.store.putAdvisoryDecision({
-    ...(existing !== undefined ? { id: existing.id } : {}),
-    userId: LOCAL_USER_ID,
-    code: BODYWEIGHT_RATE_ADVISORY_CODE,
-    issuedAt: existing?.issuedAt ?? context.reviewedAt,
-    inputs: {
-      ...advisory.inputs,
-      weekOf: context.weekOf,
-      observationKey: key,
-      targetId: context.target.id,
-      committedValue: context.target.committedValue,
+): AdvisoryDerivation<null> {
+  const existing = live.filter((row) => row.inputs.observationKey === key);
+  if (existing.some((row) => row.userResponse === 'declined')) return { result: null };
+  const [current] = existing;
+  return {
+    decision: {
+      ...(current !== undefined ? { id: current.id } : {}),
+      userId: LOCAL_USER_ID,
+      code: BODYWEIGHT_RATE_ADVISORY_CODE,
+      issuedAt: current?.issuedAt ?? context.reviewedAt,
+      inputs: {
+        ...advisory.inputs,
+        weekOf: context.weekOf,
+        observationKey: key,
+        targetId: context.target.id,
+        committedValue: context.target.committedValue,
+      },
+      thresholds: advisory.thresholds,
+      algorithmVersion: BODYWEIGHT_RATE_ADVISORY_VERSION,
+      verdict: advisory.outcome,
+      ...(current?.userResponse !== undefined ? { userResponse: current.userResponse } : {}),
+      ...(current?.respondedAt !== undefined ? { respondedAt: current.respondedAt } : {}),
     },
-    thresholds: advisory.thresholds,
-    algorithmVersion: BODYWEIGHT_RATE_ADVISORY_VERSION,
-    verdict: advisory.outcome,
-    ...(existing?.userResponse !== undefined ? { userResponse: existing.userResponse } : {}),
-    ...(existing?.respondedAt !== undefined ? { respondedAt: existing.respondedAt } : {}),
-  });
+    result: null,
+  };
+}
+
+function proposalOf(saved: StoredAdvisoryDecision): WeeklyReviewProposal {
   return {
     decisionId: saved.id,
     issuedAt: saved.issuedAt,
