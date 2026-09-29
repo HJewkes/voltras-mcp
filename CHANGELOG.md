@@ -153,6 +153,12 @@ entry is written from the user's point of view is a review question, not a check
   not only to a whole workout template. Its title comes from that exercise's template, and
   an attachment for a different exercise still shows nothing (VW-641).
 
+- Two edits to the same planned exercise no longer land an inverted rep band. Each edit in
+  the plan builder is now checked against the row as the other edit left it, so raising the
+  low end while another edit lowers the high end refuses the second one. Retrying
+  `plan.block.create` with the same id and `scaffoldWeeks` no longer writes a second set of
+  weeks: the second call answers `WEEKS_EXIST` (VW-585).
+
 - The plan lint again warns when a block's priority muscle shifts between week 1 and a later
   week in a row-based plan. A lift that trains two muscles ties them for the top spot, and
   the warning stayed silent on every tie; it now compares the tied muscles and warns only when
