@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   attributionFromPrimaries,
   attributionProblem,
+  countSetsByAttribution,
   dayFrequencyCredit,
   doseWeights,
   resolveAttribution,
@@ -116,5 +117,47 @@ describe('day frequency credit (R14, R15)', () => {
 
   it('gives no credit through a weight-0 row', () => {
     expect(dayFrequencyCredit([hipThrust]).has('hamstrings')).toBe(false);
+  });
+});
+
+describe('counting sets by attribution', () => {
+  const press = resolveAttribution([
+    row('front_delts', 1, true),
+    row('triceps', 0.5),
+    row('side_delts', 0.5),
+  ]);
+  const cableRow = resolveAttribution([
+    row('lats', 1, true),
+    row('upper_back', 1, true),
+    row('biceps', 0.5),
+  ]);
+
+  it('credits every target the full set count in the landmark read', () => {
+    const { landmark } = countSetsByAttribution([{ rows: cableRow, sets: 3 }]);
+
+    expect(landmark).toEqual({ lats: 3, upper_back: 3 });
+  });
+
+  it('weights each row by its dose in the dose read', () => {
+    const { landmark, dose } = countSetsByAttribution([{ rows: press, sets: 2 }]);
+
+    expect(landmark).toEqual({ front_delts: 2 });
+    expect(dose).toEqual({ front_delts: 2, triceps: 1, side_delts: 1 });
+  });
+
+  it('sums groups that share a muscle', () => {
+    const { dose } = countSetsByAttribution([
+      { rows: press, sets: 1 },
+      { rows: resolveAttribution([row('triceps', 1, true)]), sets: 2 },
+    ]);
+
+    expect(dose.triceps).toBe(2.5);
+  });
+
+  it('files a group with no target row under unknown in the landmark read only', () => {
+    const { landmark, dose } = countSetsByAttribution([{ rows: [], sets: 2 }]);
+
+    expect(landmark).toEqual({ unknown: 2 });
+    expect(dose).toEqual({});
   });
 });
