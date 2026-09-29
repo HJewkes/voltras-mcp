@@ -1182,7 +1182,7 @@ export async function finalizeSet(
   // channel events only — they never mutate the persisted set.
   publishWeightImpliedMismatch(stored, slotId, slotChannels);
   if (match?.divergent === true) {
-    state.channels.publish(buildBilateralDivergencePayload(match));
+    slotChannels.publish(buildBilateralDivergencePayload(match));
   }
   // VMCP-02.08 / VMCP-02.54: optionally kick off the passive rest_status
   // emission cycle. Starts AFTER the set_ended publish so a channel-consumer

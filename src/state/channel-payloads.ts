@@ -1932,9 +1932,10 @@ export function buildWeightImpliedMismatchPayload(
 /**
  * Build the meta + content for a `bilateral_divergence` channel event
  * (VMCP-02.67). Fired when the reconciler pairs two opposite-slot set closes
- * whose rep counts differ by one or more. Cross-slot by nature, so it carries
- * both sides' slot / session / set ids and counts rather than being scoped to
- * a single slot. `delta` is `a.rep_count − b.rep_count` (signed).
+ * whose rep counts differ by one or more. Scoped to the closing slot (`slot`
+ * equals `slot_id`); `partner_slot_id` names the other side, and both sides'
+ * session / set ids and counts ride along. `delta` is
+ * `a.rep_count − b.rep_count` (signed).
  */
 export function buildBilateralDivergencePayload(divergence: BilateralDivergence): {
   meta: Record<string, string>;

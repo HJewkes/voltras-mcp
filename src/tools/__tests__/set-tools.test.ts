@@ -2181,6 +2181,8 @@ describe('set.end', () => {
     );
     expect(events).toHaveLength(1);
     const meta = (events[0][0] as { meta: Record<string, string> }).meta;
+    expect(meta.slot).toBe('primary');
+    expect(meta.slot_id).toBe('primary');
     expect(meta.header_weight_lbs).toBe('30');
     expect(Number(meta.implied_weight_lbs)).toBeCloseTo(49.6, 1);
     expect(Number(meta.mismatch_pct)).toBeGreaterThan(10);
@@ -2235,6 +2237,7 @@ describe('set.end', () => {
     expect(events).toHaveLength(1);
     const meta = (events[0][0] as { meta: Record<string, string> }).meta;
     expect(meta.slot_id).toBe('primary');
+    expect(meta.slot).toBe(meta.slot_id);
     expect(meta.partner_slot_id).toBe('secondary');
     expect(meta.rep_count).toBe('1');
     expect(meta.partner_rep_count).toBe('12');
@@ -3054,6 +3057,7 @@ describe('bilateral group id at finalize', () => {
     const meta = (divergences[0][0] as { meta: Record<string, string> }).meta;
     expect(meta.rep_count).toBe('11');
     expect(meta.partner_rep_count).toBe('12');
+    expect(meta.slot).toBe(meta.slot_id);
     expect(rows.get(PARTNER_ID)?.bilateralGroupId).toBeTruthy();
   });
 
