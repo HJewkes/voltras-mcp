@@ -33,10 +33,9 @@
 // within-set losses side by side over recorded work, which is the paired
 // comparison that has to run before the live 25% guard can be rebased.
 //
-// `session.volume` (VMCP-06.05 / B47) records the volume model rather than
-// changing it: target-only set counting, one set to one primary muscle, no
-// synergist weighting. See `setsByTargetMuscle` for the decision and the
-// reason it is not to be built speculatively.
+// `session.volume` (VMCP-06.05 / B47, VW-661) reads the VW-561 weight table
+// two ways: `setsByMuscle` is the landmark read (target rows only) and
+// `doseSetsByMuscle` is the labelled dose read. See `setsByAttribution`.
 //
 // ── Status of the original 9 pipelines ─────────────────────────────────────
 //
@@ -146,6 +145,12 @@ import {
   type RomIntegrityReading,
 } from '../analytics/rom-integrity.js';
 import { movementClassForExerciseId, type MovementClass } from '../exercises/movement-class.js';
+import {
+  countSetsByAttribution,
+  type AttributedSetCounts,
+} from '../exercises/muscle-attribution.js';
+import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
+import { attributionOfExercise } from '../exercises/seed-attribution.js';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import {
@@ -317,9 +322,12 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // way the pipelines below are. See `setsForSessionExercise`.
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
+      const counts = setsByAttribution(state, sets);
       const result: SessionVolumeResult = {
         tonnageLbs: computeVolume(sets.map(toAnalyticsSet), weightsOf(sets)),
-        setsByMuscle: setsByTargetMuscle(state, sets),
+        setsByMuscle: counts.landmark,
+        doseSetsByMuscle: counts.dose,
+        muscleMapVersion: MUSCLE_MAP_VERSION,
         model: 'target-only',
       };
       return result;
@@ -1070,7 +1078,7 @@ async function computeHistoryWeeklyVolume(
     muscleSessions,
     (exerciseId: string) => {
       // B47 (VMCP-06.05, PR #263): target-only — the PRIMARY muscle group and
-      // nothing else, matching `session.volume`'s `setsByTargetMuscle`. A
+      // nothing else, until VW-662 moves this onto the VW-561 table. A
       // single-element array degenerates WA's own even-split-across-groups
       // math to "all of it", which IS the target-only rule.
       const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0];
@@ -1512,20 +1520,19 @@ const UNKNOWN_KEY = 'unknown';
 interface SessionVolumeResult {
   tonnageLbs: number;
   setsByMuscle: Record<string, number>;
+  doseSetsByMuscle: Record<string, number>;
+  muscleMapVersion: string;
   model: 'target-only';
 }
 
 /**
- * VOLUME MODEL: TARGET-ONLY SET COUNTING (B47 / VMCP-06.05).
+ * VOLUME MODEL (B47 / VMCP-06.05, on the VW-561 table since VW-661).
  *
- * A working set counts toward its exercise's PRIMARY muscle group and nothing
- * else. `secondaryMuscleGroups` is NEVER counted, at any weight. RP built
- * fractional / synergist-weighted set counting, scrapped it, and ships
- * target-only because the complexity rarely earns its keep. Weighted counting
- * stays reserved as an optional diagnostic for one specific non-responding
- * muscle, and only if a real case appears — it is NOT to be built
- * speculatively. The regression test on this function is what keeps a future
- * synergist weighting from landing silently.
+ * `landmark` counts a working set 1 toward each TARGET muscle of its exercise
+ * and nothing else; it is the only count a landmark band may read. `dose` adds
+ * each row's weight and is shown labelled, never compared with a landmark.
+ * Keys are titan slugs; an exercise the catalog does not know counts under
+ * `unknown` in `landmark` and nowhere in `dose`.
  *
  * SCOPE DIFFERS FROM `tonnageLbs` ON PURPOSE. Tonnage stays every set in the
  * session, guest sets included, because that contract predates this and
@@ -1533,16 +1540,16 @@ interface SessionVolumeResult {
  * dose for one lifter, so it takes the owner's working sets only: a guest's
  * set (VW-169) is not the owner's volume and a warm-up is not a working set.
  */
-function setsByTargetMuscle(
-  state: ServerState,
-  sets: readonly StoredSet[],
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const [exerciseId, working] of workingSetsByExercise(sets, undefined)) {
-    const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0] ?? UNKNOWN_KEY;
-    counts[muscle] = (counts[muscle] ?? 0) + working.length;
-  }
-  return counts;
+function setsByAttribution(state: ServerState, sets: readonly StoredSet[]): AttributedSetCounts {
+  return countSetsByAttribution(
+    [...workingSetsByExercise(sets, undefined)].map(([exerciseId, working]) => {
+      const exercise = state.exercises.getById(exerciseId);
+      return {
+        rows: exercise === undefined ? [] : attributionOfExercise(exercise),
+        sets: working.length,
+      };
+    }),
+  );
 }
 
 /**
@@ -2438,11 +2445,17 @@ const METRICS_COMPUTE_DESCRIPTION =
   'WITH its caveats; do not present it as a precise rep count, and never present the ' +
   '`profile-estimate` basis as measuring proximity to failure. Its velocity loss is peak-based ' +
   "by model contract and will not equal `vbt.set`'s mean-based lossPct. " +
-  '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, model }`. Tonnage is ' +
-  'whole-session, deliberately NOT narrowed to one exercise (a session may span several). ' +
-  "`setsByMuscle` counts the owner's working sets under each exercise's PRIMARY muscle group " +
-  'only — `model` is always `target-only`, and secondary/synergist muscles are never credited ' +
-  '(B47). An exercise the catalog does not know counts under `unknown`. ' +
+  '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, doseSetsByMuscle, ' +
+  'muscleMapVersion, model }`. Tonnage is whole-session, deliberately NOT narrowed to one ' +
+  "exercise (a session may span several). Both counts take the owner's working sets and key " +
+  'them by muscle slug (`front_delts`, `side_delts`, `rear_delts`, `lats`, `upper_back` and so on). ' +
+  '`setsByMuscle` is the landmark read: a set counts 1 toward each TARGET muscle of its exercise ' +
+  'and nothing else, so `model` is always `target-only` (B47). An overhead press is one ' +
+  '`front_delts` set; a chest press is one `chest` set and no delt set. `doseSetsByMuscle` is ' +
+  'the dose read: a set adds each muscle its weight (1 or 0.5), so the chest press also adds ' +
+  '0.5 to `front_delts` and `triceps`. Compare only `setsByMuscle` with a volume landmark; ' +
+  'show the dose read labelled as dose. `muscleMapVersion` stamps the weight table used. An ' +
+  'exercise the catalog does not know counts under `unknown` in `setsByMuscle` only. ' +
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
   'folded with within-set fatigue so a single hard set still reads as fatigued, plus ' +
   '`fatigueAxes` (see `session.perturbation`). ' +
@@ -2603,8 +2616,8 @@ const METRICS_COMPUTE_DESCRIPTION =
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
   "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +
   "own `getWeeklySummaries`; `byMuscleGroup` is WA's `getVolumeByMuscleGroup`, attributed " +
-  "target-only to each exercise's PRIMARY muscle group only (B47, matching `session.volume`'s " +
-  '`setsByTargetMuscle`). `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
+  "target-only to each exercise's PRIMARY muscle group only (B47). `verdict` is always " +
+  '`null` — `classifyWeeklyVolume` needs ' +
   'caller-supplied `VolumeLandmarks` that no source in this repo states for this athlete, so no ' +
   'landmark is invented here. A window with no working sets is NOT_FOUND. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +

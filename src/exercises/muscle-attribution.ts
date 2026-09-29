@@ -101,3 +101,37 @@ export function dayFrequencyCredit(
   }
   return credit;
 }
+
+/** Sets of one exercise, with that exercise's rows; empty rows mean the catalog does not know it. */
+export interface AttributedSets {
+  rows: readonly SlugAttribution[];
+  sets: number;
+}
+
+/** Both reads over a set count, keyed by titan slug. */
+export interface AttributedSetCounts {
+  landmark: Record<string, number>;
+  dose: Record<string, number>;
+}
+
+/** Key the landmark read files a set under when its exercise has no target row. */
+export const UNATTRIBUTED_MUSCLE = 'unknown';
+
+/**
+ * Counts sets both ways: the landmark read adds each group's sets to every
+ * target slug, the dose read adds sets times weight to every row above 0.
+ */
+export function countSetsByAttribution(groups: Iterable<AttributedSets>): AttributedSetCounts {
+  const landmark: Record<string, number> = {};
+  const dose: Record<string, number> = {};
+  for (const { rows, sets } of groups) {
+    const targets = targetMuscles(rows);
+    for (const muscle of targets.length > 0 ? targets : [UNATTRIBUTED_MUSCLE]) {
+      landmark[muscle] = (landmark[muscle] ?? 0) + sets;
+    }
+    for (const [muscle, weight] of doseWeights(rows)) {
+      dose[muscle] = (dose[muscle] ?? 0) + sets * weight;
+    }
+  }
+  return { landmark, dose };
+}
