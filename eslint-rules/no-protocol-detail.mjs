@@ -23,17 +23,37 @@
 //     writing to it does carries no value in any shape a pattern can match.
 //     Prose is a review-checklist item (see CLAUDE.md), not a lint rule, and
 //     nothing here should be read as covering it.
-//   - It cannot see a value SPLIT ACROSS A CONCATENATION. `'0x' + '1f'` and a
-//     line-wrapped `'a9c7' + 'f00d'` are two string literals to the parser and
-//     neither half is a finding on its own. Constant folding would close it and
-//     is not worth the machinery: deliberate evasion is not the threat model,
-//     because anyone evading the rule would simply not write the value. The
-//     case that actually happens is a long string wrapped to fit the line
-//     width, so if a value must live in source, keep it on one line where the
-//     rule can see it.
+//   - It folds a CONCATENATION OF STRING LITERALS (VW-224). `'0x' + '1f'` and a
+//     line-wrapped `'a9c7' + 'f00d'` are joined, adjacent literal pieces at a
+//     time, and scanned as one string. A finding reported this way crosses a
+//     join and overlaps no hit the whole-text pass already reported inside a
+//     piece. A hit inside a piece spelled with escapes is not matched, so such
+//     a value can be reported twice.
 //
-// Naming that last limit is the point. A guard that is silently narrower than
-// it looks is the failure this campaign is named after: a `[redacted]` marker
+// What it does NOT catch (VW-224):
+//
+//   - A value built from VARIABLES OR CALLS. `PREFIX + digits`, `[a, b].join()`,
+//     `.concat()`, `+=` and tagged templates are never evaluated; only adjacent
+//     string and expression-free template literals in one `+` chain are folded.
+//   - A chain piece that is not a bare string literal: a NUMBER literal, a piece
+//     wrapped in TypeScript `as` or `satisfies`, or a template holding a literal
+//     inside `${}`. Each one breaks the run of literals at that point.
+//   - ONE literal split by a backslash-newline continuation. It is a single
+//     literal, not a chain, and the whole-text pass sees the backslash break.
+//   - A value spelled in ESCAPES. The whole-text pass reads the raw spelling and
+//     the join reads cooked values, so a value that appears only as escape
+//     sequences inside one literal is seen by neither.
+//   - PROSE PROVENANCE: a sentence saying where a value came from, or what a
+//     register does, without quoting a value or a private path.
+//   - DELIBERATE EVASION. Anyone evading the rule can always spell a value in a
+//     shape it does not know; the threat model is accidental disclosure.
+//
+// A known false-positive shape of the join: a short hex-letter word joined to a
+// digit (`'add' + '1'`, `'feed' + '2'`) reads as a bare hex run. None exist in
+// this repo today, and a separator between the word and the number avoids it.
+//
+// Naming these limits is the point. A guard that is silently narrower than it
+// looks is the failure this campaign is named after: a `[redacted]` marker
 // beside surviving prose made an exposure look handled (VW-220).
 //
 // It never reports the matched token. A CI log is as public as the source it
@@ -170,6 +190,72 @@ export function findProtocolDetail(text) {
   return findings.sort((a, b) => a.index - b.index);
 }
 
+/** A literal's string value, or `null` for anything that would need evaluating. */
+function literalText(node) {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0].value.cooked ?? null;
+  }
+  return null;
+}
+
+function isConcatenation(node) {
+  return node?.type === 'BinaryExpression' && node.operator === '+';
+}
+
+/** The leaves of a `+` chain, left to right. */
+function chainOperands(node) {
+  if (!isConcatenation(node)) return [node];
+  return [...chainOperands(node.left), ...chainOperands(node.right)];
+}
+
+/**
+ * Runs of adjacent literal pieces in source order, each as its cooked text and
+ * the source text between its quotes.
+ */
+function literalRuns(operands, sourceCode) {
+  const runs = [[]];
+  for (const operand of operands) {
+    const text = literalText(operand);
+    if (text === null) runs.push([]);
+    else runs.at(-1).push({ text, raw: sourceCode.getText(operand).slice(1, -1) });
+  }
+  return runs.filter((run) => run.length > 1);
+}
+
+/**
+ * The whole-text pass's hits inside the pieces, as spans of the joined text.
+ * A piece spelled with escapes has no offset map from raw to cooked, so it
+ * contributes none: it may report twice, but it never hides a value.
+ */
+function reportedSpans(pieces) {
+  let offset = 0;
+  return pieces.flatMap(({ text, raw }) => {
+    const start = offset;
+    offset += text.length;
+    if (raw !== text) return [];
+    return findProtocolDetail(raw).map(({ index, length }) => ({ index: start + index, length }));
+  });
+}
+
+const overlaps = (a, b) => a.index < b.index + b.length && b.index < a.index + a.length;
+
+/**
+ * The first shape that only exists once `pieces` are joined, or `undefined`.
+ * A shape overlapping a hit the whole-text pass already reported is skipped.
+ */
+function shapeAcrossJoin(pieces) {
+  const joins = [];
+  let offset = 0;
+  for (const { text } of pieces.slice(0, -1)) joins.push((offset += text.length));
+  const reported = reportedSpans(pieces);
+  return findProtocolDetail(pieces.map((piece) => piece.text).join('')).find(
+    (finding) =>
+      joins.some((join) => join > finding.index && join < finding.index + finding.length) &&
+      !reported.some((hit) => overlaps(hit, finding)),
+  );
+}
+
 const MESSAGES = {
   'hex-literal': 'a hex literal',
   'byte-sequence': 'a byte sequence',
@@ -206,6 +292,18 @@ const rule = {
             data: { shape: MESSAGES[kind] },
           });
         }
+      },
+      BinaryExpression(node) {
+        if (node.operator !== '+' || isConcatenation(node.parent)) return;
+        const finding = literalRuns(chainOperands(node), context.sourceCode)
+          .map(shapeAcrossJoin)
+          .find(Boolean);
+        if (!finding) return;
+        context.report({
+          node,
+          messageId: 'protocolDetail',
+          data: { shape: `${MESSAGES[finding.kind]} split across a concatenation` },
+        });
       },
     };
   },
