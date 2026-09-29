@@ -17,9 +17,10 @@ sources:
   - src/dashboard/read-models/session-summary.ts
   - src/dashboard/spa/live-page/stage-variant.ts
   - src/dashboard/spa/live-page/RestView.tsx
+  - src/dashboard/spa/live-page/ExerciseHeader.tsx
   - src/tool-registry.ts
   - src/tools/truecoach-tools.ts
-lastVerified: 2026-09-28
+lastVerified: 2026-09-29
 ---
 
 # Dashboard pages
@@ -45,8 +46,11 @@ that says what does not work.
 ## What each page shows
 
 **Live (`#/`).** The current set as it happens, with velocity loss and form and tempo lights
-against the set's stop threshold. It does not show an effort estimate (RPE or reps in reserve)
-yet.
+against the set's stop threshold. Under the prescription it shows the effort target for a
+working set: the plan's RPE as written, else the target for your training tier, marked
+"(assumed tier)" when no tier was declared. Hover it for what the target rests on. A session
+with no plan shows no target. The page does not show an effort estimate (RPE or reps in
+reserve) read off the set yet.
 
 **Plan builder (`#/plan`).** Browse the exercise catalog, then build, change or reorder a
 workout. Lifts a coach adds with the `plan.*` tools appear without a reload, because the page
@@ -70,15 +74,15 @@ recorded against the mock adapter never count on this page.
 Each row names the tools whose calls put something on a screen. The status word is the same
 one the table above gives for that route.
 
-| Screen             | Route       | Status                                 | What you see                                                                                                       | Tools that put it there                                                                                                                                                                      |
-| ------------------ | ----------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live, during a set | `#/`        | Available                              | The device, the current set, velocity against the set's stop line, the fatigue card, the load and the prescription | `device.connect`, `session.start`, `set.start` (or auto-arm on your own reps), `device.set_weight` for the load, `plan.attach_to_session` for the prescription                               |
-| Live, resting      | `#/`        | Available                              | The set you just finished, its verdict, the rest ring and the pace footer                                          | `set.end`; the ring counts down the rest the attached plan sets for the lift, else a default                                                                                                 |
-| Live, two devices  | `#/`        | Available                              | Left and right velocity on one chart                                                                               | `device.connect` once with `slot` set to `left` and once to `right`; `slot.bind` remembers each device's side                                                                                |
-| Session summary    | `#/summary` | Available                              | A fatigue verdict per exercise, form lights, the worst velocity loss and a progression recommendation              | `session.start`, `set.start` and `set.end` for the sets; `plan.program.create` and `plan.exercise.create` for the recommendation, which needs the exercise prescribed in the current program |
-| Plan builder       | `#/plan`    | Available                              | The exercise catalog and the workout editor                                                                        | `plan.program.create`, `plan.template.create`, `plan.exercise.create`, `truecoach.import_week`, and the page's own edits                                                                     |
-| Goals              | `#/goals`   | [Coming soon](/coming-soon/goals-page) | Priorities with committed and stretch bands, the weekly trajectory, and bodyweight and attendance cards            | `goal.declare_priorities`, `goal.propose_targets`, `goal.accept_target`, `set.end`, `profile.log_bodyweight`, `profile.set_diet_phase`                                                       |
-| Body               | `#/body`    | [Coming soon](/coming-soon/body-map)   | Weekly sets per muscle, a strength trend per muscle, and planned against done this week                            | `set.end` on a real device, `session.set_exercise` to name the lift, `plan.exercise.create` for the week's planned sets, `profile.set_diet_phase`                                            |
+| Screen             | Route       | Status                                 | What you see                                                                                                                          | Tools that put it there                                                                                                                                                                                                    |
+| ------------------ | ----------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live, during a set | `#/`        | Available                              | The device, the current set, velocity against the set's stop line, the fatigue card, the load, the prescription and its effort target | `device.connect`, `session.start`, `set.start` (or auto-arm on your own reps), `device.set_weight` for the load, `plan.attach_to_session` for the prescription and its RPE, `profile.set_training_background` for the tier |
+| Live, resting      | `#/`        | Available                              | The set you just finished with its effort target, its verdict, the rest ring and the pace footer                                      | `set.end`; the ring counts down the rest the attached plan sets for the lift, else a default                                                                                                                               |
+| Live, two devices  | `#/`        | Available                              | Left and right velocity on one chart                                                                                                  | `device.connect` once with `slot` set to `left` and once to `right`; `slot.bind` remembers each device's side                                                                                                              |
+| Session summary    | `#/summary` | Available                              | A fatigue verdict per exercise, form lights, the worst velocity loss and a progression recommendation                                 | `session.start`, `set.start` and `set.end` for the sets; `plan.program.create` and `plan.exercise.create` for the recommendation, which needs the exercise prescribed in the current program                               |
+| Plan builder       | `#/plan`    | Available                              | The exercise catalog and the workout editor                                                                                           | `plan.program.create`, `plan.template.create`, `plan.exercise.create`, `truecoach.import_week`, and the page's own edits                                                                                                   |
+| Goals              | `#/goals`   | [Coming soon](/coming-soon/goals-page) | Priorities with committed and stretch bands, the weekly trajectory, and bodyweight and attendance cards                               | `goal.declare_priorities`, `goal.propose_targets`, `goal.accept_target`, `set.end`, `profile.log_bodyweight`, `profile.set_diet_phase`                                                                                     |
+| Body               | `#/body`    | [Coming soon](/coming-soon/body-map)   | Weekly sets per muscle, a strength trend per muscle, and planned against done this week                                               | `set.end` on a real device, `session.set_exercise` to name the lift, `plan.exercise.create` for the week's planned sets, `profile.set_diet_phase`                                                                          |
 
 The `goal.*` tools are available today. The Coming soon label on the Goals row is about the
 page, not the tools.

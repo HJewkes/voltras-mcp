@@ -48,6 +48,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The live page and the rest recap now show the effort target for a working set under the
+  prescription: the plan's RPE as the coach wrote it, else the target for your training tier,
+  marked "(assumed tier)" when you never declared one. Hover it for what the target rests on.
+  A session with no plan shows none (VW-670, #566).
+
 - A **For coaches** section on the docs site, for a coach who reads a lifter's reports and
   has never seen an MCP (VMCP-07.07): the onboarding model with a data-loop diagram, consent
   and the data loop (with TrueCoach's terms quoted in full and the write-back marked

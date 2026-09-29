@@ -46,8 +46,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 729736,
-      "sha256": "afd7416c2b8fd5d42e42c1fb7a36513b46ae85fad705b4330babff10ed154634"
+      "bytes": 713720,
+      "sha256": "78e2c8528d8964eecf17c204a4a648e53555e387622bd24b6281da955d751902"
     },
     {
       "name": "live-rest",
@@ -68,8 +68,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 106126,
-      "sha256": "d938a03e5b06a120e56cf9db450d7bd8a2cdd76a46e4ac16d9e54f41a48fa55b"
+      "bytes": 116422,
+      "sha256": "608e82c79dea023a624f727f14b3458c0ba2e7361ae26bf36e9e959ffd0dbfe1"
     },
     {
       "name": "session-summary",
@@ -135,8 +135,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 929143,
-      "sha256": "92dbba08c932a4d87dea3b1ddb7c0d8f12f36f9db713d61e16829dda434006e7"
+      "bytes": 910021,
+      "sha256": "681345923fa57d97734e45583399f30c69cb27cee6358a4b5f41d62f2b282bf6"
     },
     {
       "name": "live-dual-mid-set",

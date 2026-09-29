@@ -31,6 +31,7 @@ import {
 } from './model';
 import { setFatigueState } from './fatigue-state';
 import { restBasisCaption } from './live-copy';
+import { EffortCaption } from './ExerciseHeader';
 import { type MassUnit, formatMass } from './mass';
 import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
 import { dashboardStore } from '../store';
@@ -322,6 +323,11 @@ function RecapCard({
         setStates={rows.map((row) => ({ status: 'done' as const, velocities: row.velocities }))}
         testID="recap-card-heading"
       />
+      {heading.effort !== null && (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
+          <EffortCaption effort={heading.effort} />
+        </View>
+      )}
       <View style={{ borderTopWidth: 1 }}>
         <SetTableHeader unit={heading.unit} showPrevious={false} />
         {rows.map((row, i) => (

@@ -18,8 +18,10 @@ import {
   deriveActiveSetStates,
   derivePrescription,
   stageIsEnded,
+  type EffortCell,
 } from './model';
 import { type MassUnit } from './mass';
+import { effortCaption } from './live-copy';
 
 const t = getSemanticColors('dark');
 
@@ -43,6 +45,23 @@ function clampLerp(w: number, wLo: number, wHi: number, vLo: number, vHi: number
   if (w <= wLo) return vLo;
   if (w >= wHi) return vHi;
   return vLo + ((w - wLo) / (wHi - wLo)) * (vHi - vLo);
+}
+
+/**
+ * The effort target caption (VW-670) in the rest-basis caption's style, with what it rests on
+ * (the plan, or the tier and its corpus) on hover. Renders nothing without a target.
+ */
+export function EffortCaption({ effort }: { effort: EffortCell | null }) {
+  const color = useOnSurfaceColor('tertiary');
+  const caption = effortCaption(effort);
+  if (effort === null || caption === null) return null;
+  return (
+    <Tooltip label={effort.basis} placement="bottom">
+      <Text testID="effort-caption" style={{ color, fontSize: 13 }}>
+        {caption}
+      </Text>
+    </Tooltip>
+  );
 }
 
 // --- Page-level exercise header -----------------------------------------------
@@ -236,13 +255,16 @@ export function ExerciseHeader({
         )}
         {/* targets: pinned right when inline, tucked under the name (smaller) when wrapped. */}
         {targets && (
-          <SetsRepsLoad
-            sets={targets.sets}
-            reps={targets.reps}
-            load={targets.load}
-            unit={targets.unit}
-            fontSize={targetSize}
-          />
+          <View style={{ alignItems: wrap ? 'flex-start' : 'flex-end', gap: 4 }}>
+            <SetsRepsLoad
+              sets={targets.sets}
+              reps={targets.reps}
+              load={targets.load}
+              unit={targets.unit}
+              fontSize={targetSize}
+            />
+            <EffortCaption effort={targets.effort} />
+          </View>
         )}
       </View>
       {/* The expected setup card at exercise start (VW-275) — anchor/mount/cable-length/mode,
