@@ -7,7 +7,6 @@ import { UNDATED_MESO_WEEKS } from '../../analytics/goal-horizon.js';
 import { readDerivationContext } from '../goal-derivation.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
-
 let store: SessionStore;
 
 beforeEach(async () => {
