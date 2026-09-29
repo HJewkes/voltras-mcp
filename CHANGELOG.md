@@ -52,7 +52,7 @@ entry is written from the user's point of view is a review question, not a check
   `sessionPace` on `session.get` and the dashboard snapshot carries a `state` (ahead, on
   pace, behind, or idle before your first working set) and a signed `slipMinutes`, positive
   when behind. Rest inside the rest the plan gives you never counts against you, and slip
-  within two minutes (or 5% of a long plan) reads as on pace (VW-577).
+  within two minutes (or 5% of a long plan) reads as on pace (VW-577, #573).
 
 - The live page and the rest recap now show the effort target for a working set under the
   prescription: the plan's RPE as the coach wrote it, else the target for your training tier,
