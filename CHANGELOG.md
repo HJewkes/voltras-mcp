@@ -78,6 +78,11 @@ entry is written from the user's point of view is a review question, not a check
   per-muscle parts still add up to the total. It also returns `setsByMuscle` (the count to
   compare with a volume landmark), `doseSetsByMuscle` (the weighted dose count) and
   `muscleMapVersion`.
+- The corroboration note in the comparability block of `session.readiness`,
+  `session.strength` and `progression.get_for_exercise` counts exercises that share a target
+  muscle from the weight table (VW-664, #559). A lateral raise no longer backs an overhead press
+  (side delts against front delts), and a lat pulldown now backs a cable row (both target
+  the lats).
 - A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
   horizon now continues past the named block through the program's later dated blocks, and
   undated weeks are split into 5-week blocks, the length the owner chose.

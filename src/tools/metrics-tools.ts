@@ -152,7 +152,7 @@ import {
   type AttributedSetCounts,
   type SlugAttribution,
 } from '../exercises/muscle-attribution.js';
-import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
+import { MUSCLE_MAP_VERSION, type TitanMuscleGroup } from '../exercises/muscle-map.js';
 import { attributionOfExercise } from '../exercises/seed-attribution.js';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
@@ -1085,7 +1085,7 @@ async function computeHistoryWeeklyVolume(
     (exerciseId: string) => {
       // VW-662: the landmark targets, so WA's even split gives a row half its
       // tonnage on lats and half on upper_back and the parts still sum to the total.
-      const targets = targetMuscles(attributionOf(state, exerciseId));
+      const targets = targetMusclesOf(state, exerciseId);
       return { muscleGroups: targets.length > 0 ? targets : [UNATTRIBUTED_MUSCLE] };
     },
     period,
@@ -1581,9 +1581,20 @@ function setsByAttribution(state: ServerState, sets: readonly StoredSet[]): Attr
 }
 
 /** An exercise's weight-table rows; an id the catalog does not know has none. */
-function attributionOf(state: ServerState, exerciseId: string): SlugAttribution[] {
+function attributionOf(
+  state: Pick<ServerState, 'exercises'>,
+  exerciseId: string,
+): SlugAttribution[] {
   const exercise = state.exercises.getById(exerciseId);
   return exercise === undefined ? [] : attributionOfExercise(exercise);
+}
+
+/** An exercise's landmark target slugs; an id the catalog does not know has none. */
+export function targetMusclesOf(
+  state: Pick<ServerState, 'exercises'>,
+  exerciseId: string,
+): TitanMuscleGroup[] {
+  return targetMuscles(attributionOf(state, exerciseId));
 }
 
 /**
@@ -2141,7 +2152,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
       (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
         (s) => s.exerciseId,
       ),
-    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    targetMusclesOf: (exerciseId) => targetMusclesOf(state, exerciseId),
     getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
     getChapterStartedAt: (exerciseId) => state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
   };

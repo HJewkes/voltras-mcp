@@ -11,7 +11,8 @@
 // The `SessionStore` is faked in-memory; the `aggregateProgression` pure
 // function is exercised indirectly (aggregator unit tests cover edge cases).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { setCatalog } from '@voltras/workout-analytics';
 import type { ServerState } from '../../state/server-state.js';
 import type {
   SessionListFilter,
@@ -41,6 +42,11 @@ vi.mock('@voltras/node-sdk', () => {
 });
 
 const { registerProgressionTools } = await import('../progression-tools.js');
+const { ExerciseService } = await import('../../exercises/exercise-service.js');
+const { HISTORY_SEED_EXERCISES } = await import('../../exercises/history-seed-catalog.js');
+const { SEED_CABLE_EXERCISES } = await import('../../exercises/seed-catalog.js');
+
+beforeAll(() => setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]));
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -252,10 +258,9 @@ function setup(
     config: {} as never,
     slots: new Map(),
     store,
-    // VW-211: the comparability v2 subject writers look up each exercise's
-    // primary muscle for the corroboration count. No fixture exercise is
-    // seeded, so `undefined` here is the honest "not in the catalog" answer.
-    exercises: { getById: vi.fn(() => undefined) },
+    // VW-664: the corroboration count reads each exercise's target slugs from
+    // the real seed catalogs, so a catalog change shows up here.
+    exercises: new ExerciseService(),
     manager: {} as never,
   } as unknown as ServerState;
 
@@ -841,6 +846,27 @@ describe('progression.get_for_exercise — comparability basis (VW-94)', () => {
     expect(body.comparability.nearest?.setId).toBe('a1');
     expect(body.comparability.nearest?.reasons.join(' ')).toContain(
       'different load (170 vs 140 lb)',
+    );
+  });
+
+  it('corroborates an overhead press with a front raise but not a lateral raise (VW-664)', async () => {
+    const press = 'cable-shoulder-press';
+    const sessions = [
+      makeSession('s1', recentDate(14), press),
+      makeSession('s2', recentDate(7), press),
+      makeSession('s3', recentDate(10), 'cable-front-raise'),
+      makeSession('s4', recentDate(9), 'cable-lateral-raise'),
+      makeSession('s5', recentDate(8), 'not-in-catalog'),
+    ];
+    const h = setup(sessions, {
+      s1: [makeSet('a1', 's1', 60, 8, { exerciseId: press, startedAt: recentDate(14) })],
+      s2: [makeSet('a2', 's2', 60, 8, { exerciseId: press, startedAt: recentDate(7) })],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: press })) as ComparabilityBody;
+
+    expect(body.comparability.comparedTo?.reasons.join(' ')).toContain(
+      '2 corroborating exercises for this muscle (2 vs 2)',
     );
   });
 
