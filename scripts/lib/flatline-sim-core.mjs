@@ -10,6 +10,8 @@ export const WEEK_MS = 7 * DAY_MS;
 export const FLAT_FRACTION = 0.25;
 export const WA_THRESHOLD_PCT = 5;
 export const MIN_DAYS = 14;
+/** VW-490 R7c: a rule step under this many lb a week counts as a light lift. */
+export const LIGHT_STEP_LBS = 2;
 
 const FIRST_MONDAY_MS = Date.parse('2026-01-05T00:00:00.000Z');
 
@@ -192,16 +194,24 @@ export function readsFlat(points, expectedStep, strategy, gate = plateauGate(poi
   for (let start = 0; start < points.length - 1; start++) {
     const days = (last - points[start].t) / DAY_MS;
     if (days < MIN_DAYS) return false;
-    if (!gate[start] || !longEnough(points, start, days, flatBelow, strategy)) continue;
+    const minRunDays = minRunDaysFor(strategy, expectedStep);
+    if (!gate[start] || !longEnough(points, start, days, minRunDays, flatBelow, strategy)) continue;
     if (strategy.slope(smoothed, start) >= flatBelow) continue;
     if (strategy.trusts === undefined || strategy.trusts(points, start, flatBelow)) return true;
   }
   return false;
 }
 
+/** `lightMinRunDays` replaces `minRunDays` when the rule step is a light lift's. */
+function minRunDaysFor(strategy, expectedStep) {
+  if (strategy.lightMinRunDays !== undefined && expectedStep < LIGHT_STEP_LBS)
+    return strategy.lightMinRunDays;
+  return strategy.minRunDays ?? 0;
+}
+
 /** `settledWeeks` lets a run under the floor through when its whole range is within that many weeks of flatline-rate movement. */
-function longEnough(points, start, days, flatBelow, strategy) {
-  if (days >= (strategy.minRunDays ?? 0)) return true;
+function longEnough(points, start, days, minRunDays, flatBelow, strategy) {
+  if (days >= minRunDays) return true;
   if (strategy.settledWeeks === undefined) return false;
   let low = Infinity;
   let high = -Infinity;
@@ -266,5 +276,12 @@ export const STRATEGIES = {
     slope: olsSlope,
     minRunDays: 21,
     settledWeeks: 1,
+  },
+  light_min_35d: {
+    smooth: smoothers.rollingMax(14),
+    slope: olsSlope,
+    minRunDays: 21,
+    settledWeeks: 1,
+    lightMinRunDays: 35,
   },
 };
