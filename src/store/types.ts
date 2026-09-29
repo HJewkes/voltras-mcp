@@ -908,13 +908,13 @@ export interface ListAdvisoryDecisionsFilter {
 // a repeated action id safe: the primary key refuses the second claim, so the
 // handler cannot run twice even when two submits race.
 //
-// The two steps are two statements, not one transaction. Several store methods
-// open their own transactions (`declareDietPhase` among them) and there is no
-// SAVEPOINT nesting, so an outer transaction around a handler is not available.
-// The cost is a crash window: a row left `pending` means the handler's write
-// may or may not have landed, and a replay says `indeterminate` rather than
-// guessing. Nothing sweeps those rows — a pending row is the truthful record of
-// a run that died, and rewriting it to `error` would assert something unknown.
+// The claim, the handler and the completion run in one caller-owned transaction
+// (VW-659, see `executeAudited`), so a committed row is always `ok` or `error`.
+// `pending` survives for rows written before that change, when the two steps
+// were separate statements and a crash between them left the row claimed: a
+// replay of one says `indeterminate` rather than guessing. Nothing sweeps those
+// rows — a pending row is the truthful record of a run that died, and rewriting
+// it to `error` would assert something unknown.
 
 /**
  * Who submitted an action. Extends the `block_schedules.changed_by` vocabulary

@@ -60,6 +60,8 @@ class FakeActionStore {
     this.rows.set(input.actionId, next);
     return Promise.resolve(next);
   };
+
+  transaction = <T>(fn: () => Promise<T>): Promise<T> => fn();
 }
 
 interface Harness {
