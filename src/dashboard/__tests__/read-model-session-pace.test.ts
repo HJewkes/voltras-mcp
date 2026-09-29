@@ -248,6 +248,13 @@ describe('buildSessionPaceView pace state', () => {
     expect(lateInRest).toMatchObject({ state: early.state, slipMinutes: early.slipMinutes });
   });
 
+  it('stops counting rest once the next set is streaming', () => {
+    const sets = endedAt(onPlanEnd(1));
+    const longAfterRest = onPlanEnd(1) + 180 + 600;
+    expect(paceAt(longAfterRest, sets).state).toBe('behind');
+    expect(paceAt(longAfterRest, sets, true)).toMatchObject({ state: 'on_pace', slipMinutes: 0 });
+  });
+
   it('reads exactly the tolerance as on pace and one second over as behind', () => {
     const restEnds = onPlanEnd(1) + 180;
     const sets = endedAt(onPlanEnd(1));
