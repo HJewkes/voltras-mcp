@@ -621,8 +621,9 @@ async function scaffoldWeeks(
   block: StoredTrainingBlock,
   deloadWeeks: readonly number[],
 ): Promise<void> {
+  const weeks: StoredTrainingWeek[] = [];
   for (let n = 1; n <= block.weeksCount; n++) {
-    await state.store.putTrainingWeek({
+    weeks.push({
       id: randomUUID(),
       blockId: block.id,
       orderIndex: n - 1,
@@ -630,6 +631,7 @@ async function scaffoldWeeks(
       isDeload: deloadWeeks.includes(n),
     });
   }
+  await state.store.scaffoldTrainingWeeks(block.id, weeks);
 }
 
 /**

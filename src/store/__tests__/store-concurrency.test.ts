@@ -1000,3 +1000,75 @@ describe('T11: goal target writes (VW-589)', () => {
     expect(await store.listExerciseChapters(LOCAL_USER_ID)).toEqual([]);
   });
 });
+
+describe('T12: planned-exercise patch and week scaffold (VW-585)', () => {
+  const week = (id: string, orderIndex: number) => ({
+    id,
+    blockId: 'block-t12',
+    orderIndex,
+    isDeload: false,
+  });
+
+  async function seedPlannedRow(store: SessionStore): Promise<void> {
+    await seedBlock(store, 'block-t12');
+    await store.putTrainingWeek(week('week-t12', 0));
+    await store.putWorkoutTemplate({
+      id: 'tpl-t12',
+      weekId: 'week-t12',
+      name: 'Day A',
+      orderIndex: 0,
+    });
+    await store.putPlannedExercise({
+      id: 'pe-t12',
+      workoutTemplateId: 'tpl-t12',
+      exerciseId: 'bench-press',
+      orderIndex: 0,
+      targetSets: 3,
+    });
+  }
+
+  it('runs two patches to one row one after the other, across two connections', async () => {
+    const eng = await engineFor('t12-patch');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedPlannedRow(a);
+
+    await Promise.all([
+      a.patchPlannedExercise('pe-t12', (live) => ({ ...live, targetSets: live.targetSets + 1 })),
+      b.patchPlannedExercise('pe-t12', (live) => ({ ...live, targetSets: live.targetSets + 1 })),
+    ]);
+
+    expect((await a.getPlannedExercise('pe-t12'))?.targetSets).toBe(5);
+  });
+
+  it('leaves the row alone when apply throws, and reports a missing row', async () => {
+    const store = await (await engineFor('t12-throw')).connect();
+    await seedPlannedRow(store);
+
+    await expect(
+      store.patchPlannedExercise('pe-t12', () => {
+        throw new Error('refused');
+      }),
+    ).rejects.toThrow('refused');
+
+    expect((await store.getPlannedExercise('pe-t12'))?.targetSets).toBe(3);
+    expect(await store.patchPlannedExercise('missing', (live) => live)).toBeUndefined();
+  });
+
+  it('scaffolds one set of weeks from two concurrent calls, across two connections', async () => {
+    const eng = await engineFor('t12-scaffold');
+    const [a, b] = [await eng.connect(), await eng.connect()];
+    await seedBlock(a, 'block-t12');
+    const weeks = (tag: string) => [0, 1, 2].map((i) => week(`${tag}-${String(i)}`, i));
+
+    const results = await Promise.allSettled([
+      a.scaffoldTrainingWeeks('block-t12', weeks('a')),
+      b.scaffoldTrainingWeeks('block-t12', weeks('b')),
+    ]);
+
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({
+      reason: { code: 'WEEKS_EXIST' },
+    });
+    expect(await a.getTrainingWeeksForBlock('block-t12')).toHaveLength(3);
+  });
+});
