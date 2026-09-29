@@ -36,7 +36,7 @@
     "lint:text-confidentiality": "node scripts/check-text-confidentiality.mjs",
     "typecheck": "tsc --noEmit && npm run typecheck:spa && npm run typecheck:tests && npm run typecheck:sim && npm run typecheck:store && npm run typecheck:retro",
     "typecheck:spa": "tsc -p src/dashboard/spa/tsconfig.json",
-    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p tsconfig.analytics-tests.json",
     "typecheck:sim": "tsc -p tsconfig.sim.json --noEmit",
     "typecheck:store": "tsc -p tsconfig.store.json --noEmit",
     "typecheck:retro": "tsc -p tools/truecoach-retro/tsconfig.json",
