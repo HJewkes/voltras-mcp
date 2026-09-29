@@ -10,14 +10,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 import type { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredIsometricMeasurement, StoredRep, StoredSession, StoredSet } from '../types.js';
 import { openSqliteTestStore } from './open-test-store.js';
-
-// Each test opens a store and walks the migration ladder: up to 0.5 s under 14 CPU burners, 5 s timeouts seen on CI.
-vi.setConfig({ testTimeout: 30_000 });
 
 const EMPTY_PHASE: Phase = {
   samples: [],

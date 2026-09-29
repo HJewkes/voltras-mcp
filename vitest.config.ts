@@ -32,6 +32,15 @@ const LOCAL_TIME_TEST_FILES = [
   'src/tools/__tests__/weekly-checkin-anchor.test.ts',
 ];
 // tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.
+// Every store and migration file opens a store per test and walks the whole migration ladder,
+// and a loaded 2-core runner stretched single tests past 5 s (VW-461). One budget for all of
+// them, scoped by glob so no other file's timeout moves.
+const STORE_SUITE_TEST_FILES = [
+  'src/store/__tests__/**/*.test.ts',
+  'src/dashboard/__tests__/preview-seeds.test.ts',
+  'src/dashboard/__tests__/plateau-on-ramp.test.ts',
+];
+const STORE_SUITE_TIMEOUT_MS = 15_000;
 const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
 
 const alias = [
@@ -99,7 +108,21 @@ export default defineConfig({
           globals: false,
           server,
           include: ALL_TESTS_GLOB,
-          exclude: [LAUNCHER_TEST_FILE, ...LOCAL_TIME_TEST_FILES],
+          exclude: [LAUNCHER_TEST_FILE, ...LOCAL_TIME_TEST_FILES, ...STORE_SUITE_TEST_FILES],
+        },
+      },
+      {
+        plugins,
+        resolve: resolution,
+        test: {
+          name: 'unit-store',
+          pool: 'threads',
+          environment: 'node',
+          globals: false,
+          server,
+          testTimeout: STORE_SUITE_TIMEOUT_MS,
+          include: STORE_SUITE_TEST_FILES,
+          exclude: LOCAL_TIME_TEST_FILES,
         },
       },
       {

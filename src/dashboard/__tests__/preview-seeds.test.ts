@@ -40,12 +40,6 @@ import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
 import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
-/** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
-const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
-
-// Each cache miss opens a store and walks the migration ladder: 0.5 s to 2 s under 14 CPU burners, 5.5 s seen on CI.
-vi.setConfig({ testTimeout: SEED_ALL_STATES_TIMEOUT_MS });
-
 // `now` feeds a whole-body target's startMeasuredAt as a raw day offset (preview-seeds.ts,
 // seedWholeBodyGoal), not a calendar-week-aligned one, so its meso week position flips with
 // the real weekday the suite runs on; freeze it to the weekday this fixture was written against.
@@ -178,27 +172,23 @@ describe('dashboard:preview goal states', () => {
   }
 
   // The newest session has to share `now`'s calendar week, even seconds after it turned.
-  it(
-    'keeps every state on its status and its current-week reading just past Monday midnight UTC',
-    async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
-      try {
-        for (const state of GOAL_PREVIEW_STATES) {
-          const view = await viewFor(state);
+  it('keeps every state on its status and its current-week reading just past Monday midnight UTC', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
+    try {
+      for (const state of GOAL_PREVIEW_STATES) {
+        const view = await viewFor(state);
 
-          const matched = view.actuals.filter((actual) => actual.matched);
-          expect(view.status, state.name).toBe(state.expectedStatus);
-          expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
-            view.mesoMilestone.currentWeek,
-          );
-        }
-      } finally {
-        vi.useRealTimers();
+        const matched = view.actuals.filter((actual) => actual.matched);
+        expect(view.status, state.name).toBe(state.expectedStatus);
+        expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
+          view.mesoMilestone.currentWeek,
+        );
       }
-    },
-    SEED_ALL_STATES_TIMEOUT_MS,
-  );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('rejects a state nobody defined, naming the ones that exist', () => {
     expect(() => goalPreviewState('nearly')).toThrow(/unknown --state nearly; known: calibrating/);
