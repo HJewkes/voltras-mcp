@@ -493,7 +493,7 @@ describe.each([1, 2] as const)('truecoach.import_week concurrency with %i connec
       importWeek(state, SPAN, { fetchPages: pages(W37, W39) }),
       importWeek(otherState, SPAN, { fetchPages: pages(W37, W39) }),
     ]);
-    if (other !== store) other.close();
+    if (other !== store) await other.close();
 
     const blocks = await store.getTrainingBlocksForProgram('prog-1');
     expect(blocks.map((block) => block.name)).toEqual(['TrueCoach import']);
