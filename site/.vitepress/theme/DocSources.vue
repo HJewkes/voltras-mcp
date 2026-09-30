@@ -12,6 +12,7 @@ const sources = computed<string[]>(() => {
   return Array.isArray(value) ? value.map(String) : [];
 });
 const verified = computed(() => formatVerifiedDate(frontmatter.value.lastVerified));
+const sourced = computed(() => formatVerifiedDate(frontmatter.value.sourced));
 </script>
 
 <template>
@@ -25,6 +26,9 @@ const verified = computed(() => formatVerifiedDate(frontmatter.value.lastVerifie
       </li>
     </ul>
     <p v-if="verified" class="doc-sources-verified">Verified {{ verified }}</p>
+    <p v-if="sourced" class="doc-sources-verified">
+      Every claim checked against source {{ sourced }}
+    </p>
   </section>
 </template>
 

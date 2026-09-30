@@ -22,8 +22,8 @@ typecheck:
 lint:
     npm run lint
 
-# Boot the real MCP server against the mock adapter with the dashboard on an
-# OS-assigned port, isolated from any real session's SQLite file.
+# Boot the real MCP server against the mock adapter with the dashboard off
+# (VMCP_DASHBOARD_PORT=0 means off), isolated from any real SQLite file.
 sim:
     VOLTRA_ADAPTER=mock VMCP_DB_PATH=$(mktemp -u /tmp/vmcp-sim-XXXX.sqlite) VMCP_DASHBOARD_PORT=0 \
         VOLTRAS_MCP_HOME="{{justfile_directory()}}" \

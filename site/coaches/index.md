@@ -8,7 +8,8 @@ sources:
   - README.md
   - src/tools/report-tools.ts
   - src/tools/truecoach-tools.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # For coaches
@@ -27,7 +28,8 @@ trainer. You never install anything and you never touch the device. What you get
    reaches you only when the lifter sends it or turns on the tool in item 5
    ([Consent and the data loop](/coaches/consent-and-data-loop)).
 5. An optional, gated tool that posts results into TrueCoach for the lifter. It carries
-   account risk for you, so the lifter must tell you before using it (`README.md`).
+   account risk for you. Nothing in the tool makes the lifter tell you first; the README
+   asks them to, before the first real submit (`README.md`).
 
 ## Pages
 

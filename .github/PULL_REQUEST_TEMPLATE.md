@@ -16,6 +16,13 @@
 - [ ] `npm run build`
 - [ ] `npm run changelog:check`
 
+## Docs pages (skip if no `site/` page changed)
+
+- [ ] Every behavioural claim on each changed page was checked against source, one by one,
+      not sampled (see `site/CONTRIBUTING-DOCS.md`)
+- [ ] The ledger is below: per page, claims checked and every sentence changed
+- [ ] Each fully checked page carries `sourced: <date>` in its front matter
+
 ## Hardware verification
 
 - [ ] Verified against a real Voltra device

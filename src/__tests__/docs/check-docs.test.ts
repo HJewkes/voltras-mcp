@@ -340,6 +340,16 @@ describe('checkPageFrontmatter', () => {
     ]);
   });
 
+  it('passes a page marked with the date of its per-claim sourcing pass', () => {
+    expect(messages(page({ sourced: '2026-09-30' }))).toEqual([]);
+  });
+
+  it('names sourced when it is not a real calendar date', () => {
+    expect(messages(page({ sourced: 'yes' }))).toEqual([
+      'sourced: "yes" is not a YYYY-MM-DD date',
+    ]);
+  });
+
   it('names an audience outside the enum', () => {
     expect(messages(page({ audience: '[lifter, investor]' }))).toEqual([
       'audience: "investor" is not one of lifter, coach, developer',

@@ -12,7 +12,9 @@ sources:
   - scripts/dashboard-mock-drive.mjs
   - docs/dashboard-drivers.md
   - src/state/auto-arm.ts
-lastVerified: 2026-09-19
+  - src/dashboard/spa/live-page/RestView.tsx
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Your first session
@@ -28,8 +30,8 @@ underneath, named so you can recognize them if you ask Claude to show its work.
 
 ## Option A: with a Voltra
 
-Power the device on and wake its screen — a sleeping unit doesn't advertise
-(`README.md`).
+Power the device on and wake its screen. The README advises this because a sleeping unit
+may not show up in a scan (`README.md`).
 
 1. **"Find my Voltra."** → [`device.scan`](/reference/device) (default 10-second window),
    then [`device.connect`](/reference/device) with the id it found. `device.connect`
@@ -47,14 +49,17 @@ Power the device on and wake its screen — a sleeping unit doesn't advertise
    Read that literally: `watch` triggers are advisory cues, not an auto-stop — they fire
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
-   a hardware run tore the cable mid-eccentric; the set now always ends on your own call
-   or the device's own signal (`src/schemas/set.ts`, `src/state/event-bridge.ts:1451`).
+   a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
+   `src/state/event-bridge.ts:1489`). A set now ends on your own call, on the device's own
+   signal, or after 90 seconds with no activity, when the server closes it as partial. A
+   `watch` block can raise that inactivity limit, never lower it
+   (`src/state/event-bridge.ts:260-284`).
    Lift.
    - The set's header weight tracks the unit until your first rep closes, then freezes.
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
-     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1756-1760`).
+     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1808-1812`).
 5. **"Done."** → [`set.end`](/reference/set). This persists the set and every rep with
    its telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
@@ -131,8 +136,9 @@ first before adopting either, because a single rope-positioning pull looks exact
 a rep until another rep disagrees with it (`src/state/auto-arm.ts`, VW-164/VW-181). If
 you didn't call `set.start` yourself and a set appears anyway, this is why — it isn't a
 bug, and the rep count is still accurate. The wall dashboard marks such a set with a
-compact "AUTO" badge, on the live header while it's active and on the rest recap once it
-closes.
+compact "AUTO" badge on the live header while it's active. The rest recap shows the same
+label once it closes, unless the set has a warm-up, probe or technique label instead
+(`src/dashboard/spa/live-page/RestView.tsx`).
 
 ## Set purpose
 
@@ -152,10 +158,10 @@ session.
 The question set comes from RP's client check-in: four free-text prompts — how it went,
 how you felt, whether anything felt off, and any questions — plus four questions on RP's
 coarse 3-point scale (`low`/`medium`/`high`, never a 5- or 10-point scale): how you're
-feeling about the next session or week, soreness, joint discomfort, and motivation. "How
-did it go?" is never actually asked — completion (loads, reps, sets) is already
-telemetry-derivable, so Claude shows you your own numbers back instead, and the code
-exists only to store whatever you volunteer on top of that. Of the four 3-point
+feeling about the next session or week, soreness, joint discomfort, and motivation. The
+tool tells Claude not to ask "How did it go?", because completion (loads, reps, sets) is
+already in the telemetry. Claude should show you your own numbers back instead, and that
+answer exists only to store whatever you volunteer (`src/tools/session-tools.ts`). Of the four 3-point
 questions, soreness, joint discomfort, and motivation are withheld entirely until you have
 trained on an earlier day: every session of your first training day skips them, since that
 early the answers are uniformly positive and

@@ -11,7 +11,8 @@ sources:
   - site/concepts/technique-signals.md
   - site/concepts/how-coaching-works.md
   - site/concepts/privacy-and-local-data.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Understand your data

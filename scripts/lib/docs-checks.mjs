@@ -302,6 +302,12 @@ function lastVerifiedFinding(field) {
   return `lastVerified: "${field.value}" is not a YYYY-MM-DD date`;
 }
 
+/** Optional: the date every behavioural claim on the page was checked against source, one by one (VW-219). */
+function sourcedFinding(field) {
+  if (field === undefined || isRealDate(String(field.value))) return null;
+  return `sourced: "${field.value}" is not a YYYY-MM-DD date`;
+}
+
 /**
  * Findings for a hand-written site page's frontmatter. Each message opens with
  * the field it is about; `exists` reports whether a repo path is on disk.
@@ -314,6 +320,7 @@ export function checkPageFrontmatter(text, exists) {
     audienceFinding(fields.get('audience')),
     ...sourcesFindings(fields.get('sources'), exists),
     lastVerifiedFinding(fields.get('lastVerified')),
+    sourcedFinding(fields.get('sourced')),
   ].filter((message) => message !== null);
   return messages.map((message) => ({
     line: fields.get(message.split(':')[0])?.line ?? 1,

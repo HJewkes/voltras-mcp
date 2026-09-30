@@ -9,9 +9,10 @@ sources:
   - src/dashboard/server.ts
   - docs/bench-preflight.md
   - docs/push-events.md
-  - src/state/session-recorder.ts
-  - src/voice/vad.ts
-lastVerified: 2026-09-27
+  - src/config.ts
+  - src/docs/environment-variables.ts
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Install
@@ -32,8 +33,8 @@ other way, see [launch options](/start/launch-options).
 - **For a real Voltra on macOS, Bluetooth permission** for the app that launches the server,
   normally your terminal app or the Claude Code desktop app. macOS grants Bluetooth access
   per app. If you dismissed the first prompt, grant it again under System Settings, Privacy
-  & Security, Bluetooth. Without it, `device.scan` returns no devices and gives no other
-  clue. ([README.md § Requirements](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#requirements))
+  & Security, Bluetooth. Without it, expect `device.scan` to find no devices, with no error
+  that names the permission. ([README.md § Requirements](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#requirements))
 - **For a real Voltra, the Xcode Command Line Tools** (`xcode-select --install`). The BLE
   module `@stoprocent/noble` is an optional dependency of `@voltras/node-sdk` and may compile
   from source on a recent Node. Because the dependency is optional, a failed compile does not
@@ -51,7 +52,7 @@ repository and build it. ([README.md § Quickstart](https://github.com/HJewkes/v
 git clone <this-repo> voltras-mcp
 cd voltras-mcp
 
-npm install              # ~1000 packages
+npm install
 npm run build            # tsc → dist/ (this produces the server binary)
 npm run build:dashboard  # vite → dist/spa (this produces the web dashboard)
 ```
@@ -86,48 +87,18 @@ because a later global install can clear the link. ([README.md § Quickstart](ht
 
 This is plain registration: tools work, but the server cannot push events into the
 conversation. For push events, use the `voltra-pt` launcher on
-[launch options](/start/launch-options). Do not use both, because two server processes
-collide on the database and the dashboard port.
+[launch options](/start/launch-options). Do not use both. That starts two server processes on
+the same database, and the store does not stop the second one reliably
+([README.md § Running more than one instance](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#running-more-than-one-instance)).
 
 For every tool the server exposes, see the [capability reference](/reference/).
 
 ## Environment variables
 
-Everything is optional; the defaults are a working configuration. Full descriptions are in
-[README.md § Environment variables](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#environment-variables) —
-this table adds three diagnostic variables that are read in code but not in that table.
-
-| Var                                                | Default                           | Notes                                                                                                                                                                                        |
-| -------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER`                                   | `node`                            | `node` \| `mock`. BLE adapter.                                                                                                                                                               |
-| `VMCP_DB_PATH`                                     | `~/.voltras/vmcp.sqlite`          | SQLite store path.                                                                                                                                                                           |
-| `VMCP_DASHBOARD_PORT`                              | `7723`                            | Dashboard sidecar port; `off`/`0` disables it.                                                                                                                                               |
-| `VMCP_LOG_LEVEL`                                   | `info`                            | `debug` \| `info` \| `warn` \| `error`.                                                                                                                                                      |
-| `VMCP_CUES`                                        | `off`                             | Spoken coaching cues. macOS only.                                                                                                                                                            |
-| `VMCP_CUES_MIDSET`                                 | `off`                             | Whether mid-set cue categories may speak.                                                                                                                                                    |
-| `VMCP_REST_TIMER`                                  | `off`                             | Auto-arm the rest-status push cycle on set close.                                                                                                                                            |
-| `VMCP_AUTO_ARM`                                    | `on`                              | Open a set on the server's own initiative when reps are detected.                                                                                                                            |
-| `VMCP_REP_SOURCE`                                  | `analytics`                       | `analytics` \| `firmware`.                                                                                                                                                                   |
-| `VMCP_REP_UNRACK_DROP`                             | `off`                             | Drop the un-rack artifact rep at set close. Changes the persisted rep count; dark pending movement-class validation.                                                                         |
-| `VMCP_REP_ECC_TRUNCATE`                            | `on`                              | Truncate the final rep's parked idle tail off its eccentric at set close.                                                                                                                    |
-| `VMCP_REP_CORRECTIONS`                             | _unset_                           | Legacy coarse switch over both of the above; either one's own variable overrides it.                                                                                                         |
-| `VMCP_SLOT_BINDINGS_PATH`                          | `~/.voltras/slot-bindings.json`   | Device ↔ left/right side bindings.                                                                                                                                                           |
-| `VMCP_DEBUG_BUFFER_SIZE`                           | `256`                             | Capacity of the diagnostic ring buffer.                                                                                                                                                      |
-| `VMCP_TRUECOACH_USERNAME`                          | _unset_                           | TrueCoach account email.                                                                                                                                                                     |
-| `VMCP_TRUECOACH_PASSWORD`                          | _unset_                           | TrueCoach password, plaintext. Prefer `_PASSWORD_CMD`.                                                                                                                                       |
-| `VMCP_TRUECOACH_PASSWORD_CMD`                      | _unset_                           | Command whose stdout is the password.                                                                                                                                                        |
-| `VMCP_TRUECOACH_CLIENT_ID`                         | token response `user_id`          | Override for the TrueCoach client id.                                                                                                                                                        |
-| `VMCP_TRUECOACH_TOKEN_PATH`                        | `~/.voltras/truecoach-token.json` | Cached access token, mode 0600.                                                                                                                                                              |
-| `VMCP_TRUECOACH_CACHE_DIR`                         | `~/.voltras/truecoach-cache`      | Raw response cache, 6-hour TTL.                                                                                                                                                              |
-| `VMCP_TRUECOACH_OUTBOX`                            | `off`                             | Write session results to a local outbox file on `session.end`.                                                                                                                               |
-| `VMCP_TRUECOACH_OUTBOX_DIR`                        | `~/.voltras/truecoach-outbox`     | Outbox root.                                                                                                                                                                                 |
-| `VMCP_TRUECOACH_SUBMIT_ON_END`                     | `off`                             | Spawn the (separate, opt-in) TrueCoach submitter after an outbox write.                                                                                                                      |
-| `VMCP_RECORD_SESSION` _(diagnostic, undocumented)_ | _unset_                           | Appends every inbound raw BLE frame to a capture file when set. ([`src/state/session-recorder.ts:127`](https://github.com/HJewkes/voltras-mcp/blob/main/src/state/session-recorder.ts#L127)) |
-| `VMCP_CAPTURE_DIR` _(diagnostic, undocumented)_    | `~/.voltras/captures`             | Overrides where `VMCP_RECORD_SESSION` writes captures. ([`src/state/session-recorder.ts:130`](https://github.com/HJewkes/voltras-mcp/blob/main/src/state/session-recorder.ts#L130))          |
-| `VOLTRAS_VAD_MODEL` _(diagnostic, undocumented)_   | built-in model                    | Overrides the Silero VAD model path used by the local voice listener. ([`src/voice/vad.ts:100`](https://github.com/HJewkes/voltras-mcp/blob/main/src/voice/vad.ts#L100))                     |
-
-`VOLTRA_ADAPTER`, `VMCP_REP_SOURCE`, `VMCP_REST_TIMER`, `VMCP_REP_CORRECTIONS`,
-`VMCP_REP_UNRACK_DROP`, `VMCP_REP_ECC_TRUNCATE`,
-`VMCP_AUTO_ARM`, `VMCP_TRUECOACH_OUTBOX`, `VMCP_TRUECOACH_SUBMIT_ON_END`, and `VMCP_CUES`
-throw synchronously at startup on an unrecognized value.
-([README.md § Environment variables](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#environment-variables))
+Everything is optional; the defaults are a working configuration. The
+[environment variable reference](/reference/environment-variables) lists every variable the
+server reads, with its default, what it accepts, and what an invalid value does. That page is
+generated from `src/docs/environment-variables.ts`, and a docs test checks it against the
+code. Most variables are read once at startup. An unrecognized value for an on/off switch,
+`VOLTRA_ADAPTER`, `VMCP_REP_SOURCE` or `VMCP_MOUNT_RATING_LBS` stops the server before it
+starts (`src/config.ts`).
