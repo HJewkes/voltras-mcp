@@ -89,29 +89,60 @@ export async function markSessionKind(
   // day or a range is a bulk gesture over rows the caller has not looked at one
   // by one, so it only classifies the unreviewed unless asked for more.
   const mayReclassify = input.sessionId !== undefined || input.reclassify === true;
-  const unreviewed = selected.filter((row) => row.kind === undefined);
-  const otherKind = selected.filter((row) => row.kind !== undefined && row.kind !== input.kind);
-  const pending = mayReclassify ? [...unreviewed, ...otherKind] : unreviewed;
-
   const dryRun = input.dryRun === true;
-  const result: MarkKindResult = {
-    kind: input.kind,
+  assertExpectedSessions(input, selected.length, dryRun);
+  if (dryRun) {
+    const rehearsed = selected.map((row) => ({
+      ...row,
+      kind: row.kind,
+      written: row.kind === undefined || (mayReclassify && row.kind !== input.kind),
+    }));
+    return markResult(input.kind, true, selected, rehearsed);
+  }
+  // The write judges each row on its live kind, so a mark that landed after the read above wins.
+  const write = await state.store.setSessionKindWhere(idsOf(selected), input.kind, {
+    mayReclassify,
+  });
+  const bySession = new Map(selected.map((row) => [row.sessionId, row]));
+  const judged = write.rows.flatMap((row) => {
+    const read = bySession.get(row.sessionId);
+    return read === undefined ? [] : [{ ...read, kind: row.priorKind, written: row.written }];
+  });
+  const result = {
+    ...markResult(input.kind, false, selected, judged),
+    setsChanged: write.setsChanged,
+  };
+  if (result.rederived.length === 0) return result;
+  return { ...result, ...(await rederive(state, result.rederived)) };
+}
+
+/** A selected row as the write judged it: its kind before the write, and whether it was written. */
+type JudgedRow = Omit<SessionReviewRow, 'kind'> & {
+  kind: SessionKind | undefined;
+  written: boolean;
+};
+
+/** The counts, from the rows the write judged; `setsChanged` is each row's set count. */
+function markResult(
+  kind: SessionKind,
+  dryRun: boolean,
+  selected: readonly SessionReviewRow[],
+  rows: readonly JudgedRow[],
+): MarkKindResult {
+  const written = rows.filter((row) => row.written);
+  const otherKind = (row: JudgedRow) => row.kind !== undefined && row.kind !== kind;
+  return {
+    kind,
     dryRun,
-    newlyClassified: idsOf(unreviewed),
-    reclassified: mayReclassify ? idsOf(otherKind) : [],
-    skippedAlreadyMarked: mayReclassify ? [] : idsOf(otherKind),
-    alreadyThisKind: idsOf(selected.filter((row) => row.kind === input.kind)),
-    setsChanged: pending.reduce((total, row) => total + row.setCount, 0),
+    newlyClassified: idsOf(written.filter((row) => row.kind === undefined)),
+    reclassified: idsOf(written.filter(otherKind)),
+    skippedAlreadyMarked: idsOf(rows.filter((row) => !row.written && otherKind(row))),
+    alreadyThisKind: idsOf(rows.filter((row) => row.kind === kind)),
+    setsChanged: written.reduce((total, row) => total + row.setCount, 0),
     days: [...new Set(selected.map((row) => reviewDayOf(row)))].sort(),
-    rederived: exercisesOf(pending),
+    rederived: exercisesOf(written),
     rederiveFailed: [],
   };
-  assertExpectedSessions(input, selected.length, dryRun);
-  if (dryRun || pending.length === 0) return result;
-
-  await state.store.setSessionKind(idsOf(pending), input.kind);
-  const outcome = await rederive(state, result.rederived);
-  return { ...result, ...outcome };
 }
 
 /**
@@ -137,7 +168,7 @@ function assertExpectedSessions(
 }
 
 /** Session ids in the review list's own order: newest first, so a reader can scan them. */
-function idsOf(rows: readonly SessionReviewRow[]): string[] {
+function idsOf(rows: readonly { sessionId: string }[]): string[] {
   return rows.map((row) => row.sessionId);
 }
 
@@ -177,7 +208,7 @@ function selectRows(
   });
 }
 
-function exercisesOf(rows: readonly SessionReviewRow[]): string[] {
+function exercisesOf(rows: readonly Pick<SessionReviewRow, 'exerciseId'>[]): string[] {
   return [
     ...new Set(rows.flatMap((row) => (row.exerciseId === undefined ? [] : [row.exerciseId]))),
   ].sort();

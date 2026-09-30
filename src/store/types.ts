@@ -1203,6 +1203,21 @@ export interface DerivedBlockSchedules<T> {
   result: T;
 }
 
+/** The block an import lands in, found by name, and the fields a new one is created with. */
+export interface ImportWeeksInput {
+  programId: string;
+  blockName: string;
+  blockDefaults: { notes?: string };
+  span: (existingNames: readonly string[]) => readonly string[];
+}
+
+/** The import block as written, each label's week id, and the dating row appended, if any. */
+export interface ImportWeeksResult {
+  block: StoredTrainingBlock;
+  weekIds: Map<string, string>;
+  schedule: StoredBlockSchedule | null;
+}
+
 /**
  * One committed training day and the day it falls back to when that one breaks. Shaped like
  * the composer's `PlannedSlot` (`src/accountability/types.ts`), which is what renders it.
@@ -1347,6 +1362,13 @@ export interface SessionReviewRow {
   lastWorkingSetEndedAt?: string;
   /** Whether a planned exercise or workout template was attached to this session. */
   planned: boolean;
+}
+
+/** What one `setSessionKindWhere` call found and wrote, read under its own write lock. */
+export interface SessionKindWrite {
+  rows: { sessionId: string; priorKind?: SessionKind; written: boolean }[];
+  /** Set rows re-marked, across the written sessions only. */
+  setsChanged: number;
 }
 
 /**
@@ -2067,6 +2089,19 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number>;
 
+  /**
+   * Mark the named owner sessions `kind` in one transaction, judging each against its LIVE
+   * kind (VW-586): an unmarked row is always written, a row of the other kind only when
+   * `mayReclassify`, and a row already of `kind` never. Every named row that exists comes
+   * back with the kind it held before the write and whether this call wrote it, so a
+   * caller's counts describe the rows it actually changed.
+   */
+  setSessionKindWhere(
+    sessionIds: readonly string[],
+    kind: SessionKind,
+    opts: { mayReclassify: boolean },
+  ): Promise<SessionKindWrite>;
+
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
 
@@ -2265,6 +2300,21 @@ export interface SessionStore extends ExerciseSetupStore {
     weeks: readonly StoredTrainingWeek[],
     schedule?: AppendBlockScheduleInput,
   ): Promise<StoredBlockSchedule | null>;
+  /**
+   * Find or create a program's block by name and give it one week per label, in one
+   * transaction (VW-586). `span` receives the names of the weeks the block already holds and
+   * returns every label it should hold, in order; weeks are matched by name and re-ordered in
+   * place, and `weeks_count` only ever rises. `schedule` sees the block and the labels and
+   * returns the dating row to append, or null; a throw from it writes nothing at all.
+   */
+  ensureImportWeeks(
+    input: ImportWeeksInput,
+    schedule: (
+      world: readonly ScheduledBlock[],
+      block: StoredTrainingBlock,
+      labels: readonly string[],
+    ) => AppendBlockScheduleInput | null,
+  ): Promise<ImportWeeksResult>;
   /** Look up a week by id; `undefined` when no row matches. */
   getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   /** Return every week in a block, ordered by `orderIndex` ascending. */
