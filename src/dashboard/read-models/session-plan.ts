@@ -24,6 +24,8 @@ export type ExerciseCatalogLookup = {
  * client's `PlannedExerciseView` in `spa/adapter.ts` — the two must stay identical.
  */
 export interface PlannedExerciseView {
+  /** The catalog exercise id, so a consumer can match a pace suggestion to its row. */
+  exerciseId: string;
   /** Display name, or the exercise id when the catalog carries no name. Never invented. */
   name: string;
   /** 0-based position within the workout template. */
@@ -153,6 +155,7 @@ export function buildPlannedExerciseList(
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .map((p) => {
       const entry: PlannedExerciseView = {
+        exerciseId: p.exerciseId,
         name: catalog?.getById(p.exerciseId)?.name ?? p.exerciseId,
         order: p.orderIndex,
         sets: p.targetSets,

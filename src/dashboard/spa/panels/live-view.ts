@@ -239,6 +239,7 @@ function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExer
   const list = prescription?.exercises;
   if (list === undefined) return [];
   return list.map((e) => ({
+    ...(e.exerciseId !== undefined && { exerciseId: e.exerciseId }),
     name: e.name,
     plannedSets: e.sets,
     targetReps: e.repsLow ?? null,

@@ -64,6 +64,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall's session rail now says where you stand against the plan. A Pace tile reads
+  `+9 min` when you are behind, `-7 min` when you are ahead, or `on pace`, and a sentence under
+  the rail names what to change: which exercises to trim and to how many sets, or how many sets
+  of which exercise you have room to add. When trimming cannot win back all the lost time, the
+  sentence says so. Before your first set there is no Pace tile, only the budget (VW-580).
+
 - The session pace now reaches you live: the dashboard snapshot counts a streaming set as
   work in progress, so the state leaves idle when your first set starts, and the trim or add
   suggestion rides on `sessionPace` next to `state` and `slipMinutes` on both the snapshot and

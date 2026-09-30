@@ -645,8 +645,9 @@ describe('GET /api/history', () => {
       // The full ordered planned list (VW-49). No exercise catalog here, so names fall
       // back to the raw exercise ids — a real identifier, never invented.
       exercises: [
-        { name: 'squat', order: 0, sets: 3, active: false },
+        { exerciseId: 'squat', name: 'squat', order: 0, sets: 3, active: false },
         {
+          exerciseId: 'bench',
           name: 'bench',
           order: 1,
           sets: 3,
@@ -799,9 +800,9 @@ describe('GET /api/history', () => {
     };
     // Ordered by orderIndex; active flag on 'bench'; unknown 'row' falls back to its id.
     expect(body.plan.exercises).toEqual([
-      { name: 'Back Squat', order: 0, sets: 4, active: false },
-      { name: 'Bench Press', order: 1, sets: 3, active: true },
-      { name: 'row', order: 2, sets: 3, active: false },
+      { exerciseId: 'squat', name: 'Back Squat', order: 0, sets: 4, active: false },
+      { exerciseId: 'bench', name: 'Bench Press', order: 1, sets: 3, active: true },
+      { exerciseId: 'row', name: 'row', order: 2, sets: 3, active: false },
     ]);
   });
 
@@ -991,7 +992,7 @@ describe('GET /api/history', () => {
     expect(body.plan).toEqual({
       source: 'prescribed',
       sets: 4,
-      exercises: [{ name: 'bench', order: 0, sets: 4, active: true }],
+      exercises: [{ exerciseId: 'bench', name: 'bench', order: 0, sets: 4, active: true }],
     });
     expect(body.plan.restSec).toBeUndefined();
   });

@@ -325,6 +325,15 @@ describe('mapStoreToDashboardModel', () => {
       ]);
     });
 
+    it('carries the exercise id through, so a pace suggestion can name its row', () => {
+      const prescription: PrescriptionView = {
+        sets: 3,
+        exercises: [{ exerciseId: 'ex-squat', name: 'Squat', order: 0, sets: 3, active: true }],
+      };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.plannedExercises[0]?.exerciseId).toBe('ex-squat');
+    });
+
     it('leaves the list empty when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.plannedExercises).toEqual([]);

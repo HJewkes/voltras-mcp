@@ -147,6 +147,8 @@ export interface CompletedSet {
  * {@link SessionModel} fields; this carries only the plan-side targets.
  */
 export interface PlannedExerciseModel {
+  /** The catalog exercise id, when the server sent one; names a pace suggestion's target. */
+  exerciseId?: string;
   name: string;
   /** Prescribed set count — the rail row's column count and summary sets. */
   plannedSets: number;
@@ -883,17 +885,62 @@ export function deriveMissedSetsMetric(model: DashboardModel): MetricTileData | 
  *
  * The planned/elapsed MINUTES of the same estimate are not tiles: they go to the
  * rail's own `elapsedMs` / `budgetMs`, which draw the header clock and its pace
- * marker. Two tiles keep the row readable at the rail's width.
+ * marker.
+ *
+ * A `Pace` tile (VMCP-02.76) reads the time-based state: `+9 min` behind, `-7 min`
+ * ahead, or `on pace`. Idle gets no Pace tile, because the clock before the first set
+ * is setup time and the rail's budget already says how long the plan runs.
  */
 export function derivePaceMetrics(pace: SessionPaceView | null): MetricTileData[] {
   if (pace === null) return [];
+  const paceTile = derivePaceTile(pace);
   return [
     {
       label: 'Left',
       value: `${pace.plannedSetsRemaining} ${pluralSets(pace.plannedSetsRemaining)}`,
     },
     { label: 'ETA', value: formatClockTime(pace.projectedEndAt) },
+    ...(paceTile ? [paceTile] : []),
   ];
+}
+
+function derivePaceTile(pace: SessionPaceView): MetricTileData | null {
+  switch (pace.state) {
+    case 'idle':
+      return null;
+    case 'on_pace':
+      return { label: 'Pace', value: 'on pace' };
+    case 'behind':
+      return { label: 'Pace', value: `+${Math.abs(pace.slipMinutes)} min` };
+    case 'ahead':
+      return { label: 'Pace', value: `-${Math.abs(pace.slipMinutes)} min` };
+  }
+}
+
+/**
+ * The pace suggestion as one sentence naming its exercises (VMCP-02.76), or null
+ * when the server offered none. A trim that cannot cover the whole slip says so
+ * rather than promising an on-time finish.
+ */
+export function derivePaceSuggestion(
+  pace: SessionPaceView | null,
+  plannedExercises: readonly PlannedExerciseModel[],
+): string | null {
+  const suggestion = pace?.suggestion;
+  if (!suggestion) return null;
+  const nameOf = (exerciseId: string): string =>
+    plannedExercises.find((e) => e.exerciseId === exerciseId)?.name ?? exerciseId;
+  if (suggestion.kind === 'add') {
+    const sets = `${suggestion.sets} more ${pluralSets(suggestion.sets)}`;
+    return `Ahead of plan: room for ${sets} of ${nameOf(suggestion.exerciseId)} (about ${suggestion.costsMinutes} min).`;
+  }
+  const cuts = suggestion.cuts
+    .map((cut) => `${nameOf(cut.exerciseId)} to ${cut.toSets} ${pluralSets(cut.toSets)}`)
+    .join(' and ');
+  const trim = `Behind plan: trim ${cuts} to save ${suggestion.savesMinutes} min`;
+  return suggestion.coversSlip
+    ? `${trim}.`
+    : `${trim}, short of the ${pace.slipMinutes} min you are behind.`;
 }
 
 function pluralSets(count: number): string {

@@ -110,6 +110,8 @@ export interface WorkoutSetView {
  * server's `PlannedExerciseView` — the two must stay identical (see server.ts).
  */
 export interface PlannedExerciseView {
+  /** The catalog exercise id. The server always sends it; optional so older fixtures still type. */
+  exerciseId?: string;
   /** Display name, or the exercise id when the catalog carries no name. Never invented. */
   name: string;
   /** 0-based position within the workout template. */

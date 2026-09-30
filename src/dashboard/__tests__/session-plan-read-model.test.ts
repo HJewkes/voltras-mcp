@@ -169,9 +169,9 @@ describe('buildPlannedExerciseList', () => {
       catalog,
     );
     expect(list).toEqual([
-      { name: 'Back Squat', order: 0, sets: 4, active: false },
-      { name: 'Bench Press', order: 1, sets: 3, active: true },
-      { name: 'row', order: 2, sets: 3, active: false },
+      { exerciseId: 'squat', name: 'Back Squat', order: 0, sets: 4, active: false },
+      { exerciseId: 'bench', name: 'Bench Press', order: 1, sets: 3, active: true },
+      { exerciseId: 'row', name: 'row', order: 2, sets: 3, active: false },
     ]);
   });
 
