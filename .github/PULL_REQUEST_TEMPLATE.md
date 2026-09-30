@@ -2,6 +2,11 @@
 
 <!-- One or two sentences, from a user's perspective. -->
 
+## Changelog
+
+- [ ] Added `changelog.d/<ticket>.md` for a user-visible change
+- [ ] No user-visible change, so no fragment
+
 ## Gates run locally
 
 - [ ] `npm run lint`
@@ -9,6 +14,7 @@
 - [ ] `npm run typecheck`
 - [ ] `npm test`
 - [ ] `npm run build`
+- [ ] `npm run changelog:check`
 
 ## Hardware verification
 

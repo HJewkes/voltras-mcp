@@ -23,6 +23,7 @@ npm run format:check  # Prettier — src/**, scripts/**, eslint-rules/** only
 npm run typecheck     # tsc --noEmit (+ dashboard SPA + test sources)
 npm test              # Vitest
 npm run build         # emits dist/, then verifies dist/bin.js and dist/server.js exist
+npm run changelog:check  # CHANGELOG.md and changelog.d/ fragments
 ```
 
 `npm run format:check` does **not** cover Markdown or `site/**`. Markdown
@@ -36,6 +37,28 @@ If your change touches hardware behavior (device modes, framing, live
 metrics) and you don't have a Voltra to test against, say so explicitly in
 the PR. A hardware-dependent change that a contributor could not verify
 locally is normal here; hiding that is the only way it becomes a problem.
+
+## Changelog entries
+
+A change a user can see gets one entry, as a new file under `changelog.d/`
+named after its ticket (`changelog.d/VW-123.md`). Do not edit `CHANGELOG.md`
+directly: every pull request that did so added to the same `### Fixed` or
+`### Added` list, and adjacent pull requests conflicted on it.
+
+```markdown
+---
+section: Fixed
+---
+
+- The rest timer no longer skips its last ten seconds (VW-123, #456).
+```
+
+`section` is one of Added, Changed, Deprecated, Removed, Fixed or Security.
+Write the entry from the user's side, as the "How to write an entry" section
+of `CHANGELOG.md` describes. A change with no user-visible effect adds no
+fragment. `npm run changelog:check` (in CI) validates every fragment and
+passes when there are none. At release, `npm run changelog:fold -- --version
+<x.y.z>` folds the fragments into `CHANGELOG.md` and deletes them.
 
 ## The confidentiality boundary
 

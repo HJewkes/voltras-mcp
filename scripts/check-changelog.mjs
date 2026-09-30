@@ -1,29 +1,38 @@
 #!/usr/bin/env node
 // Checks CHANGELOG.md against the convention documented at the top of that
-// file. The rules live in scripts/lib/changelog-rules.mjs; this reads the two
-// files and prints the findings.
+// file, and every fragment under changelog.d/. The rules live in
+// scripts/lib/changelog-rules.mjs and scripts/lib/changelog-fragments.mjs;
+// this reads the files and prints the findings. No fragments is a pass: a
+// change with no user-visible effect adds none.
 //
-// Usage: node scripts/check-changelog.mjs
+// Usage: node scripts/check-changelog.mjs [--root <dir>]
 
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { checkFragments } from './lib/changelog-fragments.mjs';
+import { loadFragments, readRelease, rootFromArgs } from './lib/changelog-files.mjs';
+import { checkChangelog, parseSections } from './lib/changelog-rules.mjs';
 
-import { checkChangelog } from './lib/changelog-rules.mjs';
+const root = rootFromArgs(process.argv);
+const { version, markdown } = readRelease(root);
+const fragments = loadFragments(root);
+const findings = [
+  ...checkChangelog({ version, markdown }).map((finding) => ({ file: 'CHANGELOG.md', ...finding })),
+  ...checkFragments(fragments),
+];
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CHANGELOG_PATH = join(REPO_ROOT, 'CHANGELOG.md');
-
-const { version } = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
-const findings = checkChangelog({ version, markdown: readFileSync(CHANGELOG_PATH, 'utf8') });
+// Transition fallback (VW-704): entries written straight into [Unreleased] still pass.
+if (parseSections(markdown).some((section) => section.isUnreleased && section.body !== '')) {
+  console.warn(
+    'changelog: [Unreleased] still holds entries written in place; new entries go in changelog.d/',
+  );
+}
 
 if (findings.length === 0) {
-  console.warn(`changelog: OK (version ${version})`);
+  console.warn(`changelog: OK (version ${version}, ${fragments.length} fragment(s))`);
   process.exit(0);
 }
 
 for (const finding of findings) {
-  const where = finding.line === null ? 'CHANGELOG.md' : `CHANGELOG.md:${finding.line}`;
+  const where = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
   console.error(`${where}: ${finding.message}`);
 }
 console.error(`\n${findings.length} changelog finding(s).`);

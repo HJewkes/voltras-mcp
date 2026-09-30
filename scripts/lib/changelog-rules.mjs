@@ -1,9 +1,10 @@
 // Pure rules behind `npm run changelog:check` (scripts/check-changelog.mjs).
 //
-// Three things can rot in a hand-written changelog without anyone noticing: the
+// Four things can rot in a hand-written changelog without anyone noticing: the
 // version in `package.json` gets bumped and no section is written for it, a
-// section is inserted in the wrong place, or a released heading is left with
-// nothing under it. Each is checked here; nothing else is. There is no minimum
+// section is inserted in the wrong place, a released heading is left with
+// nothing under it, or a group of entries lands under a prose heading where no
+// release will find it. Each is checked here; nothing else is. There is no minimum
 // entry count, no maximum age and no required-sections list, because a
 // changelog policed by a quota collects filler.
 //
@@ -101,10 +102,26 @@ function checkReleasedSectionsHaveContent(sections, findings) {
   }
 }
 
+const GROUP_HEADING = /^###\s+(Added|Changed|Deprecated|Removed|Fixed|Security)\s*$/;
+
+// A group under a prose heading belongs to no version, so no release ever picks it up.
+function checkGroupsBelongToAVersion(markdown, findings) {
+  let inVersion = false;
+  for (const [index, line] of markdown.split('\n').entries()) {
+    if (line.startsWith('## ')) inVersion = VERSION_HEADING.test(line);
+    if (inVersion || !GROUP_HEADING.test(line)) continue;
+    findings.push({
+      line: index + 1,
+      message: `"${line.trim()}" sits outside any "## [...]" section, so its entries belong to no version`,
+    });
+  }
+}
+
 /** Findings for one changelog; an empty array means it is consistent. */
 export function checkChangelog({ version, markdown }) {
   const sections = parseSections(markdown);
   const findings = [];
+  checkGroupsBelongToAVersion(markdown, findings);
   checkVersionIsDocumented(version, sections, findings);
   checkUnreleasedIsFirst(sections, findings);
   checkOrder(sections, findings);
