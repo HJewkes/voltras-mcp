@@ -96,6 +96,30 @@ describe('parseFragment', () => {
   });
 });
 
+describe('checkFragments', () => {
+  it('refuses two fragments whose names differ only in case, since both would fold', () => {
+    const findings = checkFragments([
+      parseFragment('VW-420.md', fragment('Fixed', '- A fix (VW-420).')),
+      parseFragment('vw-420.md', fragment('Fixed', '- The same fix again (VW-420).')),
+    ]);
+    expect(findings).toEqual([
+      {
+        file: 'changelog.d/vw-420.md',
+        line: null,
+        message: expect.stringContaining('same name as changelog.d/VW-420.md apart from case'),
+      },
+    ]);
+  });
+
+  it('accepts fragments for different tickets', () => {
+    const findings = checkFragments([
+      parseFragment('VW-420.md', fragment('Fixed', '- A fix (VW-420).')),
+      parseFragment('VW-421.md', fragment('Fixed', '- Another fix (VW-421).')),
+    ]);
+    expect(findings).toEqual([]);
+  });
+});
+
 describe('the real changelog.d', () => {
   it('holds only valid fragments', () => {
     expect(checkFragments(loadFragments(REPO_ROOT))).toEqual([]);

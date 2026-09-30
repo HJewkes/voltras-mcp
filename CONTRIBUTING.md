@@ -57,8 +57,14 @@ section: Fixed
 Write the entry from the user's side, as the "How to write an entry" section
 of `CHANGELOG.md` describes. A change with no user-visible effect adds no
 fragment. `npm run changelog:check` (in CI) validates every fragment and
-passes when there are none. At release, `npm run changelog:fold -- --version
-<x.y.z>` folds the fragments into `CHANGELOG.md` and deletes them.
+passes when there are none, and `npm run docs:check` scans fragments for
+protocol detail just as it scans `CHANGELOG.md`. At release, `npm run
+changelog:fold -- --version <x.y.z>` folds the fragments into `CHANGELOG.md`
+and deletes them.
+
+A fragment does not appear on the docs site's `/changelog` page until that
+release fold: the page renders `CHANGELOG.md` only. Until then the entry is
+visible in `changelog.d/` and in its pull request.
 
 ## The confidentiality boundary
 

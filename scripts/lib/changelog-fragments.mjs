@@ -83,15 +83,35 @@ export function parseFragment(name, text) {
   return { name, section: fields.section ?? null, body, problems };
 }
 
+// `vw-420.md` beside `VW-420.md` is one ticket filed twice; a case-insensitive checkout cannot even hold both.
+function duplicateNameFindings(fragments) {
+  const seen = new Map();
+  const findings = [];
+  for (const { name } of fragments) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      findings.push({
+        file: `${FRAGMENT_DIR}/${name}`,
+        line: null,
+        message: `same name as ${FRAGMENT_DIR}/${seen.get(key)} apart from case; keep one fragment per ticket`,
+      });
+      continue;
+    }
+    seen.set(key, name);
+  }
+  return findings;
+}
+
 /** Findings for a set of fragments, in the shape `checkChangelog` returns plus `file`. */
 export function checkFragments(fragments) {
-  return fragments.flatMap((fragment) =>
+  const perFragment = fragments.flatMap((fragment) =>
     fragment.problems.map((message) => ({
       file: `${FRAGMENT_DIR}/${fragment.name}`,
       line: null,
       message,
     })),
   );
+  return [...perFragment, ...duplicateNameFindings(fragments)];
 }
 
 function unreleasedBounds(lines) {
