@@ -261,6 +261,14 @@ export interface CaptureShot {
    * without the page's lead shots losing theirs (VW-455).
    */
   readonly scrollTo?: string;
+  /**
+   * The server-clock or calendar value on the page that makes two runs on one
+   * machine differ. When set, a fresh capture that differs from the committed PNG
+   * keeps the committed one and the run goes on; `CAPTURES_ALLOW_LOCAL=1`
+   * replaces it. Absent means the shot repeats byte for byte, so a difference is
+   * a real change and fails the run (VW-437).
+   */
+  readonly variesBy?: string;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -320,13 +328,19 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '0/8 sets',
       // The velocity chart's per-rep peaks — the pipeline's own output, and the
       // reason the burst has to be pinned: these moved every run before it.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      // All five: the page draws the fifth rep a poll after the server counts
+      // it, and briefly with only its lifting half, so four passed on a page
+      // that had not caught up yet (VW-437).
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44',
       // The readout that caught this: two runs of the OLD harness disagreed
       // here (5.5 "Good" against 6.0 "Slowing") and both were green. The RPE is
       // a dash: withheld until a trusted fitted profile exists (VW-485).
       'FATIGUE — RPE Good',
+      // The rail's Pace tile (VW-580): no set done yet, so no slip to report.
+      'PACE on pace',
     ],
     holdsPageOpen: true,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'live-rest',
@@ -344,8 +358,11 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'SET REPS LBS RPE 1 5 140 —',
       'SET VERDICT 5 Reps 140 lbs 12%',
       'Next · Cable Chest Press · set 2 of 3',
+      // Seconds into the owed rest, far inside the two-minute pace tolerance.
+      'PACE on pace',
     ],
     holdsPageOpen: true,
+    variesBy: 'the pace ETA',
   },
   {
     name: 'session-summary',
@@ -366,6 +383,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5',
     ],
     holdsPageOpen: false,
+    variesBy: 'the session start and end stamps',
   },
   {
     name: 'plan-builder',
@@ -397,8 +415,10 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37',
       // The verdict the tour exists to show. `live-mid-set` pins `Good`.
       'FATIGUE — RPE Slowing',
+      'PACE on pace',
     ],
     holdsPageOpen: true,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'live-dual-mid-set',
@@ -432,6 +452,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // straight off the snapshot poll, not off accumulated SSE, so a page
     // opened fresh after the predicate holds renders the same content.
     holdsPageOpen: false,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'goals',
@@ -479,6 +500,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
     expectValues: WHOLE_BODY_VALUES,
     holdsPageOpen: false,
+    variesBy: 'weigh-in dates seeded relative to today',
   },
   {
     name: 'goals-whole-body-phone',
@@ -492,6 +514,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
     expectValues: WHOLE_BODY_VALUES,
     holdsPageOpen: false,
+    variesBy: 'weigh-in dates seeded relative to today',
   },
   {
     name: 'body-week',

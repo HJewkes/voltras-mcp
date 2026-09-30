@@ -153,6 +153,9 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
 | `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
 
+`goals-whole-body` and `goals-whole-body-phone` carry no clock field, but their weigh-in
+dates are seeded relative to today, so they repeat within a day and differ across days.
+
 "Not guaranteed" means exactly that and no more: the five rows above render a value the
 SERVER computed from its own real clock, so nothing on the harness side pins it, and whether
 two runs land on the same value is down to timing, not design. A fast back-to-back run can
@@ -196,10 +199,19 @@ instead of the fixed `12:00` every frozen run shows, and its `shasum -a 256` no 
 matches the frozen baseline above. Restoring the call brings both the `12:00` clock and
 the matching digest straight back.
 
-`guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
-one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the five not-guaranteed-reproducible shots can't
-drift by accident on a routine local run — regenerating one is still a normal, deliberate
-action, just an explicit one.
+`guardLocalOverwrite` in the harness never overwrites a committed PNG with a byte-different
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so no shot drifts by accident on a routine local
+run. What it does instead depends on the shot's `variesBy` field in the definition:
+
+- **Set** (the not-guaranteed shots above, and the two whole-body shots): the difference is
+  expected, so the harness keeps the committed PNG, logs `kept the committed PNG`, and goes
+  on. The shot's assertions still ran against the live page.
+- **Absent**: the shot repeats byte for byte, so a difference is a real change to the page.
+  The run fails and names the shot.
+
+Before VW-437 a differing shot of either kind failed the run, so a plain run could never pass
+and every shot after the first live-page shot went unasserted. Regenerating is still a
+deliberate action: rerun with `CAPTURES_ALLOW_LOCAL=1` and commit the result.
 
 ## What the staleness gate can and cannot check
 

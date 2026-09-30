@@ -46,7 +46,7 @@ the prescription next to what the set is actually doing.
   :callouts='[
     {"quote": "Cable Chest Press 3 × 8–10 @ 140 lbs", "text": "The prescription from the attached plan: sets, rep range and load."},
     {"quote": "0/8 sets", "text": "Working sets done out of every set the plan holds for this session."},
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46", "text": "Each rep as a bar on the velocity chart, drawn against lines at 20% and 30% velocity loss."},
+    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44", "text": "Each rep as a bar on the velocity chart, drawn against lines at 20% and 30% velocity loss."},
     {"quote": "FATIGUE — RPE Good", "text": "The fatigue verdict. The RPE slot shows a dash: the effort readout is coming soon."}
   ]'
 />
