@@ -46,7 +46,7 @@ const TOOLS_LIST: ToolsList = {
   ],
 };
 
-const HEX_LOOKING = 'ab'.repeat(8);
+const HEX_LOOKING = 'a1'.repeat(8);
 const MADE_UP_UUID = `${'a'.repeat(8)}-${'b'.repeat(4)}-4${'c'.repeat(3)}-8${'d'.repeat(3)}-${'e'.repeat(12)}`;
 const BASE64_LOOKING = `${'QmFzZTY0'.repeat(4)}==`;
 const BYTE_RANGE_ARRAY = Array.from({ length: 12 }, (_, index) => index * 20);
@@ -239,6 +239,26 @@ describe('gate 3: named result and push fields', () => {
 
     expect(code).toBe(expected);
   });
+
+  it.each(['feedback', 'defaced', 'deadbeef', '123456', 'see feedback at 123456'])(
+    'lets the ordinary text %s through',
+    (value) => {
+      const steps = [callStep('set.start', {}, { status: value }, { showResult: ['status'] })];
+
+      expect(() => buildTranscript(recording(steps), TOOLS_LIST)).not.toThrow();
+    },
+  );
+
+  it.each(['1a2b3c', 'a1b2c3d4', '0xdead', 'see a1b2c3d4 here'])(
+    'still refuses the mixed hex run %s',
+    (value) => {
+      const steps = [callStep('set.start', {}, { status: value }, { showResult: ['status'] })];
+
+      const code = refusalCode(() => buildTranscript(recording(steps), TOOLS_LIST));
+
+      expect(code).toBe('VALUE_REFUSED');
+    },
+  );
 
   it('keeps only event_type and slot from a push whose content carries a nested payload', () => {
     const notification = {
