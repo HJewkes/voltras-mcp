@@ -116,6 +116,9 @@ Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a mu
 
 ### Changed
 
+- The `#/goals` page now reads the current block along with your goals, in the same request,
+  so the block header can pin above the live strip without a second fetch. Nothing on the page
+  looks different yet; the header itself follows (VW-654).
 - `bilateral_divergence` now carries `slot`, set to the side whose close fired it, so a
   consumer filtering on `slot` no longer drops it (VW-685). `slot_id` and `partner_slot_id`
   stay.
