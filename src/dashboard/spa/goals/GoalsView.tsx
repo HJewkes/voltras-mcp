@@ -62,6 +62,7 @@ import {
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
+import { unreviewedLine } from './review-copy.js';
 import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
 export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
@@ -82,12 +83,21 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
 
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
+      <UnreviewedNote unreviewedDays={data.unreviewedDays} />
       {primary !== null && <PrimaryGoalCard row={primary} />}
       <PerLiftGrid rows={liftRows(data)} narrow={narrow} />
       <MuscleGrid rows={muscleCardRows(data)} narrow={narrow} />
       <WholeBodySection data={data} narrow={narrow} />
     </Surface>
   );
+}
+
+/** The one line saying how many days the counts below leave out (VW-514); nothing at zero. */
+function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JSX.Element | null {
+  const color = useOnSurfaceColor('secondary');
+  const line = unreviewedLine(props.unreviewedDays);
+  if (line === null) return null;
+  return <Text style={{ color, fontSize: 14 }}>{line}</Text>;
 }
 
 /** The lead priority's lift as the full goal card (plan §4, wall; VW-385). */

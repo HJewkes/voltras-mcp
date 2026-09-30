@@ -37,6 +37,8 @@ export interface GoalsPageData {
   progress: Record<string, GoalProgressView[]>;
   /** The dated block from the same `/api/goals` response; `null` while no block has dates. */
   mesocycle: MesocycleView | null;
+  /** `review.unreviewedDays` from the same response; absent reads as none. */
+  unreviewedDays?: number;
 }
 
 export interface GoalTargetRow {

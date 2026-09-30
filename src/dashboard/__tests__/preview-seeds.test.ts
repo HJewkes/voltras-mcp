@@ -33,6 +33,7 @@ import {
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
 import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
+import { readUnreviewed } from '../../analytics/session-review.js';
 import { fetchGoalPriorityRows, fetchGoalProgressViews } from '../goal-progress-api.js';
 import { primaryTarget, type GoalsPageData } from '../spa/goals/goals-model.js';
 import { wholeBodyCards } from '../spa/goals/whole-body-cards.js';
@@ -306,5 +307,27 @@ describe('dashboard:preview whole-body goals (VW-455)', () => {
 
     expect(wholeBody).toEqual(['bodyweight']);
     expect(wholeBodyCards(data)?.sessions).toBeNull();
+  });
+});
+
+describe('dashboard:preview --unreviewed (VW-514)', () => {
+  it('leaves that many unmarked days for /api/goals to report, and the goal unchanged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+    try {
+      const now = new Date();
+      const report = await seedGoalPreview(store, goalPreviewState('on_track'), now, {
+        unreviewedDays: 3,
+      });
+      const [priority] = await store.listPriorities(LOCAL_USER_ID);
+      const [view] = await fetchGoalProgressViews(store, priority!, now);
+
+      expect(report.unreviewedDays).toBe(3);
+      expect((await readUnreviewed(store)).unreviewedDays).toBe(3);
+      expect(view?.status).toBe('on_track');
+    } finally {
+      store.close();
+    }
   });
 });

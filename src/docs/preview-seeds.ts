@@ -327,19 +327,22 @@ export interface GoalPreviewSeedReport {
   baselineState: string;
   /** The whole-body goals seeded beside the lifts, by metric. */
   wholeBody: WholeBodyMetric[];
+  /** Past days holding a session nobody has marked training or test. */
+  unreviewedDays: number;
 }
 
 /**
  * Write one previewable goal state into `store`, which must be the ONLY holder
  * of its file — the server opens it afterwards, never alongside. With
  * `companions`, the {@link GOAL_PREVIEW_COMPANIONS} are seeded beside the lead;
- * with `wholeBody`, a cut with its weigh-ins and the two whole-body goals.
+ * with `wholeBody`, a cut with its weigh-ins and the two whole-body goals;
+ * with `unreviewedDays`, that many past days each holding one unmarked session.
  */
 export async function seedGoalPreview(
   store: GoalPreviewStore,
   state: GoalPreviewState,
   now: Date,
-  options: { companions?: boolean; wholeBody?: boolean } = {},
+  options: { companions?: boolean; wholeBody?: boolean; unreviewedDays?: number } = {},
 ): Promise<GoalPreviewSeedReport> {
   // The tools derive with the catalog the server loads at boot; this seed runs before any
   // server exists, so it loads the same one, or every lift would ramp as the unknown class.
@@ -360,13 +363,37 @@ export async function seedGoalPreview(
     }
   }
   const wholeBody = options.wholeBody === true ? await seedWholeBody(store, now) : [];
+  const unreviewedDays = await seedUnreviewedDays(store, now, options.unreviewedDays ?? 0);
   return {
     priorityId: seeded.priorityId,
     targetId: seeded.target.id,
     ...seeded.written,
     baselineState: seeded.baselineState,
     wholeBody,
+    unreviewedDays,
   };
+}
+
+/**
+ * One session with no kind on each of the `days` days before `now` (VW-514). Every
+ * lifter-facing read excludes them, so the goals themselves read exactly as without.
+ */
+async function seedUnreviewedDays(
+  store: GoalPreviewStore,
+  now: Date,
+  days: number,
+): Promise<number> {
+  for (let back = 1; back <= days; back++) {
+    const at = new Date(now.getTime() - back * DAY_MS).toISOString();
+    await store.putSession({
+      id: `preview-unreviewed-session-${back}`,
+      startedAt: at,
+      endedAt: at,
+      exerciseId: GOAL_PREVIEW_EXERCISE.id,
+      exerciseName: GOAL_PREVIEW_EXERCISE.name,
+    });
+  }
+  return days;
 }
 
 function companionLift(

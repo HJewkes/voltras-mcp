@@ -521,3 +521,35 @@ describe('a calibrated starting ramp (VW-444 part 2)', () => {
     expect(render(rampData(true))).not.toContain('Calibrated');
   });
 });
+
+describe('the goals page says when history is withheld (VW-514)', () => {
+  function withUnreviewed(unreviewedDays: number | undefined): GoalsPageData {
+    return { ...baseData().data, unreviewedDays };
+  }
+
+  it('names the count of days left out, above the lead card', () => {
+    const html = render(withUnreviewed(3));
+
+    const line = html.indexOf(
+      'These numbers leave out 3 days you haven&#x27;t marked as training or test yet.',
+    );
+    expect(line).toBeGreaterThan(-1);
+    expect(line).toBeLessThan(html.indexOf('data-testid="goal-card-title"'));
+  });
+
+  it('says one day in the singular', () => {
+    const html = render(withUnreviewed(1));
+
+    expect(html).toContain('These numbers leave out 1 day you haven&#x27;t marked');
+    expect(html).not.toContain('1 days');
+  });
+
+  it('renders the same DOM as before when nothing is withheld or the field is absent', () => {
+    const { data } = baseData();
+    const before = render(data);
+
+    expect(render(withUnreviewed(0))).toBe(before);
+    expect(render(withUnreviewed(undefined))).toBe(before);
+    expect(before).not.toContain('These numbers leave out');
+  });
+});

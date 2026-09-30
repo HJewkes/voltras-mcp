@@ -392,6 +392,7 @@ Voltra or a PT session:
 ```bash
 npm run dashboard:preview -- goals                  # #/goals, held until Ctrl-C
 npm run dashboard:preview -- goals --state behind   # …in a chosen goal state
+npm run dashboard:preview -- goals --unreviewed 3   # …with 3 days waiting to be marked
 npm run dashboard:preview -- body                   # #/body, the capture's own seed
 npm run dashboard:preview -- plan                   # #/plan, the capture's own driver
 ```

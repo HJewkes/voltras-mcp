@@ -47,10 +47,10 @@ const PRIORITY_ROW = {
   rollup: null,
 } as unknown as GoalPriorityRow;
 
-function stubFetch(): ReturnType<typeof vi.fn> {
+function stubFetch(review: unknown = null): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string) => {
     const body = input.startsWith('/api/goals')
-      ? { priorities: [PRIORITY_ROW], mesocycle: MESOCYCLE, review: null }
+      ? { priorities: [PRIORITY_ROW], mesocycle: MESOCYCLE, review }
       : { targets: [] };
     return new Response(JSON.stringify(body), { status: 200 });
   });
@@ -91,6 +91,22 @@ describe('one goals fetch feeds the page and the header', () => {
     expect(data.priorities).toEqual([PRIORITY_ROW]);
     expect(data.mesocycle).toEqual(MESOCYCLE);
     expect(data.progress).toEqual({ 'pri-1': [] });
+  });
+
+  it('carries review.unreviewedDays from the same call (VW-514)', async () => {
+    stubFetch({ unreviewedDays: 2, unreviewedDayList: ['2026-09-20', '2026-09-18'] });
+
+    const data = await loadGoalsPage();
+
+    expect(data.unreviewedDays).toBe(2);
+  });
+
+  it('reads a null review as nothing withheld', async () => {
+    stubFetch(null);
+
+    const data = await loadGoalsPage();
+
+    expect(data.unreviewedDays).toBe(0);
   });
 
   it('renders the page from the route’s one poll inside the scrolling chrome', () => {

@@ -25,6 +25,8 @@ export interface GoalsPayload {
   priorities: GoalPriorityRow[];
   /** The dated block the page is in; `null` while no block has dates. */
   mesocycle: MesocycleView | null;
+  /** Days withheld from every count until their sessions are marked (VW-489). */
+  review?: { unreviewedDays: number } | null;
 }
 
 export function fetchGoalPriorities(): Promise<GoalsPayload> {
