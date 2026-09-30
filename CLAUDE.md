@@ -62,7 +62,7 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - log lines or error messages
 - commit messages, PR titles or PR bodies
 
-Describe the observable behaviour instead. Protocol-derived findings belong in `voltra-private/research/`, not here.
+Describe the observable behaviour instead. Protocol-derived findings belong in the private research tree, not here.
 
 **What enforces it, and what does not.**
 
