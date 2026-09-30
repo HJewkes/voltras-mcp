@@ -967,6 +967,65 @@ describe('session.get pace for a finished session', () => {
   });
 });
 
+describe('session.get pace for an in-progress session', () => {
+  async function getPace(endedAt: string | undefined, streaming: boolean) {
+    const h = setup();
+    const session: StoredSession = {
+      id: 'sess-live',
+      startedAt: '2025-01-01T10:00:00.000Z',
+      ...(endedAt !== undefined ? { endedAt } : {}),
+    };
+    const live = h.state.slots.get('primary')!.live;
+    vi.spyOn(live, 'session', 'get').mockReturnValue({ sessionId: 'sess-live' } as never);
+    vi.spyOn(live, 'snapshotSet').mockReturnValue(
+      streaming ? ({ setId: 'live-1' } as never) : undefined,
+    );
+    h.store.getSession.mockResolvedValueOnce(session);
+    (h.store as Record<string, unknown>).getSelfReportsForSession = vi.fn(async () => []);
+    h.store.getSetsForSession.mockResolvedValueOnce([]);
+    h.store.getAssignmentsForSession.mockResolvedValueOnce([
+      {
+        id: 'asg-1',
+        sessionId: 'sess-live',
+        workoutTemplateId: 't1',
+        assignedAt: '2025-01-01T10:00:00.000Z',
+      },
+    ]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([
+      {
+        id: 'pe1',
+        workoutTemplateId: 't1',
+        exerciseId: 'bench-press',
+        orderIndex: 0,
+        targetSets: 3,
+      },
+    ]);
+    const body = parseResult(await h.invoke('session.get', { id: 'sess-live' })) as {
+      sessionPace: { state: string; slipMinutes: number };
+    };
+    return body.sessionPace;
+  }
+
+  it('reports a non-idle state while the first set is streaming', async () => {
+    const pace = await getPace(undefined, true);
+
+    expect(pace.state).toBe('on_pace');
+    expect(pace.slipMinutes).toBe(0);
+  });
+
+  it('stays idle before any set has started', async () => {
+    const pace = await getPace(undefined, false);
+
+    expect(pace.state).toBe('idle');
+  });
+
+  it('ignores a set still open on the slot once the session has ended', async () => {
+    const pace = await getPace('2025-01-01T11:00:00.000Z', true);
+
+    expect(pace.state).toBe('idle');
+  });
+});
+
 describe('session.list', () => {
   let h: Harness;
   beforeEach(() => {
