@@ -22,6 +22,7 @@ import { deriveIsometricVerdictCard } from './isometric-verdict-model';
 import {
   deriveMissedSetsMetric,
   derivePaceMetrics,
+  derivePaceSuggestion,
   deriveRailExercises,
   deriveRailMetrics,
   stageIsEmpty,
@@ -261,28 +262,35 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
     // stage below (header, live/rest/empty) resolves its text colour from this Surface instead
     // of grabbing a token. Layout still via `style` — see the PORTING RULE above.
     <Surface level="base" style={{ flex: 1, flexDirection: 'row' }}>
-      <SessionRail
-        title={model.session.title ?? UNTITLED_SESSION}
-        exercises={exercises}
-        // Fractional credit for the set in progress — the lab's 0.75 stood in for
-        // "part-way through"; with real reps we know how far.
-        setsDone={completedSets + liveSetProgress(model)}
-        running={isLive}
-        width={272}
-        // The pace estimate's minutes half (VW-290): the header's ⏱ readout and
-        // its pace marker. Both omitted without a plan, so the rail renders
-        // exactly as it did before rather than clocking against nothing.
-        {...(pace
-          ? {
-              elapsedMs: pace.elapsedMinutes * MS_PER_MINUTE,
-              budgetMs: pace.plannedMinutes * MS_PER_MINUTE,
-            }
-          : {})}
-        // Session rollup tiles (Volume / Load), folded from the exercise-tagged set log
-        // (VW-52). Undefined before the first set closes, so the header hides them rather
-        // than showing zeros. No Fatigue tile — no honest session-wide signal to source it.
-        metrics={metrics.length > 0 ? metrics : undefined}
-      />
+      <View style={{ width: 272 }}>
+        <SessionRail
+          title={model.session.title ?? UNTITLED_SESSION}
+          exercises={exercises}
+          // Fractional credit for the set in progress — the lab's 0.75 stood in for
+          // "part-way through"; with real reps we know how far.
+          setsDone={completedSets + liveSetProgress(model)}
+          running={isLive}
+          width={272}
+          // Fills the wrapper's height the way it filled the page row before the caption.
+          style={{ flex: 1 }}
+          // The pace estimate's minutes half (VW-290): the header's ⏱ readout and
+          // its pace marker. Both omitted without a plan, so the rail renders
+          // exactly as it did before rather than clocking against nothing.
+          {...(pace
+            ? {
+                elapsedMs: pace.elapsedMinutes * MS_PER_MINUTE,
+                budgetMs: pace.plannedMinutes * MS_PER_MINUTE,
+              }
+            : {})}
+          // Session rollup tiles (Volume / Load), folded from the exercise-tagged set log
+          // (VW-52). Undefined before the first set closes, so the header hides them rather
+          // than showing zeros. No Fatigue tile — no honest session-wide signal to source it.
+          metrics={metrics.length > 0 ? metrics : undefined}
+        />
+        <PaceSuggestionCaption
+          sentence={derivePaceSuggestion(pace, model.session.plannedExercises)}
+        />
+      </View>
       {/* The lab hardcoded 76% / 7.3k / MOD here; the tiles above are the real rollup. */}
 
       {/* Panel floors at ~phone width so the live view stops collapsing; rail-aware
@@ -350,6 +358,23 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
       <IsometricWalkthrough signal={isometric} />
       <IsometricVerdictCard card={verdict.visible ? verdict.card : null} />
     </Surface>
+  );
+}
+
+/**
+ * The pace suggestion under the rail (VMCP-02.76). Titan's `SessionRail` has no footer
+ * slot yet, so the sentence sits in its own caption; nothing renders without one.
+ */
+function PaceSuggestionCaption({ sentence }: { sentence: string | null }) {
+  const color = useOnSurfaceColor('secondary');
+  if (sentence === null) return null;
+  return (
+    <Text
+      className="font-body"
+      style={{ color, fontSize: 13, lineHeight: 18, paddingHorizontal: 16, paddingVertical: 10 }}
+    >
+      {sentence}
+    </Text>
   );
 }
 

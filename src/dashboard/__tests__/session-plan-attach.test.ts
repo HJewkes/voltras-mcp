@@ -165,6 +165,7 @@ describe('/api/session-plan attach resolution (VW-641)', () => {
     });
     expect(prescription?.exercises).toEqual([
       {
+        exerciseId: 'bench',
         name: 'Bench Press',
         order: 0,
         sets: 5,
