@@ -52,7 +52,7 @@ import { parseRoute } from './routing';
 import { DashboardChrome } from './panels/DashboardChrome';
 import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
-import { GoalsPage } from './goals/GoalsPage';
+import { GoalsRoute } from './goals/GoalsRoute';
 import { BodyPage } from './body/BodyPage';
 import type { PrescriptionView } from './adapter';
 
@@ -166,10 +166,10 @@ function RoutePage(): React.JSX.Element | null {
       return <PlanBuilderPage />;
     case 'summary':
       return <SessionSummaryPage sessionId={route.sessionId} />;
-    case 'goals':
-      return <GoalsPage />;
     case 'body':
       return <BodyPage />;
+    // Both render their own chrome in `App`.
+    case 'goals':
     case 'live':
       return null;
   }
@@ -187,6 +187,8 @@ function App(): React.JSX.Element {
   // renders a ColdBootView inside the shell); the planner routes share the same
   // `DashboardChrome` with scrolling turned on.
   if (route.name === 'live') return <LivePagePanel variantOverride={variantOverride} />;
+  // Goals owns its chrome so its one poll can feed the pinned header slot too (VW-654).
+  if (route.name === 'goals') return <GoalsRoute />;
   return (
     <DashboardChrome route={route} scroll>
       <RoutePage />

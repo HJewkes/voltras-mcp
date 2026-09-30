@@ -159,7 +159,11 @@ function page(...rows: [StoredPriority, GoalProgressView[]][]): GoalsPageData {
     targets: views.map((v) => v.target),
     rollup: null,
   }));
-  return { priorities, progress: Object.fromEntries(rows.map(([pri, v]) => [pri.id, v])) };
+  return {
+    priorities,
+    progress: Object.fromEntries(rows.map(([pri, v]) => [pri.id, v])),
+    mesocycle: null,
+  };
 }
 
 describe('which whole-body cards the page draws', () => {

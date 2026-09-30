@@ -278,7 +278,7 @@ describe('dashboard:preview whole-body goals (VW-455)', () => {
       for (const row of rows) {
         progress[row.priority.id] = await fetchGoalProgressViews(store, row.priority, now);
       }
-      return { data: { priorities: rows, progress }, wholeBody: report.wholeBody };
+      return { data: { priorities: rows, progress, mesocycle: null }, wholeBody: report.wholeBody };
     } finally {
       store.close();
     }
