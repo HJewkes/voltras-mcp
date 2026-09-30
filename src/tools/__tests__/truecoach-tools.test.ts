@@ -467,6 +467,38 @@ describe('truecoach.import_week dates its block (VW-479)', () => {
       code: 'SCHEDULE_OVERLAP',
       message: expect.stringContaining('Block 2 — Orientation') as unknown as string,
     });
-    expect(await store.getTrainingWeeksForBlock((await importBlock()).id)).toEqual([]);
+    const blocks = await store.getTrainingBlocksForProgram('prog-1');
+    expect(blocks.map((block) => block.name)).toEqual(['Block 2 — Orientation']);
+  });
+});
+
+// VW-586: two imports that both found no import block, or no week of a label, each minted one.
+// Run in the two variants of `store-concurrency.test.ts`: one store, and two on one file.
+describe.each([1, 2] as const)('truecoach.import_week concurrency with %i connection(s)', (n) => {
+  const W37: RawWorkoutsPage = {
+    workouts: [{ id: 31, title: 'Upper A', due: '2026-09-07' }],
+    workout_items: [{ id: 41, workout_id: 31, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W39: RawWorkoutsPage = {
+    workouts: [{ id: 32, title: 'Upper B', due: '2026-09-21' }],
+    workout_items: [{ id: 42, workout_id: 32, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const SPAN = { from: '2026-09-07', to: '2026-09-27' };
+
+  it('writes one import block and one week per label', async () => {
+    const other = n === 1 ? store : openTestStore({ path: join(dir, 'tc.sqlite') });
+    const otherState = { ...state, store: other } as ServerState;
+
+    await Promise.all([
+      importWeek(state, SPAN, { fetchPages: pages(W37, W39) }),
+      importWeek(otherState, SPAN, { fetchPages: pages(W37, W39) }),
+    ]);
+    if (other !== store) other.close();
+
+    const blocks = await store.getTrainingBlocksForProgram('prog-1');
+    expect(blocks.map((block) => block.name)).toEqual(['TrueCoach import']);
+    const weeks = await store.getTrainingWeeksForBlock(blocks[0]!.id);
+    expect(weeks.map((week) => week.name)).toEqual(['2026-W37', '2026-W38', '2026-W39']);
+    expect(blocks[0]!.weeksCount).toBe(3);
   });
 });

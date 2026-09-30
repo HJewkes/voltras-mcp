@@ -247,7 +247,7 @@ describe('session.mark_kind', () => {
     const failing = {
       ...store,
       listSessionReviewRows: store.listSessionReviewRows.bind(store),
-      setSessionKind: store.setSessionKind.bind(store),
+      setSessionKindWhere: store.setSessionKindWhere.bind(store),
       recalcBaseline: () => Promise.reject(new Error('baseline recalc blew up')),
       refitRirVelocityModel: store.refitRirVelocityModel.bind(store),
     } as unknown as SessionStore;

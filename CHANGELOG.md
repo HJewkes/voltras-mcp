@@ -165,6 +165,17 @@ Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a mu
   numbers such as 123456. A run of six or more hex characters is refused only when it mixes
   digits with the letters a to f (VW-705).
 
+- Marking a whole day or range with `session.mark_kind` no longer overwrites a session you
+  marked on its own while the bulk mark was running. The bulk mark now checks each session
+  as it writes it, leaves one already marked the other kind alone, and its counts
+  (`newlyClassified`, `reclassified`, `skippedAlreadyMarked`, `setsChanged`) describe the
+  rows it actually changed (VW-586).
+
+- Two `truecoach.import_week` calls at once no longer create two "TrueCoach import" blocks
+  or two weeks of one ISO week. The block, its weeks and its dates are now found or created
+  together, and an import refused for its dates (`BLOCK_STARTED`, `SCHEDULE_OVERLAP`) no
+  longer leaves an empty import block behind (VW-586).
+
 - Classifying an exercise into a ramp class on an empty exercise catalog now fails with
   `CATALOG_NOT_LOADED` instead of quietly answering upper-body compound for every lift. An id
   missing from a loaded catalog still gets that default (VW-495).

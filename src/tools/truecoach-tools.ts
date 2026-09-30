@@ -15,7 +15,6 @@
 // instead of forking the tree.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
 import {
@@ -31,9 +30,9 @@ import type {
   AppendBlockScheduleInput,
   PlanImportExercise,
   PlanImportTemplate,
+  ScheduledBlock,
   StoredBlockSchedule,
   StoredTrainingBlock,
-  StoredTrainingWeek,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { resolveDefaultProgram } from './plan-tools.js';
@@ -46,6 +45,8 @@ import { isoWeekLabelsBetween, isoWeekMonday } from '../integrations/truecoach/m
 
 /** The single block every TrueCoach import lands in, per program. */
 const IMPORT_BLOCK_NAME = 'TrueCoach import';
+const IMPORT_BLOCK_NOTES =
+  "Imported from TrueCoach. Coach text is kept verbatim in each row's notes.";
 const MS_PER_DAY = 86_400_000;
 
 export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
@@ -192,7 +193,9 @@ function describe(plan: MappedPlan): Record<string, unknown> {
  * Every ISO week between the earliest and the latest gets a row, including the weeks the coach
  * assigned nothing in (VW-479): week 3 of the block must be the third calendar week, not the
  * third week that happened to have a workout. Rows are kept in date order, so a later import of
- * an earlier range does not leave the block's weeks shuffled.
+ * an earlier range does not leave the block's weeks shuffled. The block, its weeks and its dating
+ * row are found or created in one transaction (VW-586), so two imports cannot each mint a block
+ * or a week of one label, and a refused schedule writes none of them.
  */
 async function resolveWeeks(
   state: ServerState,
@@ -200,27 +203,20 @@ async function resolveWeeks(
   plan: MappedPlan,
 ): Promise<{ weekIds: Map<string, string>; schedule: { seq: number; kind: string } | null }> {
   const program = await resolveDefaultProgram(state, programId);
-  const block = await ensureImportBlock(state, program.id, plan.weeks.length);
-  const existing = await state.store.getTrainingWeeksForBlock(block.id);
-  const labels = spannedLabels([...existing.map((week) => week.name ?? ''), ...plan.weeks]);
-  const schedule = await scheduleImportBlock(state, block, labels);
-  const byName = new Map(existing.map((w) => [w.name ?? '', w]));
-  const weekIds = new Map<string, string>();
-  for (const [index, label] of labels.entries()) {
-    const row: StoredTrainingWeek = {
-      id: byName.get(label)?.id ?? randomUUID(),
-      blockId: block.id,
-      orderIndex: index,
-      name: label,
-      isDeload: byName.get(label)?.isDeload ?? false,
-    };
-    await state.store.putTrainingWeek(row);
-    weekIds.set(label, row.id);
-  }
-  if (labels.length > block.weeksCount) {
-    await state.store.putTrainingBlock({ ...block, weeksCount: labels.length });
-  }
-  return { weekIds, schedule };
+  const today = todayLocal();
+  const { weekIds, schedule } = await state.store.ensureImportWeeks(
+    {
+      programId: program.id,
+      blockName: IMPORT_BLOCK_NAME,
+      blockDefaults: { notes: IMPORT_BLOCK_NOTES },
+      span: (existing) => spannedLabels([...existing, ...plan.weeks]),
+    },
+    (world, block, labels) => importScheduleRow(world, block, labels, today),
+  );
+  return {
+    weekIds,
+    schedule: schedule === null ? null : { seq: schedule.seq, kind: schedule.kind },
+  };
 }
 
 /** Every ISO week from the earliest label to the latest, gaps included, in date order. */
@@ -237,23 +233,19 @@ function spannedLabels(labels: readonly string[]): string[] {
  * same range writes nothing. The start never moves once the block has started (I3), and an
  * import that would overlap another dated block is refused with that block named.
  */
-async function scheduleImportBlock(
-  state: ServerState,
+function importScheduleRow(
+  world: readonly ScheduledBlock[],
   block: StoredTrainingBlock,
   labels: readonly string[],
-): Promise<{ seq: number; kind: string } | null> {
+  today: string,
+): AppendBlockScheduleInput | null {
   const first = labels[0];
   if (first === undefined) return null;
-  const startsOn = isoWeekMonday(first);
-  const today = todayLocal();
-  const { rows } = await state.store.deriveBlockSchedules((world) => {
-    const { live } = scheduledBlock(world, block.id);
-    const row = importRow(block, live, { startsOn, weeksCount: labels.length }, today);
-    if (row !== null) assertNoOverlap(placedIn(world), block, row);
-    return { rows: row === null ? [] : [row], result: null };
-  });
-  const written = rows[0];
-  return written === undefined ? null : { seq: written.seq, kind: written.kind };
+  const { live } = scheduledBlock(world, block.id);
+  const range = { startsOn: isoWeekMonday(first), weeksCount: labels.length };
+  const row = importRow(block, live, range, today);
+  if (row !== null) assertNoOverlap(placedIn(world), block, row);
+  return row;
 }
 
 /** The row this import's range asks for, or null when the live row already says it. */
@@ -318,33 +310,6 @@ function assertNoOverlap(
     `The imported weeks (${row.startsOn} to ${endsOn}) would overlap "${clash.name}" ` +
       `(${clash.startsOn} to ${clash.endsOn}).`,
   );
-}
-
-/**
- * The program's one import block, found by name. Its `weeksCount` grows to
- * cover the weeks actually present — the column is NOT NULL and the block is
- * open-ended, so it tracks reality rather than declaring a fixed mesocycle.
- */
-async function ensureImportBlock(
-  state: ServerState,
-  programId: string,
-  weekCount: number,
-): Promise<StoredTrainingBlock> {
-  const blocks = await state.store.getTrainingBlocksForProgram(programId);
-  const found = blocks.find((b) => b.name === IMPORT_BLOCK_NAME);
-  const weeks = await (found === undefined
-    ? Promise.resolve([])
-    : state.store.getTrainingWeeksForBlock(found.id));
-  const block: StoredTrainingBlock = {
-    id: found?.id ?? randomUUID(),
-    programId,
-    orderIndex: found?.orderIndex ?? blocks.length,
-    name: IMPORT_BLOCK_NAME,
-    weeksCount: Math.max(1, weeks.length, weekCount),
-    notes: "Imported from TrueCoach. Coach text is kept verbatim in each row's notes.",
-  };
-  await state.store.putTrainingBlock(block);
-  return block;
 }
 
 function toImportBatch(plan: MappedPlan, weekIds: Map<string, string>): PlanImportTemplate[] {

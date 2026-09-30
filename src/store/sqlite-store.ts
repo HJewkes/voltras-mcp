@@ -123,6 +123,9 @@ import {
   type SessionDateSpan,
   type SessionReviewKindFilter,
   type SessionReviewRow,
+  type SessionKindWrite,
+  type ImportWeeksInput,
+  type ImportWeeksResult,
   type SessionListFilter,
   type SessionPatch,
   type SessionStore,
@@ -3361,8 +3364,8 @@ export class SqliteSessionStore implements SessionStore {
     // a NULL kind reads as unreviewed, and unreviewed is excluded from every
     // lifter-facing read, so the workout that just finished would vanish from
     // training days, tier, goals, reports and calibration the moment it ended
-    // (VW-489). `setSessionKind` is the one path that changes an existing row's
-    // kind, which is what makes marking auditable.
+    // (VW-489). `setSessionKind` and `setSessionKindWhere` are the only paths
+    // that change an existing row's kind, which is what makes marking auditable.
     //
     // lifter and the carb columns are held out for the same reason (VW-584):
     // `patchSession` owns them after start, and a re-put from one process's live
@@ -3778,6 +3781,45 @@ export class SqliteSessionStore implements SessionStore {
         return Number(sessions.changes);
       }),
     );
+  }
+
+  async setSessionKindWhere(
+    sessionIds: readonly string[],
+    kind: SessionKind,
+    opts: { mayReclassify: boolean },
+  ): Promise<SessionKindWrite> {
+    if (sessionIds.length === 0) return Promise.resolve({ rows: [], setsChanged: 0 });
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    return Promise.resolve(
+      this.atomically(() => {
+        // Judged on the rows as they stand under the write lock, not as a caller last read them.
+        const found = this.db
+          .prepare(`SELECT id, kind FROM sessions WHERE lifter IS NULL AND id IN (${placeholders})`)
+          .all(...sessionIds) as { id: string; kind: string | null }[];
+        const byId = new Map(found.map((row) => [row.id, row.kind]));
+        const rows = sessionIds.flatMap((sessionId) => {
+          const prior = byId.get(sessionId);
+          if (prior === undefined) return [];
+          const written = prior === null || (opts.mayReclassify && prior !== kind);
+          return [kindWriteRow(sessionId, prior, written)];
+        });
+        const toWrite = rows.filter((row) => row.written).map((row) => row.sessionId);
+        return { rows, setsChanged: this.writeSessionKind(toWrite, kind) };
+      }),
+    );
+  }
+
+  /** The session rows and their sets, re-marked; returns the number of set rows changed. */
+  private writeSessionKind(sessionIds: readonly string[], kind: SessionKind): number {
+    if (sessionIds.length === 0) return 0;
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    this.db
+      .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+      .run(kind, ...sessionIds);
+    const sets = this.db
+      .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+      .run(kind, ...sessionIds);
+    return Number(sets.changes);
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -4315,10 +4357,93 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]> {
+    return Promise.resolve(this.weeksOfBlock(blockId));
+  }
+
+  private weeksOfBlock(blockId: string): StoredTrainingWeek[] {
     const rows = this.db
       .prepare(`SELECT * FROM training_weeks WHERE block_id = ? ORDER BY order_index ASC`)
       .all(blockId) as unknown as TrainingWeekRow[];
-    return Promise.resolve(rows.map(rowToTrainingWeek));
+    return rows.map(rowToTrainingWeek);
+  }
+
+  async ensureImportWeeks(
+    input: ImportWeeksInput,
+    schedule: (
+      world: readonly ScheduledBlock[],
+      block: StoredTrainingBlock,
+      labels: readonly string[],
+    ) => AppendBlockScheduleInput | null,
+  ): Promise<ImportWeeksResult> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const found = this.blockNamed(input.programId, input.blockName);
+        const existing = found === undefined ? [] : this.weeksOfBlock(found.id);
+        const labels = input.span(existing.flatMap((week) => week.name ?? []));
+        const block = this.writeImportBlock(input, found, labels.length);
+        const row = schedule(this.scheduledBlocks(), block, labels);
+        const problem = row === null ? null : scheduleProblem(row);
+        if (row !== null && problem !== null) throw blockScheduleInvalid(row.blockId, problem);
+        const written = row === null ? null : this.insertBlockSchedule(row);
+        const weekIds = this.writeImportWeeks(block.id, existing, labels);
+        return { block, weekIds, schedule: written };
+      }),
+    );
+  }
+
+  private blockNamed(programId: string, name: string): StoredTrainingBlock | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM training_blocks WHERE program_id = ? AND name = ?
+          ORDER BY order_index ASC LIMIT 1`,
+      )
+      .get(programId, name) as TrainingBlockRow | undefined;
+    return row === undefined ? undefined : rowToTrainingBlock(row);
+  }
+
+  /** The import block with `weeks_count` raised in place to cover `weekCount`, created when missing. */
+  private writeImportBlock(
+    input: ImportWeeksInput,
+    found: StoredTrainingBlock | undefined,
+    weekCount: number,
+  ): StoredTrainingBlock {
+    if (found !== undefined) {
+      if (weekCount <= found.weeksCount) return found;
+      this.db
+        .prepare(`UPDATE training_blocks SET weeks_count = ? WHERE id = ?`)
+        .run(weekCount, found.id);
+      return { ...found, weeksCount: weekCount };
+    }
+    const siblings = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM training_blocks WHERE program_id = ?`)
+      .get(input.programId) as { n: number };
+    const block: StoredTrainingBlock = {
+      id: randomUUID(),
+      programId: input.programId,
+      orderIndex: siblings.n,
+      name: input.blockName,
+      weeksCount: Math.max(1, weekCount),
+      ...input.blockDefaults,
+    };
+    this.writeTrainingBlock(block);
+    return block;
+  }
+
+  /** One week per label in label order; an existing week keeps its row and moves in place. */
+  private writeImportWeeks(
+    blockId: string,
+    existing: readonly StoredTrainingWeek[],
+    labels: readonly string[],
+  ): Map<string, string> {
+    const byName = new Map(existing.map((week) => [week.name, week]));
+    const weekIds = new Map<string, string>();
+    for (const [orderIndex, name] of labels.entries()) {
+      const prior = byName.get(name);
+      const week = prior ?? { id: randomUUID(), blockId, name, isDeload: false, orderIndex };
+      this.writeTrainingWeek({ ...week, orderIndex });
+      weekIds.set(name, week.id);
+    }
+    return weekIds;
   }
 
   async putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void> {
@@ -6528,6 +6653,16 @@ interface SessionReviewSqlRow {
   last_set_ended_at: string | null;
   last_working_set_ended_at: string | null;
   planned: number;
+}
+
+function kindWriteRow(
+  sessionId: string,
+  prior: string | null,
+  written: boolean,
+): SessionKindWrite['rows'][number] {
+  const row: SessionKindWrite['rows'][number] = { sessionId, written };
+  if (prior !== null && isSessionKind(prior)) row.priorKind = prior;
+  return row;
 }
 
 function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
