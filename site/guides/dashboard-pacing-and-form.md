@@ -43,7 +43,7 @@ With none, the header shows no tempo rather than an invented one
   shot="live-mid-set"
   :callouts='[
     {"quote": "Cable Chest Press 3 × 8–10 @ 140 lbs", "text": "The prescription in the header. A tempo target, when one applies, sits with it."},
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46", "text": "One bar per rep. With a tempo target, each rep is tinted by how far its lifting time sat from the target lifting time."},
+    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44", "text": "One bar per rep. With a tempo target, each rep is tinted by how far its lifting time sat from the target lifting time."},
     {"quote": "FATIGUE — RPE Good", "text": "The fatigue card. Its three lights sit under this verdict: velocity loss, form and tempo."}
   ]'
 />
@@ -78,7 +78,8 @@ When a set closes, the live page switches to its rest stage.
     {"quote": "SET VERDICT 5 Reps 140 lbs 12%", "text": "The set you just finished: reps, load and velocity loss."},
     {"quote": "Next · Cable Chest Press · set 2 of 3", "text": "What comes next in the plan, under the rest ring."},
     {"quote": "VOLUME 5 TONNAGE 700 lbs", "text": "The session so far, in the rail on the left."},
-    {"quote": "1/8 sets", "text": "Working sets done out of every set the plan holds."}
+    {"quote": "1/8 sets", "text": "Working sets done out of every set the plan holds."},
+    {"quote": "PACE on pace", "text": "Where the session stands against the plan, in the pace footer."}
   ]'
 />
 
@@ -91,13 +92,15 @@ plan sets no rest, the ring counts down a default for the exercise's training go
 up from the end of the set instead (`src/dashboard/spa/live-page/RestView.tsx:241-249`).
 [Rest between sets](/concepts/fatigue-and-pacing#rest-between-sets) explains the defaults.
 
-The **pace footer** sits at the bottom of the rail. It shows two tiles: **Left**, the planned
-sets still to do, and **ETA**, the time the plan projects the session to end
-(`src/dashboard/spa/live-page/model.ts:808-826`). The same estimate drives the clock and pace
-marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:272-280`). Without an
-attached plan there is no footer at all, rather than a guessed finish time
-(`src/dashboard/spa/live-page/LivePage.tsx:245-252`). The capture does not pin the ETA, because
-it is wall-clock time.
+The **pace footer** sits at the bottom of the rail. It shows **Left**, the planned sets still
+to do, **ETA**, the time the plan projects the session to end, and, once the first set starts,
+**Pace**: `on pace`, or how many minutes behind or ahead of the plan you are
+(`src/dashboard/spa/live-page/model.ts:894-918`). When you are behind or ahead, a sentence under
+the rail suggests sets to trim or add (`src/dashboard/spa/live-page/LivePage.tsx:290-292`). The
+same estimate drives the clock and pace marker at the top of the rail
+(`src/dashboard/spa/live-page/LivePage.tsx:276-284`). Without an attached plan there is no footer
+at all, rather than a guessed finish time (`src/dashboard/spa/live-page/LivePage.tsx:246-254`).
+The capture does not pin the ETA, because it is wall-clock time.
 
 ## 4. Left and right
 

@@ -351,6 +351,8 @@ async function runPlannedExercise(exerciseIndex, templateId) {
     if (s < SETS_PER_EXERCISE) await sleep(REST_MS);
   }
   await callTool('session.end', {});
+  // VW-489: a mock session is stored as a test, which history and the summary skip.
+  await callTool('session.mark_kind', { sessionId, kind: 'training' });
   if (exerciseIndex < PLANNED.length - 1) await sleep(REST_MS);
 }
 
@@ -373,6 +375,7 @@ async function handshake() {
     'set.end',
     'plan.exercise.create',
     'plan.attach_to_session',
+    'session.mark_kind',
   ];
   for (const need of needed) {
     if (!tools.includes(need)) throw new Error(`missing tool ${need}`);

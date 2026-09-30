@@ -1,5 +1,5 @@
 {
-  "definitionHash": "a380ed30138c58803da54de3b5f95d343ef6c289171233b442f9c52c35a1e41f",
+  "definitionHash": "3c012208fb38a3092b9f51c5d26527512b34d7c944014ff9934e36f1c4fbc70a",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -19,8 +19,8 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 43802,
-      "sha256": "b11546ad26685360100c9a4932625bd6e44a01347e33460c565d9c5f9c339330"
+      "bytes": 42972,
+      "sha256": "662357a5ef450f9ed141f45bf0a6e841037ef782ecde27aa19172d1b51635f78"
     },
     {
       "name": "live-mid-set",
@@ -41,13 +41,14 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0/8 sets",
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46",
-        "FATIGUE — RPE Good"
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44",
+        "FATIGUE — RPE Good",
+        "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 713720,
-      "sha256": "78e2c8528d8964eecf17c204a4a648e53555e387622bd24b6281da955d751902"
+      "bytes": 824442,
+      "sha256": "ad849bb2427242ee857676d0902e2b60133001170efe80dba5c9506721300b85"
     },
     {
       "name": "live-rest",
@@ -64,12 +65,13 @@
         "1/8 sets",
         "SET REPS LBS RPE 1 5 140 —",
         "SET VERDICT 5 Reps 140 lbs 12%",
-        "Next · Cable Chest Press · set 2 of 3"
+        "Next · Cable Chest Press · set 2 of 3",
+        "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 116422,
-      "sha256": "608e82c79dea023a624f727f14b3458c0ba2e7361ae26bf36e9e959ffd0dbfe1"
+      "bytes": 117574,
+      "sha256": "6ac91218ce6e992136615aad26a30f466a6f5f3443b233bf542059b2fd528f1c"
     },
     {
       "name": "session-summary",
@@ -92,8 +94,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 65499,
-      "sha256": "12dd529189b75dd5d4211ac182069fa07f1da70b36f15b4fa56958522a87439f"
+      "bytes": 65476,
+      "sha256": "a2aa1efa35e4f07ed39fce967166f1887f30575f56a6ff37e06402a955b6f05a"
     },
     {
       "name": "plan-builder",
@@ -115,8 +117,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 118887,
-      "sha256": "394145cba5f0fca4bbcc4ff74616ddc8e0bd7a7c164ee90fc7ca57ac3fbe0225"
+      "bytes": 119399,
+      "sha256": "11ad196c2eb19d155ec19fcfac8ac26e11353379d551b7745606fc52dda8e436"
     },
     {
       "name": "live-slowing",
@@ -131,12 +133,13 @@
       "assertedText": ["Cable Chest Press", "VELOCITY · this set", "FATIGUE"],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37",
-        "FATIGUE — RPE Slowing"
+        "FATIGUE — RPE Slowing",
+        "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 910021,
-      "sha256": "681345923fa57d97734e45583399f30c69cb27cee6358a4b5f41d62f2b282bf6"
+      "bytes": 911449,
+      "sha256": "07209f9fc54e942d480f4be6fb4f01ed4e1ee9ebf3bcbfcfd85c43561f234b2c"
     },
     {
       "name": "live-dual-mid-set",
@@ -268,7 +271,7 @@
       "sha256": "1e1f5b85d255006ed7f99ef8cc46cb17f0656ac00bc13e626254db46c2118b8d"
     }
   ],
-  "clipDefinitionHash": "608e12dc1d0b4fb606157cab9b1068c2c5226620a20dd4c88134de40305a3365",
+  "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
   "clipSize": {
     "width": 1280,
     "height": 800
@@ -303,31 +306,32 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40",
-        "VOLUME 8 TONNAGE 1.1k lbs"
+        "VOLUME 8 TONNAGE 1.1k lbs",
+        "PACE on pace"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.32,
-      "bytes": 598007,
+      "seconds": 33.36,
+      "bytes": 623645,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 228333,
-          "sha256": "a0cf38b66b1c8cb46c898dc4418d8a2eee705e83aab7b3955a83e81993dadc22"
+          "bytes": 260216,
+          "sha256": "c7b47df8ea21abf03744c28c650a5ad6a4364b07991b5dc7aa388ffabf01c71b"
         },
         {
-          "atSeconds": 16.66,
-          "bytes": 194637,
-          "sha256": "66750f7ae4c5e1bf395feeacff8118c718292b6a8826c6efbc2b8bb48f3a06aa"
+          "atSeconds": 16.68,
+          "bytes": 208012,
+          "sha256": "66b43acc419cfaabff59b93ae0c10de70fcc50e5904522817483402361040cf2"
         },
         {
-          "atSeconds": 28.32,
-          "bytes": 200546,
-          "sha256": "e5d080028b916fac15416da480092b163fd81c9ba15ba80e5114004898b7063f"
+          "atSeconds": 28.36,
+          "bytes": 230831,
+          "sha256": "70643b4ee7ee58c9cadfddf0d987f22b8301f74a180943c55bc2dafbcb3ce381"
         }
       ],
-      "sha256": "8300eae8f64f1dff0f78e05c8cb587a303df5255d5412fc72e7158c140a36fa1"
+      "sha256": "1a9e66677cccfeee863441fa6336533ce6b92454365d53e648bb39cd5321fefa"
     },
     {
       "name": "dual-divergence",

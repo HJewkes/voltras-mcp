@@ -230,6 +230,8 @@ export const CAPTURE_CLIPS: readonly CaptureClip[] = [
       // pinned reps at the 140 lb the mock reports, through the rail tile's own
       // formatter, which abbreviates a total of 1000 or more.
       'VOLUME 8 TONNAGE 1.1k lbs',
+      // The rail's Pace tile (VW-580), sampled while the set is open.
+      'PACE on pace',
     ],
     nominalSeconds: 33,
   },

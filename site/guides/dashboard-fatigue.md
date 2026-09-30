@@ -32,7 +32,7 @@ reps of this set, the slowest rep is only a little under the fastest.
 <CaptureCallouts
   shot="live-mid-set"
   :callouts='[
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46", "text": "One bar per rep. The two lines mark 20% and 30% velocity loss from the best rep."},
+    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44", "text": "One bar per rep. The two lines mark 20% and 30% velocity loss from the best rep."},
     {"quote": "FATIGUE — RPE Good", "text": "The verdict word. No bar is near either line, so it reads Good."}
   ]'
 />

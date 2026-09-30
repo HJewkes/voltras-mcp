@@ -102,29 +102,29 @@ const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
 const log = (...args) => console.error('[capture]', ...args);
 
 /**
- * Refuse to silently replace a committed PNG with a DIFFERENT one on an
- * ordinary local run, unless `CAPTURES_ALLOW_LOCAL=1` says the replacement is
- * intentional.
+ * Never silently replace a committed PNG with a DIFFERENT one on an ordinary
+ * local run, unless `CAPTURES_ALLOW_LOCAL=1` says the replacement is
+ * intentional. Returns true when the committed PNG is to be kept.
  *
  * `installShotDeterminism` + `waitForVisualStability` make most shots repeat
- * byte-for-byte, but four of the seven (VW-389: `live-mid-set`, `live-rest`,
- * `session-summary`, `live-dual-mid-set`) render a value the SERVER computed
- * from its own real clock — a rep-shape curve's per-sample frame-decode
- * timestamp, a pace ETA, a session start/end stamp — and no amount of
- * client-side clock-freezing reaches that; `docs/screenshot-harness.md` has
- * the count and the exact fields. Regenerating one of those shots is still a
- * normal, deliberate maintainer action — this only stops it from happening
- * BY ACCIDENT as a side effect of running the harness for some other reason.
+ * byte-for-byte. A shot with `variesBy` renders a value the SERVER computed
+ * from its own real clock, or a date seeded relative to today, which no
+ * client-side freeze reaches (`docs/screenshot-harness.md` has the fields).
+ * Its difference is expected, so the committed PNG is kept and the run goes on:
+ * failing there stopped every later shot from being asserted at all (VW-437).
+ * Any other shot that differs has really changed, and fails the run.
  */
-function guardLocalOverwrite(file, buffer, name) {
-  if (process.env.CAPTURES_ALLOW_LOCAL === '1' || !fs.existsSync(file)) return;
-  const existing = fs.readFileSync(file);
-  if (existing.equals(buffer)) return;
+function guardLocalOverwrite(file, buffer, shot) {
+  if (process.env.CAPTURES_ALLOW_LOCAL === '1' || !fs.existsSync(file)) return false;
+  if (fs.readFileSync(file).equals(buffer)) return false;
+  if (shot.variesBy !== undefined) {
+    log(`${shot.name}: differs (${shot.variesBy}); kept the committed PNG`);
+    return true;
+  }
   throw new Error(
-    `${name}: the fresh capture differs from the committed PNG. If this is an ` +
-      `intentional regeneration, rerun with CAPTURES_ALLOW_LOCAL=1 and commit the ` +
-      `result; if it is not, see docs/screenshot-harness.md for which shots carry a ` +
-      'server-real-time field and are expected to differ run to run.',
+    `${shot.name}: the fresh capture differs from the committed PNG, and this shot ` +
+      `carries no run-to-run field. If this is an intentional regeneration, rerun ` +
+      `with CAPTURES_ALLOW_LOCAL=1 and commit the result.`,
   );
 }
 
@@ -460,8 +460,7 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
     animations: 'disabled',
     caret: 'hide',
   });
-  guardLocalOverwrite(file, buffer, shot.name);
-  fs.writeFileSync(file, buffer);
+  if (!guardLocalOverwrite(file, buffer, shot)) fs.writeFileSync(file, buffer);
 
   const after = await pageText(page);
   const stillMissing = missingIn(after, expected);
