@@ -19,7 +19,11 @@ import type {
 // emits it, so a root import typechecks and is `undefined` at runtime.
 import { MuscleGroup } from '@titan-design/react-ui/bodymap';
 
-import type { GoalProgressView, PriorityRollupView } from '../../read-models/index.js';
+import type {
+  GoalProgressView,
+  MesocycleView,
+  PriorityRollupView,
+} from '../../read-models/index.js';
 import type { GoalMesoTarget } from '../../read-models/goal-milestone.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 import type { StoredPriority } from '../../../store/types.js';
@@ -31,6 +35,8 @@ export interface GoalsPageData {
   priorities: GoalPriorityRow[];
   /** `/api/goal-progress?priorityId=` results, keyed by `priorityId`. */
   progress: Record<string, GoalProgressView[]>;
+  /** The dated block from the same `/api/goals` response; `null` while no block has dates. */
+  mesocycle: MesocycleView | null;
 }
 
 export interface GoalTargetRow {

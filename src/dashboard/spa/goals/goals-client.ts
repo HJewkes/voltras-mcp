@@ -9,7 +9,7 @@
  * needs, which is too much to compute once per priority server-side without a
  * param. The page fetches the list, then one progress call per priority.
  */
-import type { GoalProgressView } from '../../read-models/index.js';
+import type { GoalProgressView, MesocycleView } from '../../read-models/index.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 
 async function json<T>(input: string): Promise<T> {
@@ -21,7 +21,13 @@ async function json<T>(input: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function fetchGoalPriorities(): Promise<{ priorities: GoalPriorityRow[] }> {
+export interface GoalsPayload {
+  priorities: GoalPriorityRow[];
+  /** The dated block the page is in; `null` while no block has dates. */
+  mesocycle: MesocycleView | null;
+}
+
+export function fetchGoalPriorities(): Promise<GoalsPayload> {
   return json('/api/goals');
 }
 

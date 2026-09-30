@@ -28,6 +28,7 @@ import { DashboardShell, defaultNavItems, type SessionState } from '@titan-desig
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { routeHash, type Route } from '../routing';
+import { PAGE_PADDING } from '../planner/PlanBuilderPage';
 import { PinnedLiveStripSlot } from './PinnedLiveStripSlot';
 
 /** Nav key ⇄ route. The nav rail renders exactly these, in this order. */
@@ -105,6 +106,11 @@ function useNavSelectedShim(activeKey: string): React.RefObject<HTMLDivElement> 
   return ref;
 }
 
+/** Inset on the page gutter, the same as the live strip, so both pinned rows line up. */
+function PinnedHeader({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return <div style={{ padding: `${PAGE_PADDING}px ${PAGE_PADDING}px 0` }}>{children}</div>;
+}
+
 /**
  * Shell chrome around a route's content.
  *
@@ -112,10 +118,14 @@ function useNavSelectedShim(activeKey: string): React.RefObject<HTMLDivElement> 
  * exactly one screen and must never scroll, while the operator surfaces are
  * documents. Both keep the same rail, so a wall that someone walks up to can
  * still reach the plan.
+ *
+ * `header` pins above the live strip on a scrolling route (VW-654): the page
+ * says what it is about first, then the strip flags the running set.
  */
 export function DashboardChrome(props: {
   route: Route;
   scroll?: boolean;
+  header?: React.ReactNode;
   children: React.ReactNode;
 }): React.JSX.Element {
   const snapshot = useStore(dashboardStore, (s) => s.snapshot);
@@ -146,6 +156,7 @@ export function DashboardChrome(props: {
       >
         {props.scroll === true ? (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {props.header != null && <PinnedHeader>{props.header}</PinnedHeader>}
             <PinnedLiveStripSlot route={props.route} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
               {props.children}

@@ -186,6 +186,7 @@ function baseData(): { data: GoalsPageData; benchPriority: StoredPriority } {
       [benchPriority.id]: [benchView, sessionsView],
       [armsPriority.id]: [curlView, hammerCurlView],
     },
+    mesocycle: null,
   };
   return { data, benchPriority };
 }
@@ -297,7 +298,7 @@ describe('GoalsView (VW-355)', () => {
   });
 
   it('renders an empty state with no priorities declared', () => {
-    const html = render({ priorities: [], progress: {} });
+    const html = render({ priorities: [], progress: {}, mesocycle: null });
     expect(html).toContain('No priorities declared');
   });
 });
@@ -319,6 +320,7 @@ describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
     const onlyBench: GoalsPageData = {
       priorities: [data.priorities[0]!],
       progress: { [benchPriority.id]: data.progress[benchPriority.id]! },
+      mesocycle: null,
     };
 
     const html = render(onlyBench);
@@ -333,6 +335,7 @@ describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
     const sessionsOnly: GoalsPageData = {
       priorities: [{ ...data.priorities[0]!, targets: [data.priorities[0]!.targets[1]!] }],
       progress: { [benchPriority.id]: [data.progress[benchPriority.id]![1]!] },
+      mesocycle: null,
     };
 
     expect(primaryTarget(sessionsOnly)).toBeNull();

@@ -22,6 +22,8 @@ export {
 
 export type { DashboardCatalogEntry } from './catalog-entry.js';
 
+export type { MesocycleView, MesocycleWeek } from './mesocycle.js';
+
 export { composeSessionTitle, type SessionTitleInput } from './session-title.js';
 
 export type {
