@@ -918,6 +918,16 @@ async function getSession(
   };
 }
 
+/** True when a slot running this session has a set open, the same read the dashboard snapshot uses. */
+function hasStreamingSet(state: ServerState, sessionId: string): boolean {
+  for (const slot of state.slots.values()) {
+    if (slot.live.session?.sessionId === sessionId && slot.live.snapshotSet() !== undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The session's pace against its attached plan (VW-290), or null when no
  * workout template is attached — there is then no plan to estimate a length,
@@ -954,7 +964,7 @@ async function resolveSessionPace(
             set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
         )
         .map((set) => ({ exerciseId: set.exerciseId, endedAtMs: Date.parse(set.endedAt) })),
-      liveSetActive: false,
+      liveSetActive: session.endedAt === undefined && hasStreamingSet(state, session.id),
     },
     state.exercises,
   );

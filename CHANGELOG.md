@@ -37,6 +37,10 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- `session.get` on an in-progress session no longer reports pace `idle` while your first set
+  is streaming. It reads the same live set the dashboard does, and an ended session still
+  reads its final verdict (VW-703).
+
 - The weekly check-in and the Sunday review now anchor to your local Sunday. West of UTC, a
   Saturday-evening check-in used to land in the following week, because the anchor counted
   back from the UTC weekday. The review's end-of-week cutoff and its "last proposal before
