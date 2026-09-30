@@ -8,7 +8,9 @@
 // Every protocol-shaped fixture below is SYNTHETIC — invented for this file,
 // matching no value this device uses. A guard whose test fixtures are real
 // values publishes the thing it exists to keep unpublished.
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -19,6 +21,7 @@ import {
   checkToolNames,
   extractPathCitations,
 } from '../../../scripts/lib/docs-checks.mjs';
+import { documentedFiles, historical } from '../../../scripts/lib/docs-pages.mjs';
 import { findEncodedValues } from '../../docs/protocol-guard.js';
 import { ANALYTICS_PIPELINE_IDS } from '../../docs/public-vocabulary.js';
 
@@ -179,6 +182,46 @@ describe('checkProtocolLeakage', () => {
   it('fires on a synthetic command code', () => {
     const findings = checkProtocolLeakage('writes cmd_5e to the unit', options);
     expect(findings[0].message).toContain('command-code');
+  });
+});
+
+describe('documentedFiles', () => {
+  it('scans a changelog fragment, so a value in one fails before the release fold', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vw704-docs-'));
+    try {
+      mkdirSync(join(root, 'changelog.d'));
+      writeFileSync(
+        join(root, 'changelog.d', 'VW-1.md'),
+        '---\nsection: Fixed\n---\n\n- The frame now reads `de ad be ef` (VW-1).\n',
+      );
+
+      const findings = documentedFiles(root).flatMap((file: string) => {
+        const path = relative(root, file);
+        const text = readFileSync(file, 'utf8');
+        return checkProtocolLeakage(text, {
+          path,
+          findEncodedValues,
+          allowed: new Set<string>(),
+        }).map((finding: object) => ({ path, ...finding }));
+      });
+
+      expect(findings).toEqual([
+        {
+          path: 'changelog.d/VW-1.md',
+          line: 5,
+          check: 'protocol',
+          message: 'byte-sequence shaped token on a published page',
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a fragment as history, like the CHANGELOG.md it folds into', () => {
+    expect(historical('changelog.d/VW-1.md')).toBe(true);
+    expect(historical('CHANGELOG.md')).toBe(true);
+    expect(historical('docs/a.md')).toBe(false);
   });
 });
 

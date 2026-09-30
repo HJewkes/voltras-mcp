@@ -14,51 +14,45 @@ Entries name the pull request that shipped them. Anything not listed did not cha
 
 ## How to write an entry
 
-Entries are hand-written. There is no generator, no changeset tooling and no release
-workflow: this file is the record a reader trusts, so a human writes it.
+Entries are hand-written. This file is the record a reader trusts, so a human writes each
+entry; the only tooling files it into place.
 
 - Write what a **user** can now do, now sees, or no longer has to work around. Not which
   file changed and not how it was implemented. "The rest timer now announces the last ten
   seconds" is an entry; "refactored `timer-tools.ts`" is not.
-- Put it under `## [Unreleased]`, grouped **Added / Changed / Fixed / Removed**. Add only
-  the groups the release actually has.
+- Add it as a new file, `changelog.d/<ticket>.md` (for example `changelog.d/VW-123.md`),
+  not as an edit to this file. Its front matter names the group, one of **Added / Changed /
+  Deprecated / Removed / Fixed / Security**, and its body is the entry, one list item:
+
+  ```markdown
+  ---
+  section: Fixed
+  ---
+
+  - The rest timer no longer skips its last ten seconds (VW-123, #456).
+  ```
+
+  Two pull requests that each add their own file never conflict. Two that each edit the
+  same list here always did.
+
 - Name the pull request that shipped it, as `(#123)`, or the ticket and the PR when both
   exist.
 - **A change with no user-visible effect gets no entry, and that is fine.** Refactors,
   test-only changes and internal renames belong in `git log`, not here. Padding this file
   to prove work happened makes it useless for the thing it is for.
-- On release, rename `[Unreleased]` to the new version with its date, bump
-  `package.json`, and open a fresh empty `[Unreleased]`.
+- On release, `npm run changelog:fold -- --version <x.y.z>` moves `[Unreleased]` and every
+  fragment into a new `## [x.y.z] - <date>` section, leaves an empty `[Unreleased]` above
+  it and deletes the fragments. Bump `package.json` in the same commit.
 
-`npm run changelog:check` enforces the mechanical half of this in CI: the version in
-`package.json` has a section, sections run newest first, and no released section is empty.
-An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
-entry is written from the user's point of view is a review question, not a check.
+Until the fragment transition ends, an entry written straight into `[Unreleased]` below
+still passes; new entries go in `changelog.d/`.
 
-### Fixed
-
-- `session.get` on an in-progress session no longer reports pace `idle` while your first set
-  is streaming. It reads the same live set the dashboard does, and an ended session still
-  reads its final verdict (VW-703).
-
-- The weekly check-in and the Sunday review now anchor to your local Sunday. West of UTC, a
-  Saturday-evening check-in used to land in the following week, because the anchor counted
-  back from the UTC weekday. The review's end-of-week cutoff and its "last proposal before
-  this week" edge now sit on local midnight too (VW-508).
-
-- A baseline no longer counts a failure from a set that was not constant load. Damper and
-  isokinetic sets, where speed says nothing about how close you were to failing, are no longer
-  read as failure anchors. Chains and eccentric-overload stalls are still recorded but stay out of
-  the baseline and its fitted velocity threshold, because a constant-load profile does not
-  transfer to them. `baselines.recalc { reharvest: true }` re-labels history under the new
-  rule (VW-541).
-
-- The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
-  16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
-  top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
-  (0 px tall, now 16). Cause: titan's published build dropped every size, weight and leading
-  override a component passed to its text; fixed upstream in `@titan-design/react-ui` 0.18.1
-  and picked up here. Nothing was redesigned, the intended styles now apply (VW-420).
+`npm run changelog:check` enforces the mechanical half of this in CI: every fragment has a
+known group and one list item, the version in `package.json` has a section, sections run
+newest first, no released section is empty, and no group of entries sits outside a version
+section. An empty `[Unreleased]` and an empty `changelog.d/` are the normal state after a
+release and never fail. Whether an entry is written from the user's point of view is a
+review question, not a check.
 
 ## [Unreleased]
 
