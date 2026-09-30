@@ -68,7 +68,7 @@ entry is written from the user's point of view is a review question, not a check
 
 - The weekly report now shows where each goal stands. With priorities declared, `report.weekly`
   adds a Goals section with one line per accepted target, such as `goal: seated row 190x8 by
-  Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a muscle
+Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a muscle
   priority. The status word is the same one the goals page shows. The section is left out when
   you have no priorities, and the JSON form carries the same lines as `goals` (VW-358).
 
@@ -160,6 +160,10 @@ entry is written from the user's point of view is a review question, not a check
   plan lint still count by catalog muscle group (`shoulders`).
 
 ### Fixed
+
+- The agent transcript export no longer refuses ordinary words such as "feedback" or plain
+  numbers such as 123456. A run of six or more hex characters is refused only when it mixes
+  digits with the letters a to f (VW-705).
 
 - Classifying an exercise into a ramp class on an empty exercise catalog now fails with
   `CATALOG_NOT_LOADED` instead of quietly answering upper-body compound for every lift. An id
