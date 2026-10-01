@@ -5,7 +5,8 @@ status: available
 sources:
   - scripts/lib/docs-checks.mjs
   - site/.vitepress/theme/status.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Page status
@@ -49,7 +50,10 @@ The [Coming soon](/coming-soon/) section collects the dashboard screens with thi
   not work. The word links back to this page.
 - Search results put the status word in front of a badged page's title.
 - The Sources footer lists the files the page's claims come from, and the date someone last
-  checked the page against them.
+  checked the page against them. A page whose every behavioural claim was checked against
+  source one by one also carries a `sourced` date, and the footer says so. A page without it
+  has only been spot-checked.
 - `npm run docs:check` fails when a page has no status, when an Experimental or Coming soon
-  page has no note, when a Coming soon page has no tracking issue, or when a listed source
-  file does not exist.
+  page has no note, when a Coming soon page has no tracking issue, when a listed source
+  file does not exist, or when a `lastVerified` or `sourced` date is not a real date or lies in the future
+  (`scripts/lib/docs-checks.mjs`).

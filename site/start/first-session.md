@@ -12,7 +12,9 @@ sources:
   - scripts/dashboard-mock-drive.mjs
   - docs/dashboard-drivers.md
   - src/state/auto-arm.ts
-lastVerified: 2026-09-19
+  - src/dashboard/spa/live-page/RestView.tsx
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Your first session
@@ -28,8 +30,8 @@ underneath, named so you can recognize them if you ask Claude to show its work.
 
 ## Option A: with a Voltra
 
-Power the device on and wake its screen — a sleeping unit doesn't advertise
-(`README.md`).
+Power the device on and wake its screen. The README advises this because a sleeping unit
+may not show up in a scan (`README.md`).
 
 1. **"Find my Voltra."** → [`device.scan`](/reference/device) (default 10-second window),
    then [`device.connect`](/reference/device) with the id it found. `device.connect`
@@ -47,16 +49,21 @@ Power the device on and wake its screen — a sleeping unit doesn't advertise
    Read that literally: `watch` triggers are advisory cues, not an auto-stop — they fire
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
-   a hardware run tore the cable mid-eccentric; the set now always ends on your own call
-   or the device's own signal (`src/schemas/set.ts`, `src/state/event-bridge.ts:1451`).
+   a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
+   `src/state/event-bridge.ts:1489`). In a normal session a set ends on your own call or on
+   the device's own signal. The server also closes it as partial after 90 seconds with no
+   activity, and a `watch` block can raise that limit but not lower it
+   (`src/state/event-bridge.ts:260-284`). Other paths close a set too, such as
+   `session.end` (step 7) and an exit from guided load
+   (`src/state/guided-load-reap.ts:58`), so this list is not complete.
    Lift.
    - The set's header weight tracks the unit until your first rep closes, then freezes.
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
-     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1756-1760`).
-5. **"Done."** → [`set.end`](/reference/set). This persists the set and every rep with
-   its telemetry.
+     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1808-1812`).
+5. **"Done."** → [`set.end`](/reference/set). This saves the set and its reps with their
+   telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
    [`timer.start`](/reference/timer), non-blocking, which fires an event when it elapses.
 7. **"That's the workout."** → [`session.end`](/reference/session). Any set still open is
@@ -107,8 +114,8 @@ database and a non-default dashboard port produced:
 [drive] workout complete: 3 sets driven through the real pipeline
 ```
 
-The `mid` line per set is where reps are actually accruing from mock telemetry — the
-`start`/`end` lines only mark the set boundary itself.
+The `mid` line per set shows reps accruing from mock telemetry. The `start` and `end` lines
+mark the set boundary.
 
 `device.scan` → `device.connect` → `session.start` → (`set.start` → `set.end`) × 3 →
 `session.end` — the same call sequence as Option A, just with no BLE underneath.
@@ -125,22 +132,22 @@ attached — for the planned path, see
 
 `VMCP_AUTO_ARM` is `on` by default. Reps start within about a second of a weight change
 on the unit, and a model round-trip to call `set.start` is slower than that — so on an
-open session with no set open, the server opens one itself the moment it sees a rep, and
-the rep that triggered it is _not_ dropped. It waits for a second rep to agree with the
-first before adopting either, because a single rope-positioning pull looks exactly like
+open session with no set open, the server opens one itself once it sees reps, and the rep
+that triggered it is _not_ dropped. It waits for a second rep to agree with the first
+before adopting either, because a single rope-positioning pull looks exactly like
 a rep until another rep disagrees with it (`src/state/auto-arm.ts`, VW-164/VW-181). If
-you didn't call `set.start` yourself and a set appears anyway, this is why — it isn't a
-bug, and the rep count is still accurate. The wall dashboard marks such a set with a
-compact "AUTO" badge, on the live header while it's active and on the rest recap once it
-closes.
+you didn't call `set.start` yourself and a set appears anyway, this is why. It isn't a
+bug, and the reps that opened the set are counted in it. The wall dashboard marks such a set with a
+compact "AUTO" badge on the live header while it's active. The rest recap shows the same
+label once it closes, unless the set has a warm-up, probe or technique label instead
+(`src/dashboard/spa/live-page/RestView.tsx`).
 
 ## Set purpose
 
 `set.start` takes an optional `setPurpose`: `working`, `warmup`, `probe`, or `technique`
-(`src/schemas/set.ts`). Omit it and you get `working`, the default. This is the one
-piece of set-level intent the device can't infer on its own — a warm-up, a probe, and a
-working set look identical to the hardware — and it decides whether the set counts toward
-progression.
+(`src/schemas/set.ts`). Omit it and you get `working`, the default. The device can't infer
+it, because a warm-up, a probe and a working set look identical to the hardware. It decides
+whether progression scores the set.
 
 ## Check-in at the end of a session
 
@@ -152,10 +159,10 @@ session.
 The question set comes from RP's client check-in: four free-text prompts — how it went,
 how you felt, whether anything felt off, and any questions — plus four questions on RP's
 coarse 3-point scale (`low`/`medium`/`high`, never a 5- or 10-point scale): how you're
-feeling about the next session or week, soreness, joint discomfort, and motivation. "How
-did it go?" is never actually asked — completion (loads, reps, sets) is already
-telemetry-derivable, so Claude shows you your own numbers back instead, and the code
-exists only to store whatever you volunteer on top of that. Of the four 3-point
+feeling about the next session or week, soreness, joint discomfort, and motivation. The
+tool tells Claude not to ask "How did it go?", because completion (loads, reps, sets) is
+already in the telemetry. Claude should show you your own numbers back instead, and that
+answer exists only to store whatever you volunteer (`src/tools/session-tools.ts`). Of the four 3-point
 questions, soreness, joint discomfort, and motivation are withheld entirely until you have
 trained on an earlier day: every session of your first training day skips them, since that
 early the answers are uniformly positive and

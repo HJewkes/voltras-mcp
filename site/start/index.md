@@ -6,7 +6,8 @@ sources:
   - README.md
   - package.json
   - src/tool-registry.ts
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Get started
@@ -20,7 +21,7 @@ copy. ([README.md](https://github.com/HJewkes/voltras-mcp/blob/main/README.md))
 ## What you need
 
 - **A Voltra, or the mock adapter.** `VOLTRA_ADAPTER=mock` replaces the device with an
-  in-process one, so you can try everything without hardware.
+  in-process one, so you can try the whole tool surface without hardware.
 - **Node 22.5.0 or later** (`engines` in `package.json`).
 - **Claude Code**, as the MCP client.
 

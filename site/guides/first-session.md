@@ -6,7 +6,8 @@ audience: [lifter]
 status: available
 sources:
   - site/start/first-session.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 search: false
 ---
 

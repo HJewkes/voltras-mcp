@@ -7,7 +7,8 @@ sources:
   - src/dashboard/spa/body/BodyPage.tsx
   - src/dashboard/spa/goals/GoalsPage.tsx
   - src/dashboard/spa/panels/fatigue-view.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Coming soon

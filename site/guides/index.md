@@ -6,7 +6,8 @@ sources:
   - src/tools/server-tools.ts
   - src/tools/plan-tools.ts
   - src/dashboard/README.md
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Guides

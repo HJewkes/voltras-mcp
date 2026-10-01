@@ -7,7 +7,8 @@ status: available
 sources:
   - site/start/install.md
   - site/start/launch-options.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 search: false
 ---
 

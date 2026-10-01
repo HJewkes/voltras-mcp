@@ -13,7 +13,9 @@ sources:
   - src/docs/preview-seeds.ts
   - justfile
   - src/dashboard/spa/panels/DashboardChrome.tsx
-lastVerified: 2026-09-27
+  - src/server.ts
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Try it without a device
@@ -38,8 +40,9 @@ The tool surface is the same as on real hardware, plus two mock-only tools,
 (`MOCK_TOOL_NAMES` in `src/tool-registry.ts`). With the mock adapter registered, you can
 follow [your first session](/start/first-session) from start to finish.
 
-`just sim` is a one-line alternative. It starts the launcher with the mock adapter, a
-throwaway database under `/tmp`, and the dashboard on an OS-assigned port (`justfile`).
+`just sim` is a one-line alternative. It starts the launcher with the mock adapter and a
+throwaway database under `/tmp`. It sets `VMCP_DASHBOARD_PORT=0`, which turns the dashboard
+off (`justfile`, `src/server.ts`), so use a driver below to watch a workout.
 
 ## Watch a workout on the dashboard
 

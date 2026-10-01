@@ -12,7 +12,11 @@ sources:
   - justfile
   - src/store/sqlite-store.ts
   - src/dashboard/server.ts
-lastVerified: 2026-09-27
+  - src/server.ts
+  - scripts/preflight.mjs
+  - scripts/lib/preflight-gates.mjs
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Launch options
@@ -29,10 +33,13 @@ Pick one of the two, not both.
 
 ## The launcher script
 
-Every launch route ends in one script, `plugins/voltras-channel/bin/voltras-mcp-launch.sh`.
-It builds the dashboard when `dist/spa` is missing or stale, sources `.launch.env` from the
-repo root when that file exists, then runs the built server. `scripts/voltra-pt` and the
-`just` recipes both call it. ([README.md § Launching](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#launching))
+The plugin route and the `just` recipes run one script,
+`plugins/voltras-channel/bin/voltras-mcp-launch.sh`. `scripts/voltra-pt` reaches it through the
+plugin. When the script can find the repo root, it sources `.launch.env` from there if that
+file exists, builds the dashboard when `dist/spa` is missing or stale, then runs the built
+server. When it falls back to an `npm link`ed `voltras-mcp` on your `PATH`, it runs that
+directly and does neither. Plain registration from [Install](/start/install) does not use
+the script. ([README.md § Launching](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#launching))
 
 The launcher turns the dashboard off unless something asks for it. It sets
 `VMCP_DASHBOARD_PORT=off` when that variable is unset and `VOLTRA_PT` is not `1`. The
@@ -79,18 +86,22 @@ lift --print "list my sessions today"   # non-interactive query
 
 The launcher runs the server as the `voltras-channel` plugin and passes
 `--channels plugin:voltras-channel@voltras-local` to Claude Code (`scripts/voltra-pt`). It
-refuses to start in two cases, and prints the fix for each:
+stops without launching when the `claude` command is not on your `PATH`, or when the
+pre-flight below reports a failure. In this mode it also stops, and prints the fix, in these
+cases:
 
 - The `voltras-channel` plugin is not installed.
 - A standalone `voltras` server is also registered with `claude mcp add`. The plugin ships
-  its own server, so the two would run against the same database and dashboard port. Run
+  its own server, so the two would run against the same database. Run
   `claude mcp remove voltras` to clear it.
 
-Before it launches, the script runs the bench pre-flight. The pre-flight rebuilds the
-`whisper` binary if `npm ci` removed it, then prints one line per check: voice, Node
-version, push channel, spoken cues and dashboard port. Only the `whisper` and Node checks
-stop the launch. `VOLTRA_PT_SKIP_PREFLIGHT=1` skips the pre-flight.
-([docs/bench-preflight.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/bench-preflight.md))
+Before it launches, the script runs the bench pre-flight. It first rebuilds the `whisper`
+binary if `npm ci` removed it (`scripts/ensure-whisper.mjs`). The pre-flight then prints one
+line per check: voice, Node version, push channel, spoken cues, dashboard port, and whether
+the database is newer than the build. Three results stop the launch: a missing `whisper`, a
+Node that is too old, and a database newer than the build. The others print a warning.
+`VOLTRA_PT_SKIP_PREFLIGHT=1` skips the pre-flight.
+(`scripts/preflight.mjs`, `scripts/lib/preflight-gates.mjs`)
 
 ### Why not the development-channel flag
 
@@ -112,18 +123,18 @@ cp .launch.env.example .launch.env
 
 ## just recipes
 
-`just` is optional. Each recipe is a one-line wrapper you can run directly instead.
+`just` is optional. Each recipe wraps commands you can run directly instead (`justfile`).
 ([README.md § just recipes](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#just-recipes))
 
-| Recipe           | Plain command                                                |
-| ---------------- | ------------------------------------------------------------ |
-| `just build`     | `npm run build`                                              |
-| `just dashboard` | `npm run build:dashboard`                                    |
-| `just test`      | `npm test`                                                   |
-| `just typecheck` | `npm run typecheck`                                          |
-| `just lint`      | `npm run lint`                                               |
-| `just sim`       | mock adapter + dashboard on an OS-assigned port, isolated DB |
-| `just bench`     | `node scripts/preflight.mjs`, then the plugin launcher       |
+| Recipe           | Plain command                                          |
+| ---------------- | ------------------------------------------------------ |
+| `just build`     | `npm run build`                                        |
+| `just dashboard` | `npm run build:dashboard`                              |
+| `just test`      | `npm test`                                             |
+| `just typecheck` | `npm run typecheck`                                    |
+| `just lint`      | `npm run lint`                                         |
+| `just sim`       | mock adapter, dashboard off, scratch database          |
+| `just bench`     | `node scripts/preflight.mjs`, then the plugin launcher |
 
 ## Registering directly in ~/.claude.json
 
