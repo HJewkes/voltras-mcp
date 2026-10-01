@@ -14,7 +14,9 @@
 //
 // Rep pushes are pinned (scripts/lib/mock-burst.mjs): the mock device parks
 // after connect, and each `set.start` releases one burst of exactly
-// `pinnedReps` reps, so two exports of one exchange are byte-identical.
+// `pinnedReps` reps and lets it finish before the next step, so two exports
+// of one exchange are byte-identical. As on hardware, a rep's push fires when
+// the next rep begins, so the last rep's push arrives with `set.end`.
 //
 // Usage:
 //   npm run build
@@ -45,6 +47,7 @@ const MOCK_DEVICE = { deviceId: 'mock-voltra-001', deviceName: 'VTR-Mock', weigh
 const BOOT_SETTLE_MS = 2000;
 const REQUEST_TIMEOUT_MS = 20000;
 const AWAIT_CHANNEL_TIMEOUT_MS = 15000;
+const BURST_SETTLE_MS = 1500;
 const SCAN_REFERENCE = '$scan.firstDeviceId';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -259,6 +262,8 @@ async function afterCall(step, outcome, context) {
   }
   if (step.call === 'set.start' && context.pinnedReps && context.deviceId) {
     await releaseBurst(context.controlPort, context.deviceId, context.pinnedReps);
+    // The lifter finishes every rep before the exchange moves on, so a later set.end never cuts one short.
+    await sleep(burstDurationMs(context.pinnedReps) + BURST_SETTLE_MS);
   }
 }
 

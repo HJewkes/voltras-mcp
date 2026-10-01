@@ -18,9 +18,9 @@
     },
     { "call": "set.start", "args": {} },
     { "awaitChannel": "rep_finalized", "count": 2, "showFields": ["rep_count"] },
-    { "assistant": "Two reps in. Finish when you are ready." },
+    { "assistant": "That is all three reps. Ending the set." },
     { "call": "set.end", "args": {} },
     { "awaitChannel": "rep_finalized", "count": 1, "showFields": ["rep_count"] },
-    { "assistant": "Three reps, set saved." }
+    { "assistant": "Set saved with three reps." }
   ]
 }

@@ -194,6 +194,8 @@ const HEX_RUN = /[0-9a-f]{6,}/gi;
 const HEX_LITERAL = /0x[0-9a-f]{4,}/i;
 const BASE64_RUN = /[A-Za-z0-9+/]{25,}/;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+const PATH_SHAPED = /^(?:~|\.{1,2})?[\\/]|^[A-Za-z]:[\\/]|[\\/][^\\/\s]*[\\/]/;
 
 export function assertKeyAllowed(key: string): void {
   if (DENIED_KEY.test(key)) throw new ScreenSafetyError('KEY_DENIED', `key "${key}"`);
@@ -221,8 +223,15 @@ export function assertValueSafe(name: string, value: unknown): void {
   if (value.length > MAX_VALUE_CHARS) {
     throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" is over ${MAX_VALUE_CHARS} chars`);
   }
-  const shape = encodedShape(value);
+  const shape = encodedShape(value) ?? localShape(value);
   if (shape) throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" holds ${shape}`);
+}
+
+/** Shown values carry no wall-clock dates and no filesystem paths; authored text may. */
+function localShape(text: string): string | null {
+  if (ISO_DATE.test(text)) return 'a date';
+  if (PATH_SHAPED.test(text)) return 'a path';
+  return null;
 }
 
 function isPrimitive(value: unknown): value is string | number | boolean {

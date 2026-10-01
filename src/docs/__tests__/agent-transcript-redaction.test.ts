@@ -240,7 +240,23 @@ describe('gate 3: named result and push fields', () => {
     expect(code).toBe(expected);
   });
 
-  it.each(['feedback', 'defaced', 'deadbeef', '123456', 'see feedback at 123456'])(
+  it.each([
+    ['an ISO timestamp', '2001-02-03T04:05:06Z'],
+    ['an ISO date', '2001-02-03'],
+    ['an absolute path', '/tmp/x'],
+    ['a home path', '~/store'],
+    ['a relative path', './scratch'],
+    ['a nested path', 'a/b/c'],
+    ['a drive path', 'C:\\x'],
+  ])('refuses a named result field holding %s', (_label, value) => {
+    const steps = [callStep('set.start', {}, { status: value }, { showResult: ['status'] })];
+
+    const code = refusalCode(() => buildTranscript(recording(steps), TOOLS_LIST));
+
+    expect(code).toBe('VALUE_REFUSED');
+  });
+
+  it.each(['feedback', 'defaced', 'deadbeef', '123456', 'see feedback at 123456', 'lb/s', '12:30'])(
     'lets the ordinary text %s through',
     (value) => {
       const steps = [callStep('set.start', {}, { status: value }, { showResult: ['status'] })];
