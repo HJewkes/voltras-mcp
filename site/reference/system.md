@@ -42,12 +42,12 @@ Idempotent — calling on a stopped listener succeeds quietly. Safe to invoke fr
 
 Turn the deterministic spoken coaching cues on or off WITHOUT restarting the server.
 
-`cues` is the master switch (set intros, target-hit, slowdown, set-complete); `midSet` separately allows the two categories that fire while the lifter is still under load (`target_hit`, `slowdown`) — those stay silent unless BOTH are on, because every cue mutes the mic for its duration and that blind spot is worst mid-set. Omitted fields are left unchanged; a call with no fields just reports current state. `VMCP_CUES` / `VMCP_CUES_MIDSET` are only the startup defaults (both `off`). macOS-only: cues never speak on other platforms regardless of these settings. `server.health` reports the same values.
+`cues` is the master switch (set intros, target-hit, slowdown, set-complete); `midSet` separately allows the two categories that fire while the lifter is still under load (`target_hit`, `slowdown`) — those stay silent unless BOTH are on, because every cue mutes the mic for its duration and that blind spot is worst mid-set. `midSet: risk` lets mid-set lines speak only through the cue-delivery layer (`VMCP_CUE_DELIVERY=on`), and only on a set whose set-risk reading is green. Omitted fields are left unchanged; a call with no fields just reports current state. `VMCP_CUES` / `VMCP_CUES_MIDSET` are only the startup defaults (both `off`). macOS-only: cues never speak on other platforms regardless of these settings. `server.health` reports the same values.
 
 **Parameters**
 
 - `cues` — `on` | `off`, optional.
-- `midSet` — `on` | `off`, optional.
+- `midSet` — `on` | `off` | `risk`, optional.
 
 ## `system.lease_status`
 

@@ -84,12 +84,17 @@ function decide(ledger: CueLedger, request: BudgetRequest): BudgetDecision {
 
 function intraRefusal(ledger: CueLedger, request: BudgetRequest): RefuseReason | null {
   const { slot, setId, settings, line } = request;
-  if (!settings.midSetEnabled) return 'midset_disabled';
+  if (!midSetAllowed(settings)) return 'midset_disabled';
   if (!request.intraSetPermit({ slot, setId, settings })) return 'intra_permit_denied';
   if (line.kind === 'focus' && line.focusId !== preSetFocus(ledger, request)) {
     return 'new_focus_intra';
   }
   return null;
+}
+
+// VW-614: `risk` passes here and leaves the decision to the permit; an unknown mode reads as `off`.
+function midSetAllowed(settings: CueSettings): boolean {
+  return settings.midSetMode === 'on' || settings.midSetMode === 'risk';
 }
 
 /** The first focus admitted in this set's pre interval, or `null` when none was spoken. */

@@ -37,6 +37,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { CuesMidSetMode } from '../config.js';
 import { ServerHealthInput } from '../schemas/server.js';
 import { noopChannelPublisher } from '../state/channel-publisher.js';
 import type { ServerState } from '../state/server-state.js';
@@ -190,10 +191,10 @@ function resolveChannelStatus(state: ServerState): ChannelStatus {
  * missing `VMCP_CUES_MIDSET` went unnoticed through a bench setup: mid-set cues
  * that never fire produce no error, just silence.
  */
-function resolveCueStatus(state: ServerState): { cues: 'on' | 'off'; cuesMidSet: 'on' | 'off' } {
+function resolveCueStatus(state: ServerState): { cues: 'on' | 'off'; cuesMidSet: CuesMidSetMode } {
   return {
     cues: state.cueSettings.enabled ? 'on' : 'off',
-    cuesMidSet: state.cueSettings.midSetEnabled ? 'on' : 'off',
+    cuesMidSet: state.cueSettings.midSetMode,
   };
 }
 

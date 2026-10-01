@@ -50,7 +50,7 @@ function harness(overrides: Partial<DeliveryEmitterDeps> & { tier?: Tier } = {})
     },
     platform: 'darwin',
     clock: () => 1_000,
-    settings: { enabled: true, midSetEnabled: true },
+    settings: { enabled: true, midSetEnabled: true, midSetMode: 'on' },
     selector: new CueSelector({ rng: () => 0 }),
     tierFor: () => Promise.resolve(tier),
     exerciseFor: () => 'row',
@@ -174,7 +174,10 @@ describe('DeliveryEmitter', () => {
   });
 
   it.each(TIERS)('speaks no intra-set line to a %s lifter with mid-set cues off', async (tier) => {
-    const h = harness({ tier, settings: { enabled: true, midSetEnabled: false } });
+    const h = harness({
+      tier,
+      settings: { enabled: true, midSetEnabled: false, midSetMode: 'off' },
+    });
     await warmUp(h);
     await tick(h, started('work'));
     await eachTick(h, reps('work', 8));
@@ -184,7 +187,7 @@ describe('DeliveryEmitter', () => {
   });
 
   it.each([
-    ['cues are off', { settings: { enabled: false, midSetEnabled: true } }],
+    ['cues are off', { settings: { enabled: false, midSetEnabled: true, midSetMode: 'on' } }],
     ['the host is not macOS', { platform: 'linux' as const }],
   ])('speaks nothing when %s', async (_, overrides) => {
     const h = harness(overrides);

@@ -81,7 +81,8 @@ needs cmake. ([README.md § Troubleshooting](https://github.com/HJewkes/voltras-
 
 Call `server.health` and read `cues` and `cuesMidSet`. Both default to `off`, and cues work
 on macOS only. `system.set_cues` turns either one on without a restart. The mid-set
-categories, `target_hit` and `slowdown`, need both on.
+categories, `target_hit` and `slowdown`, need both on. With `cuesMidSet` set to `risk`, they
+speak only when `VMCP_CUE_DELIVERY=on`, and only on a set read as green.
 ([README.md § Troubleshooting](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#troubleshooting))
 
 ## Back up the training store

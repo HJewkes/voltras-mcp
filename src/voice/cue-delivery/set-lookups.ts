@@ -13,7 +13,7 @@ import type { SetSignals } from './delivery-emitter.js';
 
 export type SetLookupLive = Pick<
   LiveState,
-  'set' | 'snapshotDevice' | 'snapshotSession' | 'snapshotCompletedSets'
+  'set' | 'snapshotDevice' | 'snapshotSession' | 'snapshotCompletedSets' | 'setRiskReadingFor'
 >;
 
 interface TrackedSet {

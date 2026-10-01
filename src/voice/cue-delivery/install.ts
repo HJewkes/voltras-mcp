@@ -20,6 +20,7 @@ import { installCueTee } from '../cue-emitter.js';
 import type { CueSettings } from '../cue-settings.js';
 import { CueSelector } from '../cue-templates.js';
 import { DeliveryEmitter, DeliveryTee, type SetContext } from './delivery-emitter.js';
+import { riskIntraSetPermit } from './risk-permit.js';
 import { exerciseOf, lifterOf, repsOf, signalsOf, type SetLookupLive } from './set-lookups.js';
 
 /** The slice of server state the cue layer reads; `ServerState` satisfies it. */
@@ -66,6 +67,9 @@ function buildDeliveryEmitter(state: CueLayerState, opts: CueLayerOptions): Deli
     exerciseFor: (context) => withLive(liveOf(context), null, (l) => exerciseOf(l, context.setId)),
     repsFor: (context) => withLive(liveOf(context), [], (l) => repsOf(l, context.setId)),
     signalsFor: (context) => withLive(liveOf(context), {}, (l) => signalsOf(l, context.setId)),
+    intraSetPermit: riskIntraSetPermit((slot, setId) =>
+      state.slots.get(slot)?.live.setRiskReadingFor(setId),
+    ),
   });
 }
 

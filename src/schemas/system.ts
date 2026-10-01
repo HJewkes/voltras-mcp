@@ -59,7 +59,7 @@ export type SystemSpeakInputType = z.infer<typeof SystemSpeakInput>;
 export const SystemSetCuesInput = z
   .object({
     cues: z.enum(['on', 'off']).optional(),
-    midSet: z.enum(['on', 'off']).optional(),
+    midSet: z.enum(['on', 'off', 'risk']).optional(),
   })
   .strict();
 

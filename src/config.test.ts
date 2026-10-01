@@ -203,6 +203,11 @@ describe('loadConfig', () => {
     expect(cfg.cuesMidSet).toBe('on');
   });
 
+  it('honors VMCP_CUES_MIDSET="risk" when explicitly set (VW-614)', () => {
+    const cfg = loadConfig({ VMCP_CUES_MIDSET: 'risk' });
+    expect(cfg.cuesMidSet).toBe('risk');
+  });
+
   it('defaults VMCP_AUTO_ARM to "on" (VW-164 — losing the first reps of a set is worse)', () => {
     const cfg = loadConfig({ HOME: '/home/test' });
     expect(cfg.autoArm).toBe('on');
@@ -292,6 +297,7 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/on/);
+    expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/risk/);
   });
 
   it('leaves every TrueCoach credential absent by default', () => {

@@ -22,7 +22,7 @@ function request(
     slot: 'primary',
     setId: 'set-1',
     tier: 'beginner',
-    settings: { enabled: true, midSetEnabled: true },
+    settings: { enabled: true, midSetEnabled: true, midSetMode: 'on' },
     intraSetPermit: defaultIntraSetPermit,
     ...overrides,
   };
@@ -130,7 +130,7 @@ describe('cue budget', () => {
       request({
         interval: 'intra',
         line: focus('full_range'),
-        settings: { enabled: true, midSetEnabled: false },
+        settings: { enabled: true, midSetEnabled: false, midSetMode: 'off' },
         intraSetPermit: () => true,
       }),
     );
@@ -148,6 +148,20 @@ describe('cue budget', () => {
     );
 
     expect(decision).toEqual({ admit: false, reason: 'intra_permit_denied' });
+  });
+
+  it('leaves the intra-set decision to the permit under the risk mode (VW-614)', () => {
+    const settings = { enabled: true, midSetEnabled: false, midSetMode: 'risk' } as const;
+    const line = announcement('slowdown');
+
+    const permitted = admit(
+      createLedger(),
+      request({ interval: 'intra', line, settings, intraSetPermit: () => true }),
+    );
+    const byDefault = admit(createLedger(), request({ interval: 'intra', line, settings }));
+
+    expect(permitted).toEqual({ admit: true, reason: 'within_budget' });
+    expect(byDefault).toEqual({ admit: false, reason: 'intra_permit_denied' });
   });
 
   it('keeps separate budgets for two slots in the same ledger', () => {
