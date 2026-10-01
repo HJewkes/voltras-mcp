@@ -17,6 +17,11 @@ function engineeringDefault(id: string, text: string, reason: string): Fragment 
   return { id, text, sourceKind: 'engineering-default', sourceRef: reason };
 }
 
+// The owner accepted the auto-arm source labels as worded in VW-501's plan (question Q3).
+function ownerRuling(id: string, text: string): Fragment {
+  return { id, text, sourceKind: 'owner-ruling', sourceRef: 'VW-501' };
+}
+
 export const LIVE_FRAGMENTS = {
   exertionWarmingUp: engineeringDefault(
     'live.exertion.warming-up',
@@ -51,6 +56,12 @@ export const LIVE_FRAGMENTS = {
     '{{text}} (assumed tier)',
     NOT_A_READING,
   ),
+  armSourcePlanIntent: ownerRuling(
+    'live.arm-source.plan-intent',
+    'Plan · {{intent}} · stop {{stopPct}}%',
+  ),
+  armSourcePlan: ownerRuling('live.arm-source.plan', 'Plan · stop {{stopPct}}%'),
+  armSourceDefault: ownerRuling('live.arm-source.default', 'Default · stop {{stopPct}}% (assumed)'),
 } as const satisfies Record<string, Fragment>;
 
 export const CALIBRATION_FRAGMENTS = {

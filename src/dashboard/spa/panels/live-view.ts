@@ -33,6 +33,7 @@ import {
   type Snapshot,
 } from '../adapter';
 import { type LiveModel as StoreLiveModel } from '../live-stream';
+import { armSourceLabel } from '../live-page/live-copy';
 import {
   formatRepsRange,
   isRealCompletedSet,
@@ -195,6 +196,7 @@ function mapLive(
   repVelocities: number[],
   autoCreatedBy: 'guided_load' | 'idle_rep' | null,
   fatigueStop: FatigueStop,
+  armSource: string | null,
 ): LiveModel {
   return {
     velocity: live.velocity,
@@ -207,6 +209,7 @@ function mapLive(
     peakForce: live.peakForce,
     autoCreatedBy,
     fatigueStop,
+    armSource,
   };
 }
 
@@ -364,6 +367,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
           repVelocities,
           currentSet.autoCreatedBy,
           fatigueStopForSet(snapshot.sets.active?.watch, exerciseStopOf(snapshot)),
+          snapshot.sets.active ? armSourceLabel(snapshot.sets.active) : null,
         )
       : null,
     restElapsedMs,

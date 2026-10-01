@@ -221,6 +221,11 @@ export interface SnapshotActiveSet {
    * `ActiveSet.autoCreatedBy` (`state/live-state.ts`) for what each value means.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep';
+  /**
+   * Which source set an auto-armed set's watch (VW-720): its plan row, or the assumed
+   * default. Absent once an agent's own watch replaces it. See `ActiveSet.armDefaultsSource`.
+   */
+  armDefaultsSource?: 'plan_row' | 'default';
 }
 
 /**

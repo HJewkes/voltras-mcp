@@ -78,6 +78,8 @@ export interface LiveModel {
    * Optional so a fixture built before this field existed still type-checks.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
+  /** Which source set this auto-armed set's stop (VW-720), as `armSourceLabel` words it; null for none. */
+  armSource?: string | null;
 }
 
 /** A logged set on the session read-model. */
@@ -333,9 +335,14 @@ export function autoArmedBadge(
 /** Compact badge text for an auto-armed set — identical wherever the badge appears. */
 export const AUTO_ARM_BADGE_TEXT = 'AUTO';
 
-/** The badge's tooltip/title line, naming which auto-arm mechanism opened the set. */
-export function autoArmedTitle(source: 'guided_load' | 'idle_rep'): string {
-  return source === 'guided_load' ? 'Auto-armed · guided load' : 'Auto-armed · your reps';
+/** The badge's tooltip/title line: which auto-arm mechanism opened the set, then its stop's source. */
+export function autoArmedTitle(
+  source: 'guided_load' | 'idle_rep',
+  armSource: string | null = null,
+): string {
+  const mechanism =
+    source === 'guided_load' ? 'Auto-armed · guided load' : 'Auto-armed · your reps';
+  return armSource === null ? mechanism : `${mechanism} · ${armSource}`;
 }
 
 /**

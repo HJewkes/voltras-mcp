@@ -143,6 +143,33 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
+  describe('live.armSource (VW-720)', () => {
+    function withActiveSet(active: Snapshot['sets']['active']): LiveViewSources {
+      return sources({ snapshot: { ...snapshot(), sets: { active } }, live: liveWithRep(0.58) });
+    }
+
+    it('words the wire armDefaultsSource and its stop for the header', () => {
+      const model = mapStoreToDashboardModel(
+        withActiveSet({
+          reps: [],
+          autoCreatedBy: 'idle_rep',
+          armDefaultsSource: 'default',
+          watch: {
+            notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30, thresholdSource: 'default' }],
+          },
+        }),
+      );
+      expect(model?.live?.armSource).toBe('Default · stop 30% (assumed)');
+    });
+
+    it('is null for a set the server applied no source to', () => {
+      const model = mapStoreToDashboardModel(
+        withActiveSet({ reps: [], autoCreatedBy: 'idle_rep' }),
+      );
+      expect(model?.live?.armSource).toBeNull();
+    });
+  });
+
   describe('session.unit follows the store displayUnit (VW-63)', () => {
     it('defaults to lbs with no displayUnit in sources', () => {
       const model = mapStoreToDashboardModel(sources());
