@@ -10,7 +10,12 @@ sources:
   - src/dashboard/spa/live-page/LivePage.tsx
   - src/dashboard/spa/live-page/RestView.tsx
   - src/dashboard/spa/planner/SessionSummaryPage.tsx
-lastVerified: 2026-09-28
+  - src/dashboard/spa/panels/fatigue-view.ts
+  - src/dashboard/spa/live-page/live-copy.ts
+  - src/analytics/rest-defaults.ts
+  - src/tools/session-tools.ts
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Live workout tour
@@ -26,7 +31,7 @@ Every capture here is driven through the real tool pipeline against the mock ada
 (`VOLTRA_ADAPTER=mock`), never a real device, so the numbers are reproducible rather than a
 one-off recording. The planned workout is seeded by `scripts/dashboard-plan-drive.mjs`: a
 program called Mock Hypertrophy whose Push A workout holds Cable Chest Press 3 × 8–10 at
-140 lb, then two more exercises (`scripts/dashboard-plan-drive.mjs:115-126`).
+140 lb, then two more exercises (`scripts/dashboard-plan-drive.mjs:115-126`, `:249`, `:266`).
 
 ## Before a Voltra connects
 
@@ -71,8 +76,11 @@ Closing a set with [`set.end`](/reference/set) moves the live page into its rest
   ]'
 />
 
-The countdown ring runs down the rest the plan set for this exercise, or a goal default
-labelled "Default rest" when the plan sets none (`src/dashboard/spa/live-page/RestView.tsx:208-238`).
+The countdown ring runs down the rest the plan set for this exercise. When the plan sets
+none, it runs a default for the exercise's training intent, captioned "Default rest", with
+the intent and any added seconds when there are some
+(`src/dashboard/spa/live-page/RestView.tsx:208-241`, `src/analytics/rest-defaults.ts:143-153`,
+`src/dashboard/spa/live-page/live-copy.ts:33-42`).
 The [pacing and form tour](/guides/dashboard-pacing-and-form) covers the ring and the pace
 footer.
 
@@ -91,9 +99,10 @@ and re-run `npm run docs:captures` to change what it says
 ## Session complete
 
 [`session.end`](/reference/session) closes the session, force-ending any set still open, and
-writes its final row. The summary page reads back the totals, uses the same fatigue verdict the
-live page showed mid-set, and adds a load recommendation that only appears here. It states no
-RPE or RIR (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`).
+writes its final row (`src/tools/session-tools.ts:624`). The summary page reads back the
+totals, runs the same fatigue verdict the live page uses on one named set, and adds a load
+recommendation that only appears here. It states no RPE or RIR
+(`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-209`).
 
 ![The session-completion screen for the session that just ended.](/captures/session-summary.png)
 
