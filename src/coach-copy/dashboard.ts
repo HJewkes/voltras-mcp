@@ -46,7 +46,7 @@ export const LIVE_FRAGMENTS = {
   restExtended: engineeringDefault(
     'live.rest-basis.extended',
     '{{base}} +{{extensionSeconds}} s',
-    'Shows the automatic rest extension as its own addition to the derived rest.',
+    'Shows the automatic rest extension as its own addition to the derived rest; the step and cap are engineering defaults set in rest-defaults.ts, not a published figure.',
   ),
   effortAccessibleLabel: engineeringDefault(
     'live.effort.accessible-label',

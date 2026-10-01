@@ -429,7 +429,7 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
   },
   "live.rest-basis.extended": {
     "sourceKind": "engineering-default",
-    "sourceRef": "Shows the automatic rest extension as its own addition to the derived rest.",
+    "sourceRef": "Shows the automatic rest extension as its own addition to the derived rest; the step and cap are engineering defaults set in rest-defaults.ts, not a published figure.",
     "text": "{{base}} +{{extensionSeconds}} s",
   },
   "live.rest-basis.for-intent": {
