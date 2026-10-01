@@ -8,6 +8,7 @@ sources:
   - src/dashboard/spa/body/BodyPage.tsx
   - src/dashboard/spa/body/body-client.ts
   - src/dashboard/spa/body/BodyView.tsx
+  - src/dashboard/spa/body/body-sheet-model.ts
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/dashboard/read-models/muscle-set-scope.ts
   - src/dashboard/read-models/muscle-week.ts
@@ -18,7 +19,8 @@ sources:
   - src/docs/capture-shots.ts
   - src/docs/preview-seeds.ts
   - scripts/dashboard-preview.mjs
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Body map
@@ -29,8 +31,9 @@ page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/Dashbo
 
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
-The page asks the dashboard for three things every 2 seconds, all at once
-(`src/dashboard/spa/body/BodyPage.tsx:22-31`):
+The page asks the dashboard for four things every 2 seconds, all at once, and shows three of
+them (`src/dashboard/spa/body/BodyPage.tsx:27-37`). The fourth, recovery, is covered
+[below](#recovery-computed-not-on-any-page).
 
 - **This week.** Working sets per muscle, set against volume landmarks, from
   `/api/muscle-week` (`src/dashboard/spa/body/BodyView.tsx:246`).
@@ -44,23 +47,23 @@ The page asks the dashboard for three things every 2 seconds, all at once
 
 Every picture of this page so far comes from seeded data. The published screenshot below is
 made by writing a plausible training week straight into the store, not by lifting
-(`scripts/dashboard-body-seed.mjs:1-18`, `src/docs/capture-shots.ts:152-160`). Nobody has yet
+(`scripts/dashboard-body-seed.mjs:1-18`, `src/docs/capture-shots.ts:166-174`). Nobody has yet
 checked the page after a real session on a real Voltra.
 
 The mock adapter cannot fill this page either. Only your own working sets count: a set is left
 out when it has a guest lifter, came from the mock adapter, is not a working set, or has no reps
-(`src/dashboard/read-models/muscle-set-scope.ts:59-65`). So with `VOLTRA_ADAPTER=mock` the page
+(`src/dashboard/read-models/muscle-set-scope.ts:58-64`). So with `VOLTRA_ADAPTER=mock` the page
 stays empty, on purpose.
 
 Three more things can leave the page empty after real training:
 
 - A set only counts toward a muscle when the set is tied to a known exercise
-  (`src/dashboard/read-models/muscle-set-scope.ts:72-90`). Name the exercise with
+  (`src/dashboard/read-models/muscle-set-scope.ts:66-89`). Name the exercise with
   `session.set_exercise` before you lift.
-- The page always shows the current week (`src/dashboard/spa/body/body-client.ts:29-31`,
-  `src/dashboard/server.ts:908-910`). If you have not trained this week, the figure is blank.
+- The page always shows the current week (`src/dashboard/spa/body/body-client.ts:32-34`,
+  `src/dashboard/server.ts:924-928`). If you have not trained this week, the figure is blank.
 - Next up is empty unless a program week is active today
-  (`src/dashboard/server.ts:846-850`, `src/dashboard/spa/body/body-client.ts:37-45`).
+  (`src/dashboard/server.ts:849-853`, `src/dashboard/spa/body/body-client.ts:45-54`).
 
 <CaptureCallouts
   shot="body-week"
@@ -93,7 +96,7 @@ never opened (`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mj
 
 The preview can fill this page only because it writes recorded sets into the store. Mock sets
 never count on this page, so a mock-adapter workout leaves it empty
-(`src/dashboard/read-models/muscle-set-scope.ts:59-65`).
+(`src/dashboard/read-models/muscle-set-scope.ts:58-64`).
 
 ## Landmarks are population defaults <Badge type="warning" text="Coming soon" />
 
@@ -111,8 +114,9 @@ Landmarks fitted to you are coming. That work is VW-146.
 
 Per-muscle recovery (when you last trained each muscle, and how that session went against the
 one before) is computed by the dashboard at `/api/muscle-recovery`
-(`src/dashboard/server.ts:967-971`). No page shows it: the body page never asks for it
-(`src/dashboard/spa/body/BodyPage.tsx:24-31`). It also never says how long a muscle needs
+(`src/dashboard/server.ts:666-669`). No page shows it yet. The body page loads it and builds
+a per-muscle side sheet from it, but nothing on the page opens that sheet yet
+(`src/dashboard/spa/body/BodyPage.tsx:29-37`, `src/dashboard/spa/body/body-sheet-model.ts:1-11`). It also never says how long a muscle needs
 before you can train it again, because no per-muscle number for that exists to cite
 (`src/dashboard/read-models/muscle-recovery.ts:9-20`). The
 [dashboard API reference](/reference/dashboard-api) describes what it returns.
