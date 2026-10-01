@@ -55,7 +55,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: {
         adapter: 'mock',
         dbPath: '/tmp/test.sqlite',
@@ -86,7 +86,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info', effortCue: 'on' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -100,7 +100,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
     } as never;
@@ -125,7 +125,7 @@ describe('server.health', () => {
     channelDelivery.recordConfirmation('n1');
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       channelDelivery,
@@ -144,7 +144,7 @@ describe('server.health', () => {
     // (nonexistent) client-side capability signal.
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       server: { server: { getClientCapabilities: () => ({ experimental: {} }) } },
@@ -159,7 +159,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: noopChannelPublisher,
     } as never;
@@ -175,7 +175,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -193,7 +193,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: true, url: 'http://127.0.0.1:7723/app' },
     } as never;
@@ -213,7 +213,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: false, url: null },
     } as never;
@@ -231,7 +231,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: false, url: null, disabledReason: 'disabled' },
     } as never;
@@ -247,7 +247,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: false, url: null, disabledReason: null },
     } as never;
@@ -267,7 +267,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: true, midSetEnabled: true },
+      cueSettings: { enabled: true, midSetEnabled: true, midSetMode: 'on' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info', cues: 'off', cuesMidSet: 'off' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -285,7 +285,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: true, midSetEnabled: false },
+      cueSettings: { enabled: true, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -298,6 +298,23 @@ describe('server.health', () => {
     expect(body.cuesMidSet).toBe('off');
   });
 
+  it('reports the risk mid-set mode by name, not as off (VW-614)', async () => {
+    // Arrange
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: true, midSetEnabled: false, midSetMode: 'risk' },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.cuesMidSet).toBe('risk');
+  });
+
   it('reports voiceReady for both whisper artifacts', async () => {
     // Arrange: the probe reads the real node_modules at module load, so assert
     // the shape rather than the values — CI installs nodejs-whisper without
@@ -305,7 +322,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -323,7 +340,7 @@ describe('server.health', () => {
     const { placeholders } = makePlaceholders([]); // no server.health
     const state = {
       lease: new WriteLease(),
-      cueSettings: { enabled: false, midSetEnabled: false },
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     expect(() => registerServerTools({} as never, state, placeholders as never)).toThrow(

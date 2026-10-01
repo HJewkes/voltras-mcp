@@ -11,7 +11,7 @@
 //   - VMCP_REP_UNRACK_DROP             — 'on' | 'off', default 'off'.
 //   - VMCP_REP_ECC_TRUNCATE            — 'on' | 'off', default 'on'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
-//   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
+//   - VMCP_CUES_MIDSET                 — 'on' | 'off' | 'risk', default 'off'.
 //   - VMCP_CUE_DELIVERY                — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
@@ -133,8 +133,12 @@ export type CuesMode = 'off' | 'on';
  *     other physical backstop is present, or for supervised/controlled
  *     sets (e.g. filming) where the bounded per-cue mute window is
  *     acceptable.
+ *   - `'risk'` — mid-set lines speak only through the cue-delivery layer,
+ *     and only on a set whose pinned set-risk reading is green (VW-614).
+ *     The legacy cue tee treats it as `'off'`, so with
+ *     `VMCP_CUE_DELIVERY='off'` nothing speaks mid-set.
  */
-export type CuesMidSetMode = 'off' | 'on';
+export type CuesMidSetMode = 'off' | 'on' | 'risk';
 
 /**
  * Which layer speaks the deterministic cues (VW-140 plan slice S6).
@@ -292,8 +296,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid VMCP_CUES="${cues}". Must be "off" or "on".`);
   }
   const cuesMidSet = env.VMCP_CUES_MIDSET ?? 'off';
-  if (cuesMidSet !== 'off' && cuesMidSet !== 'on') {
-    throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off" or "on".`);
+  if (cuesMidSet !== 'off' && cuesMidSet !== 'on' && cuesMidSet !== 'risk') {
+    throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off", "on" or "risk".`);
   }
   const autoArm = env.VMCP_AUTO_ARM ?? 'on';
   if (autoArm !== 'off' && autoArm !== 'on') {

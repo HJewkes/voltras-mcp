@@ -75,7 +75,9 @@ Two switches control this, and both are off by default:
 - `VMCP_CUES` turns automatic cues on at all (`src/config.ts:13`, `src/config.ts:106-117`).
 - `VMCP_CUES_MIDSET` also allows the two mid-set cues. They are off by default because every cue
   mutes the microphone while it plays, which matters for the spoken stop described below
-  (`src/config.ts:14`, `src/config.ts:120-135`).
+  (`src/config.ts:14`, `src/config.ts:122-141`). Its third value, `risk`, lets mid-set lines speak
+  only through the cue-delivery layer, and only on a set whose risk reading at set start is green.
+  Amber, red and unread sets stay silent mid-set (`src/voice/cue-delivery/risk-permit.ts`).
 
 [`system.set_cues`](/reference/system) changes either switch while the server runs, with no
 restart (`src/voice/cue-settings.ts:1-12`).

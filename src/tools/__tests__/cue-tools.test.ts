@@ -45,7 +45,7 @@ function setup(settings: CueSettings): {
 
 describe('system.set_cues', () => {
   it('turns cues on and reports the resulting state', async () => {
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const { call } = setup(settings);
 
     const { body } = await call({ cues: 'on' });
@@ -55,36 +55,46 @@ describe('system.set_cues', () => {
   });
 
   it('toggles midSet independently of the master switch', async () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: false };
+    const settings: CueSettings = { enabled: true, midSetEnabled: false, midSetMode: 'off' };
     const { call } = setup(settings);
 
     const { body } = await call({ midSet: 'on' });
 
-    expect(settings).toEqual({ enabled: true, midSetEnabled: true });
+    expect(settings).toEqual({ enabled: true, midSetEnabled: true, midSetMode: 'on' });
     expect(body).toMatchObject({ cues: 'on', midSet: 'on' });
   });
 
+  it('accepts midSet risk and turns the legacy mid-set switch off (VW-614)', async () => {
+    const settings: CueSettings = { enabled: true, midSetEnabled: true, midSetMode: 'on' };
+    const { call } = setup(settings);
+
+    const { body } = await call({ midSet: 'risk' });
+
+    expect(settings).toEqual({ enabled: true, midSetEnabled: false, midSetMode: 'risk' });
+    expect(body).toMatchObject({ cues: 'on', midSet: 'risk', changed: true });
+  });
+
   it('leaves an omitted field untouched', async () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: true };
+    const settings: CueSettings = { enabled: true, midSetEnabled: true, midSetMode: 'on' };
     const { call } = setup(settings);
 
     await call({ cues: 'off' });
 
-    expect(settings).toEqual({ enabled: false, midSetEnabled: true });
+    expect(settings).toEqual({ enabled: false, midSetEnabled: true, midSetMode: 'on' });
   });
 
   it('reports current state without changing anything when called with no fields', async () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: false };
+    const settings: CueSettings = { enabled: true, midSetEnabled: false, midSetMode: 'off' };
     const { call } = setup(settings);
 
     const { body } = await call({});
 
-    expect(settings).toEqual({ enabled: true, midSetEnabled: false });
+    expect(settings).toEqual({ enabled: true, midSetEnabled: false, midSetMode: 'off' });
     expect(body).toMatchObject({ cues: 'on', midSet: 'off', changed: false });
   });
 
   it('reports changed: false when the requested value is already set', async () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: true };
+    const settings: CueSettings = { enabled: true, midSetEnabled: true, midSetMode: 'on' };
     const { call } = setup(settings);
 
     const { body } = await call({ cues: 'on', midSet: 'on' });
@@ -93,7 +103,7 @@ describe('system.set_cues', () => {
   });
 
   it('rejects an unknown value instead of silently ignoring it', async () => {
-    const { call } = setup({ enabled: false, midSetEnabled: false });
+    const { call } = setup({ enabled: false, midSetEnabled: false, midSetMode: 'off' });
 
     const { body, isError } = await call({ cues: 'yes' });
 
@@ -102,7 +112,7 @@ describe('system.set_cues', () => {
   });
 
   it('rejects unknown fields (a typo must not read as a silent no-op)', async () => {
-    const { call } = setup({ enabled: false, midSetEnabled: false });
+    const { call } = setup({ enabled: false, midSetEnabled: false, midSetMode: 'off' });
 
     const { isError } = await call({ midset: 'on' });
 
@@ -114,7 +124,7 @@ describe('system.set_cues', () => {
     expect(() =>
       registerCueTools(
         {} as never,
-        { cueSettings: { enabled: false, midSetEnabled: false } },
+        { cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' } },
         placeholders as never,
       ),
     ).toThrow(/system\.set_cues/);
@@ -123,7 +133,7 @@ describe('system.set_cues', () => {
   it('drives the live emitter: cues off at boot, on after the tool call', async () => {
     // End-to-end over the two structural fixes — the tee is installed despite
     // cues being off, and the emitter re-reads the settings the tool mutated.
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const { call } = setup(settings);
     const speakSpy = vi.fn(() => Promise.resolve({ content: [] } as unknown as ToolResult));
     const published: ChannelEvent[] = [];

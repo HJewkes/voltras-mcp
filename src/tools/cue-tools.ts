@@ -15,7 +15,8 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { SystemSetCuesInput, type SystemSetCuesInputType } from '../schemas/system.js';
-import type { CueSettings } from '../voice/cue-settings.js';
+import type { CuesMidSetMode } from '../config.js';
+import { applyMidSetMode, type CueSettings } from '../voice/cue-settings.js';
 import { wrapHandler } from './helpers.js';
 
 interface PlaceholderTools {
@@ -33,24 +34,23 @@ const DESCRIPTION = [
   'set-complete); `midSet` separately allows the two categories that fire while',
   'the lifter is still under load (`target_hit`, `slowdown`) — those stay silent',
   'unless BOTH are on, because every cue mutes the mic for its duration and that',
-  'blind spot is worst mid-set. Omitted fields are left unchanged; a call with no',
+  'blind spot is worst mid-set. `midSet: risk` lets mid-set lines speak only through',
+  'the cue-delivery layer (`VMCP_CUE_DELIVERY=on`), and only on a set whose set-risk',
+  'reading is green. Omitted fields are left unchanged; a call with no',
   'fields just reports current state. `VMCP_CUES` / `VMCP_CUES_MIDSET` are only the',
   'startup defaults (both `off`). macOS-only: cues never speak on other platforms',
   'regardless of these settings. `server.health` reports the same values.',
 ].join(' ');
 
 /** Report the settings in the same on/off vocabulary the env vars use. */
-function describe(settings: CueSettings): { cues: 'on' | 'off'; midSet: 'on' | 'off' } {
-  return {
-    cues: settings.enabled ? 'on' : 'off',
-    midSet: settings.midSetEnabled ? 'on' : 'off',
-  };
+function describe(settings: CueSettings): { cues: 'on' | 'off'; midSet: CuesMidSetMode } {
+  return { cues: settings.enabled ? 'on' : 'off', midSet: settings.midSetMode };
 }
 
 function applyCueSettings(settings: CueSettings, input: SystemSetCuesInputType): unknown {
   const before = describe(settings);
   if (input.cues !== undefined) settings.enabled = input.cues === 'on';
-  if (input.midSet !== undefined) settings.midSetEnabled = input.midSet === 'on';
+  if (input.midSet !== undefined) applyMidSetMode(settings, input.midSet);
   const after = describe(settings);
   return {
     ...after,

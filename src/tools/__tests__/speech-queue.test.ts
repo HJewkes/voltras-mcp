@@ -91,7 +91,7 @@ function buildHarness(): Harness {
     emitter: new CueEmitter({
       speakDeps: deps,
       selector: new CueSelector({ rng: () => 0 }),
-      settings: { enabled: true, midSetEnabled: true },
+      settings: { enabled: true, midSetEnabled: true, midSetMode: 'on' },
     }),
     utterances,
     drain: async (count) => {

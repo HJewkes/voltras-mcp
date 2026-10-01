@@ -96,10 +96,10 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     name: 'VMCP_CUES_MIDSET',
     section: 'Dashboard and voice',
     defaultValue: '`off`',
-    accepts: ON_OFF,
+    accepts: '`off` \\| `on` \\| `risk`',
     onInvalid: 'stops startup',
     purpose:
-      'Lets the cues that fire while the lifter is under load speak too. A startup default: `system.set_cues` changes it at runtime.',
+      'Lets the cues that fire while the lifter is under load speak too. `risk` allows them only through the cue-delivery layer (`VMCP_CUE_DELIVERY=on`), and only on a set whose set-risk reading is green; amber and red sets, and sets with no reading, stay silent mid-set. A set that opened itself from your reps reads no fatigue signal yet, so under `risk` it stays silent from its second set on. A startup default: `system.set_cues` changes it at runtime.',
     source: CONFIG,
   },
   {
