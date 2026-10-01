@@ -11,9 +11,11 @@
 //   * Singer, Scott, Deprez, Piponnier, Verhulst & Rabasa, Frontiers in
 //     Sports and Active Living, 2024 (10.3389/fspor.2024.1429789): for
 //     hypertrophy, a small benefit to rest over 60s, no further benefit
-//     beyond 90s. Its proposed mechanism is volume-load preservation --
-//     directly observable on Voltra as reps-to-threshold holding steady set
-//     to set -- which is what makes a rep-count DROP the extension trigger.
+//     beyond 90s. This supports the hypertrophy window only.
+//
+// The auto-extension is an engineering default, not a cited finding: Singer
+// 2024's volume-load-preservation mechanism motivates watching reps-to-
+// threshold, but neither paper gives the step, the cap or a drop trigger.
 //
 // `intent` is `undefined` for a set training against no plan, or a plan whose
 // exercise carries no `trainingIntent`. That is silence, not a claim of
@@ -39,10 +41,10 @@ export const HYPERTROPHY_REST_SECONDS = 105;
  */
 export const DEFAULT_REST_SECONDS = 120;
 
-/** Added to the next rest per rep of reps-to-threshold drop (Singer 2024's volume-load-preservation read). */
+/** Engineering default: seconds added to the next rest per rep of reps-to-threshold drop. */
 export const REST_EXTENSION_STEP_SECONDS = 30;
 
-/** Ceiling on the auto-extension, so one noisy reading can't propose a runaway rest. */
+/** Engineering default ceiling on the auto-extension, so one noisy reading can't propose a runaway rest. */
 export const MAX_REST_EXTENSION_SECONDS = 60;
 
 /**
@@ -58,8 +60,8 @@ export function defaultRestSeconds(intent: TrainingIntent | undefined): number {
 /**
  * Extra rest (seconds) to layer onto the next set's rest when
  * `currRepsToThreshold` fell versus `prevRepsToThreshold` -- the prior set of
- * the same exercise reaching its velocity-loss threshold in fewer reps, the
- * observable Singer 2024 ties to insufficient rest. Zero when either set
+ * the same exercise reaching its velocity-loss threshold in fewer reps, which
+ * the coach treats as a sign of too little rest. Zero when either set
  * never reached its threshold (nothing to compare) or the count held/grew.
  *
  * Scales with the size of the drop, bounded by {@link MAX_REST_EXTENSION_SECONDS}

@@ -66,6 +66,12 @@ describe('every coach fragment carries a source', () => {
     },
   );
 
+  it('labels the rest extension an engineering default pointing at rest-defaults', () => {
+    const fragment = COACH_FRAGMENTS.find(({ id }) => id === 'live.rest-basis.extended');
+    expect(fragment).toMatchObject({ sourceKind: 'engineering-default' });
+    expect(fragment?.sourceRef).toContain('rest-defaults.ts');
+  });
+
   it('holds no duplicate ids across the registry', () => {
     expect(validateRegistry(COACH_FRAGMENTS)).toEqual([]);
   });
