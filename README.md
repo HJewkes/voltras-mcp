@@ -639,8 +639,8 @@ summary and set list render the same string.
 Which sets count is decided the same way `plan.suggest_progression` decides it: flagged
 warm-ups are excluded, then the sets at the top load are kept. A guest lifter's sets
 (`session.set_lifter`) and zero-rep sets never appear, mock-adapter sets are left out unless
-the server itself runs on the mock adapter, and an exercise
-with no working set is omitted rather than reported empty. The tool reads the store and
+the server itself runs on the mock adapter, and an exercise with no working set is omitted
+rather than reported empty. The tool reads the store and
 makes **no network call** — it never writes to TrueCoach, and nothing in this repo does.
 
 ### The outbox
@@ -791,7 +791,8 @@ in `src/dashboard/README.md`.
 
 ## Confidentiality
 
-No protocol bytes, raw frame payloads, or proprietary command codes belong in tool I/O,
-schemas, log lines, documentation, or commits. Only typed values from the SDK's public
-surface cross the MCP boundary. ESLint enforces part of this by flagging `Buffer` access
-inside handler functions.
+No protocol bytes, raw frame payloads, or proprietary command codes belong in logs,
+schemas, documentation, or commits. The everyday tools pass Claude only typed values from
+the SDK's public surface. The exceptions are two diagnostic tools for hardware debugging:
+`device.send_raw` takes and returns raw bytes, and `debug.recent_events` can return them.
+ESLint enforces part of this by flagging `Buffer` access inside handler functions.

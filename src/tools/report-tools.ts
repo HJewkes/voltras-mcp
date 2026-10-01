@@ -9,9 +9,9 @@
 //
 // The set list is narrowed the same way every other analysis path narrows it:
 // the owner's sets only (VW-169 — a guest working in is not the owner's
-// result), real sets only (a mock-adapter row never reports as work), and the
-// working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
-// not read as a light top set.
+// result), real sets only (a mock-adapter row is left out unless the server
+// itself runs on the mock adapter), and the working sets picked by the shared
+// `selectWorkingSets` rule so a ramp-up does not read as a light top set.
 
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { buildGoalLines, type WeeklyGoalLine } from './report-goals.js';
@@ -58,8 +58,9 @@ export const REPORT_SESSION_RESULTS_DESCRIPTION =
   'reads (`170 lb x 12` per working set, `L 30 lb x 13` / `R 30 lb x 12` for a bilateral pair, ' +
   'plus a `warm-up: 3 sets` count and a `missed: 1 of 3 sets below 8 reps` line when a planned ' +
   'rep band was attached). Working sets only, by the same warm-up-then-top-load rule ' +
-  "`plan.suggest_progression` uses; a guest lifter's sets, mock-adapter sets and zero-rep sets " +
-  'are excluded, and an exercise with no working set is omitted. Read-only and local: it queries ' +
+  "`plan.suggest_progression` uses; a guest lifter's sets and zero-rep sets are excluded, " +
+  'as are mock-adapter sets unless the server itself runs on the mock adapter, ' +
+  'and an exercise with no working set is omitted. Read-only and local: it queries ' +
   'the store and makes no network call. The session must already be ended.';
 
 class ToolError extends Error {
