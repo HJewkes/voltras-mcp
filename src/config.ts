@@ -12,6 +12,7 @@
 //   - VMCP_REP_ECC_TRUNCATE            — 'on' | 'off', default 'on'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
+//   - VMCP_CUE_DELIVERY                — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
@@ -24,7 +25,7 @@
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
 // VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE,
-// VMCP_AUTO_ARM, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
+// VMCP_AUTO_ARM, VMCP_CUE_DELIVERY, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
 // failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
 // on the same terms.
 
@@ -136,6 +137,17 @@ export type CuesMode = 'off' | 'on';
 export type CuesMidSetMode = 'off' | 'on';
 
 /**
+ * Which layer speaks the deterministic cues (VW-140 plan slice S6).
+ *   - `'off'` (DEFAULT) — the legacy cue tee: one templated line per category
+ *     per set, gated by `VMCP_CUES` and `VMCP_CUES_MIDSET` as before.
+ *   - `'on'` — the cue-delivery layer instead: per-interval budgets by tier,
+ *     one persistent technique focus, and a tone gate on measured decay. The
+ *     legacy tee is not installed, so no line is spoken twice. The same two
+ *     switches still gate it, and the tier only ever removes lines.
+ */
+export type CueDeliveryMode = 'off' | 'on';
+
+/**
  * Whether the bridge opens a set on its own when an idle-arm rep lands while
  * a session is active and no set is (VW-164).
  *   - `'on'` (DEFAULT) — the first idle rep auto-arms a set and is counted as
@@ -218,6 +230,7 @@ export interface Config {
   readonly repEccentricTruncate: RepEccentricTruncateMode;
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
+  readonly cueDelivery: CueDeliveryMode;
   readonly autoArm: AutoArmMode;
   readonly effortCue: EffortCueMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
@@ -296,6 +309,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `Invalid VMCP_TRUECOACH_SUBMIT_ON_END="${trueCoachSubmitOnEnd}". Must be "off" or "on".`,
     );
   }
+  const cueDelivery = onOffFlag(env.VMCP_CUE_DELIVERY, 'VMCP_CUE_DELIVERY', 'off');
   const effortCue = onOffFlag(env.VOLTRAS_EFFORT_CUE, 'VOLTRAS_EFFORT_CUE', 'off');
   const mountRatingLbs = parseMountRatingLbs(env.VMCP_MOUNT_RATING_LBS);
   // HOME is normally set on every supported platform but is typed as
@@ -312,6 +326,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     repEccentricTruncate,
     cues,
     cuesMidSet,
+    cueDelivery,
     autoArm,
     effortCue,
     trueCoachOutbox,

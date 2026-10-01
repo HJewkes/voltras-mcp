@@ -22,6 +22,7 @@ describe('loadConfig', () => {
       repEccentricTruncate: 'on',
       cues: 'off',
       cuesMidSet: 'off',
+      cueDelivery: 'off',
       autoArm: 'on',
       effortCue: 'off',
       trueCoachOutbox: 'off',
@@ -225,6 +226,15 @@ describe('loadConfig', () => {
   it('honors VOLTRAS_EFFORT_CUE="on", and refuses anything else by name', () => {
     expect(loadConfig({ VOLTRAS_EFFORT_CUE: 'on', HOME: '/home/test' }).effortCue).toBe('on');
     expect(() => loadConfig({ VOLTRAS_EFFORT_CUE: 'yes' })).toThrow(/VOLTRAS_EFFORT_CUE="yes"/);
+  });
+
+  it('defaults VMCP_CUE_DELIVERY to "off": the legacy cue tee speaks (VW-607)', () => {
+    expect(loadConfig({}).cueDelivery).toBe('off');
+  });
+
+  it('honors VMCP_CUE_DELIVERY="on", and refuses anything else by name', () => {
+    expect(loadConfig({ VMCP_CUE_DELIVERY: 'on' }).cueDelivery).toBe('on');
+    expect(() => loadConfig({ VMCP_CUE_DELIVERY: 'true' })).toThrow(/VMCP_CUE_DELIVERY="true"/);
   });
 
   it('defaults VMCP_MOUNT_RATING_LBS to undefined — unset means UNKNOWN, not unlimited (VW-274)', () => {
