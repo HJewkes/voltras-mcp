@@ -287,6 +287,12 @@ export interface CaptureShot {
    * a real change and fails the run (VW-437).
    */
   readonly variesBy?: string;
+  /**
+   * The length of an entrance animation timed off `Date.now()` (titan's side sheet
+   * slides in through react-native `Animated`), which the pinned clock would hold
+   * at its first frame. The harness steps the clock past it, then pins it again.
+   */
+  readonly clockDrivenAnimationMs?: number;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -563,6 +569,30 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'Cable Lat Pulldown Pull B 4 sets',
     ],
     holdsPageOpen: false,
+  },
+  {
+    name: 'body-drill',
+    scenario: 'body',
+    // The deep link opens the sheet on load, so no click step is needed (VW-713).
+    route: '/app#/body/lats',
+    caption:
+      "Seeded data, not yet available: the body page with one muscle's side sheet open: its weekly sets, " +
+      'when it was last trained, its strength and its remaining plan.',
+    waitFor: { kind: 'sessions-ended', minSessions: 18 },
+    viewport: WALL_VIEWPORT,
+    // The sheet title with its status, and the left rail the sheet leaves uncovered.
+    expectText: ['Lats on track', 'Last trained', 'STRENGTH', 'UPCOMING', 'Next up', 'Recent PRs'],
+    expectValues: [
+      'MEV 8 MRV 20 4 / 20 MRV',
+      'Cable Row 200 lb · prev 193 lb',
+      // Remaining rows only (VW-339 default), so the done count sits beside them.
+      'Sets 4 / 7',
+      'Cable Lat Pulldown 4 sets · Pull B',
+    ],
+    holdsPageOpen: false,
+    variesBy: 'the last-trained day count, seeded relative to today',
+    // titan's sheet slides in over 400 ms; the margin covers a late first frame.
+    clockDrivenAnimationMs: 1_000,
   },
 ];
 

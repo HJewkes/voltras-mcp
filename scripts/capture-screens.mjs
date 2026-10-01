@@ -436,6 +436,19 @@ async function installShotDeterminism(page, fixedTimeIso) {
 }
 
 /**
+ * Finish an entrance animation that reads `Date.now()` per frame, which the pinned
+ * clock would hold at its first frame forever: step the clock past its end, let
+ * it draw, then pin the clock back so the page still reads the fixed time.
+ */
+async function finishClockDrivenAnimation(page, durationMs) {
+  const pinned = Date.parse(CAPTURE_FIXED_TIME_ISO);
+  await page.clock.setFixedTime(pinned + durationMs);
+  await settlePaint(page);
+  await page.clock.setFixedTime(pinned);
+  await settlePaint(page);
+}
+
+/**
  * Block until the bundled webfonts have loaded and the browser has produced two
  * frames. Signals, not a sleep: a shot taken before `document.fonts.ready`
  * captures fallback metrics and reflows a moment later.
@@ -537,6 +550,9 @@ async function captureShot(page, origin, port, shot, defs, mode) {
   if (!shot.holdsPageOpen) await open();
   await waitForText(page, expected, shot.name);
   await settlePaint(page);
+  if (shot.clockDrivenAnimationMs !== undefined) {
+    await finishClockDrivenAnimation(page, shot.clockDrivenAnimationMs);
+  }
   if (shot.scrollTo !== undefined) await scrollToHeading(page, shot.scrollTo, shot.name);
 
   const file = path.join(mode.outDir, `${shot.name}.png`);
