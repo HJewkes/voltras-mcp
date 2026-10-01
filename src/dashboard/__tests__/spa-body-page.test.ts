@@ -12,10 +12,11 @@
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
 
 import { BodyView } from '../spa/body/BodyView.js';
+import { loadBodyPage } from '../spa/body/BodyPage.js';
 import {
   bodyMapData,
   muscleStripData,
@@ -30,10 +31,11 @@ import { buildMuscleWeekView, type MuscleWeekRows } from '../read-models/muscle-
 import { e1rmBand } from '../../tools/e1rm-band.js';
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthBestE1rm,
   MuscleStrengthView,
 } from '../read-models/index.js';
-import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
+import { MUSCLE_MAP_VERSION, TITAN_MUSCLE_GROUPS } from '../../exercises/muscle-map.js';
 import type { StoredSet } from '../../store/types.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z'); // Wednesday
@@ -185,8 +187,21 @@ const PLAN: MusclePlanView = {
   ],
 };
 
+/** No muscle trained yet: the page does not render recovery until the sheet (VW-339 S3). */
+const RECOVERY: MuscleRecoveryView = {
+  muscleMapVersion: MUSCLE_MAP_VERSION,
+  muscles: TITAN_MUSCLE_GROUPS.map((muscle) => ({
+    muscle,
+    lastTrainedAt: null,
+    daysSince: null,
+    lastEntryDepression: null,
+    lastSessionMatchedPrior: null,
+    reason: 'insufficient history',
+  })),
+};
+
 function pageData(over: Partial<BodyPageData> = {}): BodyPageData {
-  return { week: weekView(), strength: STRENGTH, plan: PLAN, ...over };
+  return { week: weekView(), strength: STRENGTH, plan: PLAN, recovery: RECOVERY, ...over };
 }
 
 /** Rendered text with runs of whitespace collapsed, same normalisation the captures use. */
@@ -306,6 +321,46 @@ describe('the body page render', () => {
     );
     expect(rendered).toContain('No planned week');
     expect(rendered).toContain('No PRs yet');
+  });
+});
+
+describe('the body page load', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Serves each `/api/muscle-*` route from its fixture, failing the ones named. */
+  function stubRoutes(failing: readonly string[]): void {
+    const bodies: Record<string, unknown> = {
+      '/api/muscle-week': weekView(),
+      '/api/muscle-strength': STRENGTH,
+      '/api/muscle-plan': PLAN,
+      '/api/muscle-recovery': RECOVERY,
+    };
+    vi.stubGlobal('fetch', (url: string) =>
+      Promise.resolve(
+        failing.includes(url)
+          ? new Response(JSON.stringify({ message: 'store unavailable' }), { status: 500 })
+          : new Response(JSON.stringify(bodies[url]), { status: 200 }),
+      ),
+    );
+  }
+
+  it('still renders the glance when only the recovery route fails', async () => {
+    stubRoutes(['/api/muscle-recovery']);
+
+    const data = await loadBodyPage();
+
+    expect(data.recovery).toBeNull();
+    const rendered = text(data);
+    expect(rendered).toContain('Weekly sets by muscle');
+    expect(rendered).not.toContain('store unavailable');
+  });
+
+  it('still fails the page when the week route fails', async () => {
+    stubRoutes(['/api/muscle-week']);
+
+    await expect(loadBodyPage()).rejects.toThrow('store unavailable');
   });
 });
 
