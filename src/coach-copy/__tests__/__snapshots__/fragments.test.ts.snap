@@ -330,7 +330,7 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
   "cue.slowdown.6": {
     "sourceKind": "engineering-default",
     "sourceRef": "Reports a slowdown the set measured; the urging around it is our wording.",
-    "text": "Speed’s dropping — one clean rep left.",
+    "text": "Speed’s dropping — keep every rep clean.",
   },
   "cue.slowdown.7": {
     "sourceKind": "engineering-default",

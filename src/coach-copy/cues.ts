@@ -44,7 +44,7 @@ export const CUE_FRAGMENTS = {
     'Down ${pct} percent — make each rep count.',
     'Rep ${rep} slowed — control it.',
     'Losing speed on rep ${rep}. Brace.',
-    'Speed’s dropping — one clean rep left.',
+    'Speed’s dropping — keep every rep clean.',
     'Bar speed fading. Finish strong.',
   ]),
   setComplete: cues('set-complete', SET_READOUT, [
