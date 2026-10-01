@@ -46,9 +46,9 @@ Dashboard screens that are built but not yet usable end to end have their own pa
 ## Known to be uncalibrated or unverified
 
 - **Isometric hold force.** `isometric.measure_hold`, `measure_max`, and `measure_imbalance`
-  report peak and plateau force in pounds, which reads as a settled physical measurement. The
-  underlying conversion hasn't been re-checked against a known reference weight since the
-  device's raw units last changed — see [the calibration caveat](/guides/isometric#the-calibration-caveat)
+  report peak and plateau force in pounds, which reads as a settled physical measurement. Their
+  plateau detection and inferred working weight haven't been re-checked on hardware since the
+  device's raw force scale last changed (`src/tools/isometric-tools.ts:1463-1468`). See [the calibration caveat](/guides/isometric#the-calibration-caveat)
   before treating an absolute number as calibrated. Trends within or across a session hold up
   better than any single reading.
 - **The TrueCoach results-submission control.** Ships in code, but nobody has exercised the
