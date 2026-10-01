@@ -1064,6 +1064,16 @@ describe('buildVelocityLossExceededPayload', () => {
     expect(JSON.parse(content).summary).toContain("the plan's strength intent");
   });
 
+  it('VW-719: an assumed default threshold carries default provenance and says so', () => {
+    const { meta, content } = build(spec({ pct: 30, thresholdSource: 'default' }));
+    expect(meta).toMatchObject({ threshold_pct: '30', threshold_source: 'default' });
+    expect(meta.training_intent).toBeUndefined();
+    const parsed = JSON.parse(content);
+    expect(parsed.trigger).toMatchObject({ threshold_source: 'default', training_intent: null });
+    expect(parsed.summary).toContain('Threshold: 30% (an assumed default');
+    expect(parsed.summary).not.toContain('intent');
+  });
+
   // The pre-VW-266 summary, verbatim. An EXACT match, not `toContain`: this is
   // the sentence every existing consumer already reads, and the fact that the
   // threshold was not goal-derived rides in `meta.threshold_source` rather than

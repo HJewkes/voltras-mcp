@@ -126,8 +126,8 @@ export const WatchConfig = z.object({
 });
 export type WatchConfig = z.infer<typeof WatchConfig>;
 
-/** Which of the three ways a fired threshold's number was arrived at. */
-export type VelocityLossThresholdSource = 'explicit' | 'set_intent' | 'plan_intent';
+/** How a fired threshold's number was arrived at; `default` is the assumed stop on an auto-armed set nothing named a goal for. */
+export type VelocityLossThresholdSource = 'explicit' | 'set_intent' | 'plan_intent' | 'default';
 
 /**
  * A `velocity_loss_exceeded` spec after `set.start` has pinned its threshold.

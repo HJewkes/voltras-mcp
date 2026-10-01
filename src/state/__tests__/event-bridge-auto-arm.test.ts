@@ -751,15 +751,123 @@ describe("auto-armed sets take the plan row's watch (VW-718)", () => {
     expect(h.live.set?.armDefaultsSource).toBeUndefined();
     expect(eventTypes()).not.toContain('set_updated');
   });
+});
 
-  it('a set with no plan row behaves exactly as before', async () => {
-    usePlanStore(STRENGTH_ROW, async () => []);
+describe('auto-armed sets with no plan row take the labelled default watch (VW-719)', () => {
+  let h: ReturnType<typeof makeHarness>;
 
+  const ASSUMED_WATCH = [{ type: 'velocity_loss_exceeded', pct: 30, thresholdSource: 'default' }];
+
+  function useEmptyPlanStore(): void {
+    Object.assign(h.state, {
+      store: {
+        getAssignmentsForSession: async () => [],
+        getPlannedExercisesForTemplate: async () => [],
+        getPlannedExercise: async () => undefined,
+        getRirVelocityModel: async () => undefined,
+      },
+    });
+  }
+
+  function armOn(exerciseId: string | undefined): void {
+    h.live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      ...(exerciseId === undefined ? {} : { exerciseId }),
+    });
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+    const next = feedShapedRep(h.client, 1, WORKING_SHAPE);
+    const after = feedShapedRep(h.client, next, WORKING_SHAPE);
+    feedFrame(h.client, after, 1, 0, WORKING_SHAPE.velocityMms);
+  }
+
+  function setStartTool(): (args: unknown) => Promise<{ content: { text: string }[] }> {
+    const tools = new Map<string, { callback?: (args: unknown) => Promise<unknown> }>();
+    for (const name of ['set.start', 'set.end', 'set.live_metrics', 'set.update', 'set.get']) {
+      const tool: { callback?: (args: unknown) => Promise<unknown> } = {};
+      Object.assign(tool, {
+        update: (u: { callback: (args: unknown) => Promise<unknown> }) => {
+          tool.callback = u.callback;
+        },
+        remove: () => undefined,
+      });
+      tools.set(name, tool);
+    }
+    registerSetTools({} as never, h.state as never, tools as never);
+    return (args) =>
+      tools.get('set.start')!.callback!(args) as Promise<{ content: { text: string }[] }>;
+  }
+
+  beforeEach(() => {
+    h = makeHarness();
+    useEmptyPlanStore();
+  });
+
+  it('a set auto-armed with no plan and no agent carries a 30% watch with thresholdSource default', async () => {
     armOn('ex-press');
 
+    await vi.waitFor(() => expect(h.live.set?.armDefaultsSource).toBe('default'));
+    expect(h.live.set?.watch?.notifyOn).toEqual(ASSUMED_WATCH);
+    expect(h.live.set?.upgradedAt).toBeUndefined();
+    const published = h.channels.publish.mock.calls.map((c) => c[0].meta.event_type);
+    expect(published).toContain('set_updated');
+  });
+
+  it('a set auto-armed with no exercise named takes the default watch too', async () => {
+    armOn(undefined);
+
+    await vi.waitFor(() => expect(h.live.set?.armDefaultsSource).toBe('default'));
+    expect(h.live.set?.watch?.notifyOn).toEqual(ASSUMED_WATCH);
+  });
+
+  it('the effort context re-pinned after the default reads no goal and no guard from it', async () => {
+    armOn('ex-press');
+
+    await vi.waitFor(() => expect(h.live.set?.armDefaultsSource).toBe('default'));
     await vi.waitFor(() => expect(h.live.set?.effortContext).toBeDefined());
+    expect(h.live.set?.effortContext).toMatchObject({
+      goal: null,
+      guard: { lossPct: null, lossSource: null },
+    });
+  });
+
+  it("an agent's set.start threshold replaces the default", async () => {
+    const setStart = setStartTool();
+    armOn('ex-press');
+    await vi.waitFor(() => expect(h.live.set?.armDefaultsSource).toBe('default'));
+
+    const result = await setStart({
+      watch: { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 15 }] },
+    });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ upgraded: true });
+    expect(h.live.set?.watch?.notifyOn).toEqual([
+      { type: 'velocity_loss_exceeded', pct: 15, thresholdSource: 'explicit' },
+    ]);
+    expect(h.live.set?.armDefaultsSource).toBeUndefined();
+  });
+
+  it('a set that is not auto-armed gets no default', async () => {
+    h.live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+    });
+    h.live.startSet({
+      setId: 'set-agent',
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:01.000Z',
+      reps: [],
+      status: 'active',
+    });
+    h.state.setStartDeviceSnapshots.set('set-agent', h.live.snapshotDevice());
+
+    await onSetStarted(h.state as never, { slotId: 'primary', setId: 'set-agent' });
+
     expect(h.live.set?.watch).toBeUndefined();
     expect(h.live.set?.armDefaultsSource).toBeUndefined();
-    expect(eventTypes()).not.toContain('set_updated');
   });
 });

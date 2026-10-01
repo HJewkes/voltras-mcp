@@ -112,11 +112,27 @@ function withProvenance(
 /** Intent whose stop threshold applies when nothing names one; the rest resolver and session summary use it too. */
 export const DEFAULT_STOP_INTENT: TrainingIntent = 'hypertrophy';
 
+/**
+ * The stop percent assumed for a set nothing names a goal for (VW-719).
+ *
+ * ENGINEERING DEFAULT, NOT A RESEARCH FINDING. The literature keys a threshold to
+ * a goal; with no goal there is no literature answer. This reuses the
+ * {@link DEFAULT_STOP_INTENT} value so the watch fires at the number the wall
+ * already colours against, and the spec says `default` so no reader takes it as
+ * the lifter's goal.
+ */
+export const ASSUMED_STOP_PCT = VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT];
+
+/** The labelled default spec: {@link ASSUMED_STOP_PCT}, with no intent and `default` provenance. */
+export function assumedVelocityLossSpec(): ResolvedVelocityLossSpec {
+  return withProvenance(ASSUMED_STOP_PCT, undefined, 'default');
+}
+
 /** The velocity-loss % at which a set reads as "stop", with where the number came from. */
 export interface FatigueStop {
   readonly pct: number;
   readonly intent: TrainingIntent | null;
-  readonly source: VelocityLossThresholdSource | 'default';
+  readonly source: VelocityLossThresholdSource;
   /** Per-rep colour band edges in loss %, ascending; the last is always {@link pct} (VW-448). */
   readonly bands: readonly [number, number, number];
   /** The rule that produced {@link bands}, so a research-backed source can replace it by name. */
@@ -150,7 +166,7 @@ function fatigueStop(
 export function exerciseFatigueStop(planIntent: TrainingIntent | undefined): FatigueStop {
   const resolved = resolveVelocityLossSpec({ type: 'velocity_loss_exceeded' }, planIntent);
   if (resolved === undefined) {
-    return fatigueStop(VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT], null, 'default');
+    return fatigueStop(ASSUMED_STOP_PCT, null, 'default');
   }
   return fromResolved(resolved);
 }

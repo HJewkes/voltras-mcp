@@ -137,11 +137,13 @@ export function buildEffortContext(inputs: EffortContextInputs): PinnedEffortCon
   };
 }
 
+/** The watch's loss spec. An assumed stop (VW-719) is neither goal nor guard: the library has no source for it. */
 function watchLossSpec(
   watch: ResolvedWatchConfig | undefined,
 ): ResolvedVelocityLossSpec | undefined {
   return watch?.notifyOn.find(
-    (spec): spec is ResolvedVelocityLossSpec => spec.type === 'velocity_loss_exceeded',
+    (spec): spec is ResolvedVelocityLossSpec =>
+      spec.type === 'velocity_loss_exceeded' && spec.thresholdSource !== 'default',
   );
 }
 
@@ -192,8 +194,15 @@ function goalFromWatch(watch: ResolvedWatchConfig | undefined): EffortGoal | nul
     return { kind: 'rep_range', repsLow: reps.value, repsHigh: reps.value, source: 'explicit' };
   }
   const loss = watchLossSpec(watch);
-  if (loss === undefined) return null;
-  return { kind: 'velocity_loss', lossPct: loss.pct, source: loss.thresholdSource ?? 'explicit' };
+  const source = loss === undefined ? null : effortLossSource(loss);
+  if (loss === undefined || source === null) return null;
+  return { kind: 'velocity_loss', lossPct: loss.pct, source };
+}
+
+/** A spec's provenance in the library's terms; `null` for the assumed stop, which it has none for. */
+function effortLossSource(spec: ResolvedVelocityLossSpec): EffortLossSource | null {
+  const source = spec.thresholdSource ?? 'explicit';
+  return source === 'default' ? null : source;
 }
 
 /** The loss guard is the watch's resolved spec, else the plan intent's; never a default. */
@@ -212,7 +221,7 @@ function guardFor(
     effortCapRpe: cap ?? null,
     effortCapSource: cap === undefined ? null : 'plan',
     lossPct: loss?.pct ?? null,
-    lossSource: loss === undefined ? null : (loss.thresholdSource ?? 'explicit'),
+    lossSource: loss === undefined ? null : effortLossSource(loss),
   };
 }
 
