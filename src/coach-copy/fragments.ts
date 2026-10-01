@@ -7,6 +7,7 @@
 // Pure module with no Node APIs, so the dashboard SPA can import it.
 
 import { ACCOUNTABILITY_FRAGMENT_LIST } from './accountability.js';
+import { COMPOSER_FRAGMENT_LIST } from './composer.js';
 
 /**
  * - `rp`: one or more RP corpus ids, comma separated.
@@ -30,6 +31,13 @@ export interface Fragment {
   readonly id: string;
   /** The template, with its slots as the renderer fills them. */
   readonly text: string;
+  readonly sourceKind: SourceKind;
+  readonly sourceRef: string;
+}
+
+/** A coaching number, rather than a sentence, with the same source fields as a fragment. */
+export interface SourcedValue<T> {
+  readonly value: T;
   readonly sourceKind: SourceKind;
   readonly sourceRef: string;
 }
@@ -78,12 +86,9 @@ function refProblem(kind: SourceKind, ref: string): string | undefined {
   }
 }
 
-/** Every reason `candidate` is not a sourced fragment; empty when it is one. */
-export function validateFragment(candidate: FragmentCandidate): string[] {
+/** Every reason a kind and ref pair is not a followable source; empty when it is one. */
+export function validateSource(sourceKind: unknown, sourceRef: unknown): string[] {
   const problems: string[] = [];
-  const { id, text, sourceKind, sourceRef } = candidate;
-  if (typeof id !== 'string' || !FRAGMENT_ID.test(id)) problems.push('id is not dotted lower-case');
-  if (typeof text !== 'string' || text.trim() === '') problems.push('text is empty');
   if (!isSourceKind(sourceKind)) problems.push('sourceKind is missing or unknown');
   if (typeof sourceRef !== 'string' || sourceRef.trim() === '') {
     problems.push('sourceRef is empty');
@@ -93,6 +98,15 @@ export function validateFragment(candidate: FragmentCandidate): string[] {
   const mismatch = isSourceKind(sourceKind) ? refProblem(sourceKind, sourceRef) : undefined;
   if (mismatch) problems.push(mismatch);
   return problems;
+}
+
+/** Every reason `candidate` is not a sourced fragment; empty when it is one. */
+export function validateFragment(candidate: FragmentCandidate): string[] {
+  const problems: string[] = [];
+  const { id, text, sourceKind, sourceRef } = candidate;
+  if (typeof id !== 'string' || !FRAGMENT_ID.test(id)) problems.push('id is not dotted lower-case');
+  if (typeof text !== 'string' || text.trim() === '') problems.push('text is empty');
+  return [...problems, ...validateSource(sourceKind, sourceRef)];
 }
 
 /** Problems across a whole registry, each prefixed with the fragment id; duplicate ids included. */
@@ -108,4 +122,7 @@ export function validateRegistry(fragments: readonly FragmentCandidate[]): strin
 }
 
 /** One list over every per-area registry; later areas append here. */
-export const COACH_FRAGMENTS: readonly Fragment[] = [...ACCOUNTABILITY_FRAGMENT_LIST];
+export const COACH_FRAGMENTS: readonly Fragment[] = [
+  ...ACCOUNTABILITY_FRAGMENT_LIST,
+  ...COMPOSER_FRAGMENT_LIST,
+];

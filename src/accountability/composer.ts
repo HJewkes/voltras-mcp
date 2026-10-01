@@ -25,6 +25,7 @@ import {
   SILENCE_MEANS_ON_TRACK_LINE,
   SUNDAY_ANCHOR,
 } from './copy.js';
+import { COMPOSER_FRAGMENTS as LINES, REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
 import type {
   AdherenceRead,
   HoldingRead,
@@ -45,12 +46,8 @@ export type {
   PlanningDueRead,
 } from './types.js';
 
-/**
- * The plan's own illustrative reduced-scope figure ("20 minutes, row and one
- * accessory", plan §2). A default, not a finding: no source in either research
- * file gives a re-entry session length.
- */
-const DEFAULT_REDUCED_SCOPE_MINUTES = 20;
+/** An engineering default; its source sits beside it in the coach-copy registry. */
+const DEFAULT_REDUCED_SCOPE_MINUTES = REDUCED_SCOPE_MINUTES.value;
 
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
 
@@ -106,15 +103,20 @@ export interface RealignOpenerInput {
   slots: PlannedSlot[];
 }
 
-function render(template: string, values: Record<string, string>): string {
-  const filled = template.replace(/\{\{(\w+)\}\}/g, (_match, token: string) => {
+/** Fills each `{{token}}` once; a filled value is never scanned for further tokens. */
+function fill(template: string, values: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, token: string) => {
     const value = values[token];
     if (value === undefined) {
       throw new Error(`coach copy: template placeholder "${token}" has no value`);
     }
     return value;
   });
-  return filled
+}
+
+/** Fills a whole message, then drops the lines that rendered empty. */
+function render(template: string, values: Record<string, string>): string {
+  return fill(template, values)
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
@@ -135,75 +137,61 @@ function joinNames(names: readonly string[]): string {
  * keyed to trend (RP §2), and a count is the running total copy rule 2 bans.
  */
 function trendWord(trend: AdherenceRead['trend']): string {
-  if (trend === 'improving') return 'improving';
-  if (trend === 'declining') return 'worsening';
-  if (trend === 'steady') return 'flat';
-  return 'no prior week to compare';
+  if (trend === 'improving') return LINES.trendImproving.text;
+  if (trend === 'declining') return LINES.trendDeclining.text;
+  if (trend === 'steady') return LINES.trendSteady.text;
+  return LINES.trendNoPrior.text;
 }
 
 function adherenceLine(adherence: AdherenceRead | null): string {
-  if (adherence === null) {
-    return 'Nothing was on the calendar last week, so there is no planned-versus-recorded read to show.';
-  }
-  return `Planned ${adherence.planned}, recorded ${adherence.done}. Deviation trend: ${trendWord(adherence.trend)}.`;
+  if (adherence === null) return LINES.adherenceNone.text;
+  return fill(LINES.adherenceRead.text, {
+    planned: String(adherence.planned),
+    done: String(adherence.done),
+    trend: trendWord(adherence.trend),
+  });
 }
 
 /** Copy rule 7: a rolling window has no zero state, which is the point of it. */
 function rollingLine(trainingDays: number): string {
-  return `Rolling 28-day training days: ${trainingDays}.`;
+  return fill(LINES.rolling.text, { trainingDays: String(trainingDays) });
 }
 
 function nextUpLine(nextWorkout: NextWorkoutRead | null): string {
-  if (nextWorkout === null) {
-    return 'Nothing is queued on the plan right now, which is ten minutes of programming whenever you want it.';
-  }
-  return `Next on the plan: ${nextWorkout.templateName}, with ${joinNames(nextWorkout.exercises.map((exercise) => exercise.name))}.`;
+  if (nextWorkout === null) return LINES.nextUpEmpty.text;
+  return fill(LINES.nextUp.text, {
+    templateName: nextWorkout.templateName,
+    exercises: joinNames(nextWorkout.exercises.map((exercise) => exercise.name)),
+  });
 }
 
 /** Offers the planning sitting, never starts it: the lifter picks when (VW-476). */
 function planningLine(planning: PlanningDueRead | null): string {
   if (planning === null) return '';
-  return (
-    `The next block is due to be planned: ${planning.reason} Pick a time this week to plan it ` +
-    'with me, because a block dated before it starts is one the week can be built around.'
-  );
+  return fill(LINES.planning.text, { reason: planning.reason });
 }
 
 function slotsLine(slots: readonly PlannedSlot[]): string {
-  const rendered = slots.map((slot) => `${slot.day} (fallback ${slot.fallbackDay})`).join(', ');
-  return (
-    `Slots for the coming week, each with its named fallback: run ${rendered}, because a session on ` +
-    'its fallback day counts as recorded, which is the whole point of naming fallbacks.'
-  );
+  const rendered = slots
+    .map((slot) => fill(LINES.slot.text, { day: slot.day, fallbackDay: slot.fallbackDay }))
+    .join(', ');
+  return fill(LINES.slots.text, { slots: rendered });
 }
 
 function ifThenLine(ifThenPlan: string | undefined): string {
-  const rationale =
-    'because a plan you wrote yourself is the one that holds when the week pushes back';
-  if (ifThenPlan === undefined) {
-    return (
-      'This week\'s if-then is yours to write, in the shape of "if this gets in the way, then that ' +
-      `slot moves here", so send it in your own words, ${rationale}.`
-    );
-  }
-  return (
-    `Your if-then from last week was: "${ifThenPlan}". Send this week's version with the barrier ` +
-    `you actually expect named in it, ${rationale}.`
-  );
+  if (ifThenPlan === undefined) return LINES.ifThenFirst.text;
+  return fill(LINES.ifThenRepeat.text, { ifThenPlan });
 }
 
 function commitmentLine(input: SundayAnchorInput): string {
   if (!input.monthlyCommitmentReoffer) return '';
   const wording = input.commitmentLanguage ?? COMMITMENT_LANGUAGE_PLACEHOLDER;
-  return (
-    `Month marker: the target in your own words is "${wording}", and restating or revising it is ` +
-    'yours to do, because a number I pick for you is not a commitment.'
-  );
+  return fill(LINES.monthMarker.text, { wording });
 }
 
 function loadClause(exercise: NextWorkoutExercise): string {
   if (exercise.targetWeightLbs === undefined) return '';
-  return `, load held at ${exercise.targetWeightLbs} lb`;
+  return fill(LINES.loadClause.text, { weightLbs: String(exercise.targetWeightLbs) });
 }
 
 /**
@@ -212,19 +200,20 @@ function loadClause(exercise: NextWorkoutExercise): string {
  * winning intervention was a specific return to the next session (LIT §1.9).
  */
 function offerLine(input: MissRecoveryInput, minutes: number, lead: NextWorkoutExercise): string {
-  return (
-    `One way back in, smaller than the plan asks for: ${input.reEntryDay}, ${minutes} minutes, run ` +
-    `${lead.name} plus one accessory${loadClause(lead)}, because a short session that happens is ` +
-    'what the next progression reads from.'
-  );
+  return fill(LINES.reEntryOffer.text, {
+    reEntryDay: input.reEntryDay,
+    minutes: String(minutes),
+    exercise: lead.name,
+    loadClause: loadClause(lead),
+  });
 }
 
 function maintenanceLine(minutes: number, lead: NextWorkoutExercise): string {
-  return (
-    `If you want to keep a hand in while it runs, one option is ${minutes} minutes of ${lead.name} ` +
-    `on whichever day suits${loadClause(lead)}, because holding a position takes far less work ` +
-    'than building it did.'
-  );
+  return fill(LINES.holdingMaintenance.text, {
+    minutes: String(minutes),
+    exercise: lead.name,
+    loadClause: loadClause(lead),
+  });
 }
 
 /**
@@ -232,22 +221,14 @@ function maintenanceLine(minutes: number, lead: NextWorkoutExercise): string {
  * within the same number of days and never below it.
  */
 function reArchitectLine(slots: readonly PlannedSlot[]): string {
-  const days = numberWord(slots.length);
-  const dayList = joinNames(slots.map((slot) => slot.day));
-  return (
-    `If the week is genuinely fuller than the plan assumes, the fix is re-architecting to your real ` +
-    `schedule: keep ${days} days and move ${dayList} to the hours that actually exist, renaming each ` +
-    `fallback as you go, within ${days} days rather than down from them, because ${days} days is the ` +
-    'frequency your training tier holds before any change to it is worth making.'
-  );
+  return fill(LINES.reArchitect.text, {
+    days: numberWord(slots.length),
+    dayList: joinNames(slots.map((slot) => slot.day)),
+  });
 }
 
 function askLine(slots: readonly PlannedSlot[]): string {
-  return (
-    `Tell me which of ${joinNames(slots.map((slot) => slot.day))} is the slot that keeps breaking ` +
-    'and I will rebuild the week around the ones that hold, because moving one slot is a smaller ' +
-    'change than moving the plan.'
-  );
+  return fill(LINES.ask.text, { dayList: joinNames(slots.map((slot) => slot.day)) });
 }
 
 function leadExercise(nextWorkout: NextWorkoutRead): NextWorkoutExercise {
@@ -284,7 +265,7 @@ function composeHoldingAcknowledgement(input: MissRecoveryInput): ComposedMessag
     kind: 'holding_acknowledgement',
     text: render(HOLDING_ACKNOWLEDGEMENT, {
       lifterName: input.lifterName,
-      throughClause: endDate === undefined ? '' : ` through ${endDate}`,
+      throughClause: endDate === undefined ? '' : fill(LINES.holdingThrough.text, { endDate }),
       plannedDay: input.missed.plannedDay,
       maintenanceLine: maintenanceLine(minutes, leadExercise(input.nextWorkout)),
     }),
@@ -309,7 +290,7 @@ export function composeMissRecovery(input: MissRecoveryInput): ComposedMessage {
       nonJudgmentLine: NON_JUDGMENT_LINE,
       operationalHonestyLine: OPERATIONAL_HONESTY_LINE,
       offerLine: offerLine(input, minutes, leadExercise(input.nextWorkout)),
-      bookingLine: `Reply with a yes and it goes on the plan for ${input.reEntryDay}, because a booked slot defends itself better than an intention does.`,
+      bookingLine: fill(LINES.booking.text, { reEntryDay: input.reEntryDay }),
     }),
   };
 }
