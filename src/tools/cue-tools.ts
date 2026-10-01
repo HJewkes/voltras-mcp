@@ -53,7 +53,7 @@ const DESCRIPTION = [
   'fields just reports current state. `VMCP_CUES` / `VMCP_CUES_MIDSET` are only the',
   'startup defaults (both `off`). macOS-only: cues never speak on other platforms',
   'regardless of these settings. `server.health` reports the same values. Under',
-  '`risk` the reply adds `liveSetRisk`: for each slot with an active set, its band,',
+  '`risk` the reply also lists each slot with an active set, with its set-risk band,',
   'points, factor levels and veto ids, or a null band when no reading is pinned.',
 ].join(' ');
 
