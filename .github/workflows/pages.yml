@@ -16,6 +16,10 @@ concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
 
+# onnxruntime-node's postinstall downloads the CUDA provider on linux/x64; CPU inference never loads it (VW-733).
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   build:
     runs-on: ubuntu-latest

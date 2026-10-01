@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: read
 
+# onnxruntime-node's postinstall downloads the CUDA provider on linux/x64; CPU inference never loads it (VW-733).
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   # Security: scan for leaked secrets
   gitleaks:
@@ -60,6 +64,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Confirm the onnxruntime GPU download was skipped
+        run: test ! -e node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so && echo "onnxruntime CUDA provider not downloaded"
       - run: npm test
 
   # Build verification
