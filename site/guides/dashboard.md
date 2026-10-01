@@ -12,9 +12,13 @@ sources:
   - src/dashboard/spa/live-stream.ts
   - src/dashboard/spa/planner/planner-client.ts
   - src/docs/capture-shots.ts
+  - src/dashboard/spa/adapter.ts
+  - src/dashboard/spa/live-page/model.ts
+  - src/server.ts
   - docs/dashboard-drivers.md
   - site/public/captures/manifest.json
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # The wall dashboard
@@ -29,18 +33,22 @@ shows what the server records.
 ## What it is
 
 - **Local.** The dashboard binds `127.0.0.1` only, so you open it on the machine that runs the
-  server and no other machine can reach it (`src/dashboard/server.ts:242`).
+  server and no other machine can reach it (`src/dashboard/server.ts:245`).
 - **One per session.** Each Claude Code session runs its own server, and each server starts
-  its own dashboard on its own port (`src/server.ts:145-157`).
+  its own dashboard on its own port (`src/server.ts:148-157`).
 - **Mostly read-only.** The live page and the session summary only read. The plan builder is
   the one page that writes, and each of its edits needs a same-origin request that carries a
   per-boot write token (`src/dashboard/server.ts:96-99`, `src/dashboard/write-guard.ts:85-95`).
-- **No effort number yet.** The live page and the session summary show velocity loss and a
-  fatigue verdict, but no RPE or reps in reserve. The
+- **No effort reading yet.** The live page and the session summary show velocity loss and a
+  fatigue verdict, but no measured RPE or reps in reserve. The live page does show an effort
+  target under the prescription: the plan's RPE, or your tier's default target
+  (`src/dashboard/spa/live-page/model.ts:472-488`). The
   [effort readout](/coming-soon/effort-readout) is coming soon.
 
-Every capture on this site comes from the real MCP tools running against the mock adapter
-(`VOLTRA_ADAPTER=mock`), not from a real Voltra (`src/docs/capture-shots.ts`).
+No capture on this site comes from a real Voltra. Every capture but the body page's comes
+from the real MCP tools running against the mock adapter (`VOLTRA_ADAPTER=mock`). The body
+capture comes from training rows seeded into the store, because the per-muscle reads leave
+mock sets out (`src/docs/capture-shots.ts:165-176`).
 
 ## The five screens
 
@@ -81,8 +89,10 @@ turns the dashboard on, and how to find its address. In short: call
 `7723` unless that port was busy, so read the address rather than typing it
 (`src/tools/server-tools.ts:252`).
 
-Open the page before the first set. The set log on the live page builds up in the browser as
-sets close, so a page opened after the last set has nothing to show (`README.md:262`).
+You can open the page at any point in a session. While a session is open, the server sends
+its finished sets with every update, so a page opened or reloaded mid-session shows them
+(`src/dashboard/spa/adapter.ts:755-766`). When the session ends, the live page clears its
+set log; the session summary shows the finished session.
 
 ## How it stays current
 
@@ -113,6 +123,6 @@ stream cadence above. It re-polls `/api/plan-tree` on its own 2-second interval
   response shapes, and the plan builder's write routes.
 - [Dashboard pages](/reference/dashboard-pages): each route with the data it reads.
 - [`docs/dashboard-drivers.md`](https://github.com/HJewkes/voltras-mcp/blob/main/docs/dashboard-drivers.md):
-  four ways to make the dashboard render a workout without hardware, from a scripted fake
-  state up to a real Voltra, and what each one can show.
+  the real device and four ways to make the live page render a workout without hardware,
+  from a scripted fake state to a replay of a real recording, and what each one can show.
 - [Try it without a device](/start/try-without-a-device): run the mock driver end to end.
