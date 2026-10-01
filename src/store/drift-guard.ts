@@ -32,7 +32,11 @@ import {
 } from '@voltras/workout-analytics';
 
 import { normalisePositionsToMetres } from './position-units.js';
-import { isEligibleForComparison, scopeSessionSetsToExerciseId } from './set-scope.js';
+import {
+  isEligibleForComparison,
+  scopeSessionSetsToExerciseId,
+  scopeSetsToLifter,
+} from './set-scope.js';
 import type { SessionStore } from './types.js';
 
 export interface DriftGuardInput {
@@ -42,6 +46,8 @@ export interface DriftGuardInput {
   baselineSessionId: string;
   /** The session being judged against the reference. */
   currentSessionId: string;
+  /** Whose sets to read (VW-717); absent is the owner, as in `scopeSetsToLifter`. */
+  lifter?: string;
 }
 
 /**
@@ -57,8 +63,8 @@ export async function checkDriftGuard(
   input: DriftGuardInput,
 ): Promise<DriftGuardVerdict> {
   const [baseline, current] = await Promise.all([
-    summarizeSessionForDrift(store, input.baselineSessionId, input.key),
-    summarizeSessionForDrift(store, input.currentSessionId, input.key),
+    summarizeSessionForDrift(store, input.baselineSessionId, input.key, input.lifter),
+    summarizeSessionForDrift(store, input.currentSessionId, input.key, input.lifter),
   ]);
 
   if (baseline === undefined || current === undefined) {
@@ -84,13 +90,17 @@ export async function checkDriftGuard(
  * is an ABSOLUTE length, and `romDriftPct` divides one session's by another's,
  * so a capture-era difference between the two sessions would otherwise read as
  * a drift verdict rather than as the unit mismatch it is.
+ *
+ * A guest can work in during an owner's session (VW-169), so the sets are
+ * scoped to one lifter first (VW-717): the owner unless `lifter` names a guest.
  */
 export async function summarizeSessionForDrift(
   store: Pick<SessionStore, 'getSetsForSession'>,
   sessionId: string,
   key: BaselineKey,
+  lifter?: string,
 ): Promise<DriftSummary | undefined> {
-  const allSets = await store.getSetsForSession(sessionId);
+  const allSets = scopeSetsToLifter(await store.getSetsForSession(sessionId), lifter);
   const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId)
     .filter((set) => isEligibleForComparison(set, key))
     .map(normalisePositionsToMetres);

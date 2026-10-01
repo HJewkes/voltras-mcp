@@ -339,6 +339,27 @@ describe('checkMrvGuard', () => {
     expect(result.guard.reasoning).toContain('only one of the two sessions underperformed');
   });
 
+  it("keeps a guest's sets inside owner sessions out of the verdict (VW-717)", async () => {
+    // Arrange: the owner declines 6 -> 4 -> 3; a guest works in with 12-rep sets
+    const input = { key, session1Id: 'sess-1', session2Id: 'sess-2', session3Id: 'sess-3' };
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }, { repCount: 4 }));
+    await store.putSet(makeSet({ id: 'c', sessionId: 'sess-3' }, { repCount: 3 }));
+    const ownerOnly = await checkMrvGuard(store, input);
+    for (const sessionId of ['sess-2', 'sess-3']) {
+      await store.putSet(
+        makeSet({ id: `guest-${sessionId}`, sessionId, lifter: 'Guest' }, { repCount: 12 }),
+      );
+    }
+
+    // Act
+    const withGuest = await checkMrvGuard(store, input);
+
+    // Assert
+    expect(ownerOnly.guard.mrvFlagged).toBe(true);
+    expect(withGuest).toEqual(ownerOnly);
+  });
+
   it('stays inconclusive rather than flagged when a pair could not be evaluated', async () => {
     // Arrange: sess-2 has no recorded sets at all, so the prior pair has no read
     await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
