@@ -107,9 +107,9 @@
 //   # the PR-star loop, then open http://127.0.0.1:7724/app#/goals:
 //   node scripts/dashboard-mock-drive.mjs --goal=cable-chest-press
 //
-// Then open http://127.0.0.1:7724/app in a browser BEFORE/DURING the run — the
-// set-log accumulates client-side across polls, so a late-joining page misses
-// the non-null→null set transitions it logs.
+// Then open http://127.0.0.1:7724/app in a browser BEFORE/DURING the run — while the
+// session is open the snapshot carries its finished sets, so a late-joining page
+// rebuilds its set log; once the driver ends the session there is nothing left to show.
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
