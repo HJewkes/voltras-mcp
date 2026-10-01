@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { log } from '../../../logger.js';
 import type { ChannelEvent, ChannelPublisher } from '../../../state/channel-publisher.js';
 import type { Tier } from '../../../tools/tier-signal.js';
 import { CueSelector } from '../../cue-templates.js';
@@ -83,6 +84,19 @@ function intraLines(h: Harness, setId = 'work'): DeliveryRecord[] {
   return h.records.filter(
     (record) => record.setId === setId && record.interval === 'intra' && record.decision.admit,
   );
+}
+
+function recordingPublisher(): ChannelPublisher & { published: ChannelEvent[] } {
+  const published: ChannelEvent[] = [];
+  const publisher = {
+    published,
+    publish: (event: ChannelEvent) => published.push(event),
+    forSlot: (slot: string): ChannelPublisher => ({
+      publish: (event) => published.push({ ...event, meta: { slot, ...event.meta } }),
+      forSlot: () => publisher,
+    }),
+  };
+  return publisher;
 }
 
 describe('DeliveryEmitter', () => {
@@ -274,6 +288,61 @@ describe('DeliveryEmitter', () => {
     expect(intraLines(h).map((line) => line.slot)).toEqual(['left', 'right']);
   });
 
+  it('speaks only the set-complete line when a slowdown and the set end share a tick', async () => {
+    const h = harness({ tier: 'beginner' });
+    await tick(h, started('work'));
+    const [first, second] = reps('work', 2);
+    await tick(h, first);
+    await tick(h, second, slowdown('work', 2), ended('work', STEADY_REPS));
+
+    expect(h.spoken.map((line) => line.source)).toEqual(['set_intro', 'set_complete']);
+    expect(intraLines(h)).toEqual([]);
+  });
+
+  it('drops a pending intra-set moment when the next set starts in the same tick', async () => {
+    const h = harness({ tier: 'beginner' });
+    await tick(h, started('work'));
+    const [first, second] = reps('work', 2);
+    await tick(h, first);
+    await tick(h, second, slowdown('work', 2), started('next'), ...reps('next', 1));
+
+    expect(h.spoken.map((line) => line.source)).not.toContain('slowdown');
+    expect(h.records.filter((record) => record.interval === 'intra')).toEqual([]);
+  });
+
+  describe('when a dependency throws during an intra-set decision', () => {
+    let armed = false;
+    const boom = (): never => {
+      throw new Error('boom');
+    };
+    const throwing: Record<string, Partial<DeliveryEmitterDeps>> = {
+      signalsFor: { signalsFor: () => (armed ? boom() : {}) },
+      'the clock': { clock: () => (armed ? boom() : 1_000) },
+      onDecision: { onDecision: () => (armed ? boom() : undefined) },
+      'a synchronous speak': { speak: () => (armed ? boom() : Promise.resolve()) },
+    };
+
+    it.each(Object.keys(throwing))('logs and drops the line when %s throws', async (name) => {
+      armed = false;
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      const h = harness({ tier: 'beginner', ...throwing[name] });
+      const tee = new DeliveryTee(recordingPublisher(), h.emitter);
+      await warmUp(h);
+      tee.publish(started('work'));
+      await settle();
+      armed = true;
+
+      for (const event of reps('work', 2)) tee.publish(event);
+      await settle();
+
+      expect(warn).toHaveBeenCalledWith(
+        'cue delivery: dropped an intra-set line after an error',
+        'Error: boom',
+      );
+      warn.mockRestore();
+    });
+  });
+
   it('stamps each decision with the injected clock', async () => {
     const h = harness({ clock: () => 42 });
     await tick(h, started('work'));
@@ -283,19 +352,6 @@ describe('DeliveryEmitter', () => {
 });
 
 describe('DeliveryTee', () => {
-  function recordingPublisher(): ChannelPublisher & { published: ChannelEvent[] } {
-    const published: ChannelEvent[] = [];
-    const publisher = {
-      published,
-      publish: (event: ChannelEvent) => published.push(event),
-      forSlot: (slot: string): ChannelPublisher => ({
-        publish: (event) => published.push({ ...event, meta: { slot, ...event.meta } }),
-        forSlot: () => publisher,
-      }),
-    };
-    return publisher;
-  }
-
   it('forwards every event to the inner publisher unchanged', async () => {
     const inner = recordingPublisher();
     const tee = new DeliveryTee(inner, harness().emitter);
@@ -306,6 +362,31 @@ describe('DeliveryTee', () => {
     await settle();
 
     expect(inner.published).toEqual(snapshot);
+  });
+
+  it('publishes to the inner publisher before the emitter sees the event', () => {
+    const order: string[] = [];
+    const inner: ChannelPublisher = {
+      publish: () => order.push('inner'),
+      forSlot: () => inner,
+    };
+    const emitter = harness().emitter;
+    vi.spyOn(emitter, 'onEvent').mockImplementation(() => {
+      order.push('emitter');
+    });
+
+    new DeliveryTee(inner, emitter).publish(started('work'));
+
+    expect(order).toEqual(['inner', 'emitter']);
+  });
+
+  it('leaves the caller event untouched when a slot-scoped tee stamps its slot', () => {
+    const event = started('work');
+    const snapshot = JSON.parse(JSON.stringify(event)) as ChannelEvent;
+
+    new DeliveryTee(recordingPublisher(), harness().emitter).forSlot('left').publish(event);
+
+    expect(event).toEqual(snapshot);
   });
 
   it('still forwards the event when the emitter throws', () => {

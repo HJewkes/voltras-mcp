@@ -6,6 +6,7 @@
 
 import type { Rep } from '@voltras/workout-analytics';
 
+import { log } from '../../logger.js';
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';
 import type { Tier } from '../../tools/tier-signal.js';
 import { decideCue, type CueDecision } from '../cue-policy.js';
@@ -231,9 +232,18 @@ export class DeliveryEmitter {
     const decision = decideCue(event);
     if (slotSet.moment === null) {
       slotSet.moment = [];
-      queueMicrotask(() => this.decideMoment(context, slotSet));
+      queueMicrotask(() => this.decideMomentSafely(context, slotSet));
     }
     if (decision !== null) slotSet.moment.push(decision);
+  }
+
+  // The microtask runs outside the tee's try/catch, so a throw here would be unhandled.
+  private decideMomentSafely(context: SetContext, slotSet: SlotSet): void {
+    try {
+      this.decideMoment(context, slotSet);
+    } catch (error) {
+      log.warn('cue delivery: dropped an intra-set line after an error', String(error));
+    }
   }
 
   /** Plays the best-ranked line the budget admits for this moment, and nothing else. */
