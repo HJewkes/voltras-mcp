@@ -94,7 +94,7 @@ describe('mesoMilestoneOf invariant', () => {
     const milestone = mesoMilestoneOf(milestoneInput([reading(2), reading(4)], 3));
 
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(milestone.latest?.value).toBe(174);
+    expect(milestone.latest).toEqual({ reps: 8, load: 174 });
   });
 
   it('stays silent when the newest reading sits in the current week', () => {
