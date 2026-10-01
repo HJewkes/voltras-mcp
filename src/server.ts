@@ -29,7 +29,7 @@ import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
 import { publishCoachLine, wireEventBridge } from './state/event-bridge.js';
 import { installIsometricLiveTee } from './state/isometric-live-signal-tee.js';
-import { installCueTee } from './voice/cue-emitter.js';
+import { installCueLayer } from './voice/cue-delivery/install.js';
 import {
   createClientConnection,
   registerClient,
@@ -83,13 +83,14 @@ export function dashboardUrlFor(port: number, host: string = DEFAULT_DASHBOARD_H
  * this per connection — fanning these out is VMCP-01.63.
  */
 function wireProcessState(state: ServerState, connection: ClientConnection): void {
-  // Always tee the channel stream through the deterministic cue emitter; the
-  // emitter reads `state.cueSettings` per event to decide whether to speak, so
+  // Always tee the channel stream through ONE deterministic cue layer, chosen by
+  // VMCP_CUE_DELIVERY: the legacy emitter or the cue-delivery layer, never both.
+  // The layer reads `state.cueSettings` per event to decide whether to speak, so
   // `system.set_cues` can turn cues on mid-session (VMCP-02.85). Installing
   // conditionally would make that impossible — the tee would not be there to
   // enable. The emitter shares the same voice-listener ref as `system.speak`
   // so spoken cues duck the STT mic. Passthrough is byte-identical either way.
-  state.channels = installCueTee(connection.channels, {
+  state.channels = installCueLayer(connection.channels, state, {
     settings: state.cueSettings,
     voiceListenerRef: state.voice,
     // Reads `state.channels` at call time, so a cue spoken later publishes

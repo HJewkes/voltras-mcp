@@ -103,6 +103,16 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     source: CONFIG,
   },
   {
+    name: 'VMCP_CUE_DELIVERY',
+    section: 'Dashboard and voice',
+    defaultValue: '`off`',
+    accepts: ON_OFF,
+    onInvalid: 'stops startup',
+    purpose:
+      'Speaks the automatic cues through the cue-delivery layer instead: a per-set budget by training tier, one repeated technique focus, and a firmer tone as the set nears failure. Replaces the default cues rather than adding to them, and the two cue switches still gate it.',
+    source: CONFIG,
+  },
+  {
     name: 'VOLTRAS_EFFORT_CUE',
     section: 'Dashboard and voice',
     defaultValue: '`off`',
