@@ -73,7 +73,7 @@ intent (`scripts/dashboard-plan-drive.mjs:115-126`), so the default applies, and
 (`src/state/velocity-loss-intent.ts:45-49`, `src/state/velocity-loss-intent.ts:113`,
 `src/state/velocity-loss-intent.ts:150-154`). The block's "Hypertrophy" focus does not set it.
 At 26% the card is in its approaching band, which starts at two thirds of the stop line
-(`src/dashboard/spa/live-page/fatigue-state.ts:29-38`,
+(`src/dashboard/spa/live-page/fatigue-state.ts:29-37`,
 `src/state/velocity-loss-intent.ts:133-136`). At 30% it would read stop.
 [When the live card says stop](/concepts/fatigue-and-pacing#when-the-live-card-says-stop)
 explains the stop line and where its number comes from. Neither the card nor the server's

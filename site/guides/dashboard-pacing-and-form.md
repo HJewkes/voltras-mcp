@@ -38,7 +38,7 @@ Every capture here comes from the real MCP tools running against the mock adapte
 A tempo target is four numbers in seconds: lowering, pause at the bottom, lifting, pause at the
 top (`src/dashboard/tempo-defaults.ts:21-22`). The dashboard uses the tempo your coach set on the
 planned exercise, else the exercise's default, else none
-(`src/dashboard/tempo-defaults.ts:71-90`). When one applies, it sits in the header under the
+(`src/dashboard/tempo-defaults.ts:71-89`). When one applies, it sits in the header under the
 prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:291-310`).
 With none, the header shows no tempo rather than an invented one
 (`src/dashboard/spa/live-page/ExerciseHeader.tsx:145`).
@@ -134,7 +134,7 @@ because the gap would describe the rig rather than you
 (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:80-85`). A side with no device bound reads
 "awaiting" plus that side (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:101-110`). You
 see that only with `?variant=live-dual` in the URL, because without it the page leaves the
-diverging stage as soon as a side drops (`src/dashboard/spa/live-page/stage-variant.ts:66-99`).
+diverging stage as soon as a side drops (`src/dashboard/spa/live-page/stage-variant.ts:66-87`).
 [Left and right](/concepts/technique-signals#left-and-right) covers the measurement, and the
 [bilateral guide](/guides/bilateral) covers the setup.
 
