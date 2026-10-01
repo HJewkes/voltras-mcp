@@ -208,6 +208,20 @@ describe('/api/session-plan derived fallback (VW-642)', () => {
     expect(otherGuest).toBeNull();
   });
 
+  it("reaches past a newer guest session to the owner's own last time", async () => {
+    await seed(store, 'sess-owner', '2026-05-01T10:00:00.000Z', [{ reps: 6, weightLbs: 120 }]);
+    await seed(store, 'sess-guest', LAST_START, WORKING, { lifter: 'Sam' });
+
+    const plan = await fetchPlan(stateFor(store, [liveSession(LIVE_ID, LIVE_START)]));
+
+    expect(plan).toMatchObject({
+      derivedFrom: { startedAt: '2026-05-01T10:00:00.000Z' },
+      sets: 1,
+      repsLow: 6,
+      weightLbs: 120,
+    });
+  });
+
   it('drops a guest set inside an owner session from the derivation', async () => {
     await seed(store, 'sess-last', LAST_START, [
       { reps: 8, weightLbs: 100 },
