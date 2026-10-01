@@ -15,11 +15,11 @@ import type { PrescriptionView } from '../read-models/session-plan.js';
 import type { ActiveSession } from '../../state/live-state.js';
 import {
   LOCAL_USER_ID,
-  type SessionKind,
   type SetPurpose,
   type StoredRep,
   type StoredSet,
 } from '../../store/types.js';
+import type { SessionKind } from '../../store/session-kind.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const EXERCISE = 'bench';

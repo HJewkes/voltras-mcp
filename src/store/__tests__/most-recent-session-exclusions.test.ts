@@ -4,7 +4,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, type SessionKind, type StoredSet } from '../types.js';
+import { LOCAL_USER_ID, type StoredSet } from '../types.js';
+import type { SessionKind } from '../session-kind.js';
 import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EXERCISE = 'bench';
