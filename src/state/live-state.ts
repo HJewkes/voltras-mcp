@@ -38,6 +38,7 @@ import type { RepSource } from '../config.js';
 import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
+import type { ArmDefaults, ArmDefaultsSource } from './arm-defaults.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { JsonObject, SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
 
@@ -292,6 +293,11 @@ export interface ActiveSet {
    * for a new set rather than for the one in front of them.
    */
   upgradedAt?: string;
+  /**
+   * Where the server-applied watch on an auto-armed set came from (VW-718). Written
+   * once by {@link LiveState.applyArmDefaults}; absent when nothing was applied.
+   */
+  armDefaultsSource?: ArmDefaultsSource;
   /**
    * Why this set is being performed, stated at `set.start` time (VMCP-02.84).
    * Carried onto the persisted row ({@link StoredSet.setPurpose}) so
@@ -844,8 +850,13 @@ export class LiveState {
     if (this.set === undefined) {
       return undefined;
     }
+    // VW-718: a watch from the caller replaces the server's, so its source no longer applies.
+    const { armDefaultsSource, ...current } = this.set;
     this.set = {
-      ...this.set,
+      ...current,
+      ...(patch.watch === undefined && armDefaultsSource !== undefined
+        ? { armDefaultsSource }
+        : {}),
       upgradedAt: patch.upgradedAt,
       ...setPurposeFields(patch.setPurpose),
       ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
@@ -857,6 +868,25 @@ export class LiveState {
       ...(patch.watch !== undefined
         ? { watch: patch.watch, firedTriggers: new Set<string>() }
         : {}),
+    };
+    return this.snapshotSet();
+  }
+
+  /**
+   * Attach the server's defaults to an auto-armed set (VW-718). Unlike
+   * {@link upgradeActiveSet} it does NOT stamp `upgradedAt`, so the agent's one
+   * `set.start` upgrade still applies. A no-op, returning `undefined`, when the
+   * active set is not `setId`, was already upgraded, or already has defaults.
+   */
+  applyArmDefaults(setId: string, defaults: ArmDefaults): ActiveSet | undefined {
+    const set = this.set;
+    if (set?.setId !== setId || set.upgradedAt !== undefined) return undefined;
+    if (set.armDefaultsSource !== undefined) return undefined;
+    this.set = {
+      ...set,
+      armDefaultsSource: defaults.source,
+      watch: defaults.watch,
+      firedTriggers: new Set<string>(),
     };
     return this.snapshotSet();
   }

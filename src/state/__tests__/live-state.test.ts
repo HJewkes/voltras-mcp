@@ -1033,3 +1033,62 @@ describe('idle-rep ledger publish state (VW-185)', () => {
     expect(live.idleReps[0].published).toBe(false);
   });
 });
+
+describe('applyArmDefaults (VW-718)', () => {
+  const DEFAULTS = {
+    watch: {
+      notifyOn: [
+        {
+          type: 'velocity_loss_exceeded' as const,
+          pct: 20,
+          intent: 'strength' as const,
+          thresholdSource: 'plan_intent' as const,
+        },
+      ],
+    },
+    source: 'plan_row' as const,
+  };
+
+  function liveWithAutoArmedSet(): InstanceType<typeof LiveState> {
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet({ autoCreatedBy: 'idle_rep' }));
+    return live;
+  }
+
+  it('attaches the watch and its source without stamping upgradedAt', () => {
+    const live = liveWithAutoArmedSet();
+
+    const applied = live.applyArmDefaults(live.set!.setId, DEFAULTS);
+
+    expect(applied?.watch).toEqual(DEFAULTS.watch);
+    expect(live.set?.armDefaultsSource).toBe('plan_row');
+    expect(live.set?.upgradedAt).toBeUndefined();
+  });
+
+  it('leaves a set alone once it has defaults, has been upgraded, or is another set', () => {
+    const live = liveWithAutoArmedSet();
+    const setId = live.set!.setId;
+
+    expect(live.applyArmDefaults('another-set', DEFAULTS)).toBeUndefined();
+    live.applyArmDefaults(setId, DEFAULTS);
+    expect(live.applyArmDefaults(setId, DEFAULTS)).toBeUndefined();
+
+    const upgraded = liveWithAutoArmedSet();
+    upgraded.upgradeActiveSet({ upgradedAt: '2026-09-30T00:00:00.000Z' });
+    expect(upgraded.applyArmDefaults(upgraded.set!.setId, DEFAULTS)).toBeUndefined();
+    expect(upgraded.set?.watch).toBeUndefined();
+  });
+
+  it('drops the source when an upgrade brings its own watch', () => {
+    const live = liveWithAutoArmedSet();
+    live.applyArmDefaults(live.set!.setId, DEFAULTS);
+
+    live.upgradeActiveSet({
+      upgradedAt: '2026-09-30T00:00:00.000Z',
+      watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] },
+    });
+
+    expect(live.set?.armDefaultsSource).toBeUndefined();
+  });
+});
