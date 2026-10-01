@@ -124,15 +124,15 @@ cp .launch.env.example .launch.env
 `just` is optional. Each recipe is a one-line wrapper you can run directly instead.
 ([README.md § just recipes](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#just-recipes))
 
-| Recipe           | Plain command                                                |
-| ---------------- | ------------------------------------------------------------ |
-| `just build`     | `npm run build`                                              |
-| `just dashboard` | `npm run build:dashboard`                                    |
-| `just test`      | `npm test`                                                   |
-| `just typecheck` | `npm run typecheck`                                          |
-| `just lint`      | `npm run lint`                                               |
-| `just sim`       | mock adapter, dashboard off, scratch database                |
-| `just bench`     | `node scripts/preflight.mjs`, then the plugin launcher       |
+| Recipe           | Plain command                                          |
+| ---------------- | ------------------------------------------------------ |
+| `just build`     | `npm run build`                                        |
+| `just dashboard` | `npm run build:dashboard`                              |
+| `just test`      | `npm test`                                             |
+| `just typecheck` | `npm run typecheck`                                    |
+| `just lint`      | `npm run lint`                                         |
+| `just sim`       | mock adapter, dashboard off, scratch database          |
+| `just bench`     | `node scripts/preflight.mjs`, then the plugin launcher |
 
 ## Registering directly in ~/.claude.json
 

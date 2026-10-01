@@ -345,9 +345,7 @@ describe('checkPageFrontmatter', () => {
   });
 
   it('names sourced when it is not a real calendar date', () => {
-    expect(messages(page({ sourced: 'yes' }))).toEqual([
-      'sourced: "yes" is not a YYYY-MM-DD date',
-    ]);
+    expect(messages(page({ sourced: 'yes' }))).toEqual(['sourced: "yes" is not a YYYY-MM-DD date']);
   });
 
   it('names an audience outside the enum', () => {
