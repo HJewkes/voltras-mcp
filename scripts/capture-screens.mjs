@@ -440,12 +440,26 @@ async function installShotDeterminism(page, fixedTimeIso) {
  * clock would hold at its first frame forever: step the clock past its end, let
  * it draw, then pin the clock back so the page still reads the fixed time.
  */
-async function finishClockDrivenAnimation(page, durationMs) {
-  const pinned = Date.parse(CAPTURE_FIXED_TIME_ISO);
+async function finishClockDrivenAnimation(page, durationMs, fixedTimeIso) {
+  const pinned = Date.parse(fixedTimeIso);
   await page.clock.setFixedTime(pinned + durationMs);
   await settlePaint(page);
   await page.clock.setFixedTime(pinned);
   await settlePaint(page);
+}
+
+/**
+ * Throw unless the element with test id `testId` ends at the viewport's right
+ * edge: a side sheet caught mid-slide still renders every word the text checks
+ * look for, so only its position proves it is open.
+ */
+async function assertFlushRight(page, testId, shotName) {
+  const box = await page.getByTestId(testId).boundingBox();
+  const width = page.viewportSize()?.width;
+  const right = box === null ? null : box.x + box.width;
+  if (right === null || width === undefined || Math.abs(right - width) > 1) {
+    throw new Error(`${shotName}: ${testId} ends at ${right}, not the viewport edge ${width}`);
+  }
 }
 
 /**
@@ -551,7 +565,11 @@ async function captureShot(page, origin, port, shot, defs, mode) {
   await waitForText(page, expected, shot.name);
   await settlePaint(page);
   if (shot.clockDrivenAnimationMs !== undefined) {
-    await finishClockDrivenAnimation(page, shot.clockDrivenAnimationMs);
+    await finishClockDrivenAnimation(
+      page,
+      shot.clockDrivenAnimationMs,
+      defs.CAPTURE_FIXED_TIME_ISO,
+    );
   }
   if (shot.scrollTo !== undefined) await scrollToHeading(page, shot.scrollTo, shot.name);
 
@@ -568,6 +586,7 @@ async function captureShot(page, origin, port, shot, defs, mode) {
     animations: 'disabled',
     caret: 'hide',
   });
+  if (shot.flushRight !== undefined) await assertFlushRight(page, shot.flushRight, shot.name);
   if (mode.check) {
     const mismatch = await checkAgainstCommitted(
       mode.browser,

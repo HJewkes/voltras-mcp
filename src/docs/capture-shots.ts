@@ -293,6 +293,8 @@ export interface CaptureShot {
    * at its first frame. The harness steps the clock past it, then pins it again.
    */
   readonly clockDrivenAnimationMs?: number;
+  /** A test id whose box must end at the viewport's right edge: proof a side sheet is fully open. */
+  readonly flushRight?: string;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -590,9 +592,9 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'Cable Lat Pulldown 4 sets · Pull B',
     ],
     holdsPageOpen: false,
-    variesBy: 'the last-trained day count, seeded relative to today',
     // titan's sheet slides in over 400 ms; the margin covers a late first frame.
     clockDrivenAnimationMs: 1_000,
+    flushRight: 'body-map-detail-panel',
   },
 ];
 
