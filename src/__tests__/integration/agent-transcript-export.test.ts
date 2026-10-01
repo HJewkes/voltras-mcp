@@ -1,16 +1,17 @@
 // Integration test for the agent-transcript exporter (VW-597, VW-257 slice S2):
 // `scripts/export-agent-transcript.mjs` boots the compiled server on the mock
 // adapter, plays a synthetic exchange over stdio, and writes a transcript only
-// when every redaction gate passes. Spawns real processes, so it runs in its
-// own sequence group (vitest.config.ts).
+// when every redaction gate passes. Every run is hermetic (see `hermeticEnv`).
+// Spawns real processes, so it runs in its own sequence group (vitest.config.ts).
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -33,19 +34,65 @@ interface ExportRun {
   readonly code: number | null;
   readonly stderr: string;
   readonly out: string;
+  /** Files that appeared under the run's sentinel dir; must stay empty. */
+  readonly sentinelContents: readonly string[];
 }
 
-function runExporter(exchangePath: string, env: Record<string, string> = {}): Promise<ExportRun> {
-  const out = join(mkdtempSync(join(tmpdir(), 'vmcp-export-it-')), 'transcript.json');
+const tempDirs: string[] = [];
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/**
+ * The exporter's whole env. Only PATH and TMPDIR come from the test runner; every
+ * home, store, bindings, capture and outbox setting points into `sentinel`, so no
+ * run can reach a real store whatever the exporter forwards. NODE_OPTIONS loads a
+ * probe that marks the sentinel if it ever runs inside the server process, which
+ * catches an exporter that forwards any parent variable it was not meant to.
+ */
+function hermeticEnv(sentinel: string): Record<string, string> {
+  const probe = join(tempDir('vmcp-export-probe-'), 'probe.mjs');
+  const marker = join(sentinel, 'server-inherited-parent-env');
+  writeFileSync(
+    probe,
+    "import { writeFileSync } from 'node:fs';\n" +
+      "if (process.argv.some((arg) => arg.endsWith('bin.js'))) " +
+      `writeFileSync(${JSON.stringify(marker)}, '');\n`,
+  );
+  const inherited = ['PATH', 'TMPDIR'].filter((key) => process.env[key] !== undefined);
+  return {
+    ...Object.fromEntries(inherited.map((key) => [key, process.env[key] as string])),
+    HOME: sentinel,
+    VOLTRA_ADAPTER: 'mock',
+    VMCP_DB_PATH: join(sentinel, 'vmcp.sqlite'),
+    VMCP_SLOT_BINDINGS_PATH: join(sentinel, 'slot-bindings.json'),
+    VMCP_CAPTURE_DIR: join(sentinel, 'captures'),
+    VMCP_RECORD_SESSION: '1',
+    VMCP_TRUECOACH_OUTBOX: 'on',
+    VMCP_TRUECOACH_OUTBOX_DIR: join(sentinel, 'outbox'),
+    VMCP_TRUECOACH_TOKEN_PATH: join(sentinel, 'truecoach-token.json'),
+    VMCP_TRUECOACH_CACHE_DIR: join(sentinel, 'truecoach-cache'),
+    NODE_OPTIONS: `--import ${probe}`,
+  };
+}
+
+function runExporter(exchangePath: string, overrides: Record<string, string> = {}) {
+  const sentinel = tempDir('vmcp-export-sentinel-');
+  const out = join(tempDir('vmcp-export-it-'), 'transcript.json');
   const child = spawn(process.execPath, [EXPORTER, '--exchange', exchangePath, '--out', out], {
     cwd: REPO_ROOT,
-    env: { ...process.env, VOLTRA_ADAPTER: 'mock', ...env },
+    env: { ...hermeticEnv(sentinel), ...overrides },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let stderr = '';
   child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
-  return new Promise((resolveRun) => {
-    child.on('exit', (code) => resolveRun({ code, stderr, out }));
+  return new Promise<ExportRun>((resolveRun) => {
+    child.on('exit', (code) =>
+      resolveRun({ code, stderr, out, sentinelContents: readdirSync(sentinel) }),
+    );
   });
 }
 
@@ -64,32 +111,11 @@ function distIsFresh(): boolean {
   return built > newestSourceMtime(join(REPO_ROOT, 'src'));
 }
 
-/**
- * A parent env whose every store, home and capture setting points into one
- * sentinel dir. An exporter that leaked its own env to the server would open
- * a store there.
- */
-function sentinelEnv(): { dir: string; env: Record<string, string> } {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-export-sentinel-'));
-  return {
-    dir,
-    env: {
-      HOME: dir,
-      VMCP_DB_PATH: join(dir, 'vmcp.sqlite'),
-      VMCP_SLOT_BINDINGS_PATH: join(dir, 'slot-bindings.json'),
-      VMCP_CAPTURE_DIR: join(dir, 'captures'),
-      VMCP_RECORD_SESSION: '1',
-      VMCP_TRUECOACH_OUTBOX: 'on',
-      VMCP_TRUECOACH_OUTBOX_DIR: join(dir, 'outbox'),
-    },
-  };
-}
-
 /** The synthetic fixture with one extra call step, written to a scratch file. */
 function exchangeWithCall(call: string): string {
   const exchange = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { steps: unknown[] };
   exchange.steps.splice(2, 0, { call, args: {} });
-  const path = join(mkdtempSync(join(tmpdir(), 'vmcp-export-it-')), 'poisoned.exchange.json');
+  const path = join(tempDir('vmcp-export-it-'), 'poisoned.exchange.json');
   writeFileSync(path, JSON.stringify(exchange));
   return path;
 }
@@ -104,15 +130,14 @@ describe('export-agent-transcript against the mock server', () => {
     if (result.status !== 0) throw new Error('failed to build the server before the export test');
   }, BUILD_HOOK_TIMEOUT_MS);
 
+  afterAll(() => {
+    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  });
+
   it(
     'exports a schema-valid, screen-safe transcript that is byte-identical across two pinned runs',
     async () => {
-      const sentinel = sentinelEnv();
-
-      const [first, second] = await Promise.all([
-        runExporter(FIXTURE, sentinel.env),
-        runExporter(FIXTURE),
-      ]);
+      const [first, second] = await Promise.all([runExporter(FIXTURE), runExporter(FIXTURE)]);
 
       expect(first.stderr).toBe('');
       expect(first.code).toBe(0);
@@ -144,7 +169,8 @@ describe('export-agent-transcript against the mock server', () => {
       );
       expect(reps).toEqual(['1', '2', '3']);
       expect(firstBytes.toString('utf8')).not.toContain('mock-voltra');
-      expect(readdirSync(sentinel.dir)).toEqual([]);
+      expect(first.sentinelContents).toEqual([]);
+      expect(second.sentinelContents).toEqual([]);
     },
     EXPORT_TIMEOUT_MS,
   );
@@ -159,6 +185,7 @@ describe('export-agent-transcript against the mock server', () => {
       expect(run.code).toBe(1);
       expect(run.stderr).toContain('TOOL_REFUSED');
       expect(existsSync(run.out)).toBe(false);
+      expect(run.sentinelContents).toEqual([]);
     },
     EXPORT_TIMEOUT_MS,
   );
@@ -171,6 +198,7 @@ describe('export-agent-transcript against the mock server', () => {
       expect(run.code).toBe(1);
       expect(run.stderr).toContain('mock only');
       expect(existsSync(run.out)).toBe(false);
+      expect(run.sentinelContents).toEqual([]);
     },
     EXPORT_TIMEOUT_MS,
   );

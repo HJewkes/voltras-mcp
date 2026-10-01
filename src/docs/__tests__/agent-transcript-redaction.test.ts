@@ -167,6 +167,16 @@ describe('gate 2: schema projection of args', () => {
     expect(code).toBe('ENUM_NOT_MEMBER');
   });
 
+  it('shows a date the exchange authored as an arg, but never a path', () => {
+    const inputSchema = { properties: { startDate: { type: 'string' }, dir: { type: 'string' } } };
+
+    const shown = projectArgs(inputSchema, { startDate: '2001-02-05' }, ['startDate']);
+    const code = refusalCode(() => projectArgs(inputSchema, { dir: '/tmp/x' }, ['dir']));
+
+    expect(shown.args).toEqual([{ name: 'startDate', value: '2001-02-05' }]);
+    expect(code).toBe('VALUE_REFUSED');
+  });
+
   it('collapses an object arg the step asks to show', () => {
     const properties = TOOLS_LIST.tools[2]?.inputSchema ?? {};
 

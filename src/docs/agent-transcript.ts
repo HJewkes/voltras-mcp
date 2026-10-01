@@ -223,15 +223,15 @@ export function assertValueSafe(name: string, value: unknown): void {
   if (value.length > MAX_VALUE_CHARS) {
     throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" is over ${MAX_VALUE_CHARS} chars`);
   }
-  const shape = encodedShape(value) ?? localShape(value);
+  const shape = encodedShape(value) ?? (PATH_SHAPED.test(value) ? 'a path' : null);
   if (shape) throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" holds ${shape}`);
 }
 
-/** Shown values carry no wall-clock dates and no filesystem paths; authored text may. */
-function localShape(text: string): string | null {
-  if (ISO_DATE.test(text)) return 'a date';
-  if (PATH_SHAPED.test(text)) return 'a path';
-  return null;
+/** A server-produced field may carry wall-clock time; an authored arg such as a plan date may not. */
+function assertNotDated(name: string, value: unknown): void {
+  if (typeof value === 'string' && ISO_DATE.test(value)) {
+    throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" holds a date`);
+  }
 }
 
 function isPrimitive(value: unknown): value is string | number | boolean {
@@ -298,6 +298,7 @@ export function projectFields(value: unknown, names: readonly string[]): NamedVa
     const field = record[name];
     if (!isPrimitive(field)) throw new ScreenSafetyError('FIELD_NOT_PRIMITIVE', `"${name}"`);
     assertValueSafe(name, field);
+    assertNotDated(name, field);
     return { name, value: field };
   });
 }

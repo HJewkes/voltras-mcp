@@ -83,9 +83,13 @@ function freePort() {
   });
 }
 
+/** The only parent variables the server sees; everything else, NODE_OPTIONS included, stays behind. */
+const INHERITED_ENV = ['PATH'];
+
 function isolatedEnv(scratchDir, controlPort) {
+  const inherited = INHERITED_ENV.filter((key) => process.env[key] !== undefined);
   return {
-    PATH: process.env.PATH ?? '',
+    ...Object.fromEntries(inherited.map((key) => [key, process.env[key]])),
     HOME: scratchDir,
     TZ: 'UTC',
     VOLTRA_ADAPTER: 'mock',

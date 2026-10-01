@@ -46,9 +46,11 @@ set or request ids, so `seq` is the only ordering.
 Every value passes the fail-closed gates in `src/docs/agent-transcript.ts`: a tool
 allowlist by namespace, projection of args onto the tool's public input schema, result and
 push fields only when the exchange names them, a key denylist, and value checks. A shown
-value may not hold a hex run, a UUID, a base64 run, a date or a filesystem path, even when
-the exchange names it. Authored user and assistant text is not held to the date and path
-checks. The finished transcript is then walked once more. Any refusal exits 1 and writes no file.
+value may not hold a hex run, a UUID, a base64 run or a filesystem path, even when the
+exchange names it. A shown result or push field may not hold a date either, because the
+server stamps wall-clock time. A shown arg may: the exchange authored it, so a plan's start
+date can appear on the pane. Authored user and assistant text is not held to the date and
+path checks. The finished transcript is then walked once more. Any refusal exits 1 and writes no file.
 
 The exporter adds its own limits:
 
@@ -56,19 +58,25 @@ The exporter adds its own limits:
   adapter, and it checks that `server.health` reports `mock` before running a step.
 - It refuses `device.send_raw` and the `debug.*`, `mock.*`, `system.*` and `truecoach.*`
   namespaces by name before the server boots. It never calls `debug.recent_events`.
-- The server gets an environment built from scratch: `HOME`, the store, the slot bindings
-  and the capture directory all point into a temporary directory that is deleted
-  afterwards. No real store is opened. The dashboard, auto-arm, rest timer and spoken cues
-  are off.
+- The server gets an environment built from scratch. Of the parent's variables only `PATH`
+  passes. `HOME`, the store, the slot bindings and the capture directory all point into a
+  temporary directory that is deleted afterwards. No real store is opened. The dashboard,
+  auto-arm, rest timer and spoken cues are off.
 - Raw responses and pushes stay in memory. A push contributes only its event type, its slot
   and the meta keys the exchange names. Its content body is never read.
 
 The integration test
 ([`src/__tests__/integration/agent-transcript-export.test.ts`](../src/__tests__/integration/agent-transcript-export.test.ts))
 exports the synthetic exchange twice and asserts schema validity, the structural walk and
-byte-identical output. One of the two runs gets a parent env whose home, store, bindings
-and capture settings all point into a sentinel directory, which must stay empty. The test
-also asserts that a `device.send_raw` step, a `debug.recent_events` step and a non-mock
-adapter are each refused with no file written. A step calling a made-up tool in the `debug`
-namespace must be refused as `TOOL_REFUSED` too. That tool is in no `tools/list`, so only the
-refusal made before the server boots can name it that way.
+byte-identical output. It also asserts that a `device.send_raw` step, a
+`debug.recent_events` step and a non-mock adapter are each refused with no file written. A
+step calling a made-up tool in the `debug` namespace must be refused as `TOOL_REFUSED` too.
+That tool is in no `tools/list`, so only the refusal made before the server boots can name
+it that way.
+
+No test run inherits the runner's environment. Each run gets only `PATH` and `TMPDIR`, plus
+a home, store, bindings, capture and outbox setting that all point into a fresh sentinel
+directory. Each run also gets a `NODE_OPTIONS` probe that writes a marker if it ever loads
+inside the server. The sentinel must stay empty, so a server that saw any parent variable
+fails the test, and no run can reach a real store. The test removes its temporary
+directories when it finishes.
