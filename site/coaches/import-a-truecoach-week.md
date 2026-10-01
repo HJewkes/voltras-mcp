@@ -9,7 +9,8 @@ sources:
   - src/tools/truecoach-tools.ts
   - src/schemas/truecoach.ts
   - src/config.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Import a TrueCoach week
@@ -21,7 +22,7 @@ tool never writes to TrueCoach, and it runs only when called (`README.md`, "True
 
 Read [the terms-of-service passage](/coaches/consent-and-data-loop#truecoach-import-read-only-and-the-coach-has-not-consented)
 before the first import. TrueCoach publishes no public developer API, and the lifter's
-account is the one at risk (`README.md:579-595`).
+account is the one at risk (`README.md`, "Terms of service — read this before using it").
 
 ## For the coach: write instructions the parser can read
 
@@ -66,8 +67,9 @@ prompts, and it never writes the token or the password to a log line or an error
    `mapping: { "<TrueCoach name>": "<catalog exercise id>" }` on the next run to resolve
    them (`README.md`, "What it does").
 3. **Import.** Run it again without `dryRun`. The workouts land in a block named
-   "TrueCoach import" in the lifter's most recent non-archived program, one week per ISO
-   week, one template per workout (`src/tools/truecoach-tools.ts`).
+   "TrueCoach import" in the program you name with `programId`, else the lifter's most recent
+   non-archived program. The block gets one week per ISO week in the range, empty weeks
+   included, and one template per workout (`src/tools/truecoach-tools.ts:11-15`).
 4. **Train.** Attach the imported workout to the session as in
    [Running a planned session](/guides/planned-session).
 

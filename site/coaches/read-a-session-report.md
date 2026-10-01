@@ -8,11 +8,13 @@ sources:
   - README.md
   - src/tools/report-tools.ts
   - src/state/set-capture.ts
+  - src/store/working-sets.ts
   - tools/truecoach-submit/
   - tools/truecoach-submit/README.md
   - tools/truecoach-submit/package.json
   - tools/truecoach-submit/src/selectors.js
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Coach reports and the outbox
@@ -41,9 +43,11 @@ appears when the session had a plan attached (`plan.complete_workout` /
 `plan.attach_to_session`) and a working set fell below its `targetRepsLow` (`README.md`).
 
 Which sets count follows the same rule [`plan.suggest_progression`](/reference/plan) uses:
-flagged warm-ups are excluded, then the sets at the top load are kept. A guest lifter's
-sets (`session.set_lifter`), mock-adapter sets, and zero-rep sets never appear, and an
-exercise with no working set is omitted rather than reported empty (`README.md`).
+sets flagged as a warm-up, probe or technique set are excluded, then the sets at the top load
+are kept (`src/store/working-sets.ts:20-58`). A guest lifter's sets (`session.set_lifter`) and
+zero-rep sets never appear, and an exercise with no working set is omitted rather than
+reported empty. Mock-adapter sets are left out too, unless the server itself runs on the mock
+adapter (`src/tools/report-tools.ts:149-159`).
 
 ## Load labels on non-weight modes
 
@@ -69,9 +73,9 @@ Set `VMCP_TRUECOACH_OUTBOX=on` and every `session.end` also writes the same payl
 ```
 
 `VMCP_TRUECOACH_OUTBOX_DIR` moves the root; `pending/` is created on demand, mode `0700`.
-Nothing reads the directory, nothing uploads it, and nothing schedules anything — it exists
-so a session's results survive the conversation that produced them, ready to paste
-(`README.md`). A session with no working sets writes nothing, and a write failure is logged
+The server never reads the directory back, uploads it or schedules anything; only the
+write-back submitter below reads it. It exists so a session's results survive the
+conversation that produced them, ready to paste (`README.md`, "The outbox"). A session with no working sets writes nothing, and a write failure is logged
 and swallowed; the file is a by-product of `session.end`, never a precondition for it.
 
 The example above is a synthetic result for an invented exercise, not a real session — this
@@ -81,7 +85,8 @@ page never shows real athlete data, a real session id, or a real TrueCoach accou
 
 Posting a report's text into TrueCoach isn't something this server does. `tools/truecoach-submit/`
 is a **standalone package**: its own `package.json`, its own lockfile, not part of the
-server bundle, not installed by the root `npm ci`, not run by CI (`tools/truecoach-submit/package.json`).
+server bundle, not installed by the root `npm ci`, not run by CI (`tools/truecoach-submit/package.json`,
+`README.md`, "TrueCoach write-back").
 It reads the outbox and drives a local Playwright browser to fill in that day's TrueCoach
 workout.
 
@@ -101,12 +106,12 @@ The submit button's own selector ships marked `UNVERIFIED` in source: nobody has
 yet, so the first real run is also the first verification of that one constant
 (`tools/truecoach-submit/src/selectors.js:28-45`).
 
-By default a human runs the submitter by hand. One environment variable changes that:
-`VMCP_TRUECOACH_SUBMIT_ON_END=on` (with the outbox also on) makes every outbox write spawn
+By default a human runs the submitter by hand. Two optional triggers change that: a daily
+launchd job the lifter installs by hand, and `VMCP_TRUECOACH_SUBMIT_ON_END=on` (with the outbox also on) makes every outbox write spawn
 `tools/truecoach-submit --submit --session <id>` itself, detached, once per session —
 turning "a person chooses to post this" into "ending a session posts it" with no further
-action from you. Read both gates above before setting it, since it's the trigger that puts
-the account risk on autopilot (`README.md`).
+action from you. Read both gates above before setting either, since each one puts the
+account risk on autopilot (`README.md`, "Scheduling").
 
 Pulling a coach's assigned workouts the other direction — TrueCoach into the local plan
 tree — is a different, already-read-only tool: see
@@ -116,7 +121,8 @@ tree — is a different, already-read-only tool: see
 
 [`report.weekly`](/reference/report) rolls per-session results like the ones above up over
 a date range — training days, a rolling 28-day count of training days, adherence and its trend,
-progression suggestions, flags, and a check-in section. See the
+schedule changes, progression suggestions, flags, a check-in section and goal lines
+(`src/tools/report-tools.ts:450-460`). See the
 [weekly report guide](/coaches/read-the-weekly-report) for what each part means and how to call it.
 
 ## What to read next
