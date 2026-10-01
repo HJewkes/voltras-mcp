@@ -41,6 +41,7 @@ const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 const { CoercionWatch } = await import('../coercion-watch.js');
 const { RestTimerRegistry } = await import('../rest-timer.js');
 const { registerSetTools } = await import('../../tools/set-tools.js');
+const { onSetStarted } = await import('../set-start-seam.js');
 const analytics = await import('@voltras/workout-analytics');
 const { SEED_CABLE_EXERCISES } = await import('../../exercises/seed-catalog.js');
 
@@ -693,6 +694,61 @@ describe("auto-armed sets take the plan row's watch (VW-718)", () => {
     expect(closed?.watch).toBeUndefined();
     expect(closed?.armDefaultsSource).toBeUndefined();
     expect(h.live.set).toBeUndefined();
+    expect(eventTypes()).not.toContain('set_updated');
+  });
+
+  it('a set auto-armed by guided load is left untouched', async () => {
+    usePlanStore(STRENGTH_ROW);
+    h.live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseId: 'ex-press',
+    });
+    h.live.startSet({
+      setId: 'set-guided',
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:01.000Z',
+      reps: [],
+      status: 'active',
+      autoCreatedBy: 'guided_load',
+      exerciseId: 'ex-press',
+    });
+    h.state.setStartDeviceSnapshots.set('set-guided', h.live.snapshotDevice());
+
+    await onSetStarted(h.state as never, { slotId: 'primary', setId: 'set-guided' });
+
+    expect(h.live.set?.watch).toBeUndefined();
+    expect(h.live.set?.armDefaultsSource).toBeUndefined();
+    expect(eventTypes()).not.toContain('set_updated');
+  });
+
+  it('a set that replaced the armed one before the plan read returns is left untouched', async () => {
+    let releaseRead: (rows: unknown[]) => void = () => undefined;
+    const pendingRead = new Promise<unknown[]>((resolve) => {
+      releaseRead = resolve;
+    });
+    usePlanStore(STRENGTH_ROW, () => pendingRead);
+    armOn('ex-press');
+    h.live.endSet();
+    h.live.startSet({
+      setId: 'set-next',
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:01:00.000Z',
+      reps: [],
+      status: 'active',
+      autoCreatedBy: 'idle_rep',
+      exerciseId: 'ex-press',
+    });
+
+    releaseRead([{ id: 'a1', plannedExerciseId: 'pe-1' }]);
+    await pendingRead;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.live.set?.setId).toBe('set-next');
+    expect(h.live.set?.watch).toBeUndefined();
+    expect(h.live.set?.armDefaultsSource).toBeUndefined();
     expect(eventTypes()).not.toContain('set_updated');
   });
 

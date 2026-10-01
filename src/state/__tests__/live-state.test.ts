@@ -1091,4 +1091,29 @@ describe('applyArmDefaults (VW-718)', () => {
 
     expect(live.set?.armDefaultsSource).toBeUndefined();
   });
+
+  it("drops the plan row's watch when an upgrade moves the set to another exercise", () => {
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet({ autoCreatedBy: 'idle_rep', exerciseId: 'ex-press' }));
+    live.applyArmDefaults(live.set!.setId, DEFAULTS);
+
+    live.upgradeActiveSet({ upgradedAt: '2026-09-30T00:00:00.000Z', exerciseId: 'ex-row' });
+
+    expect(live.set?.exerciseId).toBe('ex-row');
+    expect(live.set?.watch).toBeUndefined();
+    expect(live.set?.armDefaultsSource).toBeUndefined();
+  });
+
+  it('keeps the plan row watch through an upgrade that changes neither watch nor exercise', () => {
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet({ autoCreatedBy: 'idle_rep', exerciseId: 'ex-press' }));
+    live.applyArmDefaults(live.set!.setId, DEFAULTS);
+
+    live.upgradeActiveSet({ upgradedAt: '2026-09-30T00:00:00.000Z', setPurpose: 'warmup' });
+
+    expect(live.set?.watch).toEqual(DEFAULTS.watch);
+    expect(live.set?.armDefaultsSource).toBe('plan_row');
+  });
 });

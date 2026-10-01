@@ -850,13 +850,9 @@ export class LiveState {
     if (this.set === undefined) {
       return undefined;
     }
-    // VW-718: a watch from the caller replaces the server's, so its source no longer applies.
-    const { armDefaultsSource, ...current } = this.set;
+    const current = withoutStaleArmDefaults(this.set, patch);
     this.set = {
       ...current,
-      ...(patch.watch === undefined && armDefaultsSource !== undefined
-        ? { armDefaultsSource }
-        : {}),
       upgradedAt: patch.upgradedAt,
       ...setPurposeFields(patch.setPurpose),
       ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
@@ -1570,4 +1566,22 @@ function isTrailingFirmwareRepIncomplete(reps: readonly FirmwareRep[]): boolean 
     return false;
   }
   return isTrailingRepIncomplete([enriched]);
+}
+
+/**
+ * The set without its server-applied watch when an upgrade makes it stale (VW-718): the
+ * caller's own watch replaces it, and a new exercise means the plan row no longer applies.
+ */
+function withoutStaleArmDefaults(
+  set: ActiveSet,
+  patch: { watch?: ResolvedWatchConfig; exerciseId?: string },
+): ActiveSet {
+  if (set.armDefaultsSource === undefined) return set;
+  const exerciseChanged = patch.exerciseId !== undefined && patch.exerciseId !== set.exerciseId;
+  if (patch.watch === undefined && !exerciseChanged) return set;
+  const stripped = { ...set };
+  delete stripped.armDefaultsSource;
+  delete stripped.watch;
+  delete stripped.firedTriggers;
+  return stripped;
 }
