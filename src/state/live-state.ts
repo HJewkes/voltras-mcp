@@ -34,6 +34,7 @@ import {
   getPhaseRangeOfMotion,
 } from '@voltras/workout-analytics';
 
+import type { SetRiskReading } from '../analytics/set-risk.js';
 import type { RepSource } from '../config.js';
 import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
@@ -615,6 +616,9 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /** The set-risk reading pinned for one set (VW-613); readable only while that set is active. */
+  private setRiskPin: { readonly setId: string; readonly reading: SetRiskReading } | undefined =
+    undefined;
   /**
    * Bounded ring of finished sets (VW-70), each tagged with the device snapshot
    * at close. Read (session-scoped) by {@link snapshotCompletedSets} so the
@@ -891,6 +895,24 @@ export class LiveState {
   attachEffortContext(setId: string, context: JsonObject): void {
     if (this.set?.setId !== setId) return;
     this.set = { ...this.set, effortContext: context };
+  }
+
+  /** Pin the set-risk reading for `setId`, when it is still the active set. */
+  attachSetRiskReading(setId: string, reading: SetRiskReading): void {
+    if (this.set?.setId !== setId) return;
+    this.setRiskPin = { setId, reading };
+  }
+
+  /** Drop the pinned set-risk reading, so a recompute that fails leaves none rather than a stale one. */
+  clearSetRiskReading(): void {
+    this.setRiskPin = undefined;
+  }
+
+  /** The reading pinned for `setId`, or `undefined` unless that set is active and was pinned. */
+  setRiskReadingFor(setId: string): SetRiskReading | undefined {
+    const pin = this.setRiskPin;
+    if (pin === undefined || pin.setId !== setId || this.set?.setId !== setId) return undefined;
+    return pin.reading;
   }
 
   /** Latch the active set's one effort cue on `repNumber`. True only the first time. */

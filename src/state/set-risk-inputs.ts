@@ -8,8 +8,8 @@ import type { SessionStore, StoredRep, StoredSet } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { velocityLossBaseline } from './channel-payloads.js';
 import { deviceResistanceFamily, type PinnedEffortContext } from './effort-context.js';
-import { relativeIntensityOf } from './effort-pin.js';
 import type { DeviceSnapshot } from './live-state.js';
+import { relativeIntensityOf } from './relative-intensity.js';
 import { eccentricOverloadLeadIn } from './rep-eligibility.js';
 
 /** What the readers need to know about the set that is starting. */

@@ -10,7 +10,6 @@
 
 import type { RirVelocityModel } from '../analytics/rir-velocity.js';
 import { log } from '../logger.js';
-import { constantLoadSets, referenceOneRepMax } from '../store/rir-velocity-candidates.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
 import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 import {
@@ -21,7 +20,9 @@ import {
   type EffortContextInputs,
 } from './effort-context.js';
 import type { ActiveSet, DeviceSnapshot, LiveState } from './live-state.js';
+import { relativeIntensityOf } from './relative-intensity.js';
 import type { ServerState } from './server-state.js';
+import { repinSetRiskReading } from './set-risk-pin.js';
 
 /** Build the context from the set's current start inputs and attach it, unless they moved. */
 export async function pinEffortContext(
@@ -39,7 +40,8 @@ export async function pinEffortContext(
 }
 
 /**
- * Pin again after the start inputs moved (an upgrade, or the pre-first-rep snapshot refresh).
+ * Pin again after the start inputs moved (an upgrade, or the pre-first-rep snapshot refresh),
+ * together with the set-risk reading those inputs also feed (VW-613).
  * Never rejects: a context that could not be pinned leaves the set exactly as it was.
  */
 export async function repinEffortContext(
@@ -47,6 +49,13 @@ export async function repinEffortContext(
   live: LiveState,
   setId: string,
 ): Promise<void> {
+  await Promise.all([
+    repinContextOnly(state, live, setId),
+    repinSetRiskReading(state, live, setId),
+  ]);
+}
+
+async function repinContextOnly(state: ServerState, live: LiveState, setId: string): Promise<void> {
   try {
     await pinEffortContext(state, live, setId);
   } catch (err) {
@@ -91,22 +100,6 @@ async function loadProfile(
   if (typeof profile === 'string') return profile;
   const relativeIntensity = await relativeIntensityOf(store, set.exerciseId, device.weightLbs);
   return { profile, relativeIntensity };
-}
-
-/** Load over the same reference 1RM the curve was fitted against, or `null` when either is unknown. */
-export async function relativeIntensityOf(
-  store: SessionStore,
-  exerciseId: string,
-  loadLbs: number | undefined,
-): Promise<number | null> {
-  if (loadLbs === undefined || loadLbs <= 0) return null;
-  const sets = await store.getSetsForExercise({
-    userId: LOCAL_USER_ID,
-    exerciseId,
-    purpose: ['working'],
-  });
-  const reference = referenceOneRepMax(constantLoadSets(sets));
-  return reference === undefined ? null : loadLbs / reference;
 }
 
 /**
