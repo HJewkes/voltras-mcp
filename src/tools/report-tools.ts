@@ -9,10 +9,9 @@
 //
 // The set list is narrowed the same way every other analysis path narrows it:
 // the owner's sets only (VW-169 — a guest working in is not the owner's
-// result), real sets only (a mock-adapter row is left out unless the server itself runs on
-// the mock adapter), and the
-// working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
-// not read as a light top set.
+// result), real sets only (a mock-adapter row is left out unless the server
+// itself runs on the mock adapter), and the working sets picked by the shared
+// `selectWorkingSets` rule so a ramp-up does not read as a light top set.
 
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { buildGoalLines, type WeeklyGoalLine } from './report-goals.js';

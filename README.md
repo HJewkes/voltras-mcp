@@ -639,8 +639,8 @@ summary and set list render the same string.
 Which sets count is decided the same way `plan.suggest_progression` decides it: flagged
 warm-ups are excluded, then the sets at the top load are kept. A guest lifter's sets
 (`session.set_lifter`) and zero-rep sets never appear, mock-adapter sets are left out unless
-the server itself runs on the mock adapter, and an exercise
-with no working set is omitted rather than reported empty. The tool reads the store and
+the server itself runs on the mock adapter, and an exercise with no working set is omitted
+rather than reported empty. The tool reads the store and
 makes **no network call** — it never writes to TrueCoach, and nothing in this repo does.
 
 ### The outbox
