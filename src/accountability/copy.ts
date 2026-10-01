@@ -7,9 +7,14 @@
 // Nothing here sends. `composer.ts` renders these against structured inputs and
 // the state machine decides when a rendered message goes out.
 //
+// The texts and their sources live in `src/coach-copy/accountability.ts`
+// (VW-725); the names below are the ones the composer and tests import.
+//
 // `{{token}}` placeholders are filled by `composer.ts`. A line that renders
 // empty is dropped, which is how the optional monthly commitment re-offer
 // disappears on the other three Sundays of the month.
+
+import { ACCOUNTABILITY_FRAGMENTS } from '../coach-copy/accountability.js';
 
 /**
  * Stands in for the lifter's own commitment wording until the Sunday
@@ -25,20 +30,16 @@ export const COMMITMENT_LANGUAGE_PLACEHOLDER = '<<COMMITMENT_LANGUAGE>>';
  * operational-honesty line. Reversing the two turns an operational request
  * into an accusation with a disclaimer attached.
  */
-export const NON_JUDGMENT_LINE = 'No judgment in this, and none implied.';
+export const NON_JUDGMENT_LINE = ACCOUNTABILITY_FRAGMENTS.nonJudgment.text;
 
 /** Copy rule 3: honesty as an operating requirement, never a moral one. */
-export const OPERATIONAL_HONESTY_LINE =
-  'The reason accuracy matters here is operational, not moral: the plan cannot ' +
-  'autoregulate load and volume correctly from records that do not match what happened.';
+export const OPERATIONAL_HONESTY_LINE = ACCOUNTABILITY_FRAGMENTS.operationalHonesty.text;
 
 /**
  * Plan §2 "Thursday" decision: an absent mid-week message is only informative
  * if the lifter was told once what silence means.
  */
-export const SILENCE_MEANS_ON_TRACK_LINE =
-  'You will not hear from me mid-week unless a planned session goes unrecorded, so ' +
-  'silence through the week means the plan is on track.';
+export const SILENCE_MEANS_ON_TRACK_LINE = ACCOUNTABILITY_FRAGMENTS.silenceMeansOnTrack.text;
 
 /**
  * The weekly anchor. Shows last week's telemetry back instead of asking how it
@@ -46,64 +47,35 @@ export const SILENCE_MEANS_ON_TRACK_LINE =
  * slot's named fallback, and carries the rolling 28-day count in place of a
  * streak (copy rule 7).
  */
-export const SUNDAY_ANCHOR = [
-  '{{lifterName}}, it is Sunday. Here is last week as the records have it, rather than a question about how it went.',
-  '{{adherenceLine}}',
-  '{{rollingLine}}',
-  '{{nextUpLine}}',
-  '{{planningLine}}',
-  '{{slotsLine}}',
-  '{{ifThenLine}}',
-  '{{commitmentLine}}',
-  '{{silenceLine}}',
-].join('\n');
+export const SUNDAY_ANCHOR = ACCOUNTABILITY_FRAGMENTS.sundayAnchor.text;
 
 /**
  * Fires on entry to `missed`. Names the miss with no evaluation, offers exactly
  * one reduced-scope re-entry sourced from `plan.next_workout`, and puts it on a
  * named day (plan §2 miss-recovery; child-ticket row 11).
  */
-export const MISS_RECOVERY = [
-  '{{lifterName}}, the {{plannedDay}} session ({{missedExercises}}) is not in the records, and its named fallback on {{fallbackDay}} has passed.',
-  '{{nonJudgmentLine}}',
-  '{{operationalHonestyLine}}',
-  '{{offerLine}}',
-  '{{bookingLine}}',
-].join('\n');
+export const MISS_RECOVERY = ACCOUNTABILITY_FRAGMENTS.missRecovery.text;
 
 /**
  * The same missed day inside a declared hold. Miss framing is suppressed
  * entirely: a hold is a window the plan expects to be empty (plan §2 `holding`,
  * RP S11 disruption rules), so this names no miss and prescribes no day.
  */
-export const HOLDING_ACKNOWLEDGEMENT = [
-  '{{lifterName}}, the hold you declared is still running{{throughClause}}, so the empty {{plannedDay}} slot is what the plan expects this week.',
-  'Nothing recalculates against a hold, and nothing is owed at the end of one.',
-  '{{maintenanceLine}}',
-].join('\n');
+export const HOLDING_ACKNOWLEDGEMENT = ACCOUNTABILITY_FRAGMENTS.holdingAcknowledgement.text;
 
 /**
  * Ghost nudge 1 of 2. Standalone by construction: it carries no back-reference,
  * no running count and no escalation of urgency (copy rule 2, RP ghost
  * protocol).
  */
-export const GHOST_NUDGE_1 = [
-  '{{lifterName}}, the plan is sitting where you left it, and the door does not close.',
-  '{{nextUpLine}}',
-  'Pick a day that works and it goes on the plan, because a day you choose beats a day I would guess at.',
-].join('\n');
+export const GHOST_NUDGE_1 = ACCOUNTABILITY_FRAGMENTS.ghostNudge1.text;
 
 /**
  * Ghost nudge 2 of 2, and the last proactive message before outreach stops.
  * Reads as a first contact on purpose: it never refers to nudge 1, because a
  * nudge that counts its predecessors is a running total (copy rule 2).
  */
-export const GHOST_NUDGE_2 = [
-  '{{lifterName}}, short one.',
-  '{{nextUpLine}}',
-  '{{minutes}} minutes of it counts as done, because the plan recalculates from what actually happened rather than from what it asked for.',
-  'Say a day and it is scheduled, because a slot in the week holds better than an intention does.',
-].join('\n');
+export const GHOST_NUDGE_2 = ACCOUNTABILITY_FRAGMENTS.ghostNudge2.text;
 
 /**
  * The realign conversation opener, which is also the escalation ceiling:
@@ -111,12 +83,4 @@ export const GHOST_NUDGE_2 = [
  * frequency offer is a re-architecture within the same number of days, never a
  * reduction (copy rule 4, RP S5 tier reversal).
  */
-export const REALIGN_OPENER = [
-  '{{lifterName}}, one conversation about the shape of the week, not a verdict on it.',
-  '{{nonJudgmentLine}}',
-  '{{operationalHonestyLine}}',
-  '{{adherenceLine}}',
-  '{{rollingLine}}',
-  '{{reArchitectLine}}',
-  '{{askLine}}',
-].join('\n');
+export const REALIGN_OPENER = ACCOUNTABILITY_FRAGMENTS.realignOpener.text;
