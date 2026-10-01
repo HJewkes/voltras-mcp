@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Exercise, Phase } from '@voltras/workout-analytics';
 
 import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
-import type { SetPurpose, StoredRep, StoredSet } from '../../store/types.js';
+import type { SetPurpose, StoredRep } from '../../store/types.js';
 import { collectDeloadBreaches, type DeloadAdvisoryDeps } from '../deload-advisory.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
@@ -71,8 +71,13 @@ async function recordSession(spec: SessionSpec): Promise<string> {
   const at = new Date(NOW.getTime() - spec.daysAgo * DAY_MS).toISOString();
   const lifter = spec.lifter === undefined ? {} : { lifter: spec.lifter };
   await store.putSession({ kind: 'training', id: sessionId, startedAt: at, ...lifter });
-  const setId = `${sessionId}-set`;
-  const set: StoredSet = {
+  await recordSet(sessionId, `${sessionId}-set`, spec);
+  return sessionId;
+}
+
+async function recordSet(sessionId: string, setId: string, spec: SessionSpec): Promise<void> {
+  const at = new Date(NOW.getTime() - spec.daysAgo * DAY_MS).toISOString();
+  await store.putSet({
     userId: LOCAL_USER_ID,
     exerciseId: spec.exerciseId ?? 'synthetic-press',
     id: setId,
@@ -83,10 +88,8 @@ async function recordSession(spec: SessionSpec): Promise<string> {
     weightLbs: 100,
     reps: Array.from({ length: spec.reps }, (_, i) => makeRep(setId, i, spec.romM ?? 0.5)),
     ...(spec.purpose === undefined ? {} : { setPurpose: spec.purpose }),
-    ...lifter,
-  };
-  await store.putSet(set);
-  return sessionId;
+    ...(spec.lifter === undefined ? {} : { lifter: spec.lifter }),
+  });
 }
 
 async function recordWeekly(
@@ -198,6 +201,24 @@ describe('collectDeloadBreaches', () => {
 
     // Assert
     expect(muscles).toEqual([]);
+  });
+
+  it('does not report a muscle a guest trained inside an owner session', async () => {
+    // Arrange
+    const ids = await recordWeekly([6, 4, 3]);
+    const newest = ids[2] as string;
+    await recordSet(newest, `${newest}-guest`, {
+      daysAgo: 1,
+      reps: 8,
+      exerciseId: 'synthetic-curl',
+      lifter: 'Guest',
+    });
+
+    // Act
+    const muscles = await collectDeloadBreaches(deps, NOW);
+
+    // Assert
+    expect(muscles.map((signal) => signal.muscle)).toEqual(['chest']);
   });
 
   it('does not consider a muscle whose newest session is older than seven days', async () => {
