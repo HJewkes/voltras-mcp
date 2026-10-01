@@ -37,6 +37,7 @@ describe('registerFor', () => {
     ['working', 'high'],
     ['in_range', 'high'],
     ['approaching', 'low'],
+    ['reached', 'low'],
     ['past', 'low'],
     ['past', null],
   ])('stays affirming for effort %s at confidence %s', (cueState, confidence) => {
@@ -51,6 +52,11 @@ describe('registerFor', () => {
     expect(registerFor(reading({ lossPct: edge - 0.1, lossThresholdPct: threshold }))).toBe(
       'affirming',
     );
+  });
+
+  it('pins the directive line at exactly two thirds of a 30% threshold', () => {
+    expect(registerFor(reading({ lossPct: 20, lossThresholdPct: 30 }))).toBe('directive');
+    expect(registerFor(reading({ lossPct: 19.9, lossThresholdPct: 30 }))).toBe('affirming');
   });
 
   it('never escalates on loss without a usable threshold', () => {
