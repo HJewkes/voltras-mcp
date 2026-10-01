@@ -10,7 +10,10 @@ sources:
   - src/tools/__tests__/report-weekly-goals.test.ts
   - src/tools/__tests__/report-weekly-tools.test.ts
   - src/tools/accountability-tools.ts
-lastVerified: 2026-09-27
+  - src/accountability/state-machine.ts
+  - src/dashboard/read-models/goal-progress.ts
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # The weekly report
@@ -28,8 +31,10 @@ in markdown or JSON. Both formats render from the same underlying data, so a num
 never disagrees with the same number in the other. It's read-only: no network call, and it
 writes nothing.
 
-Every example below is real output from the test suite's fixture
-(`src/tools/__tests__/report-weekly-tools.test.ts`), not an invented sample.
+Every example below is real output from a test fixture, not an invented sample: the goals
+section from `src/tools/__tests__/report-weekly-goals.test.ts`, the rest from
+`src/tools/__tests__/report-weekly-tools.test.ts`. Each block shows only the section it
+illustrates.
 
 ## The header
 
@@ -47,19 +52,26 @@ Adherence: planned 2 / done 1 (trend: no-prior-data)
 - **Range** is the `from`/`to` window the report was asked for.
 - **Training days** counts the distinct days you trained inside that range (JSON:
   `trainingDaysCompleted`). A day counts once however many sessions it holds, so a visit
-  logged as one session per exercise is one training day, not twelve.
+  logged as one session per exercise is one training day, not twelve. A past day whose
+  session nobody has marked as training or a test is left out of both counts until it is;
+  JSON `unreviewedDays` says how many (`src/tools/report-tools.ts:364-373`).
 - **Last 28 days** is a separate, always-rolling count of training days in the 28 days
   before the range's end (JSON: `rolling28DayTrainingDays`), by the same one-per-day rule
   the attendance goal uses — deliberately **not a streak**. It doesn't care whether those
   days were consecutive or bunched at the end of the window; it exists so a
   coach can tell "did they train enough this month" apart from "did they train this week"
   without the two questions bleeding into each other.
-- **Adherence** only appears when at least one session in range was attached to a planned
-  workout template. It reads `planned N / done M`: `N` is every template belonging to the
-  week(s) those sessions touched, and `M` is how many of those templates got an ended
-  session attached — regardless of which calendar day that session actually landed on. A
-  session run on a named fallback day still counts as done; this model was never checking
-  the exact day in the first place.
+- **Block** names the dated block the range ends in and which week of it that was, when
+  there is one.
+- **Adherence** reads `planned N / done M`. When the range overlaps a dated block, `N` is
+  every template in each dated week the range overlaps, trained or not, so a week nobody
+  trained reads `done 0` instead of vanishing. A held or extended week gets its own line
+  under it. With no dated block, adherence appears only when at least one session in range
+  was attached to a planned workout template, and `N` is every template in the week(s) those
+  sessions touched (`src/tools/report-tools.ts:825-929`). Either way `M` is how many of those
+  templates got an ended session attached — regardless of which calendar day that session
+  actually landed on. A session run on a named fallback day still counts as done; this model
+  was never checking the exact day in the first place.
 
   The `trend` next to it is a **direction, not a count**: `improving`, `declining`,
   `steady`, or `no-prior-data`. It compares this range's done/planned ratio against the
@@ -80,6 +92,9 @@ seated-row
 170 lb x 2
 170 lb x 2
 ```
+
+The fixture's second session block, which has no template and no reportable sets, is cut
+from the example above.
 
 One block per ended session in range, in date order. Each names the workout template it
 was attached to (when any), then repeats the same per-exercise result strings
@@ -127,7 +142,9 @@ Three flags point at sets worth a second look:
   force implies.
 - **inactivity_timeout with reps recorded** — the set was closed by the idle timeout, but
   reps were still recorded on it, so it's worth confirming those reps are real.
-- **velocity-loss holds** — the set was held at the VL30 autoregulation stop point.
+- **velocity-loss holds** — the set's velocity loss reached 30%, the default stop point for
+  the hypertrophy goal. The report applies that one threshold to every set, whatever goal
+  the set was planned under (`src/tools/report-tools.ts:336`, `:729-734`).
 
 **`setting_coerced` never lists any sets, on any report.** It's a live-only comparison
 between what a tool call asked the device for and what the device echoed back
@@ -159,15 +176,19 @@ input as a plain lifter note instead — and if neither exists, the whole sectio
 
 ```
 ## Goals
-- goal: seated row 190x8 by Oct 25, on track (wk 3/6)
-- goal: arms, 1 of 2 primary lifts on track (wk 3/6)
+- goal: seated row 190x8 by Oct 25, on track (wk 5/12)
+- goal: chest press 130x8 by Oct 25, behind (wk 5/12)
+- goal: arms, 1 of 2 primary lifts on track (wk 5/12)
 ```
 
 Only appears when the lifter has declared goal priorities. One line per accepted target
-(JSON: `goals`), worded `goal: <lift> <committed load>x<reps> by <date>, <status> (wk n/of)`.
+(JSON: `goals`). A load-at-reps target is worded
+`goal: <lift> <committed load>x<reps> by <date>, <status> (wk n/of)`; other target kinds
+swap in their own value, such as `<n> training days per 28` (`src/tools/report-goals.ts:66-96`).
 The status is the word the goals page shows for that target, read from the same model, so
-the report never re-judges it: `on track`, `ahead`, `behind`, `stalled`, `calibrating`,
-`deload week, no verdict`, or `behind, tolerated for the diet phase`. A muscle priority adds a
+the report never re-judges it: `beyond goal`, `goal met`, `ahead`, `on track`, `behind`,
+`stalled`, `calibrating`, `deload week, no verdict`, or `behind, tolerated for the diet
+phase` (`src/dashboard/read-models/goal-progress.ts:1110-1120`). A muscle priority adds a
 rollup line counting how many of its lifts are on track. Proposals the lifter has not accepted
 are left out, and with no priorities the whole section is omitted. Goals belong to the owner, so
 a report scoped to a named `lifter` has none. The section reads as of the range's end: a target

@@ -8,7 +8,8 @@ sources:
   - README.md
   - src/tools/report-tools.ts
   - src/tools/truecoach-tools.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Onboard a client
@@ -31,8 +32,10 @@ tell your coach before the first real submit (`README.md`, GATE 1).
 
 **[Lifter]** Install voltras-mcp and register it with Claude Code by following
 [Install](/start/install). Then follow [Your first session](/start/first-session).
-It works with a Voltra or, for a rehearsal, with the mock adapter. Mock-adapter sets never
-appear in a report (`README.md`, "Coach results and the outbox").
+It works with a Voltra or, for a rehearsal, with the mock adapter. A server running on a
+Voltra leaves mock-adapter sets out of its reports, but a server running on the mock adapter
+reports its mock sets, so do not send a rehearsal's results to your coach
+(`src/tools/report-tools.ts:149-159`).
 
 ## 3. Give the lifter a plan
 

@@ -11,7 +11,8 @@ sources:
   - src/tools/rir-velocity-tools.ts
   - src/voice/cue-policy.ts
   - site/public/captures/manifest.json
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Effort readout (RPE and RIR)
@@ -23,8 +24,8 @@ dashboard's live fatigue card and session summary. The rest of the fatigue card 
 ## What works today
 
 **The server can estimate reps in reserve for any recorded set.** Ask `metrics.compute` for the
-`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:308`,
-`src/tools/metrics-tools.ts:2258`). If you have a fitted curve for that lift, the estimate
+`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:316`,
+`src/tools/metrics-tools.ts:2250-2262`). If you have a fitted curve for that lift, the estimate
 comes from it. If you do not, it comes from a general model, is marked as such, and is always
 rated low confidence (`src/tools/rir-velocity-tools.ts:216-239`).
 

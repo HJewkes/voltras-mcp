@@ -21,7 +21,8 @@ sources:
   - src/tools/set-tools.ts
   - src/config.ts
   - package.json
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Fatigue and pacing
@@ -42,18 +43,18 @@ A few terms first.
 The server sums up a set in one word: **good**, **slowing**, **grinding** or **form breakdown**.
 You can ask for it with the `fatigue.verdict` pipeline of [`metrics.compute`](/reference/metrics).
 It returns the same verdict the live fatigue card on the dashboard shows
-(`src/tools/metrics-tools.ts:2419-2421`, `src/dashboard/spa/panels/fatigue-view.ts:432-435`).
+(`src/tools/metrics-tools.ts:2471-2474`, `src/dashboard/spa/panels/fatigue-view.ts:432-435`).
 
 The verdict looks at three things: velocity loss, ROM and tempo. Each one gets its own grade of
-ok, warn or alarm, and the response lists all three (`src/tools/metrics-tools.ts:2420-2422`).
+ok, warn or alarm, and the response lists all three (`src/tools/metrics-tools.ts:2472-2474`).
 The calculation comes from
 [`@voltras/workout-analytics`](https://www.npmjs.com/package/@voltras/workout-analytics), the
-published analytics library this server depends on (`package.json:63`). Its function
+published analytics library this server depends on (`package.json:66`). Its function
 `getSetFatigueVerdict` combines the three grades in a fixed order.
 
 1. A ROM or tempo alarm gives **form breakdown**. This check runs first, so a fast-looking rep
    cannot hide it. A cheat rep keeps its speed up by cutting ROM and dropping the lowering
-   phase, and this is the one signal that catches it (`src/tools/metrics-tools.ts:2422-2425`).
+   phase, and this is the one signal that catches it (`src/tools/metrics-tools.ts:2474-2476`).
 2. A velocity-loss alarm with clean form gives **grinding**.
 3. Any warning gives **slowing**.
 4. Otherwise the set is **good**.
@@ -70,7 +71,7 @@ What counts as an alarm, in that library's defaults:
   30%. That is separate from your set's own stop threshold, described in the next section.
 
 With fewer than two reps there is nothing to compare against, so the verdict is empty. The card
-shows "warming up" instead of a guess (`src/tools/metrics-tools.ts:2425`,
+shows "warming up" instead of a guess (`src/tools/metrics-tools.ts:2477`,
 `src/dashboard/spa/panels/fatigue-view.ts:432-435`).
 
 ## When the live card says stop
@@ -79,7 +80,7 @@ The live card colours your set in three states: keep going, approaching the stop
 card reads **stop** when velocity loss reaches your set's stop threshold, or when the verdict is
 form breakdown. It reads **approaching** from two thirds of the stop threshold, or when the ROM or
 tempo grade is not ok (`src/dashboard/spa/live-page/fatigue-state.ts:30-38`,
-`src/state/velocity-loss-intent.ts:129-136`).
+`src/state/velocity-loss-intent.ts:129-139`).
 
 The stop threshold is chosen in this order (`src/state/velocity-loss-intent.ts:146-171`):
 
@@ -104,22 +105,23 @@ asked ([push events](/reference/push-events)). Two of them matter for stopping.
 
 Neither one ends the set. They are advisory cues: the event goes out, and the set keeps running
 until you finish or ask Claude to end it (`site/reference/push-events.md:22-23`,
-`docs/push-events.md:385-392`). The only automatic close is the inactivity timeout, for when you
-have walked away (`docs/push-events.md:388-392`).
+`docs/push-events.md:383-388`). A set can still close without you, for example on the device's
+own end-of-set signal or after the inactivity timeout, for when you have walked away
+(`docs/push-events.md:384-388`, `src/state/rest-timer.ts:3-4`).
 
 A few details shape when `velocity_loss_exceeded` fires.
 
 - It measures loss on each rep's peak lifting speed, against the fastest eligible rep in the set.
   A rep far off the set's typical range or speed is not eligible, so a positioning pull or a
-  half rep cannot set the baseline (`docs/push-events.md:520-523`).
+  half rep cannot set the baseline (`docs/push-events.md:516-520`).
 - With the lowering phase loaded heavier than the lift, the first two reps are left out. They
-  are fast for mechanical reasons, not because you are fresh (`docs/push-events.md:531-542`).
+  are fast for mechanical reasons, not because you are fresh (`docs/push-events.md:527-537`).
 - On a pulling movement it does not fire at all. Peak speed on a fast pull does not drop with
   fatigue, so the server says at the start that the watch is off
-  (`docs/push-events.md:572-578`).
+  (`docs/push-events.md:569-574`).
 - The server warns that velocity loss is a volume dial and a poor measure of how close you are
   to failure. Reps completed to a fixed threshold vary by about five either way between sessions
-  (`docs/push-events.md:443-447`).
+  (`docs/push-events.md:440-443`).
 
 ## Pacing each rep
 
@@ -153,13 +155,13 @@ After a set closes, the dashboard counts down a rest length. It uses the rest fr
 there is one. Otherwise it uses a default for the exercise's training goal and labels it "Default
 rest", so it never reads as your coach's number (`src/dashboard/spa/live-page/RestView.tsx:55-57`,
 `src/dashboard/spa/live-page/live-copy.ts:33-42`). With no rest target at all, it counts up from
-the end of the set instead (`src/dashboard/spa/live-page/RestView.tsx:242-249`).
+the end of the set instead (`src/dashboard/spa/live-page/RestView.tsx:243-251`).
 
-The goal defaults are 150 seconds for strength, 105 seconds for hypertrophy, and 120 seconds when
-no goal is known (`src/analytics/rest-defaults.ts:29-56`). A default rest can grow. If your last
+The goal defaults are 150 seconds for strength, 105 seconds for hypertrophy, and 120 seconds for
+any other goal or when no goal is known (`src/analytics/rest-defaults.ts:29-56`). A default rest can grow. If your last
 set reached its stop threshold in fewer reps than the set before it, the next rest gets 30 extra
 seconds per rep lost, up to 60 seconds. A rest your coach set is never extended
-(`src/analytics/rest-defaults.ts:41-46`, `src/analytics/rest-defaults.ts:120-127`). The research
+(`src/analytics/rest-defaults.ts:38-42`, `src/analytics/rest-defaults.ts:122-129`). The research
 behind this links a falling rep count to rest that was too short
 (`src/analytics/rest-defaults.ts:11-16`).
 
@@ -170,11 +172,11 @@ length, and its result says where the length came from (`src/tools/timer-tools.t
 
 Separately, the server can send Claude a `rest_status` push event while you rest. This is off by
 default and turned on with `VMCP_REST_TIMER=on` (`src/config.ts:256`,
-`src/tools/set-tools.ts:1191-1199`). It sends one message when the set closes, then one every 15
+`src/tools/set-tools.ts:1191-1200`). It sends one message when the set closes, then one every 15
 seconds, and stops at five minutes with a final message (`src/state/rest-timer.ts:9-12`,
 `src/state/rest-timer.ts:44`, `src/state/rest-timer.ts:55`). Starting the next set cancels it
 (`src/state/rest-timer.ts:19-21`).
 
 These messages carry only the time elapsed. They hold no rest target
-(`src/state/channel-payloads.ts:2245-2275`). They let Claude keep track of your rest without
+(`src/state/channel-payloads.ts:2246-2275`). They let Claude keep track of your rest without
 waiting or polling. They do not draw the clock on the wall.

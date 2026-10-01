@@ -11,13 +11,15 @@ sources:
   - src/config.ts
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
+  - src/actions/allowlist.ts
   - src/integrations/truecoach/outbox.ts
   - src/tools/report-tools.ts
   - src/tools/session-tools.ts
   - src/tools/truecoach-tools.ts
   - tools/truecoach-submit/README.md
   - tools/truecoach-submit/src/selectors.js
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Consent and the data loop
@@ -34,9 +36,10 @@ With no extra settings, voltras-mcp sends nothing to anyone:
   `~/.voltras/vmcp.sqlite` unless `VMCP_DB_PATH` moves it (`README.md`, "Environment
   variables").
 - The dashboard binds `127.0.0.1` only, so no other machine can open it. Its live-view
-  routes are reads; it also serves a small set of plan-editing routes used by the plan
-  builder page, each behind the write guard in `src/dashboard/write-guard.ts` (`README.md`,
-  "The dashboard"; `src/dashboard/server.ts:242`, `src/dashboard/write-guard.ts:85-95`).
+  routes are reads. Its write routes edit plans or run a short allowlist of store-only
+  actions, such as logging bodyweight or answering a weekly check-in, each behind the write
+  guard (`src/dashboard/server.ts:245`, `src/dashboard/server.ts:561-584`,
+  `src/actions/allowlist.ts:41-101`, `src/dashboard/write-guard.ts:85-95`).
 - `report.session_results` and `report.weekly` read the store and make no network call
   (`src/tools/report-tools.ts`).
 - The outbox file drop and the automated TrueCoach post are both off by default
@@ -51,16 +54,16 @@ control it.
 
 ## What reaches the coach, and when
 
-| What                      | When it reaches the coach                                                                                                | Source                              |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| One session's result text | When the lifter sends it. `report.session_results` only renders it.                                                      | `src/tools/report-tools.ts`         |
-| The weekly rollup         | When the lifter sends it. `report.weekly` only renders it.                                                               | `src/tools/report-tools.ts`         |
-| An outbox file            | Never on its own. With `VMCP_TRUECOACH_OUTBOX=on`, each `session.end` writes a local file that nothing reads or uploads. | `README.md`, "The outbox"           |
-| A post into TrueCoach     | Only if the lifter installs and runs the separate write-back tool. See the last section.                                 | `README.md`, "TrueCoach write-back" |
+| What                      | When it reaches the coach                                                                                               | Source                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| One session's result text | When the lifter sends it. `report.session_results` only renders it.                                                     | `src/tools/report-tools.ts`         |
+| The weekly rollup         | When the lifter sends it. `report.weekly` only renders it.                                                              | `src/tools/report-tools.ts`         |
+| An outbox file            | Never on its own. With `VMCP_TRUECOACH_OUTBOX=on`, each `session.end` writes a local file. The server never uploads it. | `README.md`, "The outbox"           |
+| A post into TrueCoach     | Only if the lifter installs the separate write-back tool and runs it, by hand or on a trigger. See the last section.    | `README.md`, "TrueCoach write-back" |
 
-Some sets never appear in a report. A guest lifter's sets, mock-adapter sets and zero-rep
-sets are left out, and an exercise with no working set is omitted (`README.md`, "Coach
-results and the outbox"). A guest is whoever the lifter names with `session.set_lifter`
+Some sets never appear in a report. A guest lifter's sets and zero-rep sets are left out, and
+an exercise with no working set is omitted. Mock-adapter sets are left out too, unless the
+server itself runs on the mock adapter (`src/tools/report-tools.ts:149-159`). A guest is whoever the lifter names with `session.set_lifter`
 before the guest's sets; the owner's baselines, progression and history then stay clean
 (`src/tools/session-tools.ts`).
 
@@ -84,7 +87,7 @@ before the guest's sets; the owner's baselines, progression and history then sta
 `truecoach.import_week` reads the lifter's own assigned workouts from TrueCoach. It never
 writes to TrueCoach, and it runs only when called, with no background sync
 (`src/tools/truecoach-tools.ts`). The README's terms-of-service passage for the import, quoted
-in full (`README.md:579-595`):
+in full (`README.md`, "Terms of service — read this before using it"):
 
 > TrueCoach (an Xplor Technologies brand) **publishes no public developer API**. The
 > endpoint this uses is undocumented and reverse-engineered. Xplor's terms of use, section
@@ -104,7 +107,8 @@ in full (`README.md:579-595`):
 > written consent under clause (d). The account at risk is yours. Do not present this as a
 > sanctioned integration, and do not point it at anyone else's account.
 
-The server itself has no write path to TrueCoach (`README.md:597-601`).
+The server itself has no write path to TrueCoach (`README.md`, the paragraph after that
+passage).
 
 ## TrueCoach write-back: experimental and gated
 
@@ -117,7 +121,8 @@ The write-back tool's submit control ships marked UNVERIFIED: nobody has clicked
 `tools/truecoach-submit/` reads the outbox and posts one session's results into that day's
 TrueCoach workout with a local browser. It is a separate package: the server does not
 bundle it, the root `npm ci` does not install it, and CI does not run it (`README.md`,
-"TrueCoach write-back"). The README's gates, quoted in full (`README.md:665-670`):
+"TrueCoach write-back"). The README's gates, quoted in full (`README.md`, "TrueCoach write-back
+(unattended, gated)"):
 
 > **GATE 1.** Xplor ToS A.4(d) forbids third-party apps interacting with the service without
 > written consent; this job is the human's accepted risk on their own client account, and the
@@ -126,7 +131,7 @@ bundle it, the root `npm ci` does not install it, and CI does not run it (`READM
 > **GATE 2.** Any DOM selector change fails closed: if one expected element is missing, nothing
 > is filled and nothing is submitted; there are no partial posts.
 
-And its terms-of-service passage, quoted in full (`README.md:674-693`):
+And its terms-of-service passage, quoted in full (`README.md`, "The terms of service"):
 
 > TrueCoach's terms are Xplor's. Section A.4 "Prohibited Activities" says you will not:
 >

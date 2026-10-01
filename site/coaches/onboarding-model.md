@@ -9,10 +9,12 @@ sources:
   - README.md
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
+  - src/actions/allowlist.ts
   - src/tools/report-tools.ts
   - src/tools/truecoach-tools.ts
   - plugins/voltras-channel/skills/pt-session/SKILL.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # The onboarding model
@@ -43,9 +45,9 @@ at a time, one process per session (`CLAUDE.md`).
 **You** write the programme, read the results and decide what changes. You have no path to
 the device or to the lifter's records. The server talks to Claude over standard input and
 output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
-machine can reach it. Its live-view routes are reads; the plan-editing routes behind the
-plan builder page are further gated by the per-boot write guard in
-`src/dashboard/write-guard.ts` (`README.md`, `src/dashboard/server.ts`,
+machine can reach it. Its live-view routes are reads. Its write routes, which edit plans or
+run a short allowlist of store-only actions such as logging bodyweight, are further gated by
+the per-boot write guard (`src/dashboard/server.ts:561-584`, `src/actions/allowlist.ts:41-101`,
 `src/dashboard/write-guard.ts:85-95`).
 
 ## Responsibilities
@@ -73,7 +75,7 @@ You:
 
 - Decide progression. Every progression line in the weekly report is labelled "suggestion
   for the coach, not applied", and nothing in the report changes a prescription
-  ([Read the weekly report](/coaches/read-the-weekly-report)).
+  (`src/tools/report-tools.ts:656-667`).
 
 ## The data loop
 

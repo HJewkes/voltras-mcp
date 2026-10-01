@@ -18,7 +18,8 @@ sources:
   - src/tools/tts-tools.ts
   - src/voice/transcript-router.ts
   - src/voice/voice-listener.ts
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # How coaching works
@@ -85,16 +86,16 @@ There is a third, separate switch: `VOLTRAS_EFFORT_CUE`, off by default (`src/co
 `src/config.ts:299`). When on, an effort rule decides the one ending cue for a set. It picks at
 most one of: target reps reached, velocity loss exceeded, or an effort target reached, and it stores
 a record of the cue with the set. It stays off by default until it has been tested on the device
-(`src/config.ts:151-158`). [Velocity and effort](/concepts/velocity-and-effort#when-the-server-will-state-a-number)
+(`src/config.ts:149-157`). [Velocity and effort](/concepts/velocity-and-effort#when-the-server-will-state-a-number)
 explains the strict conditions it puts on your effort curve.
 
 ## Your experience tier
 
 Advice depends on how experienced you are. The server's **tier signal** places you as a
-**beginner**, **intermediate** or **advanced** lifter (`src/tools/tier-signal.ts:28`), and
+**beginner**, **intermediate** or **advanced** lifter (`src/tools/tier-signal.ts:30`), and
 [`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:265-271`).
 
-It answers two questions separately (`src/tools/tier-signal.ts:4-14`):
+It answers two questions separately (`src/tools/tier-signal.ts:8-14`):
 
 - **How sure is it?** The tier counts as confident only after 24 training days logged over 12
   weeks.
@@ -102,7 +103,7 @@ It answers two questions separately (`src/tools/tier-signal.ts:4-14`):
   history, or a record of earlier training with only a short break since. The server never
   derives advanced, and it only ever lowers the tier you declared, never raises it.
 
-Several tools read the tier (`src/tools/tier-signal.ts:16-19`):
+Several tools read the tier (`src/tools/tier-signal.ts:16-20`):
 
 - [`plan.warmup_ramp`](/reference/plan) uses it for the number of warm-up steps.
 - [`report.weekly`](/reference/report) and [`plan.suggest_progression`](/reference/plan) use it
@@ -111,7 +112,7 @@ Several tools read the tier (`src/tools/tier-signal.ts:16-19`):
 - [`profile.get_starting_prescription`](/reference/profile) uses it for your first loads.
 
 Goal setting reads the tier you declared instead, and flags when the server's own reading
-disagrees (`src/tools/tier-signal.ts:18-19`).
+disagrees (`src/tools/tier-signal.ts:19-20`).
 
 ## Where coaching.explain gets its answers
 
