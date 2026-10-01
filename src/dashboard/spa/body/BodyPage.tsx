@@ -41,7 +41,7 @@ export async function loadBodyPage(): Promise<BodyPageData> {
 export function BodyPage(props: { muscle?: string }): React.JSX.Element {
   const [data, setData] = useState<BodyPageData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { stack, drill } = useBodyDrill(props.muscle);
+  const { stack, drill } = useBodyDrill(props.muscle, data);
 
   useEffect(() => {
     let cancelled = false;

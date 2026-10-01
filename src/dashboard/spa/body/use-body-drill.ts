@@ -17,10 +17,15 @@ import {
   bodyHashFor,
   initialBodyStack,
   syncToRoute,
+  undrawableSheetAction,
   type BodyDrillHandlers,
 } from './body-drill.js';
+import type { BodyPageData } from './body-model.js';
 
-export function useBodyDrill(routeMuscle: string | undefined): {
+export function useBodyDrill(
+  routeMuscle: string | undefined,
+  data: BodyPageData | null,
+): {
   stack: DrillStack;
   drill: BodyDrillHandlers;
 } {
@@ -28,6 +33,10 @@ export function useBodyDrill(routeMuscle: string | undefined): {
   const drill = useMemo(() => bodyDrillHandlers(dispatch), []);
   useIdleHeal(stack.length > 0, dispatch);
   useHashSync(stack, routeMuscle, dispatch);
+  useEffect(() => {
+    const action = undrawableSheetAction(stack, data);
+    if (action !== null) dispatch(action);
+  }, [stack, data]);
   return { stack, drill };
 }
 

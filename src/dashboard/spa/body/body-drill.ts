@@ -14,6 +14,8 @@ import {
 } from '../drill/drill-stack.js';
 import { createIdleHeal, IDLE_ACTIVITY_EVENTS, type IdleHeal } from '../drill/idle-heal.js';
 import { routeHash } from '../routing.js';
+import type { BodyPageData } from './body-model.js';
+import { muscleSheetProps } from './body-sheet-model.js';
 
 /** The lineage every muscle sheet shares, so a second press replaces rather than stacks. */
 export const MUSCLE_LINEAGE = 'muscle';
@@ -45,6 +47,19 @@ export function bodyHashFor(stack: DrillStack): string {
 export function syncToRoute(stack: DrillStack, muscle: string | undefined): DrillAction | null {
   if ((muscle ?? null) === openMuscle(stack)) return null;
   return muscle === undefined ? { type: 'reset' } : { type: 'open', layer: muscleLayer(muscle) };
+}
+
+/**
+ * A reset when the open sheet names a muscle the loaded week cannot draw, so a
+ * deep link to it does not hold an invisible stack (and its hash) open.
+ */
+export function undrawableSheetAction(
+  stack: DrillStack,
+  data: BodyPageData | null,
+): DrillAction | null {
+  const muscle = openMuscle(stack);
+  if (data === null || muscle === null) return null;
+  return muscleSheetProps(muscle, data) === null ? { type: 'reset' } : null;
 }
 
 export interface BodyDrillHandlers {
