@@ -5,6 +5,9 @@
     "declaration": false,
     "declarationMap": false
   },
-  "files": ["src/analytics/__tests__/deload-ladder.test.ts"],
+  "files": [
+    "src/analytics/__tests__/deload-ladder.test.ts",
+    "src/analytics/__tests__/workout-analytics-types.test.ts"
+  ],
   "include": []
 }
