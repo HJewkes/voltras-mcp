@@ -6,8 +6,11 @@
  * is what titan's `GoalTrajectoryChart` puts first in its calibrating info tip
  * (`calibratingNote`): the wait alone, since the tip's own lines already say the
  * line is the planned ramp. A baseline blocker names what it waits on and never
- * a count, because the baseline has no count the view can promise.
+ * a count, because the baseline has no count the view can promise. The wording
+ * and its source live in `coach-copy/dashboard.ts`.
  */
+import { CALIBRATION_FRAGMENTS as LINES } from '../../../coach-copy/dashboard.js';
+import { fillSlots } from '../../../coach-copy/fill.js';
 import type { GoalCalibrationView, GoalProgressView } from '../../read-models/index.js';
 
 export interface CalibrationCopy {
@@ -15,11 +18,9 @@ export interface CalibrationCopy {
   chartNote: string;
 }
 
-const STARTING_RAMP = 'Starting ramp, not yet based on your lifts.';
-
 export function calibrationCopy(calibration: GoalCalibrationView): CalibrationCopy {
   const wait = waitClause(calibration);
-  const prefix = calibration.targetInfoLevel === 'cold' ? `${STARTING_RAMP} ` : '';
+  const prefix = calibration.targetInfoLevel === 'cold' ? `${LINES.startingRamp.text} ` : '';
   return { sentence: `${prefix}${wait}`, chartNote: wait };
 }
 
@@ -28,21 +29,22 @@ function waitClause(calibration: GoalCalibrationView): string {
   const baseline = baselineNeed(calibration.baselineState);
   switch (calibration.blockedBy) {
     case 'sessions':
-      return `${sessions} to calibrate.`;
+      return fillSlots(LINES.waitSessions.text, { sessions });
     case 'baseline':
-      return `Calibrates after ${baseline}.`;
+      return fillSlots(LINES.waitBaseline.text, { baseline });
     case 'both':
-      return `Calibrates after ${sessions} and ${baseline}.`;
+      return fillSlots(LINES.waitBoth.text, { sessions, baseline });
   }
 }
 
 function sessionCount(needed: number): string {
-  return `${needed} more comparable ${needed === 1 ? 'session' : 'sessions'}`;
+  const line = needed === 1 ? LINES.sessionCountOne : LINES.sessionCountMany;
+  return fillSlots(line.text, { needed: String(needed) });
 }
 
 /** COLD waits on enough working sets to read the lift's rep pattern; SHAPE_ONLY waits on a set near failure. */
 function baselineNeed(state: GoalCalibrationView['baselineState']): string {
-  return state === 'COLD' ? 'more working sets of this lift' : 'a set taken near failure';
+  return state === 'COLD' ? LINES.baselineCold.text : LINES.baselineShapeOnly.text;
 }
 
 /**
@@ -50,8 +52,7 @@ function baselineNeed(state: GoalCalibrationView['baselineState']): string {
  * stands (VW-444 part 2). A declined offer gets no line: the decline is recorded
  * and suppresses the offer, and the card says nothing more (human, review round 2).
  */
-export const RECALIBRATION_OFFERED_LINE =
-  'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
+export const RECALIBRATION_OFFERED_LINE = LINES.recalibrationOffered.text;
 
 /** The one line a card carries about calibration, or `null` when it has nothing to say. */
 export function calibrationLine(view: GoalProgressView): string | null {

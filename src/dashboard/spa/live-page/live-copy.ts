@@ -5,8 +5,11 @@
  * files import `react-native`, which the node-side vitest run cannot parse, so
  * anything defined in them is untestable. Copy that formats real numbers belongs on
  * the testable side — both defects fixed here shipped to the wall precisely because
- * nothing could assert on an inline template literal.
+ * nothing could assert on an inline template literal. The wording and its source live in
+ * `coach-copy/dashboard.ts`.
  */
+import { LIVE_FRAGMENTS as LINES } from '../../../coach-copy/dashboard.js';
+import { fillSlots } from '../../../coach-copy/fill.js';
 
 /**
  * The exertion message shown beside the verdict.
@@ -21,9 +24,12 @@
  * of them ends up stale.
  */
 export function exertionMessage(velocityLossPct: number | null, stopPct: number): string {
-  if (velocityLossPct === null) return 'warming up — velocity loss needs a second rep';
+  if (velocityLossPct === null) return LINES.exertionWarmingUp.text;
   // Loss only: a reps-left claim read off velocity loss is the conversion VW-302 forbids (VW-485).
-  return `VL${Math.round(velocityLossPct)}% · stop at VL${Math.round(stopPct)}%`;
+  return fillSlots(LINES.exertionReading.text, {
+    lossPct: String(Math.round(velocityLossPct)),
+    stopPct: String(Math.round(stopPct)),
+  });
 }
 
 /**
@@ -36,9 +42,15 @@ export function restBasisCaption(basis: {
   extensionSeconds: number;
 }): string | null {
   if (basis.source === 'explicit_plan') return null;
-  const base = basis.intent === null ? 'Default rest' : `Default rest for ${basis.intent}`;
+  const base =
+    basis.intent === null
+      ? LINES.restDefault.text
+      : fillSlots(LINES.restDefaultForIntent.text, { intent: basis.intent });
   if (basis.source === 'intent_default') return base;
-  return `${base} +${basis.extensionSeconds} s`;
+  return fillSlots(LINES.restExtended.text, {
+    base,
+    extensionSeconds: String(basis.extensionSeconds),
+  });
 }
 
 /** The basis `derivePrescription` gives a coach-written RPE. */
@@ -46,7 +58,7 @@ const PLAN_EFFORT_BASIS = 'plan';
 
 /** The caption with its basis appended, for the accessible label (the tooltip needs hover). */
 export function effortAccessibleLabel(caption: string, basis: string): string {
-  return `${caption}. Basis: ${basis}`;
+  return fillSlots(LINES.effortAccessibleLabel.text, { caption, basis });
 }
 
 /**
@@ -57,7 +69,9 @@ export function effortCaption(
   effort: { text: string; basis: string; assumed: boolean } | null,
 ): string | null {
   if (effort === null) return null;
-  if (effort.basis === PLAN_EFFORT_BASIS) return `Target ${effort.text}`;
-  if (effort.assumed) return `${effort.text} (assumed tier)`;
+  if (effort.basis === PLAN_EFFORT_BASIS) {
+    return fillSlots(LINES.effortPlanTarget.text, { text: effort.text });
+  }
+  if (effort.assumed) return fillSlots(LINES.effortAssumedTier.text, { text: effort.text });
   return effort.text;
 }

@@ -75,6 +75,7 @@ export const ACCOUNTABILITY_POLICY = {
       'RP keys the escalation ladder to a trend across mesocycles without naming a count; two ' +
       'is the fewest that make a trend.',
   },
+  /** Documents what `onSessionCompleted` does; the reducer does not read it, so it is not a switch. */
   sessionCompletedClearsGhosting: {
     value: true,
     sourceKind: 'engineering-default',

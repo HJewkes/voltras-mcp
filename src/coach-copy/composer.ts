@@ -5,8 +5,10 @@
 import type { Fragment, SourcedValue } from './fragments.js';
 
 const FREQUENCY_HOLD = 'rp-s5-frequency-progression-conservative';
+// The papers back asking for a barrier-naming if-then each week, not the closing reason.
 const IF_THEN_PAPERS =
-  'Silva et al. 2018, https://doi.org/10.1371/journal.pone.0206294; ' +
+  'Supports asking each week for an if-then plan that names the expected barrier, not the ' +
+  'closing reason that a self-written plan holds, which is ours: Silva et al. 2018, https://doi.org/10.1371/journal.pone.0206294; ' +
   'Belanger-Gravel et al. 2013, https://doi.org/10.1080/17437199.2011.560095';
 const IF_THEN_RATIONALE =
   'because a plan you wrote yourself is the one that holds when the week pushes back';
