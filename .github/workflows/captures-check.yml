@@ -1,0 +1,56 @@
+# Stills-only, no-write `docs:captures` run against the mock device (VW-710).
+# Fails a PR when a shot's assertions miss or a shot without `variesBy` differs
+# from its committed PNG. Clips (Kokoro, ffmpeg) are excluded. Not a required
+# check: it lives outside ci.yml so the required jobs are untouched.
+name: Captures check
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: captures-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  captures-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright Chromium
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Install Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright-core install chromium
+      - name: Install Chromium system dependencies
+        run: npx playwright-core install-deps chromium
+      - run: npm run build
+      - run: npm run build:dashboard
+      - name: Check stills against the committed PNGs
+        run: npm run docs:captures -- --stills --check --diff-dir captures-diff
+      - name: Upload differing captures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captures-diff
+          path: captures-diff/
+          if-no-files-found: ignore

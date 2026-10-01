@@ -8,6 +8,7 @@
 //   npm run docs:captures                            # every shot and every clip
 //   npm run docs:captures -- --only live-rest        # re-take one shot
 //   npm run docs:captures -- --record planned-set    # re-take one clip
+//   npm run docs:captures -- --stills --check        # assert stills, write nothing (CI)
 //
 // ── What a clip adds over a shot ───────────────────────────────────────────
 // The same drivers, the same `/api/snapshot` predicates, the same page-text
@@ -128,20 +129,103 @@ function guardLocalOverwrite(file, buffer, shot) {
   );
 }
 
+/**
+ * `--check`'s counterpart to {@link guardLocalOverwrite}: compare, never write.
+ * Returns a mismatch record for a shot without `variesBy` that differs from (or
+ * has no) committed PNG, and null otherwise. Collected rather than thrown, so
+ * one stale shot does not leave every later shot unasserted.
+ */
+async function checkAgainstCommitted(browser, file, buffer, shot, diffDir) {
+  if (!fs.existsSync(file)) return { name: shot.name, detail: 'no committed PNG' };
+  const committed = fs.readFileSync(file);
+  if (committed.equals(buffer)) return null;
+  if (diffDir !== null) {
+    fs.mkdirSync(diffDir, { recursive: true });
+    fs.writeFileSync(path.join(diffDir, `${shot.name}.png`), buffer);
+  }
+  const diff = await pixelDiff(browser, committed, buffer);
+  log(`${shot.name}: differs from the committed PNG (${diff})`);
+  if (shot.variesBy !== undefined) return null;
+  return { name: shot.name, detail: diff };
+}
+
+/**
+ * Runs inside the browser (serialised by `page.evaluate`, so self-contained):
+ * decode two PNG data URLs and count the pixels they disagree on.
+ */
+async function comparePixelsInPage([srcA, srcB]) {
+  const decode = async (src) => {
+    const bitmap = await createImageBitmap(await (await fetch(src)).blob());
+    const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+  };
+  const [x, y] = await Promise.all([decode(srcA), decode(srcB)]);
+  if (x.width !== y.width || x.height !== y.height) {
+    return { size: `${x.width}x${x.height} vs ${y.width}x${y.height}` };
+  }
+  const stats = { changed: 0, total: x.width * x.height, maxDelta: 0 };
+  const box = { x0: x.width, y0: x.height, x1: -1, y1: -1 };
+  for (let i = 0; i < x.data.length; i += 4) {
+    let delta = 0;
+    for (let c = 0; c < 4; c++) delta = Math.max(delta, Math.abs(x.data[i + c] - y.data[i + c]));
+    if (delta === 0) continue;
+    stats.changed++;
+    stats.maxDelta = Math.max(stats.maxDelta, delta);
+    const px = (i / 4) % x.width;
+    const py = Math.floor(i / 4 / x.width);
+    Object.assign(box, {
+      x0: Math.min(box.x0, px),
+      y0: Math.min(box.y0, py),
+      x1: Math.max(box.x1, px),
+      y1: Math.max(box.y1, py),
+    });
+  }
+  return { ...stats, box };
+}
+
+/**
+ * Describe how far two PNGs disagree: changed pixel count, the largest channel
+ * delta and the bounding box, decoded in the browser this script already holds.
+ */
+async function pixelDiff(browser, a, b) {
+  const page = await browser.newPage();
+  try {
+    const sources = [a, b].map((buf) => `data:image/png;base64,${buf.toString('base64')}`);
+    const result = await page.evaluate(comparePixelsInPage, sources);
+    if (result.size !== undefined) return `size ${result.size}`;
+    const { changed, total, maxDelta, box } = result;
+    if (changed === 0) return 'encoding only, 0 pixels';
+    const pct = ((100 * changed) / total).toFixed(3);
+    const extent = `${box.x1 - box.x0 + 1}x${box.y1 - box.y0 + 1} at ${box.x0},${box.y0}`;
+    return `${changed} px (${pct}%), max channel delta ${maxDelta}, box ${extent}`;
+  } finally {
+    await page.close();
+  }
+}
+
 // ── CLI ────────────────────────────────────────────────────────────────────
 
 /**
  * `--only` narrows the stills, `--record` narrows the clips. Neither takes
  * everything; either one on its own takes just that thing, so re-taking one clip
- * never costs a four-minute screenshot run.
+ * never costs a four-minute screenshot run. `--stills` drops the clips (and so
+ * Kokoro and ffmpeg). `--check` writes no PNG and no manifest; `--diff-dir`
+ * keeps the fresh capture of each shot that differs, for a CI artifact.
  */
 function parseArgs(argv) {
-  const args = { only: null, record: null };
+  const args = { only: null, record: null, stills: false, check: false, diffDir: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--only') args.only = argv[++i];
     else if (argv[i] === '--record') args.record = argv[++i];
+    else if (argv[i] === '--stills') args.stills = true;
+    else if (argv[i] === '--check') args.check = true;
+    else if (argv[i] === '--diff-dir') args.diffDir = path.resolve(argv[++i]);
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
+  if (args.stills && args.record !== null) throw new Error('--stills and --record conflict');
+  if (args.check && !args.stills) throw new Error('--check needs --stills');
+  if (args.diffDir !== null && !args.check) throw new Error('--diff-dir needs --check');
   return args;
 }
 
@@ -399,17 +483,11 @@ async function waitForVisualStability(page, screenshotOptions) {
 }
 
 /** Width and height straight out of the PNG's IHDR — no image library needed. */
-function pngDimensions(file) {
-  const header = Buffer.alloc(24);
-  const fd = fs.openSync(file, 'r');
-  try {
-    fs.readSync(fd, header, 0, 24, 0);
-  } finally {
-    fs.closeSync(fd);
-  }
+function pngDimensions(buffer, label) {
+  const header = buffer.subarray(0, 24);
   const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  if (!header.subarray(0, 8).equals(pngSignature)) {
-    throw new Error(`${file} is not a PNG`);
+  if (header.length < 24 || !header.subarray(0, 8).equals(pngSignature)) {
+    throw new Error(`${label} is not a PNG`);
   }
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 }
@@ -423,7 +501,7 @@ function pngDimensions(file) {
  * `holdsPageOpen` decides which side of the predicate the route is opened on,
  * and the definition explains why each shot picks the side it does.
  */
-async function captureShot(page, origin, port, shot, defs, outDir) {
+async function captureShot(page, origin, port, shot, defs, mode) {
   const target = `${origin}${shot.route}`;
   // Per-shot geometry: the body page is laid out for a 1920x1080 wall and is
   // cropped at the default size. Set unconditionally so the shot AFTER an
@@ -448,7 +526,7 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
   await settlePaint(page);
   if (shot.scrollTo !== undefined) await scrollToHeading(page, shot.scrollTo, shot.name);
 
-  const file = path.join(outDir, `${shot.name}.png`);
+  const file = path.join(mode.outDir, `${shot.name}.png`);
   // `animations: 'disabled'` is Playwright's own belt to installShotDeterminism's
   // braces: it finishes any CSS transition/animation the stylesheet missed
   // (an inline `style` attribute, for one) before each sample. `caret: 'hide'`
@@ -460,7 +538,12 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
     animations: 'disabled',
     caret: 'hide',
   });
-  if (!guardLocalOverwrite(file, buffer, shot)) fs.writeFileSync(file, buffer);
+  if (mode.check) {
+    const mismatch = await checkAgainstCommitted(mode.browser, file, buffer, shot, mode.diffDir);
+    if (mismatch !== null) mode.mismatches.push(mismatch);
+  } else if (!guardLocalOverwrite(file, buffer, shot)) {
+    fs.writeFileSync(file, buffer);
+  }
 
   const after = await pageText(page);
   const stillMissing = missingIn(after, expected);
@@ -469,8 +552,9 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
     throw new Error(`${shot.name}: state moved during the capture, lost ${report.join('; ')}`);
   }
 
-  const bytes = fs.statSync(file).size;
-  const { width, height } = pngDimensions(file);
+  const stored = mode.check ? buffer : fs.readFileSync(file);
+  const bytes = stored.length;
+  const { width, height } = pngDimensions(stored, shot.name);
   log(`${shot.name}: ${width}x${height}, ${Math.round(bytes / 1024)} kB (${observed})`);
   return {
     name: shot.name,
@@ -492,7 +576,7 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
     // docs/screenshot-harness.md's two-run proof for the exact split. Nothing
     // gates on this field regardless: font hinting, GPU rasterisation and
     // Skia's antialiasing still differ machine to machine either way.
-    sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+    sha256: createHash('sha256').update(stored).digest('hex'),
   };
 }
 
@@ -786,7 +870,7 @@ const startCaptureScenario = (scenario, dbDir) =>
 // ── main ───────────────────────────────────────────────────────────────────
 
 /** Every stills scenario that owns at least one wanted shot, captured in definition order. */
-async function captureShots(browser, shots, defs, dbDir, outDir) {
+async function captureShots(browser, shots, defs, dbDir, mode) {
   if (shots.length === 0) return [];
   const page = await browser.newPage({
     viewport: { ...defs.CAPTURE_VIEWPORT },
@@ -805,7 +889,7 @@ async function captureShots(browser, shots, defs, dbDir, outDir) {
     try {
       const origin = `http://127.0.0.1:${scene.port}`;
       for (const shot of wanted) {
-        captured.push(await captureShot(page, origin, scene.port, shot, defs, outDir));
+        captured.push(await captureShot(page, origin, scene.port, shot, defs, mode));
       }
     } catch (err) {
       throw new Error(`${scenario.name}: ${err.message}\n--- driver output ---\n${scene.tail()}`);
@@ -851,6 +935,19 @@ function mergeEntries(previous, captured, definition) {
     .sort((a, b) => order.get(a.name) - order.get(b.name));
 }
 
+/** End a `--check` run: every assertion already held, so only byte mismatches can fail it. */
+function reportCheck(count, mismatches) {
+  if (mismatches.length === 0) {
+    log(`checked ${count} shot(s); every assertion held and no fixed shot differs; wrote nothing`);
+    return;
+  }
+  const lines = mismatches.map((m) => `  ${m.name}: ${m.detail}`).join('\n');
+  throw new Error(
+    `${mismatches.length} of ${count} shot(s) without variesBy differ from the committed PNG:\n` +
+      `${lines}\nRegenerate with CAPTURES_ALLOW_LOCAL=1 npm run docs:captures and commit the result.`,
+  );
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   for (const [label, file] of [
@@ -868,11 +965,11 @@ async function main() {
   const { CAPTURE_CLIPS } = clipDefs;
 
   const shots = narrow(CAPTURE_SHOTS, args.only, args.record, '--only');
-  const clips = narrow(CAPTURE_CLIPS, args.record, args.only, '--record');
+  const clips = args.stills ? [] : narrow(CAPTURE_CLIPS, args.record, args.only, '--record');
 
   const outDir = path.join(REPO_ROOT, defs.CAPTURE_DIR);
   const clipsDir = path.join(REPO_ROOT, clipDefs.CLIP_DIR);
-  fs.mkdirSync(outDir, { recursive: true });
+  if (!args.check) fs.mkdirSync(outDir, { recursive: true });
   const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vmcp-captures-'));
   if (dbDir.includes('.voltras')) throw new Error('refusing to run against the real store');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vmcp-clips-'));
@@ -899,10 +996,11 @@ async function main() {
   };
 
   const browser = await chromium.launch({ headless: true });
+  const mode = { check: args.check, diffDir: args.diffDir, outDir, browser, mismatches: [] };
   let captured = [];
   let recorded = [];
   try {
-    captured = await captureShots(browser, shots, defs, dbDir, outDir);
+    captured = await captureShots(browser, shots, defs, dbDir, mode);
     recorded = await captureClips(browser, clips, cfg, dbDir, clipsDir, tmpDir, before.clips ?? []);
   } finally {
     await browser.close();
@@ -910,6 +1008,10 @@ async function main() {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
+  if (args.check) {
+    reportCheck(captured.length, mode.mismatches);
+    return;
+  }
   fs.writeFileSync(
     manifestPath,
     JSON.stringify(
