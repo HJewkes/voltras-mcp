@@ -144,17 +144,17 @@ remove:
 That reaches every shot whose non-determinism was ours (the harness's) to fix. It does
 **not** reach a shot whose page renders a value the SERVER computed from ITS OWN real clock:
 
-| Shot                | Server-real-time field                                         | Byte-reproducible? |
-| ------------------- | -------------------------------------------------------------- | ------------------ |
-| `dashboard-cold`    | none                                                           | yes                |
-| `plan-builder`      | none                                                           | yes                |
-| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
-| `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
-| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | not guaranteed     |
-| `live-slowing`      | same, one set of ten reps                                      | not guaranteed     |
-| `live-dual-mid-set` | same, both slots' curves                                       | not guaranteed     |
-| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
-| `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
+| Shot                | Server-real-time field                                                          | Byte-reproducible? |
+| ------------------- | ------------------------------------------------------------------------------- | ------------------ |
+| `dashboard-cold`    | none                                                                            | yes                |
+| `plan-builder`      | none                                                                            | yes                |
+| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)                    | yes                |
+| `body-week`         | none (its "Week of" date comes from a server clock pinned by `--clock`, VW-710) | yes                |
+| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time                       | not guaranteed     |
+| `live-slowing`      | same, one set of ten reps                                                       | not guaranteed     |
+| `live-dual-mid-set` | same, both slots' curves                                                        | not guaranteed     |
+| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()`                  | not guaranteed     |
+| `session-summary`   | session start/end stamps in the header                                          | not guaranteed     |
 
 `goals-whole-body` and `goals-whole-body-phone` carry no clock field, but their weigh-in
 dates are seeded relative to today, so they repeat within a day and differ across days.
@@ -270,6 +270,15 @@ smaller than that: the `live-rest` pace ETA moving by a few minutes changed 265 
 on one machine. No pixel threshold separates the two. Two Linux runs on different runners, by
 contrast, rendered all five shots without `variesBy` byte for byte the same. So the check stays
 byte-exact and compares Linux against Linux.
+
+**Wall-clock text on a baselined shot.** A shot without `variesBy` must render no date the
+server derives from its own clock, or its baseline goes stale the week after it is taken. The
+body page prints "Week of" the seeded week's Monday, so the `body` scenario passes
+`--clock=<CAPTURE_FIXED_TIME_ISO>` to `scripts/dashboard-body-seed.mjs`. The seed and the
+server it boots then run on a clock shifted to start at the instant the page's own clock is
+pinned to (`scripts/fixed-clock-preload.mjs`). The other baselined shots print no server date:
+the goals pages show relative weeks ("Week 2 of 12") from a reading seeded seven days back, and
+the header clock is the pinned page clock.
 
 **Refreshing the baseline.** When a pull request changes a page on purpose, the check fails
 and uploads the fresh render of each differing shot as the `captures-diff-attempt-<n>`

@@ -95,13 +95,6 @@ const PREDICATE_TIMEOUT_MS = 300_000;
  * wrong.
  */
 const TEXT_TIMEOUT_MS = 20_000;
-/**
- * The wall clock every shot's page sees, fixed so the header clock and any
- * elapsed-time readout render the same text on every run. Only `Date.now()`/
- * `new Date()` are pinned ({@link installShotDeterminism}) — real timers keep
- * firing, so the 2s snapshot poll and the live SSE stream are untouched.
- */
-const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
 const log = (...args) => console.error('[capture]', ...args);
 
 /**
@@ -201,7 +194,8 @@ async function pixelDiff(browser, a, b) {
   const page = await browser.newPage();
   try {
     const sources = [a, b].map((buf) => `data:image/png;base64,${buf.toString('base64')}`);
-    const result = await page.evaluate(comparePixelsInPage, sources);
+    const result = await page.evaluate(comparePixelsInPage, sources).catch(() => null);
+    if (result === null) return 'the baseline does not decode as a PNG';
     if (result.size !== undefined) return `size ${result.size}`;
     const { changed, total, maxDelta, box } = result;
     if (changed === 0) return 'encoding only, 0 pixels';
@@ -420,7 +414,7 @@ async function waitForText(page, expected, label) {
 /**
  * Pin everything about a shot's page that a wall clock or a CSS transition
  * would otherwise make differ run to run: `Date.now()`/`new Date()` fixed at
- * {@link CAPTURE_FIXED_TIME_ISO} (timers keep running — see its note), the
+ * the definition's `CAPTURE_FIXED_TIME_ISO` (timers keep running — see its note), the
  * `prefers-reduced-motion` media query set to `reduce`, and a stylesheet
  * forcing every animation/transition to complete instantly. The stylesheet is
  * an init script rather than a one-off `addStyleTag` because `captureShot`
@@ -428,8 +422,8 @@ async function waitForText(page, expected, label) {
  * script re-applies on each one; a style tag added once would not survive the
  * first reload.
  */
-async function installShotDeterminism(page) {
-  await page.clock.setFixedTime(CAPTURE_FIXED_TIME_ISO);
+async function installShotDeterminism(page, fixedTimeIso) {
+  await page.clock.setFixedTime(fixedTimeIso);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(() => {
     const style = document.createElement('style');
@@ -906,7 +900,7 @@ async function captureShots(browser, shots, defs, dbDir, mode) {
     timezoneId: 'UTC',
     locale: 'en-US',
   });
-  await installShotDeterminism(page);
+  await installShotDeterminism(page, defs.CAPTURE_FIXED_TIME_ISO);
   const captured = [];
   for (const scenario of defs.CAPTURE_SCENARIOS) {
     const wanted = shots.filter((s) => s.scenario === scenario.name);

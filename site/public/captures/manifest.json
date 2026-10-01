@@ -1,5 +1,5 @@
 {
-  "definitionHash": "3c012208fb38a3092b9f51c5d26527512b34d7c944014ff9934e36f1c4fbc70a",
+  "definitionHash": "42e73dfe64577dde7ce4db6fab710d5e9be974bba9aeab89fc837232a24f267f",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -267,8 +267,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 195279,
-      "sha256": "1e1f5b85d255006ed7f99ef8cc46cb17f0656ac00bc13e626254db46c2118b8d"
+      "bytes": 194677,
+      "sha256": "3c7ab7d4492c07482ddf8460bcbb0fb7ee809f4ca149f672f0d6bd0882bb8a6e"
     }
   ],
   "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",

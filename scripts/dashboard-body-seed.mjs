@@ -20,14 +20,17 @@
 // Every value is a literal, and every timestamp is derived from the CURRENT
 // calendar week, so the seeded page is identical run to run — the property the
 // `expectValues` assertions in `src/docs/capture-shots.ts` depend on. The week's
-// DATE moves with the wall clock and is never asserted, same convention as the
-// live page's header clock.
+// DATE is printed on the page ("Week of ..."), so the capture passes `--clock`:
+// this process and the server it boots both run on a clock shifted to start at
+// that instant (`scripts/fixed-clock-preload.mjs`), which keeps the PNG byte for
+// byte the same in any week (VW-710). Without `--clock` the real clock is used.
 //
 // Confidentiality: exercise names, loads and rep counts only — derived fitness
 // metadata, no protocol data of any kind (NF-07).
 //
-// Takes no arguments: `VMCP_DB_PATH` and `VMCP_DASHBOARD_PORT` come from the
-// harness's own per-scenario environment. To drive it by hand:
+// Takes one optional argument, `--clock=<ISO instant>`. `VMCP_DB_PATH` and
+// `VMCP_DASHBOARD_PORT` come from the harness's own per-scenario environment.
+// To drive it by hand:
 //   VMCP_DB_PATH=/tmp/body.sqlite VMCP_DASHBOARD_PORT=7724 \
 //     node scripts/dashboard-body-seed.mjs
 
@@ -37,6 +40,21 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist', 'bin.js');
+const CLOCK_PRELOAD = path.join(REPO_ROOT, 'scripts', 'fixed-clock-preload.mjs');
+
+/**
+ * Shift this process's clock to `--clock` and return the node arguments that
+ * shift the server's by the same offset, so both share one timeline.
+ */
+async function pinClock(argv) {
+  const flag = argv.find((arg) => arg.startsWith('--clock='));
+  if (flag === undefined) return [];
+  const pinned = Date.parse(flag.slice('--clock='.length));
+  if (Number.isNaN(pinned)) throw new Error(`${flag} is not an ISO instant`);
+  process.env.VMCP_CLOCK_OFFSET_MS = String(pinned - Date.now());
+  await import(CLOCK_PRELOAD);
+  return ['--import', CLOCK_PRELOAD];
+}
 
 const { SqliteSessionStore } = await import(path.join(REPO_ROOT, 'dist/store/sqlite-store.js'));
 const { MUSCLE_MAP_VERSION } = await import(path.join(REPO_ROOT, 'dist/exercises/muscle-map.js'));
@@ -268,10 +286,11 @@ async function main() {
   const dbPath = process.env.VMCP_DB_PATH;
   if (!dbPath) throw new Error('VMCP_DB_PATH is required — refusing to guess a store path');
   if (dbPath.includes('.voltras')) throw new Error('refusing to seed the real store');
+  const clockArgs = await pinClock(process.argv.slice(2));
   await seed(dbPath);
   console.log(`[body-seed] seeded ${setSeq} sets across ${sessionSeq} sessions into ${dbPath}`);
 
-  const child = spawn(process.execPath, [BIN_PATH], {
+  const child = spawn(process.execPath, [...clockArgs, BIN_PATH], {
     cwd: REPO_ROOT,
     env: process.env,
     stdio: ['pipe', 'inherit', 'inherit'],
