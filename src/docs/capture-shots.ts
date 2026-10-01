@@ -34,6 +34,22 @@ export const CAPTURE_DIR = 'site/public/captures';
 export const CAPTURE_MANIFEST = `${CAPTURE_DIR}/manifest.json`;
 
 /**
+ * The wall clock every shot's page sees, fixed so the header clock and any
+ * elapsed-time readout render the same text on every run. Only `Date.now()`/
+ * `new Date()` are pinned (`installShotDeterminism` in the harness) — real
+ * timers keep firing, so the 2s snapshot poll and the live SSE stream are
+ * untouched. The body scenario pins its server to the same instant.
+ */
+export const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
+
+/**
+ * Linux renders of every shot without `variesBy`, the byte baseline the CI
+ * captures check compares against: Chromium on Linux and on macOS rasterise
+ * text differently, so the published PNGs cannot be that baseline (VW-710).
+ */
+export const CAPTURE_LINUX_BASELINE_DIR = '.github/captures-linux';
+
+/**
  * 1440x900 — the smallest full-screen laptop size the wall dashboard is laid out
  * to fill, so nothing on the live page is cropped or reflowed into a narrow
  * variant. Deliberately not titan-design's 1200x900 / 1280x720: those are
@@ -172,7 +188,9 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // and uselessly, empty. This driver seeds recorded outcomes into the store
     // instead and boots the same server; the analytics over them are real.
     driver: 'scripts/dashboard-body-seed.mjs',
-    args: [],
+    // The page prints the seeded week's date, so the server's clock is pinned
+    // to the instant the page's clock is pinned to (VW-710).
+    args: [`--clock=${CAPTURE_FIXED_TIME_ISO}`],
   },
 ];
 
