@@ -81,7 +81,7 @@ so another computer or a phone on your network cannot reach it
 
 You can open it at any point in a session. While a session is open, the server sends that
 session's finished sets with every update, so a page opened or reloaded mid-session shows
-the sets already done (`src/state/live-state.ts:1314-1325`,
+the sets already done (`src/state/live-state.ts:1340-1351`,
 `src/dashboard/spa/adapter.ts:755-766`). When the session ends, the live page clears its set
 log; the **review** screen shows the finished session.
 
