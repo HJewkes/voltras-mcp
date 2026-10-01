@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { findEncodedValues } from '../../docs/protocol-guard.js';
-import { REDUCED_SCOPE_MINUTES } from '../composer.js';
+import { COMPOSER_FRAGMENTS, REDUCED_SCOPE_MINUTES } from '../composer.js';
 import {
   COACH_FRAGMENTS,
   type FragmentCandidate,
@@ -79,6 +79,26 @@ describe('every coach fragment carries a source', () => {
     expect(leaks).toEqual([]);
   });
 
+  it('pins every fragment text and source, so a wording change is a reviewed snapshot diff', () => {
+    const pinned = Object.fromEntries(
+      COACH_FRAGMENTS.map(({ id, text, sourceKind, sourceRef }) => [
+        id,
+        { text, sourceKind, sourceRef },
+      ]),
+    );
+    expect(pinned).toMatchSnapshot();
+  });
+
+  it('keeps both DOIs on the if-then paper ref', () => {
+    const dois = (ref: string) => ref.match(/10\.\d{4,9}\/[^\s;]+/g);
+    for (const fragment of [COMPOSER_FRAGMENTS.ifThenFirst, COMPOSER_FRAGMENTS.ifThenRepeat]) {
+      expect(dois(fragment.sourceRef)).toEqual([
+        '10.1371/journal.pone.0206294',
+        '10.1080/17437199.2011.560095',
+      ]);
+    }
+  });
+
   it('sources the reduced-scope re-entry minutes', () => {
     const { sourceKind, sourceRef } = REDUCED_SCOPE_MINUTES;
     expect(validateSource(sourceKind, sourceRef)).toEqual([]);
@@ -102,6 +122,25 @@ describe('the validator rejects an unsourced fragment', () => {
   it('fails a paper ref that carries no DOI or URL', () => {
     const paper = { ...VALID, sourceKind: 'paper', sourceRef: 'Someone et al. 2020' };
     expect(validateFragment(paper)).toContain('paper ref carries no DOI or URL');
+  });
+
+  it('fails a paper ref when any one of its citations carries no DOI or URL', () => {
+    const paper = {
+      ...VALID,
+      sourceKind: 'paper',
+      sourceRef: 'Someone et al. 2020, https://doi.org/10.1000/fixture; Another et al. 2021',
+    };
+    expect(validateFragment(paper)).toContain('paper ref carries no DOI or URL');
+  });
+
+  it('fails a paper ref when any one of its citations names no year', () => {
+    const paper = {
+      ...VALID,
+      sourceKind: 'paper',
+      sourceRef:
+        'Someone et al. 2020, https://doi.org/10.1000/a; Another, https://doi.org/10.1000/b',
+    };
+    expect(validateFragment(paper)).toContain('paper ref names no year');
   });
 
   it('fails an rp ref that is not a corpus id', () => {

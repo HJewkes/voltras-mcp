@@ -13,7 +13,7 @@ import { DASHBOARD_FRAGMENT_LIST } from './dashboard.js';
 
 /**
  * - `rp`: one or more RP corpus ids, comma separated.
- * - `paper`: author and year, plus a DOI or URL.
+ * - `paper`: author and year, plus a DOI or URL, per citation; citations separated by `;`.
  * - `simulation`: the ticket whose simulation reproduced a stated baseline.
  * - `owner-ruling`: the ticket where the owner ruled on the wording or value.
  * - `engineering-default`: a plain sentence on why it is what it is.
@@ -65,6 +65,16 @@ function isSourceKind(value: unknown): value is SourceKind {
   return typeof value === 'string' && (SOURCE_KINDS as readonly string[]).includes(value);
 }
 
+/** A paper ref lists citations separated by `;`, and each one needs its own year and DOI or URL. */
+function paperProblem(ref: string): string | undefined {
+  const citations = ref.split(';');
+  if (!citations.every((citation) => YEAR.test(citation))) return 'paper ref names no year';
+  if (!citations.every((citation) => DOI_OR_URL.test(citation))) {
+    return 'paper ref carries no DOI or URL';
+  }
+  return undefined;
+}
+
 /** Why `ref` does not fit `kind`, or `undefined` when it does. */
 function refProblem(kind: SourceKind, ref: string): string | undefined {
   switch (kind) {
@@ -76,8 +86,7 @@ function refProblem(kind: SourceKind, ref: string): string | undefined {
       return bad.length === 0 ? undefined : `rp ref is not a corpus id: ${bad.join(', ')}`;
     }
     case 'paper':
-      if (!YEAR.test(ref)) return 'paper ref names no year';
-      return DOI_OR_URL.test(ref) ? undefined : 'paper ref carries no DOI or URL';
+      return paperProblem(ref);
     case 'simulation':
     case 'owner-ruling':
       return TICKET_ID.test(ref) ? undefined : `${kind} ref is not a ticket id`;
