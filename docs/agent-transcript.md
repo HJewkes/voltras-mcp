@@ -69,6 +69,6 @@ exports the synthetic exchange twice and asserts schema validity, the structural
 byte-identical output. One of the two runs gets a parent env whose home, store, bindings
 and capture settings all point into a sentinel directory, which must stay empty. The test
 also asserts that a `device.send_raw` step, a `debug.recent_events` step and a non-mock
-adapter are each refused with no file written. A `debug.not_a_tool` step must be refused as
-`TOOL_REFUSED` too. That tool is in no `tools/list`, so only the refusal made before the
-server boots can name it that way.
+adapter are each refused with no file written. A step calling a made-up tool in the `debug`
+namespace must be refused as `TOOL_REFUSED` too. That tool is in no `tools/list`, so only the
+refusal made before the server boots can name it that way.
