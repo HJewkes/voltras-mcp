@@ -85,12 +85,14 @@ lift --print "list my sessions today"   # non-interactive query
 `VOLTRA_PT_PROMPT` changes the default prompt. ([README.md § Optional: the voltra-pt launcher](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#optional-the-voltra-pt-launcher))
 
 The launcher runs the server as the `voltras-channel` plugin and passes
-`--channels plugin:voltras-channel@voltras-local` to Claude Code (`scripts/voltra-pt`). In
-this mode it refuses to start in two cases, and prints the fix for each:
+`--channels plugin:voltras-channel@voltras-local` to Claude Code (`scripts/voltra-pt`). It
+stops without launching when the `claude` command is not on your `PATH`, or when the
+pre-flight below reports a failure. In this mode it also stops, and prints the fix, in these
+cases:
 
 - The `voltras-channel` plugin is not installed.
 - A standalone `voltras` server is also registered with `claude mcp add`. The plugin ships
-  its own server, so the two would run against the same database and dashboard port. Run
+  its own server, so the two would run against the same database. Run
   `claude mcp remove voltras` to clear it.
 
 Before it launches, the script runs the bench pre-flight. It first rebuilds the `whisper`
@@ -121,7 +123,7 @@ cp .launch.env.example .launch.env
 
 ## just recipes
 
-`just` is optional. Each recipe is a one-line wrapper you can run directly instead.
+`just` is optional. Each recipe wraps commands you can run directly instead (`justfile`).
 ([README.md § just recipes](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#just-recipes))
 
 | Recipe           | Plain command                                          |

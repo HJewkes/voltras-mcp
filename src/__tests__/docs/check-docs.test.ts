@@ -280,8 +280,10 @@ describe('checkPageFrontmatter', () => {
     return `---\n${lines.join('\n')}\n---\n\n# A scratch page\n`;
   }
 
+  const NOW = new Date('2026-09-30T12:00:00Z');
+
   function messages(text: string): string[] {
-    return checkPageFrontmatter(text, (path: string) => EXISTING.has(path)).map(
+    return checkPageFrontmatter(text, (path: string) => EXISTING.has(path), NOW).map(
       (finding: { message: string }) => finding.message,
     );
   }
@@ -346,6 +348,19 @@ describe('checkPageFrontmatter', () => {
 
   it('names sourced when it is not a real calendar date', () => {
     expect(messages(page({ sourced: 'yes' }))).toEqual(['sourced: "yes" is not a YYYY-MM-DD date']);
+  });
+
+  it('names a sourced or lastVerified date that is in the future', () => {
+    expect(messages(page({ sourced: '2099-01-01' }))).toEqual([
+      'sourced: "2099-01-01" is in the future',
+    ]);
+    expect(messages(page({ lastVerified: '2026-10-02' }))).toEqual([
+      'lastVerified: "2026-10-02" is in the future',
+    ]);
+  });
+
+  it('accepts tomorrow, the date an author east of UTC may already be on', () => {
+    expect(messages(page({ sourced: '2026-10-01', lastVerified: '2026-10-01' }))).toEqual([]);
   });
 
   it('names an audience outside the enum', () => {

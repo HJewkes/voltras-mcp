@@ -55,5 +55,5 @@ The [Coming soon](/coming-soon/) section collects the dashboard screens with thi
   has only been spot-checked.
 - `npm run docs:check` fails when a page has no status, when an Experimental or Coming soon
   page has no note, when a Coming soon page has no tracking issue, when a listed source
-  file does not exist, or when a `lastVerified` or `sourced` date is not a real date
+  file does not exist, or when a `lastVerified` or `sourced` date is not a real date or lies in the future
   (`scripts/lib/docs-checks.mjs`).

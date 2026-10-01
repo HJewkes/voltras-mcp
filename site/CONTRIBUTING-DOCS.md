@@ -37,7 +37,7 @@ sourcing pass, never a sample:
    sentence you changed.
 5. Set `sourced: <date>` in the page's front matter, next to `lastVerified`. The footer then
    tells the next reader the page had a full pass, and `npm run docs:check` rejects a date
-   that is not real.
+   that is not real or lies in the future.
 
 A page without `sourced` has only been spot-checked. Leave the field off a page you did not
 check claim by claim, and update it only after a new full pass.

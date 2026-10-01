@@ -50,18 +50,20 @@ may not show up in a scan (`README.md`).
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
    a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
-   `src/state/event-bridge.ts:1489`). A set now ends on your own call, on the device's own
-   signal, or after 90 seconds with no activity, when the server closes it as partial. A
-   `watch` block can raise that inactivity limit, never lower it
-   (`src/state/event-bridge.ts:260-284`).
+   `src/state/event-bridge.ts:1489`). In a normal session a set ends on your own call or on
+   the device's own signal. The server also closes it as partial after 90 seconds with no
+   activity, and a `watch` block can raise that limit but not lower it
+   (`src/state/event-bridge.ts:260-284`). Other paths close a set too, such as
+   `session.end` (step 7) and an exit from guided load
+   (`src/state/guided-load-reap.ts:58`), so this list is not complete.
    Lift.
    - The set's header weight tracks the unit until your first rep closes, then freezes.
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
      would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1808-1812`).
-5. **"Done."** → [`set.end`](/reference/set). This persists the set and every rep with
-   its telemetry.
+5. **"Done."** → [`set.end`](/reference/set). This saves the set and its reps with their
+   telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
    [`timer.start`](/reference/timer), non-blocking, which fires an event when it elapses.
 7. **"That's the workout."** → [`session.end`](/reference/session). Any set still open is
@@ -112,8 +114,8 @@ database and a non-default dashboard port produced:
 [drive] workout complete: 3 sets driven through the real pipeline
 ```
 
-The `mid` line per set is where reps are actually accruing from mock telemetry — the
-`start`/`end` lines only mark the set boundary itself.
+The `mid` line per set shows reps accruing from mock telemetry. The `start` and `end` lines
+mark the set boundary.
 
 `device.scan` → `device.connect` → `session.start` → (`set.start` → `set.end`) × 3 →
 `session.end` — the same call sequence as Option A, just with no BLE underneath.
@@ -130,12 +132,12 @@ attached — for the planned path, see
 
 `VMCP_AUTO_ARM` is `on` by default. Reps start within about a second of a weight change
 on the unit, and a model round-trip to call `set.start` is slower than that — so on an
-open session with no set open, the server opens one itself the moment it sees a rep, and
-the rep that triggered it is _not_ dropped. It waits for a second rep to agree with the
-first before adopting either, because a single rope-positioning pull looks exactly like
+open session with no set open, the server opens one itself once it sees reps, and the rep
+that triggered it is _not_ dropped. It waits for a second rep to agree with the first
+before adopting either, because a single rope-positioning pull looks exactly like
 a rep until another rep disagrees with it (`src/state/auto-arm.ts`, VW-164/VW-181). If
-you didn't call `set.start` yourself and a set appears anyway, this is why — it isn't a
-bug, and the rep count is still accurate. The wall dashboard marks such a set with a
+you didn't call `set.start` yourself and a set appears anyway, this is why. It isn't a
+bug, and the reps that opened the set are counted in it. The wall dashboard marks such a set with a
 compact "AUTO" badge on the live header while it's active. The rest recap shows the same
 label once it closes, unless the set has a warm-up, probe or technique label instead
 (`src/dashboard/spa/live-page/RestView.tsx`).
@@ -143,10 +145,9 @@ label once it closes, unless the set has a warm-up, probe or technique label ins
 ## Set purpose
 
 `set.start` takes an optional `setPurpose`: `working`, `warmup`, `probe`, or `technique`
-(`src/schemas/set.ts`). Omit it and you get `working`, the default. This is the one
-piece of set-level intent the device can't infer on its own — a warm-up, a probe, and a
-working set look identical to the hardware — and it decides whether the set counts toward
-progression.
+(`src/schemas/set.ts`). Omit it and you get `working`, the default. The device can't infer
+it, because a warm-up, a probe and a working set look identical to the hardware. It decides
+whether progression scores the set.
 
 ## Check-in at the end of a session
 

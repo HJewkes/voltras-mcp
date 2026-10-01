@@ -296,31 +296,46 @@ function sourcesFindings(field, exists) {
     .map((path) => `sources: no such path: ${path}`);
 }
 
-function lastVerifiedFinding(field) {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The latest date a page may claim; one day past UTC today, because an author east of UTC is already there. */
+function latestAllowedDate(now) {
+  return new Date(now.getTime() + DAY_MS).toISOString().slice(0, 10);
+}
+
+/** Null for a real date that is not in the future; otherwise the message for `key`. */
+function dateFinding(key, field, now) {
+  const value = String(field.value);
+  if (!isRealDate(value)) return `${key}: "${field.value}" is not a YYYY-MM-DD date`;
+  if (value > latestAllowedDate(now)) return `${key}: "${field.value}" is in the future`;
+  return null;
+}
+
+function lastVerifiedFinding(field, now) {
   if (field === undefined) return 'lastVerified: missing';
-  if (isRealDate(String(field.value))) return null;
-  return `lastVerified: "${field.value}" is not a YYYY-MM-DD date`;
+  return dateFinding('lastVerified', field, now);
 }
 
 /** Optional: the date every behavioural claim on the page was checked against source, one by one (VW-219). */
-function sourcedFinding(field) {
-  if (field === undefined || isRealDate(String(field.value))) return null;
-  return `sourced: "${field.value}" is not a YYYY-MM-DD date`;
+function sourcedFinding(field, now) {
+  if (field === undefined) return null;
+  return dateFinding('sourced', field, now);
 }
 
 /**
  * Findings for a hand-written site page's frontmatter. Each message opens with
- * the field it is about; `exists` reports whether a repo path is on disk.
+ * the field it is about; `exists` reports whether a repo path is on disk, and
+ * `now` is the clock a verification date may not run ahead of.
  */
-export function checkPageFrontmatter(text, exists) {
+export function checkPageFrontmatter(text, exists, now = new Date()) {
   const fields = parseFrontmatter(text) ?? new Map();
   const messages = [
     ...statusFindings(fields),
     enumFinding(fields.get('diataxis'), 'diataxis', DIATAXIS_KINDS),
     audienceFinding(fields.get('audience')),
     ...sourcesFindings(fields.get('sources'), exists),
-    lastVerifiedFinding(fields.get('lastVerified')),
-    sourcedFinding(fields.get('sourced')),
+    lastVerifiedFinding(fields.get('lastVerified'), now),
+    sourcedFinding(fields.get('sourced'), now),
   ].filter((message) => message !== null);
   return messages.map((message) => ({
     line: fields.get(message.split(':')[0])?.line ?? 1,
