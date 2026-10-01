@@ -110,6 +110,23 @@ describe('checkDriftGuard', () => {
     expect(verdict.romDriftPct).toBe(0);
   });
 
+  it("keeps a guest's sets inside an owner session out of the verdict (VW-717)", async () => {
+    // Arrange: the owner repeats the same work; a guest works in at a third less ROM
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }));
+    const ownerOnly = await check();
+    for (const id of ['guest-1', 'guest-2']) {
+      await store.putSet(makeSet({ id, sessionId: 'sess-2', lifter: 'Guest' }, { romM: 0.3 }));
+    }
+
+    // Act
+    const withGuest = await check();
+
+    // Assert
+    expect(ownerOnly.flagged).toBe(false);
+    expect(withGuest).toEqual(ownerOnly);
+  });
+
   it('refuses the comparison when the current session cut ROM by a third', async () => {
     // Arrange
     await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }, { romM: 0.6 }));
