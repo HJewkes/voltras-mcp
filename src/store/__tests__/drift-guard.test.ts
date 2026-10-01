@@ -127,6 +127,26 @@ describe('checkDriftGuard', () => {
     expect(withGuest).toEqual(ownerOnly);
   });
 
+  it("reads only the named guest's sets when a lifter is passed (VW-717)", async () => {
+    // Arrange: the owner repeats the work; the guest cut ROM by a third
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }));
+    await store.putSet(makeSet({ id: 'g1', sessionId: 'sess-1', lifter: 'Guest' }, { romM: 0.6 }));
+    await store.putSet(makeSet({ id: 'g2', sessionId: 'sess-2', lifter: 'Guest' }, { romM: 0.4 }));
+
+    // Act
+    const verdict = await checkDriftGuard(store, {
+      key,
+      baselineSessionId: 'sess-1',
+      currentSessionId: 'sess-2',
+      lifter: 'Guest',
+    });
+
+    // Assert
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.romDriftPct).toBeCloseTo(-33.33, 1);
+  });
+
   it('refuses the comparison when the current session cut ROM by a third', async () => {
     // Arrange
     await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }, { romM: 0.6 }));
