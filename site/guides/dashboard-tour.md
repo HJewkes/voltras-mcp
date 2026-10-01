@@ -56,8 +56,8 @@ the prescription next to what the set is actually doing.
   ]'
 />
 
-The RPE slot stays a dash until a trusted fitted effort profile exists for the lifter
-(`src/dashboard/spa/panels/fatigue-view.ts:428-431`). The
+The RPE slot is always a dash for now: the server sends no RPE until a trusted fitted
+effort profile reaches the wall (`src/dashboard/spa/panels/fatigue-view.ts:428-431`). The
 [effort readout](/coming-soon/effort-readout) page says what is missing. The
 [fatigue tour](/guides/dashboard-fatigue) follows this card from Good to a slowing set.
 
@@ -99,7 +99,7 @@ and re-run `npm run docs:captures` to change what it says
 ## Session complete
 
 [`session.end`](/reference/session) closes the session, force-ending any set still open, and
-writes its final row (`src/tools/session-tools.ts:624`). The summary page reads back the
+writes its final row (`src/tools/session-tools.ts:679`). The summary page reads back the
 totals, runs the same fatigue verdict the live page uses on one named set, and adds a load
 recommendation that only appears here. It states no RPE or RIR
 (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-209`).

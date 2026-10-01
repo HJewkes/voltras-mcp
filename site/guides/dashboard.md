@@ -45,10 +45,12 @@ shows what the server records.
   (`src/dashboard/spa/live-page/model.ts:472-488`). The
   [effort readout](/coming-soon/effort-readout) is coming soon.
 
-No capture on this site comes from a real Voltra. Every capture but the body page's comes
-from the real MCP tools running against the mock adapter (`VOLTRA_ADAPTER=mock`). The body
-capture comes from training rows seeded into the store, because the per-muscle reads leave
-mock sets out (`src/docs/capture-shots.ts:165-176`).
+No capture on this site comes from a real Voltra. Most captures come from the real MCP
+tools running against the mock adapter (`VOLTRA_ADAPTER=mock`). The goals capture also seeds
+the store before boot: a prior-week set and, for the whole-body cards, five weeks of weigh-ins
+(`scripts/dashboard-mock-drive.mjs:241-296`). The body capture comes entirely from training
+rows seeded into the store, because the per-muscle reads leave mock sets out
+(`src/docs/capture-shots.ts:165-176`).
 
 ## The five screens
 
