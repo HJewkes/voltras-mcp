@@ -8,7 +8,8 @@
 //   npm run docs:captures                            # every shot and every clip
 //   npm run docs:captures -- --only live-rest        # re-take one shot
 //   npm run docs:captures -- --record planned-set    # re-take one clip
-//   npm run docs:captures -- --stills --check        # assert stills, write nothing (CI)
+//   npm run docs:captures -- --stills --check        # assert stills, write nothing
+//     [--baseline .github/captures-linux] [--diff-dir <dir>]   # what CI runs
 //
 // ── What a clip adds over a shot ───────────────────────────────────────────
 // The same drivers, the same `/api/snapshot` predicates, the same page-text
@@ -58,8 +59,9 @@
 //
 // ── Browsers ───────────────────────────────────────────────────────────────
 // `playwright-core` is the dependency, not `playwright`: it has no postinstall,
-// so `npm ci` downloads no browser and CI stays untouched. Installing the
-// browser is a documented one-time manual step (see docs/screenshot-harness.md).
+// so `npm ci` downloads no browser; only the captures check workflow installs
+// one. Locally, installing the browser is a documented one-time manual step
+// (see docs/screenshot-harness.md).
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -132,21 +134,28 @@ function guardLocalOverwrite(file, buffer, shot) {
 /**
  * `--check`'s counterpart to {@link guardLocalOverwrite}: compare, never write.
  * Returns a mismatch record for a shot without `variesBy` that differs from (or
- * has no) committed PNG, and null otherwise. Collected rather than thrown, so
+ * has no) baseline PNG, and null otherwise. Collected rather than thrown, so
  * one stale shot does not leave every later shot unasserted.
  */
 async function checkAgainstCommitted(browser, file, buffer, shot, diffDir) {
-  if (!fs.existsSync(file)) return { name: shot.name, detail: 'no committed PNG' };
+  if (!fs.existsSync(file)) {
+    if (shot.variesBy !== undefined) return null;
+    if (diffDir !== null) saveFresh(diffDir, shot, buffer);
+    return { name: shot.name, detail: `no baseline at ${path.relative(REPO_ROOT, file)}` };
+  }
   const committed = fs.readFileSync(file);
   if (committed.equals(buffer)) return null;
-  if (diffDir !== null) {
-    fs.mkdirSync(diffDir, { recursive: true });
-    fs.writeFileSync(path.join(diffDir, `${shot.name}.png`), buffer);
-  }
+  if (diffDir !== null) saveFresh(diffDir, shot, buffer);
   const diff = await pixelDiff(browser, committed, buffer);
-  log(`${shot.name}: differs from the committed PNG (${diff})`);
+  log(`${shot.name}: differs from the baseline (${diff})`);
   if (shot.variesBy !== undefined) return null;
   return { name: shot.name, detail: diff };
+}
+
+/** Keep a fresh capture outside the repo's published tree, for a CI artifact. */
+function saveFresh(diffDir, shot, buffer) {
+  fs.mkdirSync(diffDir, { recursive: true });
+  fs.writeFileSync(path.join(diffDir, `${shot.name}.png`), buffer);
 }
 
 /**
@@ -211,21 +220,31 @@ async function pixelDiff(browser, a, b) {
  * everything; either one on its own takes just that thing, so re-taking one clip
  * never costs a four-minute screenshot run. `--stills` drops the clips (and so
  * Kokoro and ffmpeg). `--check` writes no PNG and no manifest; `--diff-dir`
- * keeps the fresh capture of each shot that differs, for a CI artifact.
+ * keeps the fresh capture of each shot that differs, for a CI artifact, and
+ * `--baseline` compares against another directory than the published one.
  */
 function parseArgs(argv) {
-  const args = { only: null, record: null, stills: false, check: false, diffDir: null };
+  const args = {
+    only: null,
+    record: null,
+    stills: false,
+    check: false,
+    diffDir: null,
+    baseline: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--only') args.only = argv[++i];
     else if (argv[i] === '--record') args.record = argv[++i];
     else if (argv[i] === '--stills') args.stills = true;
     else if (argv[i] === '--check') args.check = true;
     else if (argv[i] === '--diff-dir') args.diffDir = path.resolve(argv[++i]);
+    else if (argv[i] === '--baseline') args.baseline = path.resolve(argv[++i]);
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   if (args.stills && args.record !== null) throw new Error('--stills and --record conflict');
   if (args.check && !args.stills) throw new Error('--check needs --stills');
   if (args.diffDir !== null && !args.check) throw new Error('--diff-dir needs --check');
+  if (args.baseline !== null && !args.check) throw new Error('--baseline needs --check');
   return args;
 }
 
@@ -527,6 +546,7 @@ async function captureShot(page, origin, port, shot, defs, mode) {
   if (shot.scrollTo !== undefined) await scrollToHeading(page, shot.scrollTo, shot.name);
 
   const file = path.join(mode.outDir, `${shot.name}.png`);
+  const baseline = path.join(mode.baselineDir, `${shot.name}.png`);
   // `animations: 'disabled'` is Playwright's own belt to installShotDeterminism's
   // braces: it finishes any CSS transition/animation the stylesheet missed
   // (an inline `style` attribute, for one) before each sample. `caret: 'hide'`
@@ -539,7 +559,13 @@ async function captureShot(page, origin, port, shot, defs, mode) {
     caret: 'hide',
   });
   if (mode.check) {
-    const mismatch = await checkAgainstCommitted(mode.browser, file, buffer, shot, mode.diffDir);
+    const mismatch = await checkAgainstCommitted(
+      mode.browser,
+      baseline,
+      buffer,
+      shot,
+      mode.diffDir,
+    );
     if (mismatch !== null) mode.mismatches.push(mismatch);
   } else if (!guardLocalOverwrite(file, buffer, shot)) {
     fs.writeFileSync(file, buffer);
@@ -943,8 +969,9 @@ function reportCheck(count, mismatches) {
   }
   const lines = mismatches.map((m) => `  ${m.name}: ${m.detail}`).join('\n');
   throw new Error(
-    `${mismatches.length} of ${count} shot(s) without variesBy differ from the committed PNG:\n` +
-      `${lines}\nRegenerate with CAPTURES_ALLOW_LOCAL=1 npm run docs:captures and commit the result.`,
+    `${mismatches.length} of ${count} shot(s) without variesBy differ from the baseline:\n` +
+      `${lines}\nIf the change is intended, see "The CI captures check" in ` +
+      `docs/screenshot-harness.md for how to refresh the baseline.`,
   );
 }
 
@@ -996,7 +1023,9 @@ async function main() {
   };
 
   const browser = await chromium.launch({ headless: true });
-  const mode = { check: args.check, diffDir: args.diffDir, outDir, browser, mismatches: [] };
+  const baselineDir = args.baseline ?? outDir;
+  const mode = { check: args.check, diffDir: args.diffDir, outDir, baselineDir, browser };
+  mode.mismatches = [];
   let captured = [];
   let recorded = [];
   try {

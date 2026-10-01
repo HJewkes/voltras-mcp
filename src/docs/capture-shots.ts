@@ -34,6 +34,13 @@ export const CAPTURE_DIR = 'site/public/captures';
 export const CAPTURE_MANIFEST = `${CAPTURE_DIR}/manifest.json`;
 
 /**
+ * Linux renders of every shot without `variesBy`, the byte baseline the CI
+ * captures check compares against: Chromium on Linux and on macOS rasterise
+ * text differently, so the published PNGs cannot be that baseline (VW-710).
+ */
+export const CAPTURE_LINUX_BASELINE_DIR = '.github/captures-linux';
+
+/**
  * 1440x900 — the smallest full-screen laptop size the wall dashboard is laid out
  * to fill, so nothing on the live page is cropped or reflowed into a narrow
  * variant. Deliberately not titan-design's 1200x900 / 1280x720: those are

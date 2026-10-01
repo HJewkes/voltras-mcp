@@ -1,7 +1,8 @@
 # Stills-only, no-write `docs:captures` run against the mock device (VW-710).
 # Fails a PR when a shot's assertions miss or a shot without `variesBy` differs
-# from its committed PNG. Clips (Kokoro, ffmpeg) are excluded. Not a required
-# check: it lives outside ci.yml so the required jobs are untouched.
+# from its Linux baseline in .github/captures-linux/. Clips (Kokoro, ffmpeg) are
+# excluded. Not a required check: it lives outside ci.yml so the required jobs
+# are untouched. docs/screenshot-harness.md says how to refresh the baseline.
 name: Captures check
 
 on:
@@ -34,7 +35,7 @@ jobs:
         run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Restore Playwright Chromium
         id: pw-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
@@ -44,7 +45,7 @@ jobs:
       # Saved straight away so a failing check still caches the download.
       - name: Save Playwright Chromium
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ steps.pw-cache.outputs.cache-primary-key }}
@@ -52,11 +53,13 @@ jobs:
         run: npx playwright-core install-deps chromium
       - run: npm run build
       - run: npm run build:dashboard
-      - name: Check stills against the committed PNGs
-        run: npm run docs:captures -- --stills --check --diff-dir captures-diff
+      - name: Check stills against the Linux baseline
+        run: >-
+          npm run docs:captures -- --stills --check
+          --baseline .github/captures-linux --diff-dir captures-diff
       - name: Upload differing captures
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: captures-diff-attempt-${{ github.run_attempt }}
           path: captures-diff/

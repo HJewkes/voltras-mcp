@@ -5,8 +5,9 @@
 // What CI CAN do is hold the committed captures to the committed definition,
 // which is the half of "a screenshot rots silently" that is actually decidable.
 //
-// It does NOT compare pixels. Font hinting, GPU rasterisation and Skia's
-// antialiasing differ per machine regardless, and five of the twelve shots
+// It does NOT compare pixels; the separate Captures check workflow does that on
+// Linux against `CAPTURE_LINUX_BASELINE_DIR` (VW-710). Font hinting, GPU
+// rasterisation and Skia's antialiasing differ per machine regardless, and five of the twelve shots
 // render a value the SERVER computed from its own real clock (a rep-shape
 // curve's frame-decode timestamp, a pace ETA, a session start/end stamp) that
 // no local determinism measure reaches — see docs/screenshot-harness.md for
@@ -30,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { createProtocolGuard } from '../../docs/protocol-guard.js';
 import {
   CAPTURE_DIR,
+  CAPTURE_LINUX_BASELINE_DIR,
   CAPTURE_MANIFEST,
   CAPTURE_SHOTS,
   CAPTURE_VIEWPORT,
@@ -166,6 +168,28 @@ describe('the captures on disk', () => {
     ].sort();
     expect(readdirSync(CAPTURES).sort()).toEqual(expected);
   });
+});
+
+describe('the Linux baseline for the CI captures check', () => {
+  const baselineDir = join(REPO_ROOT, CAPTURE_LINUX_BASELINE_DIR);
+  const fixed = CAPTURE_SHOTS.filter((shot) => shot.variesBy === undefined);
+  const refresh = 'commit the captures-diff artifact of a failed Captures check run';
+
+  it('holds exactly the shots without variesBy', () => {
+    const expected = fixed.map((shot) => `${shot.name}.png`).sort();
+    expect(readdirSync(baselineDir).sort(), refresh).toEqual(expected);
+  });
+
+  it.each(fixed.map((shot) => [shot.name, shot] as const))(
+    '%s is a PNG at the declared geometry',
+    (name, shot) => {
+      const want = viewportFor(shot);
+      expect(pngDimensions(join(baselineDir, `${name}.png`))).toEqual({
+        width: want.width * CAPTURE_DEVICE_SCALE_FACTOR,
+        height: want.height * CAPTURE_DEVICE_SCALE_FACTOR,
+      });
+    },
+  );
 });
 
 describe('the captures are safe to publish', () => {
