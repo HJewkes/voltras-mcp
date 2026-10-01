@@ -394,7 +394,7 @@ npm run store -- verify <store-file> <dir-or-store>     # non-zero exit on any d
 ```
 
 The export writes one newline-delimited JSON file per table, rows in primary-key order and
-columns in schema order, plus a `manifest.json` holding the schema version, the table list,
+columns sorted by name, plus a `manifest.json` holding the schema version, the table list,
 a row count per table and a SHA-256 per file. It carries no timestamp, so two exports of an
 unchanged store are byte-identical. `verify` prints counts and hashes and never a stored
 value.

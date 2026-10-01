@@ -6,12 +6,18 @@ sources:
   - README.md
   - src/tools/server-tools.ts
   - src/dashboard/server.ts
+  - src/server.ts
+  - src/client-connection.ts
+  - src/voice/cue-emitter.ts
+  - src/store/portable/inventory.ts
+  - src/store/portable/import.ts
   - scripts/ensure-whisper.mjs
   - scripts/store/store-portable-cli.ts
   - src/store/__tests__/portable-round-trip.test.ts
   - package.json
   - .gitignore
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Troubleshooting
@@ -51,8 +57,8 @@ Run `npm run build:dashboard`. ([README.md § Troubleshooting](https://github.co
 
 You are probably on the wrong port. Another instance holds 7723, so this session fell back
 to an OS-assigned port. Call `server.health` and read `dashboardUrl`, or check stderr,
-where the dashboard logs the URL it bound. A null `dashboardUrl` means
-`VMCP_DASHBOARD_PORT` is `off` or the bind failed outright.
+where the dashboard logs the URL it bound at the `info` log level. A null `dashboardUrl`
+means `VMCP_DASHBOARD_PORT` is `off` or `0`, or the bind failed outright.
 ([README.md § Troubleshooting](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#troubleshooting))
 
 If you started the server through the plugin launcher without `scripts/voltra-pt`, the
@@ -92,7 +98,9 @@ npm run store -- verify <store-file> <dir-or-store>     # non-zero exit on any d
 ```
 
 The export writes one newline-delimited JSON file per table, with rows in primary-key order
-and columns in schema order. It adds a `manifest.json` with the schema version, the table
+and columns sorted by name. A migrated store and a fresh one can hold the same columns in
+different positions, and name order lets the two compare equal. Generated columns are left
+out of the files, because SQLite computes them. It adds a `manifest.json` with the schema version, the table
 list, a row count per table and a SHA-256 hash per file. The export carries no timestamp, so
 two exports of an unchanged store are byte-identical. `verify` prints counts and hashes,
 never a stored value.

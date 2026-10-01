@@ -10,7 +10,9 @@ sources:
   - src/dashboard/read-models/session-summary-view.ts
   - src/tools/plan-tools.ts
   - src/docs/capture-shots.ts
-lastVerified: 2026-09-28
+  - scripts/dashboard-plan-drive.mjs
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Review a session on the dashboard
@@ -22,16 +24,17 @@ start with [Set it up and open it](/guides/dashboard-setup).
 
 The capture below comes from a scripted run on the mock adapter: two sets of Cable Chest
 Press, five reps each at 140 lb, against a plan that asks for 8 to 10 reps
-(`src/docs/capture-shots.ts:351-367`, `src/docs/capture-shots.ts:380`).
+(`src/docs/capture-shots.ts:368-386`, `scripts/dashboard-plan-drive.mjs:115-123`).
 
 ## 1. Open the summary
 
 Click **review** in the nav rail. It opens `#/summary`
 (`src/dashboard/spa/panels/DashboardChrome.tsx:34-39`).
 
-With no session named, the page shows the session that ended most recently. If nothing has
-ended yet, it shows the one that started most recently, and the title reads "Session in
-progress" instead of "Session complete" (`src/dashboard/read-models/session-summary.ts:117-144`,
+With no session named, the page shows the session that ended most recently, looking among the
+20 that started most recently. If none of those has ended, it shows the one that started most
+recently, and the title reads "Session in
+progress" instead of "Session complete" (`src/dashboard/read-models/session-summary.ts:114-144`,
 `src/dashboard/spa/planner/SessionSummaryPage.tsx:145-147`).
 
 The page loads once and does not poll, because a finished session's numbers do not change
@@ -62,7 +65,8 @@ card per exercise the session touched, so a session that moved between lifts sho
 Each exercise card opens with the fatigue verdict: the same word and the same three lights
 the live page shows mid-set (`src/dashboard/spa/planner/SessionSummaryPage.tsx:198-204`). The
 verdict reads the exercise's worst working set, measured by velocity loss
-(`src/dashboard/read-models/session-summary-view.ts:80-88`). What the verdict words mean is
+(`src/dashboard/read-models/session-summary-view.ts:80-86`). On a tie it reads the later set
+(`src/dashboard/read-models/session-summary.ts:258-280`). What the verdict words mean is
 explained in [Fatigue and pacing](/concepts/fatigue-and-pacing).
 
 **There is no effort number yet.** The verdict has a slot for RPE, and it stays empty. The
@@ -90,10 +94,12 @@ estimated one-rep max across the session. With fewer, it says there is not enoug
 The "Next session" block gives a load change and the target load it lands on. The line under
 the tiles says why (`src/dashboard/spa/planner/SessionSummaryPage.tsx:297-337`). It comes from
 the same rule that [`plan.suggest_progression`](/reference/plan) runs
-(`src/tools/plan-tools.ts:1555-1560`, `src/dashboard/read-models/session-summary.ts:410`).
+(`src/tools/plan-tools.ts:1570-1576`, `src/dashboard/read-models/session-summary.ts:410`).
 The page runs that rule with a default intermediate tier and no diet phase. The tool reads
 your own tier and declared diet phase, so the two can disagree
-(`src/tools/plan-tools.ts:1012-1015`, `src/tools/plan-tools.ts:1500-1505`). When they do, ask
+(`src/tools/plan-tools.ts:1028-1031`, `src/tools/plan-tools.ts:1516-1521`). By default the
+tool also reads the most recent session that trained the exercise, while the page reads the
+session on screen. When they do, ask
 Claude for the tool's answer.
 
 The recommendation needs a plan. Instead of tiles you get one line when the sets named no
