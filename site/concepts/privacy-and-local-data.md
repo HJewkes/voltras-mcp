@@ -10,6 +10,9 @@ sources:
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
   - src/logger.ts
+  - src/state/session-recorder.ts
+  - src/state/debug-buffer.ts
+  - src/tools/device-tools.ts
   - src/tools/voice-tools.ts
   - src/tools/tts-tools.ts
   - src/integrations/truecoach/client.ts
@@ -17,7 +20,8 @@ sources:
   - site/coaches/consent-and-data-loop.md
   - README.md
   - CLAUDE.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Privacy and local data
@@ -33,7 +37,9 @@ module, so there is no database server and no account (`src/store/sqlite-store.t
 
 The same folder can hold a few other files. The device slot assignments sit there
 (`src/config.ts:6`). A TrueCoach login token, cache and outbox appear there only if you use those
-features (`src/config.ts:17-19`, `src/config.ts:242-243`).
+features (`src/config.ts:17-19`, `src/config.ts:242-243`). An opt-in debugging recorder,
+`VMCP_RECORD_SESSION=1`, writes device captures under `~/.voltras/captures`
+(`src/state/session-recorder.ts:1-20`).
 
 Keep one server process per database file. Two processes on the same file can both open it, and
 their writes then fail ([README](https://github.com/HJewkes/voltras-mcp#running-more-than-one-instance)).
@@ -42,16 +48,16 @@ their writes then fail ([README](https://github.com/HJewkes/voltras-mcp#running-
 
 The server runs a small web dashboard next to itself. It listens on `127.0.0.1`, the address that
 only your own computer can reach, so a phone or another computer on your network cannot open it
-(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:241-242`). It sends no headers that
+(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:245`). It sends no headers that
 would let another website read its data (`src/dashboard/server.ts:14-17`).
 
 Most of its routes only read: the live view, your history, your plan, and your goals
 (`src/dashboard/server.ts:28-85`). A small set of routes can change things: six routes that edit
 your training plan, and an action route that runs only tools on a fixed list
-(`src/dashboard/server.ts:87-102`, `src/dashboard/server.ts:1178-1186`).
+(`src/dashboard/server.ts:87-103`, `src/dashboard/server.ts:1182-1190`).
 
 Every change request passes a guard before anything else happens
-(`src/dashboard/server.ts:558-575`). The guard requires all of these
+(`src/dashboard/server.ts:561-577`). The guard requires all of these
 (`src/dashboard/write-guard.ts:12-32`):
 
 - the request is addressed to your own machine by name;
@@ -106,9 +112,11 @@ The device maker shared details of how the Voltra communicates to help the commu
 asked that they stay private (`CLAUDE.md`, "Confidentiality / Privacy"). This project keeps that
 request.
 
-No raw device messages, byte values or device command codes appear in any tool's input or
-output, in any log line, in any documentation page, or in any commit. Only plain values such as
-weights, speeds and counts cross from the device into what Claude sees
-([README](https://github.com/HJewkes/voltras-mcp#confidentiality)). A lint rule checks the source
+No raw device messages, byte values or device command codes appear in a log line, a
+documentation page or a commit. The everyday tools pass Claude only plain values such as
+weights, speeds and counts ([README](https://github.com/HJewkes/voltras-mcp#confidentiality)).
+The exceptions are diagnostic tools for hardware debugging: `device.send_raw` takes and returns
+raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1410-1432`,
+`src/state/debug-buffer.ts:44-62`). A lint rule checks the source
 code, and a separate guard checks the generated documentation pages for anything shaped like
 device detail (`CLAUDE.md`, "Confidentiality / Privacy"; `src/docs/protocol-guard.ts:1-5`).
