@@ -554,8 +554,13 @@ async function captureShot(page, origin, port, shot, defs, mode) {
   // at 30s. Nothing is lost — `waitForState` and `waitForText` below are the
   // real gates; this `waitUntil` only needed to get the initial bundle running.
   const open = async () => {
-    if (page.url() === target) await page.reload({ waitUntil: 'domcontentloaded' });
-    else await page.goto(target, { waitUntil: 'domcontentloaded' });
+    if (page.url() === target) {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      return;
+    }
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+    // A goto that changes only the hash stays in the same document; `loadsFresh` needs a new one.
+    if (shot.loadsFresh) await page.reload({ waitUntil: 'domcontentloaded' });
   };
 
   const expected = [...shot.expectText, ...shot.expectValues];
