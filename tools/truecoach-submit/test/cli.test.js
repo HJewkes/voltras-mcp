@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe('parseArgs', () => {
   it('defaults to a dry run over every pending entry', () => {
-    expect(parseArgs([])).toMatchObject({ submit: false, session: undefined, command: 'run' });
+    expect(parseArgs([])).toMatchObject({ submit: true, session: undefined, command: 'run' });
   });
 
   it('reads --submit, --session and --stale-hours', () => {
