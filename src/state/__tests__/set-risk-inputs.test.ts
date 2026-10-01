@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+import type { ResolvedWatchConfig } from '../../schemas/set.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
+import { buildEffortContext } from '../effort-context.js';
 import type { DeviceSnapshot } from '../live-state.js';
 import { readSetRiskInputs, type SetRiskStart } from '../set-risk-inputs.js';
 
@@ -230,60 +232,91 @@ describe('prior-set decay', () => {
     expect(inputs.priorSetDecayed).toBe(false);
   });
 
-  it('reads the watch pct from a loss goal the watch itself set', async () => {
-    const goalFromWatch = {
-      ...watchAt(20),
-      goal: { kind: 'velocity_loss', lossPct: 20, source: 'set_intent' },
-      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
-    };
-    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: goalFromWatch }));
+  it('is false when the previous set had no loss watch', async () => {
+    const noLossWatch = { ...watchAt(20), lossWatch: 'none' };
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: noLossWatch }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBe(false);
+  });
+
+  it.each([
+    { velocities: DECAYED, decayed: true },
+    { velocities: STEADY, decayed: false },
+  ])(
+    'replays an assumed-default watch at its own pct (decayed $decayed)',
+    async ({ velocities, decayed }) => {
+      const assumed = withLossWatch(watchAt(50), [{ pct: 20, source: 'default' }]);
+      await seedLive(storedSet('w1', { velocities, effortContext: assumed }));
+
+      const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+      expect(inputs.priorSetDecayed).toBe(decayed);
+    },
+  );
+
+  it('replays a plan-intent watch at its pct, not at the band reference', async () => {
+    const planIntent = withLossWatch(watchAt(30), [{ pct: 10, source: 'plan_intent' }]);
+    const lossPastPlanPct = [0.6, 0.6, 0.55, 0.52, 0.51];
+    await seedLive(storedSet('w1', { velocities: lossPastPlanPct, effortContext: planIntent }));
 
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
 
     expect(inputs.priorSetDecayed).toBe(true);
   });
 
-  it('is null, never true, for a set whose context shows no loss watch', async () => {
-    const noLossWatch = {
-      ...watchAt(20),
-      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+  it('is true when any spec of a two-spec watch would have fired', async () => {
+    const twoSpecs = withLossWatch(watchAt(50), [
+      { pct: 50, source: 'explicit' },
+      { pct: 20, source: 'set_intent' },
+    ]);
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: twoSpecs }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBe(true);
+  });
+
+  it('is false when no spec of a two-spec watch would have fired', async () => {
+    const twoSpecs = withLossWatch(watchAt(20), [
+      { pct: 50, source: 'explicit' },
+      { pct: 45, source: 'default' },
+    ]);
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: twoSpecs }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBe(false);
+  });
+
+  it('reads the specs the effort-context builder pins from an auto-armed watch', async () => {
+    const autoArmed: ResolvedWatchConfig = {
+      notifyOn: [{ type: 'velocity_loss_exceeded', pct: 20, thresholdSource: 'default' }],
     };
-    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: noLossWatch }));
+    const pinned = buildEffortContext({
+      set: { watch: autoArmed },
+      device: DEVICE,
+      planned: undefined,
+      profile: 'no_model',
+    });
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: toJson(pinned) }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBe(true);
+  });
+
+  it('is null for a set pinned before its loss specs were, even with an explicit guard', async () => {
+    const { lossWatch: _unpinned, ...prePin } = watchAt(20);
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: prePin }));
 
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
 
     expect(inputs.priorSetDecayed).toBeNull();
   });
 
-  it('is null for an assumed-stop watch whose pct differs from the band reference', async () => {
-    const assumedStop = {
-      ...watchAt(10),
-      guard: { effortCapRpe: null, effortCapSource: null, lossPct: 10, lossSource: 'plan_intent' },
-    };
-    const lossPastBandReference = [0.6, 0.6, 0.55, 0.52, 0.51];
-    await seedLive(
-      storedSet('w1', { velocities: lossPastBandReference, effortContext: assumedStop }),
-    );
-
-    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
-
-    expect(inputs.priorSetDecayed).toBeNull();
-  });
-
-  it('is null when the loss goal came from the plan, not the watch', async () => {
-    const planGoal = {
-      ...watchAt(20),
-      goal: { kind: 'velocity_loss', lossPct: 20, source: 'plan' },
-      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
-    };
-    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: planGoal }));
-
-    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
-
-    expect(inputs.priorSetDecayed).toBeNull();
-  });
-
-  it('is null when the previous set carries no pinned threshold', async () => {
+  it('is null when the previous set carries no pinned context', async () => {
     await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: undefined }));
 
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
@@ -351,12 +384,26 @@ describe('the scorer input shape', () => {
   });
 });
 
-/** A pinned context whose loss guard came from the set's own explicit watch spec. */
-function watchAt(pct: number): NonNullable<StoredSet['effortContext']> {
+type StoredContext = NonNullable<StoredSet['effortContext']>;
+
+/** A pinned context whose watch held one explicit loss spec at this pct. */
+function watchAt(pct: number): StoredContext {
   return {
     goal: { kind: 'rep_range', repsLow: 5, repsHigh: 5, source: 'explicit' },
     guard: { effortCapRpe: null, effortCapSource: null, lossPct: pct, lossSource: 'explicit' },
     bandReferenceLossPct: pct,
+    lossWatch: [{ pct, source: 'explicit' }],
     velocitySignalValid: true,
   };
+}
+
+function toJson(value: unknown): StoredContext {
+  return JSON.parse(JSON.stringify(value)) as StoredContext;
+}
+
+function withLossWatch(
+  context: StoredContext,
+  lossWatch: { pct: number; source: string }[],
+): StoredContext {
+  return { ...context, lossWatch };
 }
