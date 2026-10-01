@@ -53,6 +53,43 @@ function inputs(overrides: Partial<EffortContextInputs> = {}): EffortContextInpu
   };
 }
 
+describe('the pinned loss watch', () => {
+  it.each([
+    { scenario: 'a set with no watch pins none', watch: undefined, lossWatch: 'none' },
+    {
+      scenario: 'a rep-count-only watch pins none',
+      watch: watch({ type: 'rep_count_reached', value: 8 }),
+      lossWatch: 'none',
+    },
+    {
+      scenario: 'an assumed-default spec is pinned with its default source',
+      watch: watch({ type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'default' }),
+      lossWatch: [{ pct: 25, source: 'default' }],
+    },
+    {
+      scenario: 'a spec with no recorded source is pinned as explicit',
+      watch: watch({ type: 'velocity_loss_exceeded', pct: 30 }),
+      lossWatch: [{ pct: 30, source: 'explicit' }],
+    },
+    {
+      scenario: 'every loss spec is pinned, in watch order',
+      watch: watch(
+        { type: 'velocity_loss_exceeded', pct: 40, thresholdSource: 'explicit' },
+        { type: 'rep_count_reached', value: 8 },
+        { type: 'velocity_loss_exceeded', pct: 20, thresholdSource: 'plan_intent' },
+      ),
+      lossWatch: [
+        { pct: 40, source: 'explicit' },
+        { pct: 20, source: 'plan_intent' },
+      ],
+    },
+  ])('$scenario', ({ watch: w, lossWatch }) => {
+    const context = buildEffortContext(inputs({ set: { watch: w } }));
+
+    expect(context.lossWatch).toEqual(lossWatch);
+  });
+});
+
 describe('the pinned goal', () => {
   it.each([
     {
