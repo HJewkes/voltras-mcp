@@ -8,6 +8,8 @@
 
 import { ACCOUNTABILITY_FRAGMENT_LIST } from './accountability.js';
 import { COMPOSER_FRAGMENT_LIST } from './composer.js';
+import { CUE_FRAGMENT_LIST } from './cues.js';
+import { DASHBOARD_FRAGMENT_LIST } from './dashboard.js';
 
 /**
  * - `rp`: one or more RP corpus ids, comma separated.
@@ -125,4 +127,6 @@ export function validateRegistry(fragments: readonly FragmentCandidate[]): strin
 export const COACH_FRAGMENTS: readonly Fragment[] = [
   ...ACCOUNTABILITY_FRAGMENT_LIST,
   ...COMPOSER_FRAGMENT_LIST,
+  ...CUE_FRAGMENT_LIST,
+  ...DASHBOARD_FRAGMENT_LIST,
 ];

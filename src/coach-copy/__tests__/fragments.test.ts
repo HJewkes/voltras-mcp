@@ -16,7 +16,13 @@ import {
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 // One file per slice joins this list as its prose moves into the registry.
-const GUARDED_FILES = ['accountability/copy.ts', 'accountability/composer.ts'];
+const GUARDED_FILES = [
+  'accountability/copy.ts',
+  'accountability/composer.ts',
+  'voice/cue-templates.ts',
+  'dashboard/spa/live-page/live-copy.ts',
+  'dashboard/spa/goals/calibration-copy.ts',
+];
 const PROSE_WORD_FLOOR = 4;
 
 const VALID: FragmentCandidate = {

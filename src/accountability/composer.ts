@@ -26,6 +26,7 @@ import {
   SUNDAY_ANCHOR,
 } from './copy.js';
 import { COMPOSER_FRAGMENTS as LINES, REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
+import { fillSlots as fill } from '../coach-copy/fill.js';
 import type {
   AdherenceRead,
   HoldingRead,
@@ -101,17 +102,6 @@ export interface RealignOpenerInput {
   adherence: AdherenceRead | null;
   rolling28DayTrainingDays: number;
   slots: PlannedSlot[];
-}
-
-/** Fills each `{{token}}` once; a filled value is never scanned for further tokens. */
-function fill(template: string, values: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_match, token: string) => {
-    const value = values[token];
-    if (value === undefined) {
-      throw new Error(`coach copy: template placeholder "${token}" has no value`);
-    }
-    return value;
-  });
 }
 
 /** Fills a whole message, then drops the lines that rendered empty. */
