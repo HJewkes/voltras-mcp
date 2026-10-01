@@ -104,7 +104,8 @@ Three events also carry `slot_id`, and all three carry `slot` too. Filter on `sl
 | `coach_line`                     | A coaching line was spoken aloud, by `system.speak` or by a deterministic cue. See [the coach line](#the-coach-line).                                                                           | —                      |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
-exhaustive. The authoritative list is the set of publish sites under `src/state/`.
+exhaustive. The authoritative inventory is `src/tools/__tests__/channel-publish-sites.test.ts`,
+which names every channel publish site under `src/` and why it does or does not carry `slot`.
 
 ## The `device_set_summary` block on `set_ended`
 
