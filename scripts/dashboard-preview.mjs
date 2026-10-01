@@ -11,6 +11,7 @@
 //   npm run build && npm run build:dashboard
 //   npm run dashboard:preview -- goals
 //   npm run dashboard:preview -- goals --state behind
+//   npm run dashboard:preview -- goals --unreviewed 3
 //   npm run dashboard:preview -- body
 //   npm run dashboard:preview -- plan
 //
@@ -32,6 +33,9 @@
 // `calibrating`, are in `src/docs/preview-seeds.ts`; the statuses they reach are
 // pinned by `src/dashboard/__tests__/preview-seeds.test.ts`.
 //
+// `--unreviewed <n>` adds n past days of sessions nobody has marked training or
+// test, which is what makes the page say its counts leave them out (VW-514).
+//
 // ── Isolation ──────────────────────────────────────────────────────────────
 // Each run gets its own scratch directory holding its own `VMCP_DB_PATH`,
 // removed on exit. `~/.voltras/vmcp.sqlite` is never opened, and refusing a
@@ -52,14 +56,17 @@ const SHOTS = path.join(REPO_ROOT, 'dist/docs/capture-shots.js');
 
 const log = (...args) => console.error('[preview]', ...args);
 
-/** `<page> [--state <name>]`, also accepting `--state=<name>`. */
+/** `<page> [--state <name>] [--unreviewed <n>]`, also accepting the `--flag=value` forms. */
 function parseArgs(argv, pages) {
-  const args = { page: null, state: 'on_track' };
+  const args = { page: null, state: 'on_track', unreviewed: 0 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--state') args.state = argv[++i];
     else if (arg.startsWith('--state=')) args.state = arg.slice('--state='.length);
-    else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
+    else if (arg === '--unreviewed') args.unreviewed = dayCount(argv[++i]);
+    else if (arg.startsWith('--unreviewed=')) {
+      args.unreviewed = dayCount(arg.slice('--unreviewed='.length));
+    } else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
     else if (args.page === null) args.page = arg;
     else throw new Error(`unexpected second page: ${arg}`);
   }
@@ -67,6 +74,12 @@ function parseArgs(argv, pages) {
     throw new Error(`name a page: ${pages.map((page) => page.name).join(', ')}`);
   }
   return args;
+}
+
+function dayCount(value) {
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 0) throw new Error('--unreviewed takes a whole number');
+  return days;
 }
 
 function pageNamed(pages, name) {
@@ -89,7 +102,7 @@ function makeScratchDir() {
  * seed runs to completion and CLOSES before the server opens the same file —
  * one process per `VMCP_DB_PATH`, always.
  */
-async function seedGoals(dbDir, stateName) {
+async function seedGoals(dbDir, stateName, unreviewedDays) {
   const { SqliteSessionStore } = await import(path.join(REPO_ROOT, 'dist/store/sqlite-store.js'));
   const { goalPreviewState, seedGoalPreview } = await import(SEEDS);
   const state = goalPreviewState(stateName);
@@ -98,11 +111,13 @@ async function seedGoals(dbDir, stateName) {
     const report = await seedGoalPreview(store, state, new Date(), {
       companions: true,
       wholeBody: true,
+      unreviewedDays,
     });
     log(
       `seeded --state ${state.name}: ${report.sets} sets across ${report.sessions} session(s), ` +
         `top ${report.latestLoadLbs} lb, baseline ${report.baselineState}, ` +
-        `whole body: ${report.wholeBody.join(', ') || 'none'}`,
+        `whole body: ${report.wholeBody.join(', ') || 'none'}, ` +
+        `unreviewed days: ${report.unreviewedDays}`,
     );
     log(`  ${state.summary}`);
   } finally {
@@ -148,7 +163,7 @@ async function main() {
   try {
     const scenario =
       page.captureScenario === null
-        ? await seedGoals(dbDir, args.state)
+        ? await seedGoals(dbDir, args.state, args.unreviewed)
         : await captureScenarioFor(page);
     scene = await startScenario(scenario, dbDir, {
       log,

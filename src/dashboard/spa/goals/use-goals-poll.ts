@@ -25,9 +25,9 @@ export interface GoalsPollState {
 
 /** One `/api/goals` call, then the per-priority progress it names. */
 export async function loadGoalsPage(): Promise<GoalsPageData> {
-  const { priorities, mesocycle } = await fetchGoalPriorities();
+  const { priorities, mesocycle, review } = await fetchGoalPriorities();
   const progress = await fetchAllGoalProgress(priorities);
-  return { priorities, progress, mesocycle };
+  return { priorities, progress, mesocycle, unreviewedDays: review?.unreviewedDays ?? 0 };
 }
 
 export function useGoalsPoll(): GoalsPollState {
