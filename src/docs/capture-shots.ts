@@ -295,6 +295,12 @@ export interface CaptureShot {
   readonly clockDrivenAnimationMs?: number;
   /** A test id whose box must end at the viewport's right edge: proof a side sheet is fully open. */
   readonly flushRight?: string;
+  /**
+   * Open the route as a new document, never as a hash change from the shot before.
+   * A hash change plays an entrance the deep link mounts already finished, and the
+   * pixels it leaves depend on when Chromium redraws the scaled layer (VW-735).
+   */
+  readonly loadsFresh?: true;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -595,6 +601,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // titan's sheet slides in over 400 ms; the margin covers a late first frame.
     clockDrivenAnimationMs: 1_000,
     flushRight: 'body-map-detail-panel',
+    // From body-week's route, the figure's highlight would scale up on screen.
+    loadsFresh: true,
   },
 ];
 
