@@ -16,6 +16,7 @@
 // Confidentiality: fitness units and plan metadata only, no protocol data (NF-07).
 
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
+import { log } from '../../logger.js';
 import {
   GOAL_BAND_CONSTANTS,
   type GoalBand,
@@ -274,12 +275,26 @@ function atPrecision(metric: StoredGoalMetric, value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/** In-block readings placed in a later block week than `currentWeek` (VW-422); none while the grid agrees. */
+export function goalReadingWeekViolations(
+  readings: readonly BlockReading[],
+  currentWeek: number,
+): BlockReading[] {
+  return readings.filter((reading) => reading.position + 1 > currentWeek);
+}
+
 export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
   const { target, band, weeks, readings } = input;
   const weekCount = weeks.length;
   const currentWeek = Math.max(1, blockWeekAt(input.weekOneAt, input.now));
   const last = readings[readings.length - 1];
   const ended = currentWeek > weekCount;
+  const violations = goalReadingWeekViolations(readings, currentWeek);
+  if (violations.length > 0) {
+    log.warn(
+      `goal-milestone: '${target.id}' has ${violations.length} reading(s) past week ${currentWeek}`,
+    );
+  }
   return {
     target: mesoTargetOf(target),
     goalWeek: weeks[weekCount - 1]?.index ?? weekCount,
