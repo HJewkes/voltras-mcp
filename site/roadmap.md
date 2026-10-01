@@ -31,7 +31,7 @@ Dashboard screens that are built but not yet usable end to end have their own pa
   accept input, so a caller might expect them to reconfigure the mock device or trigger a
   simulated fault. Calling either always returns an error saying the capability doesn't exist
   yet, regardless of input — the mock adapter has no runtime configure or error-injection API
-  to call into (`src/tools/mock-tools.ts:84-121`).
+  to call into (`src/tools/mock-tools.ts:84-120`).
 
 ## Off by default and unfinished
 
