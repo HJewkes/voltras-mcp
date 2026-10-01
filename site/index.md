@@ -46,6 +46,8 @@ sources:
   - plugins/voltras-channel/skills/pt-session/SKILL.md
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
+  - src/actions/allowlist.ts
+  - src/state/velocity-loss-intent.ts
   - src/dashboard/spa/planner/planner-client.ts
   - src/tools/report-tools.ts
   - site/guides/dashboard.md
@@ -57,7 +59,8 @@ sources:
   - site/coaches/consent-and-data-loop.md
   - site/coming-soon/index.md
   - site/public/captures/manifest.json
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 ## The dashboard
@@ -67,8 +70,8 @@ see from the machine; [Set it up and open it](/guides/dashboard-setup) gets it t
 
 ![The live page mid-set, with the prescribed sets, reps, load and tempo attached.](/captures/live-mid-set.png)
 
-**Mid-set.** Each rep's speed against the 20% and 30% velocity-loss lines, the fatigue card
-and the prescription. [The live workout tour](/guides/dashboard-tour#mid-set-with-a-plan-attached)
+**Mid-set.** Each rep's speed against the velocity-loss lines (20% and 30% at the default
+hypertrophy goal), the fatigue card and the prescription. [The live workout tour](/guides/dashboard-tour#mid-set-with-a-plan-attached)
 walks through it.
 
 ![The rest stage between two sets of a planned exercise.](/captures/live-rest.png)
@@ -81,8 +84,8 @@ walks through it.
 **After the session.** Totals, the fatigue verdict, each set and a load recommendation for
 next time. [The live workout tour](/guides/dashboard-tour#session-complete) walks through it.
 
-The mock adapter drives these captures, not a real Voltra: every published screenshot runs the
-real MCP tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
+The mock adapter drives these three captures, not a real Voltra: each one runs the real MCP
+tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
 `site/public/captures/manifest.json`).
 
 ## How the cards above are backed
@@ -91,8 +94,9 @@ real MCP tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   the MCP server (`site/guides/dashboard.md`). The live page shows the prescription next to
   the set, and the session summary reads a finished session back (`live-mid-set` and
   `session-summary` in `site/public/captures/manifest.json`).
-- **Fatigue you can see.** The live page draws the 20% and 30% velocity-loss lines and a
-  fatigue card, and the session summary repeats the verdict (`site/public/captures/manifest.json`,
+- **Fatigue you can see.** The live page draws two velocity-loss lines, at two thirds of the
+  goal's stop threshold and at the threshold itself, and a fatigue card
+  (`src/state/velocity-loss-intent.ts:130-143`), and the session summary repeats the verdict (`site/public/captures/manifest.json`,
   `site/concepts/fatigue-and-pacing.md`). The effort number (RPE or reps in reserve) is
   withheld until a lift has a trusted fitted profile (`site/coming-soon/effort-readout.md`).
 - **Plans on screen.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
@@ -134,9 +138,11 @@ real MCP tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   (`README.md`, "Quickstart").
 - **Local.** Your training records live in one SQLite file on your machine,
   `~/.voltras/vmcp.sqlite` unless `VMCP_DB_PATH` moves it (`CLAUDE.md`). The dashboard binds
-  `127.0.0.1` only, so no other machine can open it (`src/dashboard/server.ts`). Its only write
-  routes edit plans, and each one needs a same-origin request carrying a per-boot token
-  (`src/dashboard/write-guard.ts`). Tool results do go into your conversation with Claude,
+  `127.0.0.1` only, so no other machine can open it (`src/dashboard/server.ts`). Its write
+  routes edit plans or run a short allowlist of store-only actions, such as logging bodyweight
+  or answering a weekly check-in; none of them drives the device
+  (`src/actions/allowlist.ts:41-101`). Each write needs a same-origin request carrying a
+  per-boot token (`src/dashboard/write-guard.ts`). Tool results do go into your conversation with Claude,
   because that is how Claude reads them (`site/coaches/consent-and-data-loop.md`).
 - **Not a medical device.** It makes no health claims. When onboarding raises a cardiovascular
   flag, the coach skill reads the note out and sends you to a doctor instead of programming

@@ -346,9 +346,13 @@ Everything is optional; the defaults are a working configuration.
 | `VMCP_TRUECOACH_SUBMIT_ON_END` | `off`                             | `off` \| `on`                          | When `on` (and the outbox is on), writing an entry also spawns `tools/truecoach-submit --submit --session <id>` once, detached. Read the gates in [TrueCoach write-back (unattended, gated)](#truecoach-write-back-unattended-gated) first. Invalid values throw at startup.                                                                                                                                                                                                                                                    |
 
 `VOLTRA_ADAPTER`, `VMCP_REP_SOURCE`, `VMCP_REST_TIMER`, `VMCP_REP_CORRECTIONS`,
-`VMCP_REP_UNRACK_DROP`, `VMCP_REP_ECC_TRUNCATE`,
-`VMCP_AUTO_ARM`, `VMCP_TRUECOACH_OUTBOX`, `VMCP_TRUECOACH_SUBMIT_ON_END`, and `VMCP_CUES` throw synchronously at startup on an unrecognized value, so a typo surfaces
-immediately rather than being silently ignored.
+`VMCP_REP_UNRACK_DROP`, `VMCP_REP_ECC_TRUNCATE`, `VMCP_AUTO_ARM`, `VMCP_TRUECOACH_OUTBOX`,
+`VMCP_TRUECOACH_SUBMIT_ON_END`, `VMCP_CUES`, `VMCP_CUES_MIDSET`, `VOLTRAS_EFFORT_CUE` and
+`VMCP_MOUNT_RATING_LBS` throw synchronously at startup on an unrecognized value, so a typo
+surfaces immediately rather than being silently ignored (`src/config.ts`). This table is
+hand-written; the generated
+[environment variable reference](https://hjewkes.github.io/voltras-mcp/reference/environment-variables)
+lists every variable the server reads and is checked against the code by a docs test.
 
 ---
 
@@ -634,7 +638,8 @@ summary and set list render the same string.
 
 Which sets count is decided the same way `plan.suggest_progression` decides it: flagged
 warm-ups are excluded, then the sets at the top load are kept. A guest lifter's sets
-(`session.set_lifter`), mock-adapter sets and zero-rep sets never appear, and an exercise
+(`session.set_lifter`) and zero-rep sets never appear, mock-adapter sets are left out unless
+the server itself runs on the mock adapter, and an exercise
 with no working set is omitted rather than reported empty. The tool reads the store and
 makes **no network call** — it never writes to TrueCoach, and nothing in this repo does.
 
@@ -648,8 +653,9 @@ Set `VMCP_TRUECOACH_OUTBOX=on` and every `session.end` also drops the same paylo
 ```
 
 `VMCP_TRUECOACH_OUTBOX_DIR` moves the root; `pending/` is created on demand, mode 0700.
-This is a **local file drop, not a pipe**: nothing reads the directory, nothing uploads it,
-and nothing schedules anything. It exists so the results of a session survive the
+This is a **local file drop, not a pipe**: the server never reads the directory back, uploads
+it or schedules anything. Only the separate write-back tool below reads it, and only when you
+run it or turn on `VMCP_TRUECOACH_SUBMIT_ON_END`. It exists so the results of a session survive the
 conversation that produced them, ready to paste.
 
 A session with no working sets writes nothing (logged at `debug`), and a write failure is

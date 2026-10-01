@@ -12,7 +12,8 @@ sources:
   - src/store/working-sets.ts
   - plugins/voltras-channel/skills/pt-session/SKILL.md
   - README.md
-lastVerified: 2026-09-27
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Glossary for coaches
@@ -37,8 +38,9 @@ population defaults, not numbers learned from this lifter (`site/reference/dashb
 **Mesocycle.** See Block.
 
 **Outbox.** A local folder where `session.end` drops each session's result text as a file
-when the lifter sets `VMCP_TRUECOACH_OUTBOX=on`. Nothing reads or uploads it (`README.md`,
-"The outbox"). Used in [Read a session report](/coaches/read-a-session-report).
+when the lifter sets `VMCP_TRUECOACH_OUTBOX=on`. The server never uploads it; only the
+separate write-back tool reads it, when the lifter runs it or turns on automatic submit
+(`README.md`, "The outbox" and "TrueCoach write-back"). Used in [Read a session report](/coaches/read-a-session-report).
 
 **RIR.** Reps in reserve: how many more reps the lifter could have done when the set
 stopped. 0 is the last rep of a set taken to failure (`src/analytics/rir-velocity.ts:131`).
@@ -49,7 +51,7 @@ in [Read the weekly report](/coaches/read-the-weekly-report) and
 
 **RPE.** Rating of perceived exertion: the lifter's own score of how hard a set was. A stored
 RIR-velocity curve is trusted to state RIR or RPE only when its fit error passes a gate
-(`src/analytics/rir-velocity.ts:69-80`). Used in [the `set.*` reference](/reference/set).
+(`src/analytics/rir-velocity.ts:62-80`). Used in [the `set.*` reference](/reference/set).
 
 **Velocity loss.** How much slower the reps got across a set, as a percentage. Claude
 reports it after each set and does not convert it into an RPE or RIR
@@ -57,8 +59,9 @@ reports it after each set and does not convert it into an RPE or RIR
 as distance from failure. Used in [Read the weekly report](/coaches/read-the-weekly-report)
 and [the `metrics.*` reference](/reference/metrics).
 
-**Working set.** A set that counts toward the report. Flagged warm-ups are excluded, then
-the sets at the top load are kept (`src/store/working-sets.ts`, `README.md`). Used in
+**Working set.** A set that counts toward the report. Sets flagged as a warm-up, probe or
+technique set are excluded, then the sets at the top load are kept
+(`src/store/working-sets.ts:20-58`). Used in
 [Read a session report](/coaches/read-a-session-report).
 
 **Write-back.** A separate, experimental tool that posts a session's results into that
