@@ -1,6 +1,7 @@
 // File access shared by check-changelog.mjs and fold-changelog.mjs. The rules
 // themselves are pure and live in changelog-rules.mjs and changelog-fragments.mjs.
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,4 +34,26 @@ export function readRelease(root) {
   const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const markdown = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
   return { version, markdown };
+}
+
+/** `--base <ref>` from argv, else the pull request base CI names; undefined outside a pull request. */
+export function baseFromArgs(argv, env) {
+  const index = argv.indexOf('--base');
+  if (index !== -1) return argv[index + 1];
+  return env.GITHUB_BASE_REF ? `origin/${env.GITHUB_BASE_REF}` : undefined;
+}
+
+/** Files changed between the merge base with `base` and HEAD, as `{ status, path }`. */
+export function changedFiles(root, base) {
+  const out = execFileSync('git', ['diff', '--name-status', '--no-renames', `${base}...HEAD`], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  return out
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => {
+      const [status, path] = line.split('\t');
+      return { status, path };
+    });
 }

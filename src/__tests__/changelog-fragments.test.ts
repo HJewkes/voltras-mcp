@@ -341,3 +341,71 @@ describe('two pull requests with changelog entries', () => {
     expect(mergeTree(repo)).toBe(1);
   });
 });
+
+describe('a direct CHANGELOG.md edit (VW-736)', () => {
+  const FRAGMENT = fragment('Fixed', '- A fix (VW-40).');
+
+  function repoWithRelease(): string {
+    const repo = scratch();
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ version: '0.5.0' }));
+    writeFileSync(join(repo, 'CHANGELOG.md'), FIXTURE_CHANGELOG);
+    mkdirSync(join(repo, 'changelog.d'));
+    writeFileSync(join(repo, 'changelog.d', 'README.md'), '# Changelog fragments\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'base');
+    return repo;
+  }
+
+  function checkAgainstMain(repo: string) {
+    return runScript(CHECK_SCRIPT, ['--root', repo, '--base', 'main']);
+  }
+
+  it('passes when the branch only adds a fragment', () => {
+    const repo = repoWithRelease();
+    commitOnBranch(repo, 'feature', 'changelog.d/VW-40.md', FRAGMENT);
+
+    expect(checkAgainstMain(repo).status).toBe(0);
+  });
+
+  it('fails and points at changelog.d/ when the branch edits CHANGELOG.md', () => {
+    const repo = repoWithRelease();
+    commitOnBranch(repo, 'feature', 'CHANGELOG.md', FIXTURE_CHANGELOG.replace('Intro', 'Edited'));
+
+    const result = checkAgainstMain(repo);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('CHANGELOG.md');
+    expect(result.stderr).toContain('changelog.d/');
+  });
+
+  it('passes when the branch folds fragments into CHANGELOG.md', () => {
+    const repo = repoWithRelease();
+    writeFileSync(join(repo, 'changelog.d', 'VW-40.md'), FRAGMENT);
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'fragment on main');
+    git(repo, 'checkout', '-q', '-b', 'release');
+    const fold = runScript(FOLD_SCRIPT, [
+      '--root',
+      repo,
+      '--version',
+      '1.2.3',
+      '--date',
+      '2026-01-01',
+    ]);
+    expect(fold.status).toBe(0);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'release');
+
+    const result = checkAgainstMain(repo);
+
+    expect(result.status).toBe(0);
+  });
+
+  it('skips the guard when no base is known', () => {
+    const repo = repoWithRelease();
+    commitOnBranch(repo, 'feature', 'CHANGELOG.md', FIXTURE_CHANGELOG.replace('Intro', 'Edited'));
+
+    expect(runScript(CHECK_SCRIPT, ['--root', repo]).status).toBe(0);
+  });
+});
