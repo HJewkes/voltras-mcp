@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  blockReadingsOf,
   goalReadingWeekViolations,
   mesoMilestoneOf,
   type BlockReading,
@@ -83,7 +84,11 @@ describe('goalReadingWeekViolations', () => {
   });
 
   it('ignores a reading taken before week one, which never enters the block readings', () => {
-    expect(goalReadingWeekViolations([], 1)).toEqual([]);
+    const beforeWeekOne = { ts: '2026-07-20T00:00:00.000Z', value: 160 };
+
+    const inBlock = blockReadingsOf(START, WEEKS, [beforeWeekOne]);
+
+    expect(goalReadingWeekViolations(inBlock, 1)).toEqual([]);
   });
 });
 
