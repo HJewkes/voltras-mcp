@@ -39,7 +39,6 @@ export function readSetFaults(
   reps: readonly Rep[],
   margins: FocusSelectMargins = FOCUS_SELECT_MARGINS,
 ): CueFocusId[] {
-  if (reps.length < 2) return [];
   const eligible = selectEligibleReps(reps);
   const reads: Record<CueFocusId, boolean> = {
     full_range: readRomIntegrity(reps).decay.verdict === 'shrinking',

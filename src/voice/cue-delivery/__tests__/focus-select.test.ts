@@ -1,6 +1,7 @@
 import type { Phase, Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { describe, expect, it } from 'vitest';
 
+import { detectBounce, detectHesitation } from '../../../analytics/rep-faults.js';
 import { FOCUS_SELECT_MARGINS, readSetFaults, selectFocus } from '../focus-select.js';
 import { CUE_FOCUS_IDS } from '../focus.js';
 
@@ -13,6 +14,9 @@ interface RepShape {
   rom?: number;
   drive?: readonly number[];
   bounce?: boolean;
+  dwellMs?: number;
+  /** Twice the working speed, as a positioning pull at the head of a set moves. */
+  fast?: boolean;
 }
 
 function samples(rom: number, velocities: readonly number[]): WorkoutSample[] {
@@ -49,13 +53,19 @@ function phase(overrides: Partial<Phase>): Phase {
 
 function makeRep(repNumber: number, shape: RepShape = {}): Rep {
   const rom = shape.rom ?? 0.5;
+  const speed = shape.fast === true ? 2 : 1;
+  const drive = (shape.drive ?? SMOOTH_DRIVE).map((velocity) => velocity * speed);
   return {
     repNumber,
-    concentric: phase({ samples: samples(rom, shape.drive ?? SMOOTH_DRIVE), endPosition: rom }),
+    concentric: phase({
+      samples: samples(rom, drive),
+      endPosition: rom,
+      peakVelocity: PEAK * speed,
+    }),
     eccentric: phase({
       startPosition: rom,
-      peakVelocity: shape.bounce === true ? 1.3 : 0.6,
-      _totalHoldDuration: shape.bounce === true ? 0 : 500,
+      peakVelocity: (shape.bounce === true ? 1.3 : 0.6) * speed,
+      _totalHoldDuration: shape.dwellMs ?? (shape.bounce === true ? 0 : 500),
     }),
   };
 }
@@ -135,5 +145,52 @@ describe('selectFocus', () => {
 
     expect(selectFocus(set(shapes))).toBeNull();
     expect(selectFocus(set(shapes), strict)).toBe('control_lowering');
+  });
+});
+
+describe('readSetFaults margin edges', () => {
+  const bouncing = (shape: RepShape = {}): Rep[] =>
+    set(clean(4).map(() => ({ bounce: true, ...shape })));
+
+  it('counts a bounce whose speed ratio sits exactly on the minimum', () => {
+    const reps = bouncing();
+    const ratio = detectBounce(reps[0]!).eccentricPeakOverConcentricPeak;
+
+    expect(readSetFaults(reps, { ...FOCUS_SELECT_MARGINS, bounceVelocityRatioMin: ratio })).toEqual(
+      ['control_lowering'],
+    );
+    expect(
+      readSetFaults(reps, { ...FOCUS_SELECT_MARGINS, bounceVelocityRatioMin: ratio + 1e-9 }),
+    ).toEqual([]);
+  });
+
+  it('does not count a bounce whose bottom pause lasts exactly the maximum', () => {
+    const reps = bouncing({ dwellMs: 80 });
+    const dwell = detectBounce(reps[0]!).dwellLengthenedMs;
+
+    expect(readSetFaults(reps, { ...FOCUS_SELECT_MARGINS, bounceDwellMsMax: dwell })).toEqual([]);
+    expect(readSetFaults(reps, { ...FOCUS_SELECT_MARGINS, bounceDwellMsMax: dwell + 1 })).toEqual([
+      'control_lowering',
+    ]);
+  });
+
+  it('counts a hesitation whose trough sits exactly on the maximum fraction', () => {
+    const reps = set(clean(4).map(() => ({ drive: STALLED_DRIVE })));
+    const trough = Math.min(
+      ...detectHesitation(reps[0]!).crossings.map((c) => c.velocityFractionOfPeak),
+    );
+    const at = { ...FOCUS_SELECT_MARGINS, hesitationTroughFractionMax: trough };
+    const below = { ...FOCUS_SELECT_MARGINS, hesitationTroughFractionMax: trough - 1e-9 };
+
+    expect(readSetFaults(reps, at)).toEqual(['smooth_drive']);
+    expect(readSetFaults(reps, below)).toEqual([]);
+  });
+
+  it('judges per-rep faults over the eligible reps only', () => {
+    const withPull = set([{ fast: true, bounce: true }, { bounce: true }, {}, {}]);
+    const withoutPull = set([{ bounce: true }, { bounce: true }, {}, {}]);
+
+    expect(readSetFaults(withoutPull)).toEqual(['control_lowering']);
+    expect(readSetFaults(withPull)).toEqual([]);
   });
 });
