@@ -14,6 +14,11 @@ function plannedRow(overrides: Partial<StoredPlannedExercise> = {}): StoredPlann
   };
 }
 
+const ASSUMED = {
+  watch: { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30, thresholdSource: 'default' }] },
+  source: 'default',
+};
+
 describe('resolveArmDefaults (VW-718)', () => {
   it("takes a strength row's intent default as a plan_intent watch", () => {
     const defaults = resolveArmDefaults(plannedRow({ trainingIntent: 'strength' }));
@@ -47,8 +52,21 @@ describe('resolveArmDefaults (VW-718)', () => {
     ]);
   });
 
-  it('resolves nothing without a row, or from a row that names no intent or loss', () => {
-    expect(resolveArmDefaults(undefined)).toBeUndefined();
-    expect(resolveArmDefaults(plannedRow({ targetRepsLow: 8 }))).toBeUndefined();
+  it('takes the labelled assumed stop without a row, or from a row that names no intent or loss (VW-719)', () => {
+    expect(resolveArmDefaults(undefined)).toEqual(ASSUMED);
+    expect(resolveArmDefaults(plannedRow({ targetRepsLow: 8 }))).toEqual(ASSUMED);
+  });
+
+  it("a row's own loss target with no intent still wins over the assumed stop", () => {
+    const defaults = resolveArmDefaults(
+      plannedRow({ goalKind: 'velocity_loss', targetVelocityLossPct: 35 }),
+    );
+
+    expect(defaults).toEqual({
+      watch: {
+        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 35, thresholdSource: 'explicit' }],
+      },
+      source: 'plan_row',
+    });
   });
 });

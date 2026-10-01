@@ -1155,6 +1155,8 @@ export function buildVelocityLossExceededPayload(
 /**
  * How the threshold in a velocity-loss summary was arrived at (VW-266).
  *
+ * An assumed default says so (VW-719), so no reader takes it as the lifter's goal.
+ *
  * EMPTY FOR AN EXPLICIT THRESHOLD, which is every pre-VW-266 caller: the number
  * came from whoever asked for it, the summary said so by quoting it, and adding
  * prose to that sentence would change the text every existing consumer already
@@ -1168,6 +1170,9 @@ export function buildVelocityLossExceededPayload(
  * (Jukic 2023).
  */
 function describeThresholdProvenance(spec: ResolvedVelocityLossSpec): string {
+  if (spec.thresholdSource === 'default') {
+    return ' (an assumed default: no plan or agent named a goal for this auto-armed set)';
+  }
   if (spec.thresholdSource !== 'set_intent' && spec.thresholdSource !== 'plan_intent') {
     return '';
   }

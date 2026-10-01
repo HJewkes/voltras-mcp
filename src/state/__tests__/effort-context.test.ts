@@ -159,6 +159,25 @@ describe('the pinned guard', () => {
     expect(context.guard).toMatchObject({ lossPct: 20, lossSource: thresholdSource });
   });
 
+  // VW-719: the assumed stop is labelled on the watch and payloads; effort never reads it.
+  it('pins neither goal nor guard from an assumed default watch', () => {
+    const assumed = watch({ type: 'velocity_loss_exceeded', pct: 30, thresholdSource: 'default' });
+
+    const bare = buildEffortContext(inputs({ set: { watch: assumed } }));
+    const withPlan = buildEffortContext(
+      inputs({
+        set: { watch: assumed },
+        planned: planned({ goalKind: 'rep_range', targetRepsLow: 8 }),
+      }),
+    );
+
+    expect(bare.goal).toBeNull();
+    expect(bare.guard).toMatchObject({ lossPct: null, lossSource: null });
+    expect(bare.bandReferenceLossPct).toBe(30);
+    expect(withPlan.goal).toMatchObject({ kind: 'rep_range', source: 'plan' });
+    expect(withPlan.guard).toMatchObject({ lossPct: null, lossSource: null });
+  });
+
   it('takes the plan intent loss when no watch names one', () => {
     const context = buildEffortContext(
       inputs({
