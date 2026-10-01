@@ -61,8 +61,10 @@ The ports come from each script (`scripts/dashboard-sim.mjs`,
 real-pipeline drivers each default to their own database in the system temp directory, so
 they do not touch `~/.voltras/vmcp.sqlite`.
 
-Open `http://127.0.0.1:<port>/app` before or during the run. The set log builds up in the
-browser from live transitions, so a page opened after the last set has nothing to show.
+Open `http://127.0.0.1:<port>/app` before or during the run. The two real-pipeline drivers
+ship the open session's finished sets in the snapshot, so a page opened late rebuilds its set
+log. `dashboard:sim` does not: it builds the log only from live transitions, so open it
+before the first set.
 ([README.md § Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
 Useful options, from each script's header comment:

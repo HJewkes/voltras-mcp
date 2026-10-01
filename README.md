@@ -259,9 +259,10 @@ node scripts/dashboard-mock-drive.mjs   # port 7724 — boots the real MCP serve
                                         # mode and drives it through real tool calls
 ```
 
-Open `http://127.0.0.1:<port>/app` — and open it _before_ or _during_ the run: the
-set-log accumulates client-side from live transitions, so a browser that connects after the
-last set has nothing to show. `dashboard-sim` takes `PORT=` and `LOOP=1` (repeat forever);
+Open `http://127.0.0.1:<port>/app` — and open it _before_ or _during_ the run. With
+`dashboard-mock-drive` a late page rebuilds its set log from the finished sets in the
+snapshot; `dashboard-sim` has no such sets, so a browser that connects after its last set
+has nothing to show. `dashboard-sim` takes `PORT=` and `LOOP=1` (repeat forever);
 `dashboard-mock-drive` takes `VMCP_DASHBOARD_PORT=`. Read each script's header comment for
 the rest.
 

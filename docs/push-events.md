@@ -235,7 +235,9 @@ payload sets those two itself.
 
 All three `isometric.*` tools emit these, because `measure_max` and `measure_imbalance`
 run the same single hold N times; `trial` counts the holds within a side, so a
-three-trial run emits twelve events. The events are text on the channel — voicing them
+three-trial run emits twelve events, before warm-up pulls. Each warm-up pull is one more
+hold and emits its own four, so a default `measure_max` (two warm-up pulls, three trials)
+emits twenty. The events are text on the channel — voicing them
 is a cue-surface decision, not something the server does.
 
 ## The isometric result
