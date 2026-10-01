@@ -5,21 +5,23 @@
 // store, and writes no message text — a sibling module (VW-287) composes what
 // gets said; this one only decides WHEN, and says why in every `reason`.
 //
-// Numbers, and where each one comes from:
+// Numbers, and where each one comes from, are in `ACCOUNTABILITY_POLICY`
+// below, one entry per number with its source kind and ref (VW-728):
 //
 // - 2 proactive messages per rolling 7-day window, and in `ghosting` exactly
 //   2 per week for 2 weeks (4 total) then a full stop: RP's ghost-client
-//   follow-up protocol (rp-s10, digest §2). This is the ONLY hard cadence
-//   number in either research file; everything else below is derived or
-//   guessed.
+//   follow-up protocol. This is the ONLY hard cadence number in either
+//   research file; everything else below is an engineering default.
 // - N=1 miss triggers the recovery prompt, N=2 consecutive misses with no
-//   reply enters `ghosting`: BOTH ARE GUESSES. The RP digest §4 states the
-//   corpus never gives a missed-session threshold and the literature gives
-//   none either. N=1 follows from the megastudy's leverage point (returning
-//   after a miss); N=2 keeps the ghost protocol off a single bad week.
+//   reply enters `ghosting`: BOTH ARE ENGINEERING DEFAULTS. The RP corpus
+//   never gives a missed-session threshold and the literature gives none
+//   either. N=1 follows from the megastudy's leverage point (returning after
+//   a miss); N=2 keeps the ghost protocol off a single bad week.
 // - A realign conversation needs the deviation direction to hold across 2
-//   mesocycles: A GUESS. RP keys the ladder to "trend across mesocycles"
-//   without naming a count.
+//   mesocycles: AN ENGINEERING DEFAULT. RP keys the ladder to "trend across
+//   mesocycles" without naming a count.
+// - A completed session clears `ghosting`: AN ENGINEERING DEFAULT, since the
+//   plan names only an inbound reply as the clearing event.
 // - The escalation ceiling (nudge -> realign conversation -> stop) is a
 //   binding human decision, so `realign_needed` never transitions further on
 //   its own.
@@ -40,18 +42,57 @@ import type {
   ProactiveSend,
   ProtocolState,
 } from './types.js';
+import type { SourcedValue } from '../coach-copy/fragments.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const GHOST_PROTOCOL = 'rp-s10-ghost-client-followup-protocol';
 
-/** Ceiling of proactive messages in any rolling 7-day window (RP ghost protocol). */
-export const PROACTIVE_CEILING_PER_WINDOW = 2;
-export const PROACTIVE_WINDOW_MS = 7 * DAY_MS;
-/** 2 per week for 2 weeks, then proactive outreach stops for good. */
-export const GHOST_SEND_TOTAL = 4;
-/** Consecutive misses with no reply that enter `ghosting`. A GUESS (RP digest §4). */
-export const GHOSTING_MISS_THRESHOLD = 2;
-/** Mesocycles a flat/worsening direction must hold before a realign opener. A GUESS. */
-export const REALIGN_SUSTAINED_MESOCYCLES = 2;
+/** Every coaching number the reducer acts on, with where it comes from. */
+export const ACCOUNTABILITY_POLICY = {
+  /** Ceiling of proactive messages in any rolling window. */
+  proactiveCeilingPerWindow: { value: 2, sourceKind: 'rp', sourceRef: GHOST_PROTOCOL },
+  proactiveWindowDays: { value: 7, sourceKind: 'rp', sourceRef: GHOST_PROTOCOL },
+  /** 2 per week for 2 weeks, then proactive outreach stops for good. */
+  ghostSendTotal: { value: 4, sourceKind: 'rp', sourceRef: GHOST_PROTOCOL },
+  firstMissRecoveryThreshold: {
+    value: 1,
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'Recovery on the first miss is inspired by, not established by, the 2021 exercise ' +
+      'megastudy, whose winner rewarded returning after a miss; the link is unverified.',
+  },
+  ghostingMissThreshold: {
+    value: 2,
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'Two misses keep the ghost protocol off a single bad week; neither the RP corpus nor ' +
+      'the literature gives a missed-session threshold.',
+  },
+  realignSustainedMesocycles: {
+    value: 2,
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'RP keys the escalation ladder to a trend across mesocycles without naming a count; two ' +
+      'is the fewest that make a trend.',
+  },
+  sessionCompletedClearsGhosting: {
+    value: true,
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'The plan names only an inbound reply as the clearing event; clearing on a recorded ' +
+      'session too keeps nudges from reaching a lifter who is visibly training again.',
+  },
+} as const satisfies Record<string, SourcedValue<number | boolean>>;
+
+export const PROACTIVE_CEILING_PER_WINDOW = ACCOUNTABILITY_POLICY.proactiveCeilingPerWindow.value;
+export const PROACTIVE_WINDOW_MS = ACCOUNTABILITY_POLICY.proactiveWindowDays.value * DAY_MS;
+export const GHOST_SEND_TOTAL = ACCOUNTABILITY_POLICY.ghostSendTotal.value;
+/** Consecutive misses that send the recovery prompt. An engineering default. */
+export const MISS_RECOVERY_THRESHOLD = ACCOUNTABILITY_POLICY.firstMissRecoveryThreshold.value;
+/** Consecutive misses with no reply that enter `ghosting`. An engineering default. */
+export const GHOSTING_MISS_THRESHOLD = ACCOUNTABILITY_POLICY.ghostingMissThreshold.value;
+/** Mesocycles a flat/worsening direction must hold before a realign opener. An engineering default. */
+export const REALIGN_SUSTAINED_MESOCYCLES = ACCOUNTABILITY_POLICY.realignSustainedMesocycles.value;
 /** How far back the send history is kept; only the 7-day window is ever read. */
 const SEND_HISTORY_RETENTION_MS = 30 * DAY_MS;
 
@@ -123,15 +164,11 @@ function reduceInRealign(
 
 function onSessionCompleted(state: AccountabilityState, now: Date): AccountabilityTransition {
   const cleared = { ...state, consecutiveMisses: 0, ghostSends: [] };
-  // Clearing `ghosting` on telemetry rather than only on an inbound reply is a
-  // GUESS the plan does not make: it names inbound as the clearing event and
-  // says nothing about a lifter who simply trains again. Staying in `ghosting`
-  // while they are visibly training would spend ghost nudges on someone who
-  // came back, which is the failure the protocol exists to avoid.
+  // Why a session clears `ghosting` too: `ACCOUNTABILITY_POLICY.sessionCompletedClearsGhosting`.
   const reason =
     state.state === 'ghosting'
-      ? 'session completed while ghosting: training again re-arms normal cadence (a guess — ' +
-        'the plan names only an inbound reply as the clearing event)'
+      ? 'session completed while ghosting: training again re-arms normal cadence (an ' +
+        'engineering default — the plan names only an inbound reply as the clearing event)'
       : 'session completed: telemetry closed the loop, so nothing proactive is owed';
   return silent(enter(cleared, 'completed', now), reason);
 }
@@ -153,14 +190,14 @@ function onPlannedSessionMissed(state: AccountabilityState, now: Date): Accounta
       enter(counted, 'ghosting', now),
       now,
       `${counted.consecutiveMisses} consecutive misses with no reply to the last two proactive ` +
-        'messages (N=2 is a guess; the corpus gives no threshold)',
+        `messages (N=${GHOSTING_MISS_THRESHOLD} is an engineering default; the corpus gives no threshold)`,
     );
   }
   return sendOrSilent(
     enter(counted, 'missed', now),
     'miss_recovery',
     `miss ${counted.consecutiveMisses}: the planned day and its named fallback day both passed ` +
-      'with no session (N=1 is a guess; the corpus gives no threshold)',
+      `with no session (N=${MISS_RECOVERY_THRESHOLD} is an engineering default; the corpus gives no threshold)`,
     now,
   );
 }
@@ -266,7 +303,8 @@ function onDeviationTrendUpdated(
   }
   const reason =
     `deviation trend "${trend}" held across ${sustainedMesocycles} mesocycles ` +
-    '(threshold 2 is a guess): open the realign conversation, which is the last automatic rung';
+    `(threshold ${REALIGN_SUSTAINED_MESOCYCLES} is an engineering default): open the realign ` +
+    'conversation, which is the last automatic rung';
   if (ceilingReached(state, now)) {
     return silent(state, `${reason} — withheld: 2-in-7-days ceiling reached, state left unchanged`);
   }
