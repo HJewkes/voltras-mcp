@@ -791,7 +791,8 @@ in `src/dashboard/README.md`.
 
 ## Confidentiality
 
-No protocol bytes, raw frame payloads, or proprietary command codes belong in tool I/O,
-schemas, log lines, documentation, or commits. Only typed values from the SDK's public
-surface cross the MCP boundary. ESLint enforces part of this by flagging `Buffer` access
-inside handler functions.
+No protocol bytes, raw frame payloads, or proprietary command codes belong in logs,
+schemas, documentation, or commits. The everyday tools pass Claude only typed values from
+the SDK's public surface. The exceptions are two diagnostic tools for hardware debugging:
+`device.send_raw` takes and returns raw bytes, and `debug.recent_events` can return them.
+ESLint enforces part of this by flagging `Buffer` access inside handler functions.
