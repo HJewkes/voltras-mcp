@@ -379,6 +379,17 @@ describe('a direct CHANGELOG.md edit (VW-736)', () => {
     expect(result.stderr).toContain('changelog.d/');
   });
 
+  it('fails when the branch edits CHANGELOG.md and only adds a fragment', () => {
+    const repo = repoWithRelease();
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    writeFileSync(join(repo, 'changelog.d', 'VW-40.md'), FRAGMENT);
+    writeFileSync(join(repo, 'CHANGELOG.md'), FIXTURE_CHANGELOG.replace('Intro', 'Edited'));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'feature');
+
+    expect(checkAgainstMain(repo).status).toBe(1);
+  });
+
   it('passes when the branch folds fragments into CHANGELOG.md', () => {
     const repo = repoWithRelease();
     writeFileSync(join(repo, 'changelog.d', 'VW-40.md'), FRAGMENT);
