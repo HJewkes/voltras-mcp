@@ -200,3 +200,26 @@ export function foldFragments({ markdown, fragments, version, date }) {
   const after = lines.slice(end).join('\n');
   return `${before}\n## [Unreleased]\n\n${release}\n\n${after}`;
 }
+
+/**
+ * Findings for a diff against the base. CHANGELOG.md may change only in a fold,
+ * which is the one change that also deletes fragments; any other edit belongs
+ * in a changelog.d/ fragment. `changes` is `{ status, path }` per changed file.
+ */
+export function checkDirectEdit(changes) {
+  const touched = changes.some((change) => change.path === 'CHANGELOG.md');
+  const folded = changes.some(
+    (change) =>
+      change.status === 'D' &&
+      change.path.startsWith(`${FRAGMENT_DIR}/`) &&
+      !NOT_FRAGMENTS.has(change.path.slice(FRAGMENT_DIR.length + 1)),
+  );
+  if (!touched || folded) return [];
+  return [
+    {
+      file: 'CHANGELOG.md',
+      line: null,
+      message: `edited directly; add a fragment under ${FRAGMENT_DIR}/ instead (only a release fold, which also deletes fragments, may change CHANGELOG.md)`,
+    },
+  ];
+}
