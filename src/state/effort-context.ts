@@ -19,6 +19,7 @@ import type {
   ResolvedVelocityLossSpec,
   ResolvedWatchConfig,
   TrainingIntent,
+  VelocityLossThresholdSource,
 } from '../schemas/set.js';
 import type { StoredPlannedExercise } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from './live-state.js';
@@ -75,7 +76,10 @@ export type ProfileWithheldReason =
   | 'family_mismatch'
   | 'not_pinned';
 
-/** The library's `EffortSetContext`, plus the one thing kept beside it for the wall. */
+/** One velocity-loss spec as the live watch evaluates it: its pct and where that pct came from. */
+export type PinnedLossSpec = { pct: number; source: VelocityLossThresholdSource };
+
+/** The library's `EffortSetContext`, plus what is kept beside it for the wall and the set-risk reader. */
 export type PinnedEffortContext = {
   /** Carried for the record. The class mapping is task 10, so this is always `unknown`. */
   exerciseClass: 'unknown';
@@ -83,6 +87,8 @@ export type PinnedEffortContext = {
   goal: EffortGoal | null;
   guard: EffortGuardInput;
   bandReferenceLossPct: number;
+  /** Every loss spec on the set's watch, assumed defaults included; `'none'` when it has none (VW-747). */
+  lossWatch: PinnedLossSpec[] | 'none';
   relativeIntensity: number | null;
   /** `signature` is the stored settings hash: opaque, never a setting value. */
   resistance: { family: ResistanceFamily; signature: string };
@@ -126,6 +132,7 @@ export function buildEffortContext(inputs: EffortContextInputs): PinnedEffortCon
     goal,
     guard,
     bandReferenceLossPct: bandReferenceLossPct(goal, guard, planIntent),
+    lossWatch: lossWatchOf(inputs.set.watch),
     relativeIntensity: pinned?.relativeIntensity ?? null,
     resistance: {
       family: deviceResistanceFamily(inputs.device),
@@ -145,6 +152,14 @@ function watchLossSpec(
     (spec): spec is ResolvedVelocityLossSpec =>
       spec.type === 'velocity_loss_exceeded' && spec.thresholdSource !== 'default',
   );
+}
+
+/** Every loss spec the live watch evaluates, in watch order. */
+function lossWatchOf(watch: ResolvedWatchConfig | undefined): PinnedLossSpec[] | 'none' {
+  const specs = (watch?.notifyOn ?? [])
+    .filter((spec): spec is ResolvedVelocityLossSpec => spec.type === 'velocity_loss_exceeded')
+    .map((spec) => ({ pct: spec.pct, source: spec.thresholdSource ?? 'explicit' }));
+  return specs.length === 0 ? 'none' : specs;
 }
 
 /** The planned row's stated goal. The kind is read from the column (v38), never re-derived. */

@@ -62,27 +62,17 @@ async function earlierWorkingSets(
   );
 }
 
-/** Whether the set's own velocity-loss watch fired; `null` when its watch threshold cannot be recovered. */
+/** Whether any of the set's own velocity-loss specs fired; `null` for a set pinned before its specs were (VW-747). */
 function priorSetDecayed(previous: StoredSet | undefined): boolean | null {
   if (previous === undefined) return false;
   const context = previous.effortContext as Partial<PinnedEffortContext> | undefined;
   if (context?.velocitySignalValid === false) return false;
-  const thresholdPct = watchThresholdOf(context);
-  if (thresholdPct === null) return null;
+  const lossWatch = context?.lossWatch;
+  if (lossWatch === undefined) return null;
+  if (lossWatch === 'none') return false;
+  const reps = normaliseVelocityToMps(previous).reps;
   const leadIn = eccentricOverloadLeadIn(previous.eccentricPct);
-  return watchTripped(normaliseVelocityToMps(previous).reps, leadIn, thresholdPct);
-}
-
-// Only these sources prove the pinned percent is the watch spec's own; the band reference never does.
-const WATCH_SOURCES: ReadonlySet<string> = new Set(['explicit', 'set_intent']);
-
-/** The pct the live watch fired at, as far as the pinned context proves it; else `null`. */
-function watchThresholdOf(context: Partial<PinnedEffortContext> | undefined): number | null {
-  const goal = context?.goal;
-  if (goal?.kind === 'velocity_loss' && WATCH_SOURCES.has(goal.source)) return goal.lossPct;
-  const source = context?.guard?.lossSource;
-  if (typeof source !== 'string' || !WATCH_SOURCES.has(source)) return null;
-  return context?.guard?.lossPct ?? null;
+  return lossWatch.some((spec) => watchTripped(reps, leadIn, spec.pct));
 }
 
 /** Replays the live watch rep by rep: loss from the windowed peak so far against the threshold. */
