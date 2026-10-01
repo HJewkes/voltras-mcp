@@ -1,0 +1,127 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+import { describe, expect, it } from 'vitest';
+import { findEncodedValues } from '../../docs/protocol-guard.js';
+import {
+  COACH_FRAGMENTS,
+  type FragmentCandidate,
+  validateFragment,
+  validateRegistry,
+} from '../fragments.js';
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '../..');
+
+// One file per slice joins this list as its prose moves into the registry.
+const GUARDED_FILES = ['accountability/copy.ts'];
+const PROSE_WORD_FLOOR = 4;
+
+const VALID: FragmentCandidate = {
+  id: 'fixture.line',
+  text: 'A fixture line for the validator.',
+  sourceKind: 'engineering-default',
+  sourceRef: 'A fixture reason long enough to count as a sentence.',
+};
+
+function literalTexts(node: ts.Node, found: string[] = []): string[] {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) found.push(node.text);
+  if (ts.isTemplateExpression(node)) {
+    found.push([node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(' '));
+  }
+  ts.forEachChild(node, (child) => void literalTexts(child, found));
+  return found;
+}
+
+function proseLiterals(relativePath: string): string[] {
+  const path = join(SRC, relativePath);
+  const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest);
+  return literalTexts(source).filter((text) => text.trim().split(/\s+/).length >= PROSE_WORD_FLOOR);
+}
+
+describe('every coach fragment carries a source', () => {
+  it.each(COACH_FRAGMENTS.map((fragment) => [fragment.id, fragment] as const))(
+    '%s has a valid kind and ref',
+    (_id, fragment) => {
+      expect(validateFragment(fragment)).toEqual([]);
+    },
+  );
+
+  it('holds no duplicate ids across the registry', () => {
+    expect(validateRegistry(COACH_FRAGMENTS)).toEqual([]);
+  });
+
+  it('carries no protocol-shaped value in any text or ref', () => {
+    const leaks = COACH_FRAGMENTS.flatMap((fragment) =>
+      findEncodedValues(`${fragment.text}\n${fragment.sourceRef}`).map(
+        (match) => `${fragment.id}: ${match.token}`,
+      ),
+    );
+    expect(leaks).toEqual([]);
+  });
+});
+
+describe('the validator rejects an unsourced fragment', () => {
+  it('accepts the well-formed fixture', () => {
+    expect(validateFragment(VALID)).toEqual([]);
+  });
+
+  it('fails a fragment with no source kind', () => {
+    const { sourceKind: _omitted, ...noKind } = VALID;
+    expect(validateFragment(noKind)).toContain('sourceKind is missing or unknown');
+  });
+
+  it('fails a fragment with an empty source ref', () => {
+    expect(validateFragment({ ...VALID, sourceRef: '  ' })).toContain('sourceRef is empty');
+  });
+
+  it('fails a paper ref that carries no DOI or URL', () => {
+    const paper = { ...VALID, sourceKind: 'paper', sourceRef: 'Someone et al. 2020' };
+    expect(validateFragment(paper)).toContain('paper ref carries no DOI or URL');
+  });
+
+  it('fails an rp ref that is not a corpus id', () => {
+    const rp = { ...VALID, sourceKind: 'rp', sourceRef: 'RP ghost protocol' };
+    expect(validateFragment(rp)).toEqual(['rp ref is not a corpus id: RP ghost protocol']);
+  });
+
+  it('fails an rp ref list when any one entry is not a corpus id', () => {
+    const rp = { ...VALID, sourceKind: 'rp', sourceRef: 'rp-s10-real-id, S11 disruption rules' };
+    expect(validateFragment(rp)).toEqual(['rp ref is not a corpus id: S11 disruption rules']);
+  });
+
+  it('fails a ticket-shaped kind whose ref is not a ticket id', () => {
+    const ruling = { ...VALID, sourceKind: 'owner-ruling', sourceRef: 'the owner said so' };
+    expect(validateFragment(ruling)).toContain('owner-ruling ref is not a ticket id');
+  });
+
+  it('fails an engineering default given as a bare tag', () => {
+    expect(validateFragment({ ...VALID, sourceRef: 'default' })).toContain(
+      'engineering-default ref must be a sentence giving the reason',
+    );
+  });
+
+  it('fails a ref that points into a private location', () => {
+    const local = { ...VALID, sourceRef: 'See ~/notes/why-this-wording for the reasoning here.' };
+    expect(validateFragment(local)).toContain('sourceRef points into a private location');
+  });
+
+  it('fails a ref that is an absolute path', () => {
+    const local = { ...VALID, sourceRef: 'See /opt/notes/why-this-wording for the reasoning.' };
+    expect(validateFragment(local)).toContain('sourceRef points into a private location');
+  });
+
+  it('names the duplicated id', () => {
+    expect(validateRegistry([VALID, VALID])).toEqual(['fixture.line: duplicate id']);
+  });
+});
+
+describe('guarded modules hold no prose outside the registry', () => {
+  it.each(GUARDED_FILES)('%s has no literal of four or more words', (file) => {
+    expect(proseLiterals(file)).toEqual([]);
+  });
+
+  it('the scan finds prose in a file that still holds it', () => {
+    expect(proseLiterals('coach-copy/accountability.ts').length).toBeGreaterThan(0);
+  });
+});
