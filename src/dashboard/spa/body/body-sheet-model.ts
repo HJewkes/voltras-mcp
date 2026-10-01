@@ -99,7 +99,7 @@ export function muscleSheetProps(slug: string, data: BodyPageData): MuscleSheetP
   if (muscleGroup === null || week === undefined) return null;
   const strength = rowFor(data.strength.muscles, slug);
   const plan = rowFor(data.plan?.muscles, slug);
-  const lastTrained = recoveryLine(rowFor(data.recovery.muscles, slug));
+  const lastTrained = recoveryLine(rowFor(data.recovery?.muscles, slug));
   return {
     muscleGroup,
     displayName: muscleLabel(slug),

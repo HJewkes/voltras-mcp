@@ -26,7 +26,7 @@ import { SPACE } from '../planner/design.js';
 
 const POLL_INTERVAL_MS = 2000;
 
-async function load(): Promise<BodyPageData> {
+export async function loadBodyPage(): Promise<BodyPageData> {
   const [week, strength, plan, recovery] = await Promise.all([
     fetchMuscleWeek(),
     fetchMuscleStrength(),
@@ -44,7 +44,7 @@ export function BodyPage(): React.JSX.Element {
     let cancelled = false;
     const poll = async (): Promise<void> => {
       try {
-        const loaded = await load();
+        const loaded = await loadBodyPage();
         if (!cancelled) {
           setData(loaded);
           setError(null);

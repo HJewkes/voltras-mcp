@@ -196,6 +196,13 @@ describe('the body muscle sheet props', () => {
     expect(props).not.toHaveProperty('lastTrained');
   });
 
+  it('omits the last-trained line but keeps the sheet when the recovery route failed', () => {
+    const props = muscleSheetProps('chest', pageData({ recovery: null }));
+
+    expect(props).toMatchObject({ muscleGroup: 'chest', weeklySets: 10 });
+    expect(props).not.toHaveProperty('lastTrained');
+  });
+
   it('returns null for a slug titan does not draw', () => {
     expect(muscleSheetProps('not-a-muscle', pageData())).toBeNull();
   });

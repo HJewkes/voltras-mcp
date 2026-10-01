@@ -36,12 +36,15 @@ import type {
   MuscleWeekView,
 } from '../../read-models/index.js';
 
-/** Everything the page renders, as fetched. `plan` is null with no active training week. */
+/**
+ * Everything the page renders, as fetched. `plan` is null with no active
+ * training week; `recovery` is null when its route failed.
+ */
 export interface BodyPageData {
   week: MuscleWeekView;
   strength: MuscleStrengthView;
   plan: MusclePlanView | null;
-  recovery: MuscleRecoveryView;
+  recovery: MuscleRecoveryView | null;
 }
 
 const MUSCLE_BY_SLUG = new Map<string, MuscleGroup>(

@@ -12,10 +12,11 @@
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
 
 import { BodyView } from '../spa/body/BodyView.js';
+import { loadBodyPage } from '../spa/body/BodyPage.js';
 import {
   bodyMapData,
   muscleStripData,
@@ -320,6 +321,46 @@ describe('the body page render', () => {
     );
     expect(rendered).toContain('No planned week');
     expect(rendered).toContain('No PRs yet');
+  });
+});
+
+describe('the body page load', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Serves each `/api/muscle-*` route from its fixture, failing the ones named. */
+  function stubRoutes(failing: readonly string[]): void {
+    const bodies: Record<string, unknown> = {
+      '/api/muscle-week': weekView(),
+      '/api/muscle-strength': STRENGTH,
+      '/api/muscle-plan': PLAN,
+      '/api/muscle-recovery': RECOVERY,
+    };
+    vi.stubGlobal('fetch', (url: string) =>
+      Promise.resolve(
+        failing.includes(url)
+          ? new Response(JSON.stringify({ message: 'store unavailable' }), { status: 500 })
+          : new Response(JSON.stringify(bodies[url]), { status: 200 }),
+      ),
+    );
+  }
+
+  it('still renders the glance when only the recovery route fails', async () => {
+    stubRoutes(['/api/muscle-recovery']);
+
+    const data = await loadBodyPage();
+
+    expect(data.recovery).toBeNull();
+    const rendered = text(data);
+    expect(rendered).toContain('Weekly sets by muscle');
+    expect(rendered).not.toContain('store unavailable');
+  });
+
+  it('still fails the page when the week route fails', async () => {
+    stubRoutes(['/api/muscle-week']);
+
+    await expect(loadBodyPage()).rejects.toThrow('store unavailable');
   });
 });
 
