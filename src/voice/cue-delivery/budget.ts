@@ -3,6 +3,7 @@
 // `admit` decides whether one spoken line may play and records the decision on
 // the ledger. Refused lines are dropped, never queued into a later interval.
 
+import type { SetRiskReading } from '../../analytics/set-risk.js';
 import type { Tier } from '../../tools/tier-signal.js';
 import type { CueSettings } from '../cue-settings.js';
 import { densityFor, MAX_LINES_PER_INTERVAL } from './density.js';
@@ -32,13 +33,21 @@ export interface BudgetRequest {
   tier: Tier | null;
   settings: CueSettings;
   intraSetPermit: IntraSetPermit;
+  /** Present only under `VMCP_CUES_MIDSET=risk`: the set's pinned reading, or `null` when none. */
+  risk?: LedgerRisk;
 }
+
+/** What the ledger keeps of a set-risk reading (VW-615). */
+export type LedgerRisk = Pick<SetRiskReading, 'band' | 'points' | 'factors' | 'vetoes'> | null;
 
 export type AdmitReason = 'within_budget';
 
 export type RefuseReason =
   | 'midset_disabled'
   | 'intra_permit_denied'
+  | 'risk_band_amber'
+  | 'risk_band_red'
+  | 'risk_reading_missing'
   | 'new_focus_intra'
   | 'interval_cap'
   | 'tier_density';
@@ -53,6 +62,7 @@ export interface LedgerEntry {
   interval: Interval;
   line: CueLine;
   decision: BudgetDecision;
+  risk?: LedgerRisk;
 }
 
 export interface CueLedger {
@@ -66,8 +76,15 @@ export function createLedger(): CueLedger {
 /** Decide one line and append the decision to the ledger. */
 export function admit(ledger: CueLedger, request: BudgetRequest): BudgetDecision {
   const decision = decide(ledger, request);
-  const { slot, setId, interval, line } = request;
-  ledger.entries.push({ slot, setId, interval, line, decision });
+  const { slot, setId, interval, line, risk } = request;
+  ledger.entries.push({
+    slot,
+    setId,
+    interval,
+    line,
+    decision,
+    ...(risk === undefined ? {} : { risk }),
+  });
   return decision;
 }
 
@@ -85,11 +102,20 @@ function decide(ledger: CueLedger, request: BudgetRequest): BudgetDecision {
 function intraRefusal(ledger: CueLedger, request: BudgetRequest): RefuseReason | null {
   const { slot, setId, settings, line } = request;
   if (!midSetAllowed(settings)) return 'midset_disabled';
-  if (!request.intraSetPermit({ slot, setId, settings })) return 'intra_permit_denied';
+  if (!request.intraSetPermit({ slot, setId, settings })) return permitRefusal(request.risk);
   if (line.kind === 'focus' && line.focusId !== preSetFocus(ledger, request)) {
     return 'new_focus_intra';
   }
   return null;
+}
+
+/** Under `risk` the refusal names the band that denied, so the ledger never needs free text. */
+function permitRefusal(risk: LedgerRisk | undefined): RefuseReason {
+  if (risk === undefined) return 'intra_permit_denied';
+  if (risk === null) return 'risk_reading_missing';
+  if (risk.band === 'amber') return 'risk_band_amber';
+  if (risk.band === 'red') return 'risk_band_red';
+  return 'intra_permit_denied';
 }
 
 // VW-614: `risk` passes here and leaves the decision to the permit; an unknown mode reads as `off`.

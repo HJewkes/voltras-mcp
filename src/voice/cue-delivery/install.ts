@@ -6,6 +6,7 @@
 
 import { spawn } from 'node:child_process';
 
+import type { SetRiskReading } from '../../analytics/set-risk.js';
 import type { Config } from '../../config.js';
 import type { ChannelPublisher } from '../../state/channel-publisher.js';
 import { getTierSignal, type Tier, type TierSignalState } from '../../tools/tier-signal.js';
@@ -57,6 +58,8 @@ function buildDeliveryEmitter(state: CueLayerState, opts: CueLayerOptions): Deli
   };
   const liveOf = (context: SetContext): SetLookupLive | undefined =>
     state.slots.get(context.slot)?.live;
+  const readingFor = (slot: string, setId: string): SetRiskReading | undefined =>
+    state.slots.get(slot)?.live.setRiskReadingFor(setId);
   return new DeliveryEmitter({
     speak: (request, source) => speak(request, speakDeps, source),
     platform,
@@ -67,9 +70,8 @@ function buildDeliveryEmitter(state: CueLayerState, opts: CueLayerOptions): Deli
     exerciseFor: (context) => withLive(liveOf(context), null, (l) => exerciseOf(l, context.setId)),
     repsFor: (context) => withLive(liveOf(context), [], (l) => repsOf(l, context.setId)),
     signalsFor: (context) => withLive(liveOf(context), {}, (l) => signalsOf(l, context.setId)),
-    intraSetPermit: riskIntraSetPermit((slot, setId) =>
-      state.slots.get(slot)?.live.setRiskReadingFor(setId),
-    ),
+    intraSetPermit: riskIntraSetPermit(readingFor),
+    setRiskFor: (context) => readingFor(context.slot, context.setId),
   });
 }
 
