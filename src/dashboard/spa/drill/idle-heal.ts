@@ -26,7 +26,7 @@ export interface IdleHealOptions {
 }
 
 export interface IdleHeal {
-  /** Report whether the stack is non-empty. Arms on true, cancels on false. */
+  /** Report whether the stack is non-empty. Arms on true, cancels on false; inert once disposed. */
   setActive(active: boolean): void;
   /** Lifter input: restart the deadline, if one is running. */
   activity(): void;
@@ -44,6 +44,7 @@ export function createIdleHeal({
   timers = globalTimers,
 }: IdleHealOptions): IdleHeal {
   let handle: unknown = null;
+  let disposed = false;
 
   const cancel = (): void => {
     if (handle === null) return;
@@ -60,13 +61,16 @@ export function createIdleHeal({
   return {
     setActive(active) {
       if (!active) cancel();
-      else if (handle === null) arm();
+      else if (handle === null && !disposed) arm();
     },
     activity() {
       if (handle === null) return;
       cancel();
       arm();
     },
-    dispose: cancel,
+    dispose() {
+      disposed = true;
+      cancel();
+    },
   };
 }

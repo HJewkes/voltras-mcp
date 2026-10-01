@@ -9,6 +9,7 @@
  * Pure and side-effect free — `parseRoute` is a string → route function, so the
  * route table is unit-testable without a DOM.
  */
+import { muscleGroupOf } from './body/body-model';
 
 /** The live page — the default, and what the wall display shows. */
 export interface LiveRoute {
@@ -30,9 +31,13 @@ export interface SummaryRoute {
 export interface GoalsRoute {
   name: 'goals';
 }
-/** The body-map wall page (VW-338): weekly volume, next up and recent PRs. */
+/**
+ * The body-map wall page (VW-338): weekly volume, next up and recent PRs.
+ * `muscle` is a titan muscle slug whose side-sheet opens on load (VW-713).
+ */
 export interface BodyRoute {
   name: 'body';
+  muscle?: string;
 }
 
 export type Route = LiveRoute | PlanRoute | SummaryRoute | GoalsRoute | BodyRoute;
@@ -50,13 +55,19 @@ export function parseRoute(hash: string): Route {
   const [head, ...rest] = normalized.split('/');
   if (head === 'plan') return { name: 'plan' };
   if (head === 'goals') return { name: 'goals' };
-  if (head === 'body') return { name: 'body' };
+  if (head === 'body') return bodyRoute(rest[0]);
   if (head === 'summary') {
     const raw = rest[0];
     const sessionId = raw === undefined || raw === '' ? LATEST_SESSION : decodeURIComponent(raw);
     return { name: 'summary', sessionId };
   }
   return { name: 'live' };
+}
+
+/** A slug titan cannot draw degrades to the bare page rather than an empty sheet. */
+function bodyRoute(raw: string | undefined): BodyRoute {
+  const muscle = raw === undefined ? null : muscleGroupOf(decodeURIComponent(raw));
+  return muscle === null ? { name: 'body' } : { name: 'body', muscle };
 }
 
 /** The hash a route serializes to. Inverse of {@link parseRoute}. */
@@ -67,7 +78,7 @@ export function routeHash(route: Route): string {
     case 'goals':
       return '#/goals';
     case 'body':
-      return '#/body';
+      return route.muscle === undefined ? '#/body' : `#/body/${encodeURIComponent(route.muscle)}`;
     case 'summary':
       return route.sessionId === LATEST_SESSION
         ? '#/summary'

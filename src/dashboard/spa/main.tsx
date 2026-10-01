@@ -167,7 +167,7 @@ function RoutePage(): React.JSX.Element | null {
     case 'summary':
       return <SessionSummaryPage sessionId={route.sessionId} />;
     case 'body':
-      return <BodyPage />;
+      return <BodyPage muscle={route.muscle} />;
     // Both render their own chrome in `App`.
     case 'goals':
     case 'live':

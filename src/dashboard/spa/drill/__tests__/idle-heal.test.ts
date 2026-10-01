@@ -97,4 +97,15 @@ describe('idle heal', () => {
 
     expect(onIdle).not.toHaveBeenCalled();
   });
+
+  it('stays disarmed when a late re-report arrives after dispose', () => {
+    const { onIdle, heal } = setup();
+
+    heal.dispose();
+    heal.setActive(true);
+    vi.advanceTimersByTime(IDLE_HEAL_MS);
+
+    expect(onIdle).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

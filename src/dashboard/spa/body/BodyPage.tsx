@@ -19,6 +19,7 @@ import {
   fetchMuscleWeek,
 } from './body-client.js';
 import { BodyView } from './BodyView.js';
+import { useBodyDrill } from './use-body-drill.js';
 import type { BodyPageData } from './body-model.js';
 import { ErrorNote, PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { PANEL_GAP } from '../planner/PanelCard.js';
@@ -36,9 +37,11 @@ export async function loadBodyPage(): Promise<BodyPageData> {
   return { week, strength, plan, recovery };
 }
 
-export function BodyPage(): React.JSX.Element {
+/** `muscle` is the route's deep-linked sheet; the drill stack owns it once the page is up. */
+export function BodyPage(props: { muscle?: string }): React.JSX.Element {
   const [data, setData] = useState<BodyPageData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { stack, drill } = useBodyDrill(props.muscle);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,5 +82,5 @@ export function BodyPage(): React.JSX.Element {
       </Surface>
     );
   }
-  return <BodyView data={data} />;
+  return <BodyView data={data} stack={stack} drill={drill} />;
 }

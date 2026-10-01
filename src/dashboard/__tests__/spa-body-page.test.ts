@@ -12,10 +12,20 @@
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
 
-import { BodyView } from '../spa/body/BodyView.js';
+import { BodyView, type BodyViewProps } from '../spa/body/BodyView.js';
+import {
+  bindIdleHeal,
+  bodyDrillHandlers,
+  bodyHashFor,
+  initialBodyStack,
+  openMuscle,
+  syncToRoute,
+} from '../spa/body/body-drill.js';
+import { drillStackReducer, type DrillAction, type DrillStack } from '../spa/drill/drill-stack.js';
+import { IDLE_HEAL_MS } from '../spa/drill/idle-heal.js';
 import { loadBodyPage } from '../spa/body/BodyPage.js';
 import {
   bodyMapData,
@@ -204,9 +214,13 @@ function pageData(over: Partial<BodyPageData> = {}): BodyPageData {
   return { week: weekView(), strength: STRENGTH, plan: PLAN, recovery: RECOVERY, ...over };
 }
 
+function markup(data: BodyPageData, drill: Omit<BodyViewProps, 'data'> = {}): string {
+  return renderToStaticMarkup(createElement(BodyView, { data, ...drill }));
+}
+
 /** Rendered text with runs of whitespace collapsed, same normalisation the captures use. */
-function text(data: BodyPageData): string {
-  return renderToStaticMarkup(createElement(BodyView, { data }))
+function text(data: BodyPageData, drill: Omit<BodyViewProps, 'data'> = {}): string {
+  return markup(data, drill)
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -387,5 +401,160 @@ describe('the body route in the shell chrome', () => {
     // The live page never cues itself — that is the same branch that keeps the
     // body page's live signal on the rail and off the page.
     expect(liveNavKey('live', 'live')).toBeNull();
+  });
+});
+
+/** Chest trained two days ago, so the sheet has a "Last trained" line to show. */
+const CHEST_TRAINED: MuscleRecoveryView = {
+  ...RECOVERY,
+  muscles: RECOVERY.muscles.map((row) =>
+    row.muscle === 'chest'
+      ? {
+          ...row,
+          lastTrainedAt: MONDAY,
+          daysSince: 2,
+          lastSessionMatchedPrior: true,
+          reason: null,
+        }
+      : row,
+  ),
+};
+
+describe('the body page drill', () => {
+  const chestOpen = initialBodyStack('chest');
+
+  it('renders the chest sheet over the glance when the stack holds chest', () => {
+    const rendered = text(pageData({ recovery: CHEST_TRAINED }), { stack: chestOpen });
+
+    expect(rendered).toContain('Chest');
+    expect(rendered).toContain('Chest target met ×');
+    expect(rendered).toContain('2 days ago · matched last session');
+    // The sheet slides over the glance; the glance headers stay rendered beneath it.
+    expect(rendered).toContain('Weekly sets by muscle');
+    expect(markup(pageData(), { stack: chestOpen })).toContain('aria-label="Chest volume details"');
+  });
+
+  it('renders no sheet with an empty stack', () => {
+    expect(markup(pageData())).not.toContain('volume details');
+  });
+
+  /** Each figure's legend chip for a muscle, as its opening tag. */
+  function chips(html: string, name: string): string[] {
+    return html.match(new RegExp(`<[^>]*aria-label="${name}, [^>]*>`, 'g')) ?? [];
+  }
+
+  it('highlights the open muscle on both figures', () => {
+    const open = markup(pageData(), { stack: chestOpen });
+
+    expect(chips(open, 'Chest').filter((tag) => tag.includes('aria-pressed="true"'))).toHaveLength(
+      2,
+    );
+    expect(chips(open, 'Lats').some((tag) => tag.includes('aria-pressed="true"'))).toBe(false);
+    expect(
+      chips(markup(pageData()), 'Chest').some((tag) => tag.includes('aria-pressed="true"')),
+    ).toBe(false);
+  });
+
+  it('draws no sheet for a muscle the week does not carry', () => {
+    const week = weekView();
+    const noChest = { ...week, muscles: week.muscles.filter((m) => m.muscle !== 'chest') };
+
+    expect(markup(pageData({ week: noChest }), { stack: chestOpen })).not.toContain(
+      'volume details',
+    );
+  });
+});
+
+describe('the body drill handlers', () => {
+  /** Runs handler calls through the real reducer, the way `useReducer` would. */
+  function drive(start: DrillStack, act: (h: ReturnType<typeof bodyDrillHandlers>) => void) {
+    let stack = start;
+    act(bodyDrillHandlers((action: DrillAction) => (stack = drillStackReducer(stack, action))));
+    return stack;
+  }
+
+  it('opens the pressed muscle on an empty stack', () => {
+    expect(openMuscle(drive([], (h) => h.onMusclePress('lats')))).toBe('lats');
+  });
+
+  it('replaces the open sheet when a second muscle is pressed', () => {
+    const stack = drive(initialBodyStack('chest'), (h) => h.onMusclePress('lats'));
+
+    expect(stack).toEqual([{ lineage: 'muscle', id: 'lats' }]);
+  });
+
+  it('pops the sheet on the panel onClose, which Escape and the close button both call', () => {
+    expect(drive(initialBodyStack('chest'), (h) => h.onClose())).toEqual([]);
+  });
+
+  it('starts closed with no deep link and open on one', () => {
+    expect(initialBodyStack(undefined)).toEqual([]);
+    expect(openMuscle(initialBodyStack('quads'))).toBe('quads');
+  });
+
+  it('names the open sheet in the hash and drops it once closed', () => {
+    expect(bodyHashFor(initialBodyStack('upper_back'))).toBe('#/body/upper_back');
+    expect(bodyHashFor([])).toBe('#/body');
+  });
+
+  it('follows a hash change the stack did not make, and ignores one it did', () => {
+    const chest = initialBodyStack('chest');
+
+    expect(syncToRoute(chest, 'chest')).toBeNull();
+    expect(syncToRoute([], undefined)).toBeNull();
+    expect(syncToRoute(chest, undefined)).toEqual({ type: 'reset' });
+    expect(syncToRoute(chest, 'lats')).toEqual({
+      type: 'open',
+      layer: { lineage: 'muscle', id: 'lats' },
+    });
+  });
+});
+
+describe('the body drill idle heal', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A deep-linked chest sheet with the heal bound to a stand-in document. */
+  function openSheet() {
+    const doc = new EventTarget();
+    let stack: DrillStack = initialBodyStack('chest');
+    const bound = bindIdleHeal(doc, (action) => (stack = drillStackReducer(stack, action)));
+    bound.heal.setActive(true);
+    return { doc, bound, stack: () => stack };
+  }
+
+  it('returns the page to the glance after 60 s with no input', () => {
+    const { stack } = openSheet();
+
+    vi.advanceTimersByTime(IDLE_HEAL_MS);
+
+    expect(stack()).toEqual([]);
+  });
+
+  it('keeps the sheet open while the lifter keeps touching the wall', () => {
+    const { doc, stack } = openSheet();
+
+    vi.advanceTimersByTime(IDLE_HEAL_MS - 1_000);
+    doc.dispatchEvent(new Event('pointerdown'));
+    vi.advanceTimersByTime(IDLE_HEAL_MS - 1_000);
+
+    expect(openMuscle(stack())).toBe('chest');
+  });
+
+  it('stops listening and never heals once unbound', () => {
+    const { doc, bound, stack } = openSheet();
+
+    bound.unbind();
+    bound.heal.setActive(true);
+    doc.dispatchEvent(new Event('keydown'));
+    vi.advanceTimersByTime(IDLE_HEAL_MS * 2);
+
+    expect(openMuscle(stack())).toBe('chest');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

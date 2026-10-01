@@ -99,6 +99,16 @@ describe('parseRoute', () => {
     expect(parseRoute('#/body')).toEqual({ name: 'body' });
   });
 
+  it('routes a body deep link to that muscle sheet (VW-713)', () => {
+    expect(parseRoute('#/body/lats')).toEqual({ name: 'body', muscle: 'lats' });
+    expect(parseRoute('#/body/lats/')).toEqual({ name: 'body', muscle: 'lats' });
+  });
+
+  it('drops a body muscle titan does not draw, leaving the bare page', () => {
+    expect(parseRoute('#/body/wings')).toEqual({ name: 'body' });
+    expect(routeHash(parseRoute('#/body/wings'))).toBe('#/body');
+  });
+
   it('routes a summary with an explicit session id, decoding it', () => {
     expect(parseRoute('#/summary/sess%2F1')).toEqual({ name: 'summary', sessionId: 'sess/1' });
   });
@@ -108,7 +118,16 @@ describe('parseRoute', () => {
   });
 
   it('round-trips through routeHash', () => {
-    for (const hash of ['#/', '#/plan', '#/goals', '#/body', '#/summary', '#/summary/sess-1']) {
+    const hashes = [
+      '#/',
+      '#/plan',
+      '#/goals',
+      '#/body',
+      '#/body/lats',
+      '#/summary',
+      '#/summary/sess-1',
+    ];
+    for (const hash of hashes) {
       expect(routeHash(parseRoute(hash))).toBe(hash);
     }
   });
