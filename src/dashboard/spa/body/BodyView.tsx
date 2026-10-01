@@ -2,9 +2,9 @@
  * The `#/body` wall page's pure render (VW-338, plan D1 / wireframe W1).
  *
  * Split from `BodyPage` (the fetch wrapper) exactly as `GoalsView` is, so this
- * takes the three fetched payloads as props and nothing else — no store read, no
- * fetch, no clock. That is what lets the render test hand it `/api/muscle-week`,
- * `/api/muscle-strength` and `/api/muscle-plan` fixtures directly.
+ * takes the fetched payloads and the drill stack as props and nothing else — no
+ * store read, no fetch, no clock. That is what lets the render test hand it
+ * `/api/muscle-*` fixtures and an open stack directly.
  *
  * ── Layout (W1) ──────────────────────────────────────────────────────────
  * Three columns — NEXT UP + RECENT PRs on the left, the front and back figures
@@ -35,7 +35,9 @@ import {
 } from '@titan-design/react-ui';
 import {
   BodyMap,
+  BodyMapDetailPanel,
   getHeatmapColor,
+  type MuscleGroup,
   VOLUME_STATUS_LABELS,
   type VolumeStatus,
 } from '@titan-design/react-ui/bodymap';
@@ -44,8 +46,12 @@ import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
+import { EMPTY_DRILL_STACK, type DrillStack } from '../drill/drill-stack.js';
+import { openMuscle, type BodyDrillHandlers } from './body-drill.js';
+import { muscleSheetProps } from './body-sheet-model.js';
 import {
   bodyMapData,
+  muscleGroupOf,
   muscleStripData,
   nextUpRows,
   prRows,
@@ -55,6 +61,14 @@ import {
   type NextUpRow,
   type PrRow,
 } from './body-model.js';
+
+export interface BodyViewProps {
+  data: BodyPageData;
+  /** The shell's drill stack; its muscle layer is the sheet shown. */
+  stack?: DrillStack;
+  /** Absent in a static render, where a press has nothing to open. */
+  drill?: BodyDrillHandlers;
+}
 
 /** The rails either side of the figures. Wide enough for an exercise name and its targets. */
 const RAIL_WIDTH = 360;
@@ -99,10 +113,11 @@ const LEGEND_STATUSES: readonly VolumeStatus[] = [
   'over',
 ];
 
-export function BodyView(props: { data: BodyPageData }): React.JSX.Element {
-  const { data } = props;
+export function BodyView(props: BodyViewProps): React.JSX.Element {
+  const { data, stack = EMPTY_DRILL_STACK, drill } = props;
   const narrow = useIsNarrowViewport();
   const figures = bodyMapData(data.week);
+  const selected = openMuscle(stack);
 
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
@@ -126,7 +141,12 @@ export function BodyView(props: { data: BodyPageData }): React.JSX.Element {
           <NextUpPanel rows={nextUpRows(data.plan)} />
           <RecentPrsPanel rows={prRows(data.strength)} />
         </div>
-        <FigurePanel data={figures} weekStart={data.week.weekStart} />
+        <FigurePanel
+          data={figures}
+          weekStart={data.week.weekStart}
+          highlighted={selected === null ? null : muscleGroupOf(selected)}
+          onMusclePress={drill?.onMusclePress}
+        />
         <div
           style={{
             display: 'flex',
@@ -141,8 +161,11 @@ export function BodyView(props: { data: BodyPageData }): React.JSX.Element {
         </div>
       </div>
       <PanelCard title="Weekly sets by muscle">
-        <MuscleStrip data={muscleStripData(data.week)} />
+        <MuscleStrip data={muscleStripData(data.week)} onMusclePress={drill?.onMusclePress} />
       </PanelCard>
+      {selected === null ? null : (
+        <MuscleSheet slug={selected} data={data} onClose={drill?.onClose} />
+      )}
     </Surface>
   );
 }
@@ -156,7 +179,10 @@ export function BodyView(props: { data: BodyPageData }): React.JSX.Element {
 function FigurePanel(props: {
   data: ReturnType<typeof bodyMapData>;
   weekStart: string;
+  highlighted: MuscleGroup | null;
+  onMusclePress: ((muscle: MuscleGroup) => void) | undefined;
 }): React.JSX.Element {
+  const { highlighted, onMusclePress } = props;
   return (
     <div style={{ flex: '1 1 0', minWidth: 0 }}>
       <PanelCard title={`Week of ${props.weekStart.slice(0, 10)}`}>
@@ -169,13 +195,39 @@ function FigurePanel(props: {
             zoom: FIGURE_ZOOM,
           }}
         >
-          <BodyMap data={props.data} view="front" size="wall" style={{ width: FIGURE_WIDTH }} />
-          <BodyMap data={props.data} view="back" size="wall" style={{ width: FIGURE_WIDTH }} />
+          {(['front', 'back'] as const).map((view) => (
+            <BodyMap
+              key={view}
+              data={props.data}
+              view={view}
+              size="wall"
+              highlightedMuscle={highlighted}
+              onMusclePress={onMusclePress}
+              style={{ width: FIGURE_WIDTH }}
+            />
+          ))}
         </div>
       </PanelCard>
     </div>
   );
 }
+
+/**
+ * The right side-sheet over the figures. Titan's panel owns the slide, the
+ * backdrop, Escape and focus; every dismiss it offers calls `onClose`, which
+ * pops one drill layer. A slug the week does not carry draws no sheet.
+ */
+function MuscleSheet(props: {
+  slug: string;
+  data: BodyPageData;
+  onClose: (() => void) | undefined;
+}): React.JSX.Element | null {
+  const sheet = muscleSheetProps(props.slug, props.data);
+  if (sheet === null) return null;
+  return <BodyMapDetailPanel {...sheet} isOpen onClose={props.onClose ?? noop} />;
+}
+
+function noop(): void {}
 
 /** Planned lifts the active training week still owes. Empty with no program (a 404 plan). */
 function NextUpPanel(props: { rows: NextUpRow[] }): React.JSX.Element {
