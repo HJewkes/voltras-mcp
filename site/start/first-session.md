@@ -120,9 +120,9 @@ mark the set boundary.
 `device.scan` → `device.connect` → `session.start` → (`set.start` → `set.end`) × 3 →
 `session.end` — the same call sequence as Option A, just with no BLE underneath.
 
-Open `http://127.0.0.1:<port>/app` before or during the run: the set log accumulates
-client-side from live transitions, so a browser that connects after the last set has
-nothing to show. `dashboard-mock-drive` takes `VMCP_DASHBOARD_PORT=`; see the driver's
+Open `http://127.0.0.1:<port>/app` before or during the run: while the session is open the
+snapshot carries its finished sets, so a late page rebuilds its set log from them. The driver
+ends the session when the workout finishes, after which there is nothing to rebuild. `dashboard-mock-drive` takes `VMCP_DASHBOARD_PORT=`; see the driver's
 own header comment for the rest. It starts a bare single-exercise session with no plan
 attached — for the planned path, see
 [the planned-session guide](/guides/planned-session)

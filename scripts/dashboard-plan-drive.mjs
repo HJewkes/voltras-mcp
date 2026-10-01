@@ -55,8 +55,8 @@
 //   node scripts/dashboard-plan-drive.mjs --pinned-reps=5 # deterministic sets
 //   HOLD=0 node scripts/dashboard-plan-drive.mjs          # exit after the workout
 //
-// Open http://127.0.0.1:<port>/app BEFORE/DURING the run — the set log
-// accumulates client-side across polls.
+// Open http://127.0.0.1:<port>/app BEFORE/DURING the run — while the session is open
+// the snapshot carries its finished sets, so a late page rebuilds its set log.
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';

@@ -94,7 +94,7 @@ const PROGRESSION_GET_DESCRIPTION =
   'the same nominal load at a different anchor height is a different joint torque (Keogh, Lake & ' +
   'Swinton 2013). On that verdict do NOT read the left/right load difference as an imbalance — ' +
   "relay `sideSplit.setupReason` and `sideSplit.setupSignatures` (both sides' travel medians) " +
-  'instead. `setup_unverified` means neither side recorded travel, so the check never ran. ' +
+  'instead. `setup_unverified` means at least one side recorded no travel, so the check never ran. ' +
   '`setupCard` (VW-275) is a SEPARATE gate on the DECLARED setup: it compares the most recent ' +
   "session's confirmed card (anchor/mountHole/cableLengthSetting/mode) against the exercise's " +
   'reference card — the most recently confirmed one, or a digest-seeded default when nothing has ' +
