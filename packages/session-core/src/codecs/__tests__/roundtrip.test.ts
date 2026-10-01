@@ -21,7 +21,7 @@ describe('1. core equivalence — both adapters produce the same canonical core'
     // per-sample data identical (WA pre-normalizes units; replay preserves samples verbatim)
     expect(repSampleData(mcpSet.analytics)).toEqual(repSampleData(mobileSet.analytics));
 
-    expect(mcpSet.index).toBe(999);
+    expect(mcpSet.index).toBe(0);
     expect(mobileSet.index).toBe(0);
     expect(mcpSet.load.weight).toBe(60);
     expect(mobileSet.load.weight).toBe(60);
