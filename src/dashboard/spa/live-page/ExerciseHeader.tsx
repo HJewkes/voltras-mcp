@@ -19,9 +19,10 @@ import {
   derivePrescription,
   stageIsEnded,
   type EffortCell,
+  type SessionModel,
 } from './model';
 import { type MassUnit } from './mass';
-import { effortAccessibleLabel, effortCaption } from './live-copy';
+import { derivedTargetsCaption, effortAccessibleLabel, effortCaption } from './live-copy';
 
 const t = getSemanticColors('dark');
 
@@ -45,6 +46,18 @@ function clampLerp(w: number, wLo: number, wHi: number, vLo: number, vHi: number
   if (w <= wLo) return vLo;
   if (w >= wHi) return vHi;
   return vLo + ((w - wLo) / (wHi - wLo)) * (vHi - vLo);
+}
+
+/** "Last time · date" beside the lockup when its numbers are last time's (VW-643). */
+function DerivedTargetsCaption({ session }: { session: SessionModel }) {
+  const color = useOnSurfaceColor('tertiary');
+  const caption = derivedTargetsCaption(session);
+  if (caption === null) return null;
+  return (
+    <Text testID="derived-targets-caption" style={{ color, fontSize: 13 }}>
+      {caption}
+    </Text>
+  );
 }
 
 /**
@@ -283,6 +296,7 @@ export function ExerciseHeader({
               unit={targets.unit}
               fontSize={targetSize}
             />
+            <DerivedTargetsCaption session={session} />
             <EffortCaption effort={targets.effort} />
           </View>
         )}

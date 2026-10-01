@@ -30,7 +30,7 @@ import {
   type SetPurpose,
 } from './model';
 import { setFatigueState } from './fatigue-state';
-import { restBasisCaption } from './live-copy';
+import { restBasisCaption, setCountLine } from './live-copy';
 import { EffortCaption } from './ExerciseHeader';
 import { type MassUnit, formatMass } from './mass';
 import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
@@ -189,7 +189,8 @@ function nextSetInfo(model: DashboardModel): string | undefined {
   const { session } = model;
   const doneCount = activeCompletedSets(session).length;
   if (session.plannedSets !== null && doneCount < session.plannedSets) {
-    return `Next · ${session.exerciseName} · set ${doneCount + 1} of ${session.plannedSets}`;
+    const line = `Next · ${session.exerciseName} · set ${doneCount + 1} of ${session.plannedSets}`;
+    return setCountLine(line, session);
   }
   const activeIndex = session.plannedExercises.findIndex((e) => e.active);
   const next = activeIndex >= 0 ? session.plannedExercises[activeIndex + 1] : undefined;

@@ -387,6 +387,16 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
     "sourceRef": "VW-501",
     "text": "Plan · {{intent}} · stop {{stopPct}}%",
   },
+  "live.derived-targets.caption": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Marks targets copied from the lifter’s last session of the exercise so they never read as the coach’s prescription; the date shows how old they are.",
+    "text": "Last time · {{date}}",
+  },
+  "live.derived-targets.set-count": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Marks targets copied from the lifter’s last session of the exercise so they never read as the coach’s prescription; the date shows how old they are.",
+    "text": "{{line}} (last time)",
+  },
   "live.effort.accessible-label": {
     "sourceKind": "engineering-default",
     "sourceRef": "Puts the basis in the accessible label, because the tooltip that shows it needs a hover.",

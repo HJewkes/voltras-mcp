@@ -10,6 +10,7 @@
  */
 import { LIVE_FRAGMENTS as LINES } from '../../../coach-copy/dashboard.js';
 import { fillSlots } from '../../../coach-copy/fill.js';
+import { localDate } from '../../../analytics/training-days.js';
 
 /**
  * The exertion message shown beside the verdict.
@@ -92,4 +93,25 @@ export function effortCaption(
   }
   if (effort.assumed) return fillSlots(LINES.effortAssumedTier.text, { text: effort.text });
   return effort.text;
+}
+
+/** Where the active exercise's targets came from, as the live page reads it (VW-643). */
+export interface TargetProvenance {
+  prescriptionSource?: 'prescribed' | 'derived' | null;
+  derivedFromAt?: string | null;
+}
+
+/**
+ * The caption beside the prescription lockup when its numbers are last time's (VW-643), dated
+ * on the lifter's local calendar so a stale "last time" shows its age. Null for a plan's targets.
+ */
+export function derivedTargetsCaption(session: TargetProvenance): string | null {
+  if (session.prescriptionSource !== 'derived' || session.derivedFromAt == null) return null;
+  return fillSlots(LINES.derivedTargets.text, { date: localDate(session.derivedFromAt) });
+}
+
+/** A "set n of m" line, marked when the set count is last time's rather than the plan's. */
+export function setCountLine(line: string, session: TargetProvenance): string {
+  if (session.prescriptionSource !== 'derived') return line;
+  return fillSlots(LINES.derivedSetCount.text, { line });
 }
