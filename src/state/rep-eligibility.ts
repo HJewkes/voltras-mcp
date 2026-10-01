@@ -27,14 +27,14 @@ import { getPhaseRangeOfMotion, type Rep } from '@voltras/workout-analytics';
  * working reps around it; a deliberately deep or shallow rep inside a real set
  * stays under ~1.5x, so the gate sits between the two.
  */
-const ROM_OUTLIER_RATIO = 1.8;
+export const ROM_OUTLIER_RATIO = 1.8;
 
 /**
  * Same test on peak concentric velocity, in m/s (VW-160). The pull ran ~1.9x
  * the working concentrics; rep 1 of a fresh set is routinely 1.2-1.3x the set
  * median simply because it is the least fatigued, and that rep is real work.
  */
-const VELOCITY_OUTLIER_RATIO = 1.6;
+export const VELOCITY_OUTLIER_RATIO = 1.6;
 
 /**
  * A concentric with fewer movement samples than this has no measurable ROM —
@@ -181,7 +181,7 @@ function peakVelocity(rep: Rep): number {
  * direction? A non-positive median means the comparators carry no signal, so
  * nothing can be called an outlier against them.
  */
-function isOutlier(value: number, comparators: number[], ratio: number): boolean {
+export function isOutlier(value: number, comparators: number[], ratio: number): boolean {
   const reference = median(comparators);
   if (reference <= 0) return false;
   const observed = value / reference;
