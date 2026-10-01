@@ -85,6 +85,11 @@ function strengthSection(row: MuscleStrengthMuscle): MuscleStrengthSection {
   return { exercises: row.exercises, agreement: row.agreement, earlyPhase: row.earlyPhase };
 }
 
+/** A muscle the week plans nothing for has no plan section, not a 0-set target. */
+function plannedRow(row: MusclePlanMuscleView | undefined): MusclePlanMuscleView | undefined {
+  return row !== undefined && row.plannedSetsThisWeek > 0 ? row : undefined;
+}
+
 function rowFor<T extends { muscle: string }>(
   rows: readonly T[] | undefined,
   slug: string,
@@ -98,7 +103,7 @@ export function muscleSheetProps(slug: string, data: BodyPageData): MuscleSheetP
   const week = rowFor(data.week.muscles, slug);
   if (muscleGroup === null || week === undefined) return null;
   const strength = rowFor(data.strength.muscles, slug);
-  const plan = rowFor(data.plan?.muscles, slug);
+  const plan = plannedRow(rowFor(data.plan?.muscles, slug));
   const lastTrained = recoveryLine(rowFor(data.recovery?.muscles, slug));
   return {
     muscleGroup,

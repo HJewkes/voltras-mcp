@@ -245,7 +245,7 @@ describe('the docs site cannot link a capture that is gone', () => {
 // The goals and body pages are Coming soon, and their captures come from seeded
 // data. A reader who meets one of these images must be told both, wherever it is.
 const SEEDED_SCENARIOS = new Set(['goals', 'body']);
-const SEEDED_SHOT = /^(goals[\w-]*|body-week)$/;
+const SEEDED_SHOT = /^(goals[\w-]*|body-(week|drill))$/;
 const COMING_SOON_BADGE = /<Badge[^>]*text="Coming soon"/;
 
 describe('seeded captures are labelled as seeded and as Coming soon', () => {

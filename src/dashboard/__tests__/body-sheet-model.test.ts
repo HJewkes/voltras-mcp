@@ -189,6 +189,16 @@ describe('the body muscle sheet props', () => {
     expect(props).not.toHaveProperty('plan');
   });
 
+  it('omits the plan section when the active week plans no sets for the muscle', () => {
+    const unplanned = { ...PLAN.muscles[0]!, plannedSetsThisWeek: 0, plannedRemaining: [] };
+    const plan: MusclePlanView = { ...PLAN, muscles: [unplanned] };
+
+    const props = muscleSheetProps('chest', pageData({ plan }));
+
+    expect(props).not.toBeNull();
+    expect(props).not.toHaveProperty('plan');
+  });
+
   it('omits the last-trained line for a muscle never trained', () => {
     const props = muscleSheetProps('calves', pageData());
 

@@ -1,5 +1,5 @@
 {
-  "definitionHash": "42e73dfe64577dde7ce4db6fab710d5e9be974bba9aeab89fc837232a24f267f",
+  "definitionHash": "07b75e7f2cc56635bf07ab11fc219c04ac9254a25d24cb7934d3ec20545f3d2b",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -269,6 +269,35 @@
       "height": 1080,
       "bytes": 194677,
       "sha256": "3c7ab7d4492c07482ddf8460bcbb0fb7ee809f4ca149f672f0d6bd0882bb8a6e"
+    },
+    {
+      "name": "body-drill",
+      "scenario": "body",
+      "route": "/app#/body/lats",
+      "caption": "Seeded data, not yet available: the body page with one muscle's side sheet open: its weekly sets, when it was last trained, its strength and its remaining plan.",
+      "file": "body-drill.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 18
+      },
+      "assertedText": [
+        "Lats on track",
+        "Last trained",
+        "STRENGTH",
+        "UPCOMING",
+        "Next up",
+        "Recent PRs"
+      ],
+      "assertedValues": [
+        "MEV 8 MRV 20 4 / 20 MRV",
+        "Cable Row 200 lb · prev 193 lb",
+        "Sets 4 / 7",
+        "Cable Lat Pulldown 4 sets · Pull B"
+      ],
+      "width": 1920,
+      "height": 1080,
+      "bytes": 214986,
+      "sha256": "9ed37caf852cd951f3bef430a621b58251d7424b6b5dc0777ef7a9b448bbc64b"
     }
   ],
   "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
