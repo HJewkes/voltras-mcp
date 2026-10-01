@@ -6,13 +6,16 @@ sources:
   - src/dashboard/spa/planner/PlanBuilderPage.tsx
   - src/dashboard/spa/planner/planner-client.ts
   - src/dashboard/spa/planner/target-fields.ts
+  - src/dashboard/read-models/plan-tree.ts
+  - src/dashboard/plan-api.ts
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/dashboard/spa/api-client.ts
   - src/dashboard/server.ts
   - src/dashboard/write-guard.ts
   - src/docs/capture-shots.ts
   - scripts/dashboard-plan-drive.mjs
-lastVerified: 2026-09-28
+lastVerified: 2026-09-30
+sourced: 2026-09-30
 ---
 
 # Build a plan on the dashboard
@@ -35,7 +38,7 @@ it is not, start with [Set it up and open it](/guides/dashboard-setup).
 />
 
 The capture comes from a scripted run on the mock adapter, with the workout written by the
-`plan.*` tools before the shot (`src/docs/capture-shots.ts:371-385`,
+`plan.*` tools before the shot (`src/docs/capture-shots.ts:389-403`,
 `scripts/dashboard-plan-drive.mjs:248-271`).
 
 ## Open the builder
@@ -51,9 +54,12 @@ The Program bar at the top lists your programs. Select one to edit it, or type a
 block, week and workout (`src/dashboard/server.ts:87-88`).
 
 To add another workout to the program, type a name into **New workout name** in the Workouts
-panel and click **Add workout**. Click a workout to open it in the editor. The workout you are
-training today carries a "training now" badge, and a finished one carries "completed"
-(`src/dashboard/spa/planner/PlanBuilderPage.tsx:447-545`).
+panel and click **Add workout**. Click a workout to open it in the editor. The workout the live
+session is attached to carries a "training now" badge. A workout with any session linked to it,
+by [`plan.attach_to_session`](/reference/plan) or [`plan.complete_workout`](/reference/plan),
+carries "completed", so the workout you are training can carry both
+(`src/dashboard/spa/planner/PlanBuilderPage.tsx:447-545`,
+`src/dashboard/read-models/plan-tree.ts:107-108`, `src/dashboard/plan-api.ts:157-159`).
 
 ## Browse the catalog
 
@@ -76,8 +82,8 @@ adds the exercise once, not twice (`src/dashboard/spa/planner/PlanBuilderPage.ts
 
 Each planned exercise has four boxes: sets, the low and high ends of the rep range, and the
 load in pounds. Type into the ones you want to change and click **Save targets**. A blank box
-leaves that target as it is. A box that is not a number, or is out of range, shows an error
-instead of saving (`src/dashboard/spa/planner/target-fields.ts:1-11`,
+leaves that target as it is. A box that is not a number, a value out of range, or a rep range
+whose high end falls below its low end shows an error instead of saving (`src/dashboard/spa/planner/target-fields.ts:1-11`, `src/dashboard/spa/planner/target-fields.ts:34-42`,
 `src/dashboard/spa/planner/PlanBuilderPage.tsx:766-816`).
 
 ## Reorder the workout
@@ -104,9 +110,11 @@ with no reload. The workout you have selected stays selected across those refres
 
 The plan builder is the one page that writes. Each of its edits needs a same-origin request
 that carries a per-boot write token (`src/dashboard/server.ts:96-99`,
-`src/dashboard/write-guard.ts:85-95`). A page open in another browser tab on the same machine
-cannot make that request, so it cannot change your plan
-(`src/dashboard/write-guard.ts:3-31`).
+`src/dashboard/write-guard.ts:85-95`). A page from another site, open in a browser on the same
+machine, cannot make that request, so it cannot change your plan
+(`src/dashboard/write-guard.ts:3-31`). The guard does not stop another program running as your
+user, which can read the token the way it can read the store itself
+(`src/dashboard/write-guard.ts:33-35`).
 
 If the server restarts while the builder is open, your next edit picks up the new token and
 tries once more, so you do not need to reload
