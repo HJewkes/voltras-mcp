@@ -1,8 +1,6 @@
-// The coach's five message templates, as typed constants (VW-287). The same
-// five appear verbatim in the workspace reference doc
-// `sources/reference/coach-copy-pack.md`, which annotates each with the copy
-// rule from `sources/notes/2026-09-12-accountability-system-plan.md` §2 that it
-// satisfies. The doc is the human-readable record; this file is what ships.
+// The coach's five message templates, as typed constants (VW-287). A separate
+// copy pack annotates each with the copy rule it satisfies; that pack is the
+// human-readable record and this file is what ships.
 //
 // Nothing here sends. `composer.ts` renders these against structured inputs and
 // the state machine decides when a rendered message goes out.

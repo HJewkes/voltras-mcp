@@ -57,10 +57,10 @@ export const ACCOUNTABILITY_FRAGMENTS = {
       '{{offerLine}}',
       '{{bookingLine}}',
     ].join('\n'),
-    sourceKind: 'paper',
+    sourceKind: 'engineering-default',
     sourceRef:
-      'Milkman et al. 2021, Megastudies improve the impact of applied behavioural science, ' +
-      'Nature 600, https://doi.org/10.1038/s41586-021-04128-4',
+      'One re-entry offer on a named day is inspired by, not established by, the 2021 exercise ' +
+      'megastudy, whose winner rewarded returning after a miss; the link is unverified.',
   },
   holdingAcknowledgement: {
     id: 'accountability.holding-acknowledgement',
