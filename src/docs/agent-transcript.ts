@@ -194,6 +194,8 @@ const HEX_RUN = /[0-9a-f]{6,}/gi;
 const HEX_LITERAL = /0x[0-9a-f]{4,}/i;
 const BASE64_RUN = /[A-Za-z0-9+/]{25,}/;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+const PATH_SHAPED = /^(?:~|\.{1,2})?[\\/]|^[A-Za-z]:[\\/]|[\\/][^\\/\s]*[\\/]/;
 
 export function assertKeyAllowed(key: string): void {
   if (DENIED_KEY.test(key)) throw new ScreenSafetyError('KEY_DENIED', `key "${key}"`);
@@ -221,8 +223,15 @@ export function assertValueSafe(name: string, value: unknown): void {
   if (value.length > MAX_VALUE_CHARS) {
     throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" is over ${MAX_VALUE_CHARS} chars`);
   }
-  const shape = encodedShape(value);
+  const shape = encodedShape(value) ?? (PATH_SHAPED.test(value) ? 'a path' : null);
   if (shape) throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" holds ${shape}`);
+}
+
+/** A server-produced field may carry wall-clock time; an authored arg such as a plan date may not. */
+function assertNotDated(name: string, value: unknown): void {
+  if (typeof value === 'string' && ISO_DATE.test(value)) {
+    throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" holds a date`);
+  }
 }
 
 function isPrimitive(value: unknown): value is string | number | boolean {
@@ -289,6 +298,7 @@ export function projectFields(value: unknown, names: readonly string[]): NamedVa
     const field = record[name];
     if (!isPrimitive(field)) throw new ScreenSafetyError('FIELD_NOT_PRIMITIVE', `"${name}"`);
     assertValueSafe(name, field);
+    assertNotDated(name, field);
     return { name, value: field };
   });
 }
