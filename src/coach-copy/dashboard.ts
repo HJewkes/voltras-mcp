@@ -12,6 +12,9 @@ const NOT_A_READING =
 const MARKS_DERIVED_REST =
   'Marks a rest derived from the training goal so it never reads as the coach’s number; the ' +
   'rest lengths carry their own citations.';
+const MARKS_LAST_TIME =
+  'Marks targets copied from the lifter’s last session of the exercise so they never read as ' +
+  'the coach’s prescription; the date shows how old they are.';
 
 function engineeringDefault(id: string, text: string, reason: string): Fragment {
   return { id, text, sourceKind: 'engineering-default', sourceRef: reason };
@@ -62,6 +65,16 @@ export const LIVE_FRAGMENTS = {
   ),
   armSourcePlan: ownerRuling('live.arm-source.plan', 'Plan · stop {{stopPct}}%'),
   armSourceDefault: ownerRuling('live.arm-source.default', 'Default · stop {{stopPct}}% (assumed)'),
+  derivedTargets: engineeringDefault(
+    'live.derived-targets.caption',
+    'Last time · {{date}}',
+    MARKS_LAST_TIME,
+  ),
+  derivedSetCount: engineeringDefault(
+    'live.derived-targets.set-count',
+    '{{line}} (last time)',
+    MARKS_LAST_TIME,
+  ),
 } as const satisfies Record<string, Fragment>;
 
 export const CALIBRATION_FRAGMENTS = {

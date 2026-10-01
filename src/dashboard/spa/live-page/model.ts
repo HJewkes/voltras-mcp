@@ -215,6 +215,13 @@ export interface SessionModel {
   /** Prescribed set count. Null until `targetSets` reaches the view (VW-42). */
   plannedSets: number | null;
   /**
+   * Whether the targets are the plan's or copied from last time (VW-643), so a derived
+   * number never reads as the coach's. Absent or null with no prescription.
+   */
+  prescriptionSource?: 'prescribed' | 'derived' | null;
+  /** When "last time" started, an ISO instant. Absent or null unless the targets are derived. */
+  derivedFromAt?: string | null;
+  /**
    * Prescribed reps per set. The lab fixture hardcoded `8` in the header; the store has
    * this for real as the active set's configured rep target, so the port reads it.
    * Null when no target is configured (an AMRAP/untargeted set).

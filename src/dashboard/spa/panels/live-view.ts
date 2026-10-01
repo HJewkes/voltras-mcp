@@ -271,6 +271,20 @@ function mapRestBasis(rest: Snapshot['rest']): RestBasisModel | null {
   return { source: rest.source, intent: rest.intent, extensionSeconds: rest.extensionSeconds };
 }
 
+/** Where the prescription came from (VW-643). A view from before `source` existed is the plan's. */
+function mapPrescriptionSource(
+  prescription: PrescriptionView | null,
+): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt'> {
+  if (prescription === null) return { prescriptionSource: null, derivedFromAt: null };
+  if (prescription.source !== 'derived') {
+    return { prescriptionSource: 'prescribed', derivedFromAt: null };
+  }
+  return {
+    prescriptionSource: 'derived',
+    derivedFromAt: prescription.derivedFrom?.startedAt ?? null,
+  };
+}
+
 /** The session read-model. */
 function mapSession(
   snapshot: Snapshot,
@@ -315,6 +329,7 @@ function mapSession(
     // Null when the session carries no plan attachment at all — the view then hides the
     // set count rather than implying a one-set prescription.
     plannedSets: prescription?.sets ?? null,
+    ...mapPrescriptionSource(prescription),
     targetReps,
     // VW-275: null with no active exercise, or if neither a confirmed nor a
     // digest-seeded card resolved for it server-side.

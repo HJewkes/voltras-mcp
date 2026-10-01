@@ -63,6 +63,14 @@ export {
   type TierView,
 } from './session-plan.js';
 
+export {
+  buildDerivedPrescriptionView,
+  deriveExerciseTargets,
+  type DerivableSet,
+  type DerivedPrescriptionRows,
+  type DerivedTargets,
+} from './derived-prescription.js';
+
 export { buildHistoryView, type HistoryRows } from './history.js';
 
 export {
