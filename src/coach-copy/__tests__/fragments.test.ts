@@ -4,17 +4,19 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { findEncodedValues } from '../../docs/protocol-guard.js';
+import { REDUCED_SCOPE_MINUTES } from '../composer.js';
 import {
   COACH_FRAGMENTS,
   type FragmentCandidate,
   validateFragment,
   validateRegistry,
+  validateSource,
 } from '../fragments.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 // One file per slice joins this list as its prose moves into the registry.
-const GUARDED_FILES = ['accountability/copy.ts'];
+const GUARDED_FILES = ['accountability/copy.ts', 'accountability/composer.ts'];
 const PROSE_WORD_FLOOR = 4;
 
 const VALID: FragmentCandidate = {
@@ -24,7 +26,13 @@ const VALID: FragmentCandidate = {
   sourceRef: 'A fixture reason long enough to count as a sentence.',
 };
 
+function isErrorConstruction(node: ts.Node): boolean {
+  return ts.isNewExpression(node) && node.expression.getText() === 'Error';
+}
+
+// An error message is for the caller, not the lifter, so the scan skips it.
 function literalTexts(node: ts.Node, found: string[] = []): string[] {
+  if (isErrorConstruction(node)) return found;
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) found.push(node.text);
   if (ts.isTemplateExpression(node)) {
     found.push([node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(' '));
@@ -35,7 +43,12 @@ function literalTexts(node: ts.Node, found: string[] = []): string[] {
 
 function proseLiterals(relativePath: string): string[] {
   const path = join(SRC, relativePath);
-  const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest);
+  const source = ts.createSourceFile(
+    path,
+    readFileSync(path, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
   return literalTexts(source).filter((text) => text.trim().split(/\s+/).length >= PROSE_WORD_FLOOR);
 }
 
@@ -58,6 +71,11 @@ describe('every coach fragment carries a source', () => {
       ),
     );
     expect(leaks).toEqual([]);
+  });
+
+  it('sources the reduced-scope re-entry minutes', () => {
+    const { sourceKind, sourceRef } = REDUCED_SCOPE_MINUTES;
+    expect(validateSource(sourceKind, sourceRef)).toEqual([]);
   });
 });
 
