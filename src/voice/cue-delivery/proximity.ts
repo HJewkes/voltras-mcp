@@ -42,7 +42,10 @@ export interface ProximityInputs {
   /** The set's velocity-loss watch threshold; a fired loss event supplies it when absent. */
   lossThresholdPct?: number | null;
   romDecayVerdict?: RomDecayReading['verdict'];
-  /** Head-of-set reps the velocity-loss window excludes, as `velocityLossWindow` reports. */
+  /**
+   * Head-of-set reps the velocity-loss window excludes, as `velocityLossWindow` reports.
+   * Defaults to 0; the live caller must pass the eccentric-overload lead-in count from there.
+   */
   leadInReps?: number;
 }
 
@@ -94,7 +97,7 @@ function velocityLossPct(reps: readonly StreamedRep[]): number | null {
   return Math.max(0, (100 * (baseline - current)) / baseline);
 }
 
-// The same relative outlier rule `selectEligibleReps` applies, over the streamed figures.
+// Approximates `selectEligibleReps`, minus its sample-count and first_rep_unconfirmed checks.
 function eligibleReps(reps: readonly StreamedRep[]): readonly StreamedRep[] {
   const measurable = reps.filter((rep) => rep.peakVelocity > 0 && rep.rom !== null);
   const kept = measurable.filter((rep) => {
