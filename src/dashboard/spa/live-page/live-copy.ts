@@ -53,6 +53,24 @@ export function restBasisCaption(basis: {
   });
 }
 
+/**
+ * Which source set an auto-armed set's stop (VW-720): `Plan · strength · stop 20%` or
+ * `Default · stop 30% (assumed)`. Null when the server applied nothing, or an agent's own
+ * watch replaced it, or the watch carries no loss threshold to name.
+ */
+export function armSourceLabel(set: {
+  armDefaultsSource?: 'plan_row' | 'default';
+  watch?: { notifyOn?: Array<{ type: string; pct?: number; intent?: string }> };
+}): string | null {
+  const stop = set.watch?.notifyOn?.find((trigger) => trigger.type === 'velocity_loss_exceeded');
+  if (set.armDefaultsSource === undefined || stop?.pct === undefined) return null;
+  const stopPct = String(Math.round(stop.pct));
+  if (set.armDefaultsSource === 'default')
+    return fillSlots(LINES.armSourceDefault.text, { stopPct });
+  if (stop.intent === undefined) return fillSlots(LINES.armSourcePlan.text, { stopPct });
+  return fillSlots(LINES.armSourcePlanIntent.text, { intent: stop.intent, stopPct });
+}
+
 /** The basis `derivePrescription` gives a coach-written RPE. */
 const PLAN_EFFORT_BASIS = 'plan';
 

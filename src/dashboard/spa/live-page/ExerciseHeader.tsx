@@ -107,24 +107,38 @@ function formatSetupCard(card: SetupCard): string {
  * matching the header's existing chrome ({@link CARD_EDGE}), with the auto-arm mechanism
  * (guided load vs the lifter's own reps) on hover rather than crowding the header with it.
  */
-function AutoArmBadge({ source }: { source: 'guided_load' | 'idle_rep' }) {
+function AutoArmBadge({
+  source,
+  armSource,
+}: {
+  source: 'guided_load' | 'idle_rep';
+  armSource: string | null;
+}) {
   const textColor = useOnSurfaceColor('secondary');
   return (
-    <Tooltip label={autoArmedTitle(source)} placement="bottom">
-      <View
-        testID="auto-arm-badge"
-        style={{
-          paddingHorizontal: 8,
-          paddingVertical: 3,
-          borderRadius: 6,
-          ...CARD_EDGE,
-        }}
-      >
-        <Text style={{ color: textColor, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
-          {AUTO_ARM_BADGE_TEXT}
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <Tooltip label={autoArmedTitle(source, armSource)} placement="bottom">
+        <View
+          testID="auto-arm-badge"
+          style={{
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 6,
+            ...CARD_EDGE,
+          }}
+        >
+          <Text style={{ color: textColor, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
+            {AUTO_ARM_BADGE_TEXT}
+          </Text>
+        </View>
+      </Tooltip>
+      {/* VW-720: which source set this set's stop, so a plan number and an assumed one differ. */}
+      {armSource !== null && (
+        <Text testID="auto-arm-source" style={{ color: textColor, fontSize: 13 }}>
+          {armSource}
         </Text>
-      </View>
-    </Tooltip>
+      )}
+    </View>
   );
 }
 
@@ -241,7 +255,9 @@ export function ExerciseHeader({
           {headingText}
         </Text>
         {/* VW-265: only while the active set is streaming AND the server opened it itself. */}
-        {autoArmSource && <AutoArmBadge source={autoArmSource} />}
+        {autoArmSource && (
+          <AutoArmBadge source={autoArmSource} armSource={live?.armSource ?? null} />
+        )}
         {/* VW-169: whose set this is, shown ONLY for a guest working in — the wall is the
             owner's by default, and a name on every set would be noise that stops being read
             by the time it matters. */}

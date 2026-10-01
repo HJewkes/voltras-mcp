@@ -372,6 +372,21 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
     "sourceRef": "Motivational wording written for the voice layer; no corpus or paper claim sets any of it.",
     "text": "Past \${target} now — \${actual} and climbing.",
   },
+  "live.arm-source.default": {
+    "sourceKind": "owner-ruling",
+    "sourceRef": "VW-501",
+    "text": "Default · stop {{stopPct}}% (assumed)",
+  },
+  "live.arm-source.plan": {
+    "sourceKind": "owner-ruling",
+    "sourceRef": "VW-501",
+    "text": "Plan · stop {{stopPct}}%",
+  },
+  "live.arm-source.plan-intent": {
+    "sourceKind": "owner-ruling",
+    "sourceRef": "VW-501",
+    "text": "Plan · {{intent}} · stop {{stopPct}}%",
+  },
   "live.effort.accessible-label": {
     "sourceKind": "engineering-default",
     "sourceRef": "Puts the basis in the accessible label, because the tooltip that shows it needs a hover.",
