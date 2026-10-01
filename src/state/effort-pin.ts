@@ -94,7 +94,7 @@ async function loadProfile(
 }
 
 /** Load over the same reference 1RM the curve was fitted against, or `null` when either is unknown. */
-async function relativeIntensityOf(
+export async function relativeIntensityOf(
   store: SessionStore,
   exerciseId: string,
   loadLbs: number | undefined,
