@@ -50,6 +50,16 @@ describe('the text confidentiality pass', () => {
     expect(output).not.toContain(token);
   });
 
+  it('still fails on a token in a file that grep would skip as binary (VW-223)', () => {
+    const token = syntheticToken();
+
+    const { status, output } = runCheck('nul.md', `# Notes\0\n\nThe driver saw ${token} here.\n`);
+
+    expect(status).toBe(1);
+    expect(output).toContain('hex-literal');
+    expect(output).not.toContain(token);
+  });
+
   it('passes an ordinary markdown page', () => {
     const { status } = runCheck('plain.md', '# Notes\n\nNothing notable on this page.\n');
 
