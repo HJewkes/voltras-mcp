@@ -65,10 +65,22 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            tools/truecoach-submit/package-lock.json
       - run: npm ci
       - name: Confirm the onnxruntime GPU download was skipped
         run: test ! -e node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so && echo "onnxruntime CUDA provider not downloaded"
       - run: npm test
+      - name: Test session-core
+        run: npm test --workspace @voltras/session-core
+      # Standalone package with its own lockfile; fixtures only, TRUECOACH_SMOKE stays unset so the live smoke test skips.
+      - name: Install truecoach-submit
+        run: npm ci
+        working-directory: tools/truecoach-submit
+      - name: Test truecoach-submit
+        run: npm test
+        working-directory: tools/truecoach-submit
 
   # Build verification
   build:
