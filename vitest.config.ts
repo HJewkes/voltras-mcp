@@ -21,6 +21,8 @@ process.env.TZ = 'UTC';
 // parallel load the boot can miss that wait (VW-210, two flakes on 2026-09-08).
 // Its own sequence group (below) keeps it off the CPU while the rest of the suite runs.
 const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
+// Boots the compiled server twice in parallel and waits on pinned rep bursts (VW-597).
+const TRANSCRIPT_EXPORT_TEST_FILE = 'src/__tests__/integration/agent-transcript-export.test.ts';
 // These files pin `process.env.TZ` to a local zone before any Date is built (VW-477).
 // A worker THREAD cannot change its zone after start (Node reads TZ once per
 // process), so they run on the forks pool; everything else runs on threads.
@@ -108,7 +110,12 @@ export default defineConfig({
           globals: false,
           server,
           include: ALL_TESTS_GLOB,
-          exclude: [LAUNCHER_TEST_FILE, ...LOCAL_TIME_TEST_FILES, ...STORE_SUITE_TEST_FILES],
+          exclude: [
+            LAUNCHER_TEST_FILE,
+            TRANSCRIPT_EXPORT_TEST_FILE,
+            ...LOCAL_TIME_TEST_FILES,
+            ...STORE_SUITE_TEST_FILES,
+          ],
         },
       },
       {
@@ -149,6 +156,20 @@ export default defineConfig({
           include: [LAUNCHER_TEST_FILE],
           // Runs after the 'unit' group (default groupOrder 0) finishes, never alongside it.
           sequence: { groupOrder: 1 },
+        },
+      },
+      {
+        plugins,
+        resolve: resolution,
+        test: {
+          name: 'transcript-export',
+          pool: 'threads',
+          environment: 'node',
+          globals: false,
+          server,
+          include: [TRANSCRIPT_EXPORT_TEST_FILE],
+          // After the launcher group, so its two server boots never share the CPU with it.
+          sequence: { groupOrder: 2 },
         },
       },
     ],

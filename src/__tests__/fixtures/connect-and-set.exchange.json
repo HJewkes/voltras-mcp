@@ -1,0 +1,26 @@
+{
+  "exchange": "synthetic-connect-and-set",
+  "pinnedReps": 3,
+  "steps": [
+    { "user": "Connect to the trainer and start a set." },
+    { "call": "device.scan", "args": {}, "offscreen": true },
+    { "assistant": "Connecting now." },
+    {
+      "call": "device.connect",
+      "args": { "deviceId": "$scan.firstDeviceId", "slot": "primary" },
+      "showArgs": ["slot"],
+      "showResult": ["ok"]
+    },
+    {
+      "call": "session.start",
+      "args": { "exerciseId": "cable-chest-press" },
+      "showArgs": ["exerciseId"]
+    },
+    { "call": "set.start", "args": {} },
+    { "awaitChannel": "rep_finalized", "count": 2, "showFields": ["rep_count"] },
+    { "assistant": "Two reps in. Finish when you are ready." },
+    { "call": "set.end", "args": {} },
+    { "awaitChannel": "rep_finalized", "count": 1, "showFields": ["rep_count"] },
+    { "assistant": "Three reps, set saved." }
+  ]
+}
