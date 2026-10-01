@@ -137,12 +137,14 @@ import {
   buildHistoryView,
   buildMusclePlanView,
   buildMuscleRecoveryView,
+  buildDerivedPrescriptionView,
   buildMuscleWeekView,
   buildSessionPlanView,
   buildSessionSummary,
   buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
+  deriveExerciseTargets,
   recordWithEffort,
   withEffort,
   resolveSummarySessionId,
@@ -225,7 +227,9 @@ import {
   type StoredTrainingProfile,
   type StoredTrainingWeek,
   type SetupCard,
+  type SessionStore,
 } from '../store/types.js';
+import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import {
   completedSetsForExercise,
   resolveRestLength,
@@ -325,6 +329,8 @@ export interface DashboardServerState {
     ): Promise<StoredDietPhase | undefined>;
     /** Self-reported training background, read for the early-phase flag (VW-330). */
     getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
+    /** Last time's session of an exercise, for the derived prescription (VW-642). */
+    getMostRecentSessionIdForExercise?: SessionStore['getMostRecentSessionIdForExercise'];
     /** The action audit trail (VW-502). Optional for the same reason the rest are. */
     claimUiAction?: ActionStore['claimUiAction'];
     completeUiAction?: ActionStore['completeUiAction'];
@@ -1854,9 +1860,11 @@ async function fetchHistory(
  * The active exercise's prescription, when the live session is attached to a
  * plan (plan.attach_to_session): a whole workout template, or one planned
  * exercise. The first assignment covering the active exercise wins, as in
- * `findPlannedExerciseForSession`. Returns null when the plan store isn't
- * available, no session/exercise is active, or no attachment covers the active
- * exercise. Plan metadata only (NF-07).
+ * `findPlannedExerciseForSession`. With no attachment covering it, the targets
+ * are derived from the lifter's last training session of the exercise and
+ * labelled `derived` (VW-642). Returns null when the plan store isn't
+ * available, no session/exercise is active, or neither source knows anything.
+ * Plan metadata only (NF-07).
  */
 async function fetchSessionPlan(state: DashboardServerState): Promise<PrescriptionView | null> {
   const { store } = state;
@@ -1870,9 +1878,9 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
   if (live === undefined) return null;
   const { session, exerciseId } = live;
   const attached = await resolveAttachedPlan(store, session.sessionId, exerciseId);
-  if (attached === undefined) return null;
+  if (attached === undefined) return fetchDerivedPrescription(state, live);
   // VW-669: the tier signal is the owner's; a guest or partner on the cable gets no tier.
-  const tier = live.ownerLifting ? await readTierView(store) : undefined;
+  const tier = live.lifter === undefined ? await readTierView(store) : undefined;
   const rows: SessionPlanRows = {
     activeExerciseId: exerciseId,
     match: attached.match,
@@ -1883,19 +1891,66 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
   return buildSessionPlanView(rows, state.exercises);
 }
 
-/** The first slot's open session with an active exercise, and whether the owner is lifting. */
-function findLiveSessionForPlan(
-  state: DashboardServerState,
-): { session: ActiveSession; exerciseId: string; ownerLifting: boolean } | undefined {
+/** The live session a prescription is for; `lifter` absent means the owner is lifting. */
+interface LiveSessionForPlan {
+  session: ActiveSession;
+  exerciseId: string;
+  lifter?: string;
+}
+
+/** The first slot's open session with an active exercise, and who is lifting on it. */
+function findLiveSessionForPlan(state: DashboardServerState): LiveSessionForPlan | undefined {
   for (const [, slot] of state.slots) {
     const session = slot.live.snapshotSession();
     if (session === undefined) continue;
     if (session.exerciseId === undefined) return undefined;
-    const ownerLifting =
-      session.lifter === undefined && slot.live.snapshotSet()?.lifter === undefined;
-    return { session, exerciseId: session.exerciseId, ownerLifting };
+    const lifter = slot.live.snapshotSet()?.lifter ?? session.lifter;
+    return { session, exerciseId: session.exerciseId, ...(lifter !== undefined && { lifter }) };
   }
   return undefined;
+}
+
+/** Every slot's open session id: none of them is "last time" (VW-642). */
+function openSessionIds(state: DashboardServerState): string[] {
+  const ids: string[] = [];
+  for (const [, slot] of state.slots) {
+    const session = slot.live.snapshotSession();
+    if (session !== undefined) ids.push(session.sessionId);
+  }
+  return ids;
+}
+
+/**
+ * Last time's targets for the live exercise (VW-642): this lifter's most recent
+ * training session of it, before the live one and excluding every open session.
+ * A guest reads only the guest's history and the owner only the owner's.
+ */
+async function fetchDerivedPrescription(
+  state: DashboardServerState,
+  live: LiveSessionForPlan,
+): Promise<PrescriptionView | null> {
+  const { store } = state;
+  const { getMostRecentSessionIdForExercise, getSession, getSetsForSession } = store;
+  if (!getMostRecentSessionIdForExercise || !getSession || !getSetsForSession) return null;
+  const { session, exerciseId, lifter } = live;
+  const lastId = await getMostRecentSessionIdForExercise.call(store, {
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    ...(lifter !== undefined && { lifter }),
+    excludeSessionIds: openSessionIds(state),
+    startedBefore: session.startedAt,
+  });
+  if (lastId === null) return null;
+  const last = await getSession.call(store, lastId);
+  if (last === undefined) return null;
+  const sessionSets = await getSetsForSession.call(store, lastId);
+  const sets = scopeSetsToLifter(scopeSessionSetsToExerciseId(sessionSets, exerciseId), lifter);
+  const targets = deriveExerciseTargets(sets);
+  if (targets === null) return null;
+  return buildDerivedPrescriptionView(
+    { activeExerciseId: exerciseId, targets, derivedFromStartedAt: last.startedAt },
+    state.exercises,
+  );
 }
 
 /** The planned row covering `exerciseId` and the rail it sits in: its whole template, or itself alone. */

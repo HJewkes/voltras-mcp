@@ -2137,12 +2137,18 @@ export interface SessionStore extends ExerciseSetupStore {
    * "I only need the session id of the last one" — `resolveBasisSession`
    * used to pull a user's ENTIRE set history for an exercise, reps
    * included, just to read `.at(-1)?.sessionId`.
+   *
+   * `excludeSessionIds` and `startedBefore` (VW-642) keep the current work out
+   * of "last time": once an open session logs a set it would otherwise be its
+   * own most recent session. `startedBefore` is exclusive, on the set's start.
    */
   getMostRecentSessionIdForExercise(filter: {
     userId: string;
     exerciseId: string;
     lifter?: string;
     kind?: SessionKindFilter;
+    excludeSessionIds?: readonly string[];
+    startedBefore?: string;
   }): Promise<string | null>;
 
   // --- Self-reports (VMCP-06.12 / B41) ---

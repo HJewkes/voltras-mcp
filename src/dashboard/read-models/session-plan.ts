@@ -46,10 +46,12 @@ export interface TierView {
   source: TierSource;
 }
 
-/** Prescribed targets for the active exercise, from its attached plan template. */
+/** Targets for the active exercise: from its attached plan, else from last time (VW-642). */
 export interface PrescriptionView {
-  /** Where the targets come from: a plan the coach attached. */
-  source: 'prescribed';
+  /** Where the targets come from: a plan the coach attached, or the lifter's last session of it. */
+  source: 'prescribed' | 'derived';
+  /** Only on a derived view: when the session it was derived from started. */
+  derivedFrom?: { startedAt: string };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;

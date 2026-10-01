@@ -3200,6 +3200,22 @@ const PUT_SESSION_SQL = `
     notes = excluded.notes,
     diet_phase = CASE WHEN sessions.lifter IS NULL THEN ? END`;
 
+/** The `AND ...` tail that keeps named sessions and later sets out of a recency read (VW-642). */
+function recencyExclusionClause(filter: {
+  excludeSessionIds?: readonly string[];
+  startedBefore?: string;
+}): { sql: string; params: string[] } {
+  const excluded = filter.excludeSessionIds ?? [];
+  const params = [...excluded];
+  let sql =
+    excluded.length === 0 ? '' : ` AND session_id NOT IN (${excluded.map(() => '?').join(', ')})`;
+  if (filter.startedBefore !== undefined) {
+    sql += ' AND started_at < ?';
+    params.push(filter.startedBefore);
+  }
+  return { sql, params };
+}
+
 /** SQLite-backed implementation of `SessionStore`. */
 export class SqliteSessionStore implements SessionStore {
   private readonly connection: DatabaseSync;
@@ -3922,6 +3938,8 @@ export class SqliteSessionStore implements SessionStore {
     exerciseId: string;
     lifter?: string;
     kind?: SessionKindFilter;
+    excludeSessionIds?: readonly string[];
+    startedBefore?: string;
   }): Promise<string | null> {
     // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
     // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
@@ -3941,10 +3959,12 @@ export class SqliteSessionStore implements SessionStore {
     const kind = sessionKindPredicate(filter.kind);
     const kindClause = kind === undefined ? '' : ` AND ${kind.where}`;
     if (kind !== undefined) params.push(...kind.params);
+    const recency = recencyExclusionClause(filter);
+    params.push(...recency.params);
     const row = this.db
       .prepare(
         `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause}` +
-          `${kindClause} ORDER BY started_at DESC LIMIT 1`,
+          `${kindClause}${recency.sql} ORDER BY started_at DESC LIMIT 1`,
       )
       .get(...params) as { session_id: string } | undefined;
     return Promise.resolve(row?.session_id ?? null);
