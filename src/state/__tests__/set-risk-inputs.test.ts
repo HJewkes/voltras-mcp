@@ -62,7 +62,7 @@ function storedSet(id: string, fields: Partial<StoredSet> & { velocities?: numbe
     exerciseId: EXERCISE,
     weightLbs: 100,
     trainingMode: 'Weight Training',
-    effortContext: { bandReferenceLossPct: 20, velocitySignalValid: true },
+    effortContext: watchAt(20),
     reps: repsAt(id, velocities),
     ...rest,
   };
@@ -187,7 +187,7 @@ describe('prior-set decay', () => {
   });
 
   it('is false when the previous set stayed inside its own threshold', async () => {
-    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: thresholdAt(50) }));
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: watchAt(50) }));
 
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
 
@@ -213,7 +213,7 @@ describe('prior-set decay', () => {
   });
 
   it('is false when the previous set had its watch suppressed', async () => {
-    const suppressed = { bandReferenceLossPct: 20, velocitySignalValid: false };
+    const suppressed = { ...watchAt(20), velocitySignalValid: false };
     await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: suppressed }));
 
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
@@ -228,6 +228,59 @@ describe('prior-set decay', () => {
     const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
 
     expect(inputs.priorSetDecayed).toBe(false);
+  });
+
+  it('reads the watch pct from a loss goal the watch itself set', async () => {
+    const goalFromWatch = {
+      ...watchAt(20),
+      goal: { kind: 'velocity_loss', lossPct: 20, source: 'set_intent' },
+      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+    };
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: goalFromWatch }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBe(true);
+  });
+
+  it('is null, never true, for a set whose context shows no loss watch', async () => {
+    const noLossWatch = {
+      ...watchAt(20),
+      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+    };
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: noLossWatch }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBeNull();
+  });
+
+  it('is null for an assumed-stop watch whose pct differs from the band reference', async () => {
+    const assumedStop = {
+      ...watchAt(10),
+      guard: { effortCapRpe: null, effortCapSource: null, lossPct: 10, lossSource: 'plan_intent' },
+    };
+    const lossPastBandReference = [0.6, 0.6, 0.55, 0.52, 0.51];
+    await seedLive(
+      storedSet('w1', { velocities: lossPastBandReference, effortContext: assumedStop }),
+    );
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBeNull();
+  });
+
+  it('is null when the loss goal came from the plan, not the watch', async () => {
+    const planGoal = {
+      ...watchAt(20),
+      goal: { kind: 'velocity_loss', lossPct: 20, source: 'plan' },
+      guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+    };
+    await seedLive(storedSet('w1', { velocities: DECAYED, effortContext: planGoal }));
+
+    const inputs = await readSetRiskInputs(store, liveStart(), DEVICE);
+
+    expect(inputs.priorSetDecayed).toBeNull();
   });
 
   it('is null when the previous set carries no pinned threshold', async () => {
@@ -298,6 +351,12 @@ describe('the scorer input shape', () => {
   });
 });
 
-function thresholdAt(pct: number): StoredSet['effortContext'] {
-  return { bandReferenceLossPct: pct, velocitySignalValid: true };
+/** A pinned context whose loss guard came from the set's own explicit watch spec. */
+function watchAt(pct: number): NonNullable<StoredSet['effortContext']> {
+  return {
+    goal: { kind: 'rep_range', repsLow: 5, repsHigh: 5, source: 'explicit' },
+    guard: { effortCapRpe: null, effortCapSource: null, lossPct: pct, lossSource: 'explicit' },
+    bandReferenceLossPct: pct,
+    velocitySignalValid: true,
+  };
 }

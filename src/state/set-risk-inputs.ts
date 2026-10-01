@@ -7,7 +7,7 @@ import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-sc
 import type { SessionStore, StoredRep, StoredSet } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { velocityLossBaseline } from './channel-payloads.js';
-import { deviceResistanceFamily } from './effort-context.js';
+import { deviceResistanceFamily, type PinnedEffortContext } from './effort-context.js';
 import { relativeIntensityOf } from './effort-pin.js';
 import type { DeviceSnapshot } from './live-state.js';
 import { eccentricOverloadLeadIn } from './rep-eligibility.js';
@@ -62,15 +62,27 @@ async function earlierWorkingSets(
   );
 }
 
-/** Whether the set's own velocity-loss watch would have fired; `null` when its threshold was never pinned. */
+/** Whether the set's own velocity-loss watch fired; `null` when its watch threshold cannot be recovered. */
 function priorSetDecayed(previous: StoredSet | undefined): boolean | null {
   if (previous === undefined) return false;
-  const context = previous.effortContext;
-  if (context?.['velocitySignalValid'] === false) return false;
-  const thresholdPct = context?.['bandReferenceLossPct'];
-  if (typeof thresholdPct !== 'number') return null;
+  const context = previous.effortContext as Partial<PinnedEffortContext> | undefined;
+  if (context?.velocitySignalValid === false) return false;
+  const thresholdPct = watchThresholdOf(context);
+  if (thresholdPct === null) return null;
   const leadIn = eccentricOverloadLeadIn(previous.eccentricPct);
   return watchTripped(normaliseVelocityToMps(previous).reps, leadIn, thresholdPct);
+}
+
+// Only these sources prove the pinned percent is the watch spec's own; the band reference never does.
+const WATCH_SOURCES: ReadonlySet<string> = new Set(['explicit', 'set_intent']);
+
+/** The pct the live watch fired at, as far as the pinned context proves it; else `null`. */
+function watchThresholdOf(context: Partial<PinnedEffortContext> | undefined): number | null {
+  const goal = context?.goal;
+  if (goal?.kind === 'velocity_loss' && WATCH_SOURCES.has(goal.source)) return goal.lossPct;
+  const source = context?.guard?.lossSource;
+  if (typeof source !== 'string' || !WATCH_SOURCES.has(source)) return null;
+  return context?.guard?.lossPct ?? null;
 }
 
 /** Replays the live watch rep by rep: loss from the windowed peak so far against the threshold. */
