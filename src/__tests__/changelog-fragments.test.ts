@@ -234,7 +234,9 @@ function fixtureTree(fragmentFiles: Record<string, string>): string {
 }
 
 function runScript(script: string, args: string[]) {
-  return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+  // CI sets GITHUB_BASE_REF; a fixture tree is not a pull request unless it passes --base.
+  const { GITHUB_BASE_REF: _ignored, ...env } = process.env;
+  return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env });
 }
 
 describe('scripts on a fixture tree', () => {
