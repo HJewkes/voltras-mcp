@@ -30,10 +30,11 @@ import { buildMuscleWeekView, type MuscleWeekRows } from '../read-models/muscle-
 import { e1rmBand } from '../../tools/e1rm-band.js';
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthBestE1rm,
   MuscleStrengthView,
 } from '../read-models/index.js';
-import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
+import { MUSCLE_MAP_VERSION, TITAN_MUSCLE_GROUPS } from '../../exercises/muscle-map.js';
 import type { StoredSet } from '../../store/types.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z'); // Wednesday
@@ -185,8 +186,21 @@ const PLAN: MusclePlanView = {
   ],
 };
 
+/** No muscle trained yet: the page does not render recovery until the sheet (VW-339 S3). */
+const RECOVERY: MuscleRecoveryView = {
+  muscleMapVersion: MUSCLE_MAP_VERSION,
+  muscles: TITAN_MUSCLE_GROUPS.map((muscle) => ({
+    muscle,
+    lastTrainedAt: null,
+    daysSince: null,
+    lastEntryDepression: null,
+    lastSessionMatchedPrior: null,
+    reason: 'insufficient history',
+  })),
+};
+
 function pageData(over: Partial<BodyPageData> = {}): BodyPageData {
-  return { week: weekView(), strength: STRENGTH, plan: PLAN, ...over };
+  return { week: weekView(), strength: STRENGTH, plan: PLAN, recovery: RECOVERY, ...over };
 }
 
 /** Rendered text with runs of whitespace collapsed, same normalisation the captures use. */

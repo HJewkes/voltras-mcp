@@ -7,12 +7,13 @@
  * blank itself over. So the plan fetch alone resolves to `null` on a 404 and the
  * page renders its NEXT UP panel empty.
  *
- * The three routes are independent read models over the same store, so they are
- * fetched in parallel; a failure in week or strength still throws, because a
- * figure with no volume data is a broken page rather than a quiet one.
+ * The four routes are independent read models over the same store, so they are
+ * fetched in parallel; a failure in week, strength or recovery still throws,
+ * because a figure with no volume data is a broken page rather than a quiet one.
  */
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthView,
   MuscleWeekView,
 } from '../../read-models/index.js';
@@ -32,6 +33,10 @@ export function fetchMuscleWeek(): Promise<MuscleWeekView> {
 
 export function fetchMuscleStrength(): Promise<MuscleStrengthView> {
   return json('/api/muscle-strength');
+}
+
+export function fetchMuscleRecovery(): Promise<MuscleRecoveryView> {
+  return json('/api/muscle-recovery');
 }
 
 /** `null` when no training week is active — see this module's header. */

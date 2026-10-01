@@ -2,7 +2,7 @@
  * Pure derivations behind the `#/body` wall page (VW-338, plan D1).
  *
  * Everything here is `(payload) -> view data`: no fetch, no clock, no React, so
- * the page's render test can drive it with the same JSON the three `/api/muscle-*`
+ * the page's render test can drive it with the same JSON the four `/api/muscle-*`
  * routes return. `BodyView` holds no logic beyond layout.
  *
  * ── Two muscle vocabularies meet here ─────────────────────────────────────
@@ -30,6 +30,7 @@ import type { MuscleStripMuscleData } from '@titan-design/react-ui';
 
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthView,
   MuscleWeekMuscleView,
   MuscleWeekView,
@@ -40,6 +41,7 @@ export interface BodyPageData {
   week: MuscleWeekView;
   strength: MuscleStrengthView;
   plan: MusclePlanView | null;
+  recovery: MuscleRecoveryView;
 }
 
 const MUSCLE_BY_SLUG = new Map<string, MuscleGroup>(

@@ -1,7 +1,7 @@
 /**
  * `#/body` fetch wrapper (VW-338, plan D1).
  *
- * Polls the three `/api/muscle-*` read models at the same cadence the other
+ * Polls the four `/api/muscle-*` read models at the same cadence the other
  * operator routes use, for the same reason `goals-client.ts` gives: a `set.end`
  * writes derived numbers to sqlite with no live-signal push, so a poll is the
  * only way a set logged during a session reaches this page.
@@ -12,7 +12,12 @@
 import React, { useEffect, useState } from 'react';
 import { Caption, Spinner, Surface } from '@titan-design/react-ui';
 
-import { fetchMusclePlan, fetchMuscleStrength, fetchMuscleWeek } from './body-client.js';
+import {
+  fetchMusclePlan,
+  fetchMuscleRecovery,
+  fetchMuscleStrength,
+  fetchMuscleWeek,
+} from './body-client.js';
 import { BodyView } from './BodyView.js';
 import type { BodyPageData } from './body-model.js';
 import { ErrorNote, PAGE_PADDING } from '../planner/PlanBuilderPage.js';
@@ -22,12 +27,13 @@ import { SPACE } from '../planner/design.js';
 const POLL_INTERVAL_MS = 2000;
 
 async function load(): Promise<BodyPageData> {
-  const [week, strength, plan] = await Promise.all([
+  const [week, strength, plan, recovery] = await Promise.all([
     fetchMuscleWeek(),
     fetchMuscleStrength(),
     fetchMusclePlan(),
+    fetchMuscleRecovery(),
   ]);
-  return { week, strength, plan };
+  return { week, strength, plan, recovery };
 }
 
 export function BodyPage(): React.JSX.Element {
