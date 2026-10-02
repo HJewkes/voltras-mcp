@@ -17,6 +17,9 @@
 // `muscle-set-scope.ts` (VW-329), shared with every other per-muscle read model
 // so the body-map figure cannot contradict itself between panels.
 //
+// FREQUENCY (VW-623, B28): planned and observed training days per muscle this week, at landmark
+// credit through `dayFrequencyCredit`. It reports days only; the band verdict is the plan lint's.
+//
 // Confidentiality: plan metadata and fitness units only — no protocol data (NF-07).
 
 import {
@@ -24,8 +27,11 @@ import {
   TITAN_MUSCLE_GROUPS,
   type TitanMuscleGroup,
 } from '../../exercises/muscle-map.js';
+import type { SlugAttribution } from '../../exercises/muscle-attribution.js';
+import { plannedWeeklyFrequency, weeklyFrequency } from '../../plan/muscle-frequency.js';
 import type { StoredPlannedExercise, StoredSet, StoredTrainingWeek } from '../../store/types.js';
 import {
+  attributionFor,
   endOfCalendarWeekIso,
   isEligibleWorkingSet,
   startOfCalendarWeekIso,
@@ -40,6 +46,8 @@ export interface MusclePlanTemplateRow {
   id: string;
   name: string;
   completed: boolean;
+  /** The template's day, so two sessions on one weekday count as one training day. */
+  dayLabel?: string;
 }
 
 /** One planned-but-not-yet-trained exercise, for a muscle's `plannedRemaining` list. */
@@ -56,6 +64,13 @@ export interface MusclePlanMuscleView {
   plannedSetsThisWeek: number;
   doneSetsThisWeek: number;
   plannedRemaining: MusclePlanRemainingExercise[];
+  frequency: MusclePlanFrequency;
+}
+
+/** Training days this muscle is targeted on: planned across the active week, observed this calendar week. */
+export interface MusclePlanFrequency {
+  plannedPerWeek: number;
+  observedThisWeek: number;
 }
 
 export interface MusclePlanView {
@@ -136,6 +151,35 @@ function accumulateDone(
   return doneSets;
 }
 
+/** Planned training days per muscle across the active week's templates. */
+function plannedFrequency(rows: MusclePlanRows): Map<TitanMuscleGroup, number> {
+  return plannedWeeklyFrequency(
+    rows.templates.map((template) => ({
+      name: template.name,
+      ...(template.dayLabel !== undefined ? { dayLabel: template.dayLabel } : {}),
+      exercises: rows.plannedExercises
+        .filter((e) => e.workoutTemplateId === template.id)
+        .map((e) => ({ muscleGroups: titanMusclesFor(e.exerciseId, rows.catalog) })),
+    })),
+  );
+}
+
+/** Observed training days per muscle: eligible sets grouped by the UTC day they started. */
+function observedFrequency(
+  completedSets: readonly StoredSet[],
+  weekStart: string,
+  weekEnd: string,
+  catalog: MuscleCatalogLookup,
+): Map<TitanMuscleGroup, number> {
+  const days = new Map<string, SlugAttribution[][]>();
+  for (const set of completedSets) {
+    if (set.exerciseId === undefined || !isEligibleWorkingSet(set, weekStart, weekEnd)) continue;
+    const day = set.startedAt.slice(0, 10);
+    days.set(day, [...(days.get(day) ?? []), attributionFor(set.exerciseId, catalog)]);
+  }
+  return weeklyFrequency(days.values());
+}
+
 /**
  * Shape the active training week's plan plus this calendar week's completed
  * sets into one row per titan muscle group (VW-331, B4): planned sets this
@@ -152,12 +196,18 @@ export function buildMusclePlanView(rows: MusclePlanRows): MusclePlanView {
     rows.catalog,
   );
   const doneSets = accumulateDone(rows.completedSets, weekStart, weekEnd, rows.catalog);
+  const planned = plannedFrequency(rows);
+  const observed = observedFrequency(rows.completedSets, weekStart, weekEnd, rows.catalog);
 
   const muscles: MusclePlanMuscleView[] = TITAN_MUSCLE_GROUPS.map((muscle) => ({
     muscle,
     plannedSetsThisWeek: plannedSets.get(muscle) ?? 0,
     doneSetsThisWeek: doneSets.get(muscle) ?? 0,
     plannedRemaining: plannedRemaining.get(muscle) ?? [],
+    frequency: {
+      plannedPerWeek: planned.get(muscle) ?? 0,
+      observedThisWeek: observed.get(muscle) ?? 0,
+    },
   }));
 
   return {

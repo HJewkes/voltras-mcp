@@ -173,6 +173,7 @@ const PLAN: MusclePlanView = {
       muscle: 'chest',
       plannedSetsThisWeek: 12,
       doneSetsThisWeek: 9,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Push A', exerciseId: 'chest-press', exerciseName: 'Chest Press', sets: 3 },
       ],
@@ -182,6 +183,7 @@ const PLAN: MusclePlanView = {
       muscle: 'triceps',
       plannedSetsThisWeek: 3,
       doneSetsThisWeek: 0,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Push A', exerciseId: 'chest-press', exerciseName: 'Chest Press', sets: 3 },
       ],
@@ -190,6 +192,7 @@ const PLAN: MusclePlanView = {
       muscle: 'lats',
       plannedSetsThisWeek: 9,
       doneSetsThisWeek: 3,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Pull A', exerciseId: 'cable-row', exerciseName: 'Cable Row', sets: 6 },
       ],

@@ -92,6 +92,7 @@ const PLAN: MusclePlanView = {
       muscle: 'chest',
       plannedSetsThisWeek: 12,
       doneSetsThisWeek: 6,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Push B', exerciseId: 'cable-fly', exerciseName: 'Cable Fly', sets: 6 },
       ],

@@ -230,6 +230,7 @@ export {
 
 export {
   buildMusclePlanView,
+  type MusclePlanFrequency,
   type MusclePlanMuscleView,
   type MusclePlanRemainingExercise,
   type MusclePlanRows,

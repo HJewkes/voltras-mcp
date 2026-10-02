@@ -91,6 +91,7 @@ import {
   type CurrentBlockRead,
   type PlanningRead,
 } from '../plan/current-block.js';
+import { lintMuscleFrequencyChange, type FrequencyTemplate } from '../plan/muscle-frequency.js';
 import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
@@ -173,7 +174,10 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   '`upper_back`, and a chest press adds nothing to a delt), PLUS three cross-template ' +
   'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
   'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
-  'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
+  'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32), and each ' +
+  "target muscle's training days this week against its recovery-tier frequency band, a " +
+  'planning prior (VW-623): too few days is judged only once the week has filled enough days to ' +
+  'reach the band, and a frequency warning is returned only by the write that changed it. Each ' +
   'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
@@ -222,9 +226,10 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'says how that block\u2019s dates changed, in one sentence (`fact`). `advisories` are notes to ' +
   'weigh, never blocks: a main lift on an open flatline; the finishing block run past its ' +
   'tier\u2019s accumulation-to-deload prior (never for a beginner); a declared advanced lifter ' +
-  'with 6+ weeks and no deload, as evidence against the tier; and no active rest (a deload week ' +
-  'then an off week) in the last 12 months. The ratio is a planning prior; the deload trigger ' +
-  'stays performance-based. Then date the block with ' +
+  'with 6+ weeks and no deload, as evidence against the tier; no active rest (a deload week ' +
+  'then an off week) in the last 12 months; and the next block adding a training day a week ' +
+  'before the previous day count held for 2 blocks. The ratio and the hold are planning ' +
+  'priors; the deload trigger stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
 
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
@@ -790,7 +795,7 @@ async function createPlannedExercise(
   const refusal = validatePrescription(plannedExercise);
   if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
-  const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
+  const warnings = await lintTemplateVolume(state, input.workoutTemplateId, plannedExercise.id);
   return { plannedExercise, warnings };
 }
 
@@ -821,6 +826,7 @@ function prescriptionGoalAndRest(
 async function lintTemplateVolume(
   state: ServerState,
   workoutTemplateId: string,
+  addedId: string,
 ): Promise<PlanWarning[]> {
   try {
     const siblings = await state.store.getPlannedExercisesForTemplate(workoutTemplateId);
@@ -832,8 +838,7 @@ async function lintTemplateVolume(
     });
     const crossTemplateWarnings = await lintAcrossWeek(
       state,
-      workoutTemplateId,
-      siblings,
+      { templateId: workoutTemplateId, exercises: siblings, addedId },
       tier,
       confidence,
     );
@@ -848,21 +853,24 @@ interface TemplateExerciseBucket {
   exercises: LintPlanExercise[];
 }
 
-/** Runs the weekly ceiling, consecutive-days, and priority-muscle B32 lints. */
+/** The template just written to, its exercises after the insert, and the inserted row's id. */
+interface AddedExercise {
+  templateId: string;
+  exercises: StoredPlannedExercise[];
+  addedId: string;
+}
+
+/** Runs the weekly ceiling, consecutive-days and priority-muscle B32 lints, and the frequency band (VW-623). */
 async function lintAcrossWeek(
   state: ServerState,
-  workoutTemplateId: string,
-  ownExercises: StoredPlannedExercise[],
+  added: AddedExercise,
   tier: Tier,
   confidence: TierConfidence,
 ): Promise<PlanWarning[]> {
-  const current = await state.store.getWorkoutTemplate(workoutTemplateId);
+  const current = await state.store.getWorkoutTemplate(added.templateId);
   if (current === undefined) return [];
   const weekTemplates = await state.store.getWorkoutTemplatesForWeek(current.weekId);
-  const buckets = await templateExerciseBuckets(state, weekTemplates, {
-    templateId: workoutTemplateId,
-    exercises: ownExercises,
-  });
+  const buckets = await templateExerciseBuckets(state, weekTemplates, added);
   const weekExercises = buckets.flatMap((b) => b.exercises);
   const weekly = lintWeeklyVolume({ exercises: weekExercises, tier, confidence });
   const consecutive = lintSameMuscleHighVolumeConsecutiveDays({
@@ -874,7 +882,32 @@ async function lintAcrossWeek(
     confidence,
   });
   const priority = await lintPriorityMuscle(state, current, weekExercises);
-  return [...weekly, ...consecutive, ...priority];
+  const frequency = lintMuscleFrequencyChange({
+    templates: buckets.map((b) => frequencyTemplate(b.template, b.exercises)),
+    before: buckets.map((b) =>
+      b.template.id === added.templateId
+        ? frequencyTemplate(b.template, withoutAdded(state, added))
+        : frequencyTemplate(b.template, b.exercises),
+    ),
+    tier,
+    confidence,
+  });
+  return [...weekly, ...consecutive, ...priority, ...frequency];
+}
+
+function frequencyTemplate(
+  template: StoredWorkoutTemplate,
+  exercises: LintPlanExercise[],
+): FrequencyTemplate {
+  return {
+    name: template.name,
+    ...(template.dayLabel !== undefined ? { dayLabel: template.dayLabel } : {}),
+    exercises,
+  };
+}
+
+function withoutAdded(state: ServerState, added: AddedExercise): LintPlanExercise[] {
+  return added.exercises.filter((e) => e.id !== added.addedId).map((e) => toLintExercise(state, e));
 }
 
 /** Fetches each template's planned exercises, reusing an already-known one to avoid a refetch. */

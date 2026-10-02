@@ -316,6 +316,105 @@ describe('plan.exercise.create lints', () => {
     expect(weekly[0]).toMatchObject({ muscleGroup: 'chest', observed: 21, ceiling: 20 });
   });
 
+  it('warns when a week trains chest on more days than the beginner band (VW-623)', async () => {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const frequencyAfter: PlanWarning[][] = [];
+    for (const [i, day] of days.entries()) {
+      const templateId = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, i, day))
+        .template.id;
+      const r = await addExercise(h, templateId, 'bench-press', 2, 0);
+      frequencyAfter.push(
+        body<{ warnings: PlanWarning[] }>(r).warnings.filter((w) =>
+          w.code.startsWith('muscle_frequency_'),
+        ),
+      );
+    }
+
+    expect(frequencyAfter.slice(0, 4).flat()).toEqual([]);
+    expect(frequencyAfter[4]).toMatchObject([
+      { code: 'muscle_frequency_above_band', muscleGroup: 'chest', observed: 5, ceiling: 4 },
+    ]);
+    expect(frequencyAfter[4]?.[0]?.message).toContain('planning prior');
+  });
+
+  /** The frequency-band warnings on one plan.exercise.create response. */
+  function frequencyWarnings(r: ToolResult): PlanWarning[] {
+    return body<{ warnings: PlanWarning[] }>(r).warnings.filter((w) =>
+      w.code.startsWith('muscle_frequency_'),
+    );
+  }
+
+  async function weekWithTemplates(days: string[]): Promise<string[]> {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const ids: string[] = [];
+    for (const [i, day] of days.entries()) {
+      ids.push(
+        body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, i, day)).template.id,
+      );
+    }
+    return ids;
+  }
+
+  it('stays quiet on a half-built week, even when every template already exists', async () => {
+    const [mon] = await weekWithTemplates(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+
+    const first = await addExercise(h, mon!, 'bench-press', 3, 0);
+    const second = await addExercise(h, mon!, 'cable-bicep-curl', 3, 1);
+
+    expect(frequencyWarnings(first)).toEqual([]);
+    expect(frequencyWarnings(second)).toEqual([]);
+  });
+
+  it('warns below the band once the week is filled, and does not repeat it on the next add', async () => {
+    const [mon, thu] = await weekWithTemplates(['Mon', 'Thu']);
+    await addExercise(h, mon!, 'bench-press', 3, 0);
+
+    const fills = await addExercise(h, thu!, 'cable-bicep-curl', 3, 0);
+    const next = await addExercise(h, thu!, 'cable-bicep-curl', 2, 1);
+
+    expect(frequencyWarnings(fills).map((w) => [w.code, w.muscleGroup, w.observed])).toEqual([
+      ['muscle_frequency_below_band', 'chest', 1],
+      ['muscle_frequency_below_band', 'biceps', 1],
+    ]);
+    expect(frequencyWarnings(next)).toEqual([]);
+  });
+
+  it('warns again when an add changes a warned muscle', async () => {
+    const [mon, tue, wed, thu, fri, sat] = await weekWithTemplates([
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+    ]);
+    for (const id of [mon, tue, wed, thu, fri]) await addExercise(h, id!, 'bench-press', 2, 0);
+
+    const sixth = await addExercise(h, sat!, 'bench-press', 2, 0);
+
+    expect(frequencyWarnings(sixth)).toMatchObject([
+      { code: 'muscle_frequency_above_band', muscleGroup: 'chest', observed: 6, ceiling: 4 },
+    ]);
+  });
+
+  it('reads the clamped tier: a declared advanced lifter with no history gets the beginner band', async () => {
+    await h.store.putTrainingProfile({
+      userId: 'local',
+      declaredTier: 'advanced',
+      updatedAt: new Date().toISOString(),
+    });
+    const ids = await weekWithTemplates(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+    const responses: ToolResult[] = [];
+    for (const id of ids) responses.push(await addExercise(h, id, 'bench-press', 2, 0));
+
+    // The advanced chest band is 2-3, so a 4th chest day would warn there; at beginner it is 2-4.
+    expect(responses.slice(0, 4).flatMap(frequencyWarnings)).toEqual([]);
+    expect(frequencyWarnings(responses[4]!)).toMatchObject([
+      { code: 'muscle_frequency_above_band', observed: 5, ceiling: 4, tier: 'beginner' },
+    ]);
+  });
+
   it('warns when the same muscle is stacked over ceiling on two consecutive templates', async () => {
     const programId = await makeProgram(h);
     const blockId = await makeBlock(h, programId, 4);

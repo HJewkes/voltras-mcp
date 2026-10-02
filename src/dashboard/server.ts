@@ -827,7 +827,12 @@ async function findActiveWeek(store: DashboardPlanStore): Promise<ActiveWeek | n
       for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
         const completed = (await store.getAssignmentsForTemplate(template.id)).length > 0;
         if (!completed) hasIncomplete = true;
-        templates.push({ id: template.id, name: template.name, completed });
+        templates.push({
+          id: template.id,
+          name: template.name,
+          completed,
+          ...(template.dayLabel !== undefined ? { dayLabel: template.dayLabel } : {}),
+        });
       }
       if (hasIncomplete) return { week, templates };
     }
