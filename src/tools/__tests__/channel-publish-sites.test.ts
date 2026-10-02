@@ -1,6 +1,6 @@
 // The authoritative inventory of channel `.publish(` sites under `src/` (VW-212, VW-686).
 //
-// Every non-test `.ts` file under `src/` is walked. Each `.publish(` occurrence must be named
+// Every non-test `.ts` or `.tsx` file under `src/` is walked. Each `.publish(` occurrence must be named
 // in SITES below with the reason its event does, or deliberately does not, carry `meta.slot`:
 //
 //  - forSlot: the receiver is `forSlot(...)`, or a local bound to it (pinned by `bindings`).
@@ -520,7 +520,7 @@ function voiceToolsSites(): Site[] {
 }
 
 function isSourceFile(name: string): boolean {
-  return name.endsWith('.ts') && !name.endsWith('.test.ts');
+  return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name);
 }
 
 function walkSources(dir: string): string[] {
@@ -560,11 +560,20 @@ function expectPin(pin: Pin, what: string): void {
   }
 }
 
+/** A method helper is counted by method name and a channels argument, whatever the receiver is called. */
+function methodCallPattern(method: string): RegExp {
+  return new RegExp(`\\.${method}\\([^)]*hannels\\b`, 'g');
+}
+
 function callerCountAcrossSrc(name: string): number {
-  const definition = `function ${name.split('.').at(-1)}(`;
+  const method = name.split('.').at(-1) ?? name;
+  const definition = `function ${method}(`;
+  const isMethod = name.includes('.');
   let total = 0;
   for (const source of SOURCES.values()) {
-    total += countOccurrences(source, `${name}(`) - countOccurrences(source, definition);
+    total += isMethod
+      ? countMatches(source, methodCallPattern(method))
+      : countOccurrences(source, `${name}(`) - countOccurrences(source, definition);
   }
   return total;
 }
