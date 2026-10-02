@@ -4,7 +4,7 @@
 // mounted with `react-dom/client`. A wrapper that changed the DOM, dropped a prop or
 // lost a ref would break titan parents in the fidelity build, so each is proven here.
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -187,20 +187,72 @@ describe('fidelity registry', () => {
   });
 });
 
+/** Relative import and re-export specifiers of one module, resolved to files under `srcRoot`. */
+function localImports(srcRoot: string, file: string): string[] {
+  const text = readFileSync(join(srcRoot, file), 'utf8');
+  const specifiers = [...text.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)].map(
+    (m) => m[1]!,
+  );
+  return specifiers.flatMap((specifier) => {
+    if (!specifier.startsWith('.')) return specifier.includes('dev/fidelity') ? [specifier] : [];
+    const base = join(dirname(file), specifier).replace(/\.js$/, '');
+    const candidates = ['', '.ts', '.tsx', `${sep}index.ts`, `${sep}index.tsx`].map(
+      (ext) => base + ext,
+    );
+    return candidates.filter((candidate) => existsSync(join(srcRoot, candidate))).slice(0, 1);
+  });
+}
+
+const FIDELITY_DIR = join('dashboard', 'spa', 'dev', 'fidelity') + sep;
+// The build config loads the plugin, which itself imports nothing the browser bundle sees.
+const ALLOWED_EDGE = {
+  from: join('dashboard', 'spa', 'vite.config.ts'),
+  to: `${FIDELITY_DIR}vite-plugin.ts`,
+};
+
+/** Modules outside dev/fidelity that reach it, directly or through any chain of local imports. */
+function reachesFidelity(graph: ReadonlyMap<string, readonly string[]>): string[] {
+  const tainted = new Set<string>();
+  const isFidelity = (to: string): boolean =>
+    to.includes('dev/fidelity') || to.startsWith(FIDELITY_DIR);
+  const taints = (from: string, to: string): boolean =>
+    (isFidelity(to) || tainted.has(to)) && !(from === ALLOWED_EDGE.from && to === ALLOWED_EDGE.to);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [file, imports] of graph) {
+      if (tainted.has(file) || file.startsWith(FIDELITY_DIR)) continue;
+      if (!imports.some((to) => taints(file, to))) continue;
+      tainted.add(file);
+      grew = true;
+    }
+  }
+  return [...tainted].sort();
+}
+
 describe('dev-only boundary', () => {
-  it('has no importer of dev/fidelity outside that folder and its own tests', () => {
-    const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-    const fidelityDir = join('dashboard', 'spa', 'dev', 'fidelity') + sep;
+  const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  it('has no importer of dev/fidelity outside that folder apart from the build config', () => {
     const files = readdirSync(srcRoot, { recursive: true, encoding: 'utf8' })
       .filter((file) => /\.(ts|tsx|mts|js|mjs)$/.test(file))
-      .filter((file) => !file.startsWith(fidelityDir))
       .filter((file) => !file.includes(`__tests__${sep}spa-fidelity-`));
-
-    const importers = files.filter((file) =>
-      /dev\/fidelity/.test(readFileSync(join(srcRoot, file), 'utf8')),
-    );
+    const graph = new Map(files.map((file) => [file, localImports(srcRoot, file)]));
 
     expect(files).toContain(join('dashboard', 'spa', 'main.tsx'));
-    expect(importers).toEqual([]);
+    expect(graph.get(ALLOWED_EDGE.from)).toContain(ALLOWED_EDGE.to);
+    expect(reachesFidelity(graph)).toEqual([]);
+  });
+
+  it('catches a sibling under spa/dev and a two-hop re-export through it', () => {
+    const devIndex = join('dashboard', 'spa', 'dev', 'index.ts');
+    const page = join('dashboard', 'spa', 'goals', 'GoalsView.tsx');
+    const graph = new Map<string, string[]>([
+      [page, [devIndex]],
+      [devIndex, [`${FIDELITY_DIR}registry.ts`]],
+      [ALLOWED_EDGE.from, [ALLOWED_EDGE.to]],
+    ]);
+
+    expect(reachesFidelity(graph)).toEqual([devIndex, page].sort());
   });
 });
