@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Tier } from '../../tools/tier-signal.js';
 import {
   lintMuscleFrequency,
+  lintMuscleFrequencyChange,
   plannedWeeklyFrequency,
   trainingDaysOf,
   weeklyFrequency,
@@ -112,6 +113,70 @@ describe('a week with fewer days than the band', () => {
       { code: 'muscle_frequency_below_band', muscleGroup: 'chest' },
       { code: 'muscle_frequency_below_band', muscleGroup: 'quads' },
     ]);
+  });
+});
+
+describe('the below-band guard counts filled days, not templates', () => {
+  const chestMonday: FrequencyTemplate = {
+    dayLabel: 'Mon',
+    exercises: [{ muscleGroups: ['chest'] }],
+  };
+  const empty = (dayLabel: string): FrequencyTemplate => ({ dayLabel, exercises: [] });
+
+  it('warns on a finished 2-day week that trains chest once', () => {
+    const templates = [chestMonday, { dayLabel: 'Thu', exercises: [{ muscleGroups: ['quads'] }] }];
+
+    const warnings = lintMuscleFrequency({
+      templates,
+      tier: 'intermediate',
+      confidence: 'confident',
+    });
+
+    expect(warnings.filter((w) => w.muscleGroup === 'chest')).toMatchObject([
+      { code: 'muscle_frequency_below_band', observed: 1, floor: 2 },
+    ]);
+  });
+
+  it('stays quiet while fewer days are filled than the band needs, however many templates exist', () => {
+    const templates = [chestMonday, ...['Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(empty)];
+
+    expect(
+      lintMuscleFrequency({ templates, tier: 'intermediate', confidence: 'confident' }),
+    ).toEqual([]);
+  });
+});
+
+describe('lintMuscleFrequencyChange', () => {
+  const day = (dayLabel: string, ...muscles: string[]): FrequencyTemplate => ({
+    dayLabel,
+    exercises: muscles.map((m) => ({ muscleGroups: [m] })),
+  });
+  const warned = [day('Mon', 'chest'), day('Thu', 'quads')];
+
+  it('does not repeat a warning whose muscle, direction and day count did not change', () => {
+    const after = [day('Mon', 'chest'), day('Thu', 'quads', 'quads')];
+
+    expect(
+      lintMuscleFrequencyChange({
+        before: warned,
+        templates: after,
+        tier: 'advanced',
+        confidence: 'confident',
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports the warnings the write caused', () => {
+    const before = [day('Mon', 'chest'), day('Thu')];
+
+    const caused = lintMuscleFrequencyChange({
+      before,
+      templates: warned,
+      tier: 'advanced',
+      confidence: 'confident',
+    });
+
+    expect(caused.map((w) => w.muscleGroup)).toEqual(['chest', 'quads']);
   });
 });
 

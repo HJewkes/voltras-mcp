@@ -103,15 +103,15 @@ const PROVISIONAL_SUFFIX =
 
 /**
  * A warning per muscle the week trains on more days than its band, or on fewer when the week
- * already has enough training days to reach the band: a week with fewer days than the band's low
- * end is still being built, or its day count is the thing to raise, not this muscle.
+ * already has enough filled days (days with an exercise) to reach the band: a week with fewer is
+ * still being built, or its day count is the thing to raise, not this muscle.
  */
 export function lintMuscleFrequency(input: LintMuscleFrequencyInput): PlanWarning[] {
-  const weekDays = trainingDaysOf(input.templates);
+  const filledDays = trainingDaysOf(input.templates.filter((t) => t.exercises.length > 0));
   const warnings: PlanWarning[] = [];
   for (const [muscle, days] of plannedWeeklyFrequency(input.templates)) {
     const band = frequencyBand(muscle, input.tier);
-    if (band !== null && isOutsideBand(days, band, weekDays)) {
+    if (band !== null && isOutsideBand(days, band, filledDays)) {
       warnings.push(frequencyWarning(muscle, days, band, input.tier));
     }
   }
@@ -119,8 +119,28 @@ export function lintMuscleFrequency(input: LintMuscleFrequencyInput): PlanWarnin
   return warnings.map((w) => ({ ...w, message: w.message + PROVISIONAL_SUFFIX }));
 }
 
-function isOutsideBand(days: number, band: FrequencyBand, weekDays: number): boolean {
-  return days > band.high || (days < band.low && weekDays >= band.low);
+export interface LintMuscleFrequencyChangeInput extends LintMuscleFrequencyInput {
+  /** The same week before the write being linted. */
+  before: readonly FrequencyTemplate[];
+}
+
+/**
+ * The frequency warnings a write caused: those on the week after it whose muscle, direction and
+ * day count were not already warned before it, so an unchanged muscle is not warned again.
+ */
+export function lintMuscleFrequencyChange(input: LintMuscleFrequencyChangeInput): PlanWarning[] {
+  const before = new Set(
+    lintMuscleFrequency({ ...input, templates: input.before }).map(warningKey),
+  );
+  return lintMuscleFrequency(input).filter((w) => !before.has(warningKey(w)));
+}
+
+function warningKey(warning: PlanWarning): string {
+  return `${warning.code} ${warning.muscleGroup} ${warning.observed}`;
+}
+
+function isOutsideBand(days: number, band: FrequencyBand, filledDays: number): boolean {
+  return days > band.high || (days < band.low && filledDays >= band.low);
 }
 
 function frequencyWarning(
