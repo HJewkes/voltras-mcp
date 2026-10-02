@@ -22,10 +22,17 @@ export interface FidelitySnapshot {
   readonly kinds: Readonly<Record<FidelityKind, FidelityKindSummary>>;
 }
 
+/** A component the fidelity build saw but could not wrap, such as a `const` arrow component. */
+export interface UninstrumentedComponent {
+  readonly name: string;
+  readonly source: string;
+}
+
 export interface FidelityRegistryHandle {
   readonly register: typeof register;
   readonly subscribe: typeof subscribe;
   readonly snapshot: typeof snapshot;
+  readonly uninstrumented: typeof uninstrumented;
 }
 
 declare global {
@@ -36,7 +43,9 @@ declare global {
 
 const entries = new Map<string, FidelityEntry>();
 const listeners = new Set<() => void>();
+const notInstrumented: UninstrumentedComponent[] = [];
 let current: FidelitySnapshot = buildSnapshot();
+let stale = false;
 
 function summarize(kind: FidelityKind, all: readonly FidelityEntry[]): FidelityKindSummary {
   const ofKind = all.filter((entry) => entry.kind === kind);
@@ -56,8 +65,9 @@ function buildSnapshot(): FidelitySnapshot {
   };
 }
 
+// The snapshot is rebuilt on the next read, not per change, so a mount burst of n entries costs O(n).
 function publish(): void {
-  current = buildSnapshot();
+  stale = true;
   for (const listener of [...listeners]) listener();
 }
 
@@ -81,9 +91,27 @@ export function subscribe(listener: () => void): () => void {
 
 /** The same object until the registry changes, so it is safe for useSyncExternalStore. */
 export function snapshot(): FidelitySnapshot {
+  if (stale) {
+    current = buildSnapshot();
+    stale = false;
+  }
   return current;
 }
 
+/** Called by the fidelity build from each module that defines components it could not wrap. */
+export function noteUninstrumented(source: string, names: readonly string[]): void {
+  for (const name of names) {
+    const known = notInstrumented.some((item) => item.name === name && item.source === source);
+    if (!known) notInstrumented.push({ name, source });
+  }
+}
+
+export function uninstrumented(): readonly UninstrumentedComponent[] {
+  return [...notInstrumented].sort(
+    (a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name),
+  );
+}
+
 if (typeof window !== 'undefined') {
-  window.__vmcpFidelity = { register, subscribe, snapshot };
+  window.__vmcpFidelity = { register, subscribe, snapshot, uninstrumented };
 }
