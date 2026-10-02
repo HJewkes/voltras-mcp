@@ -172,7 +172,7 @@ ASK THE LIFTER EACH TIME which they want, and never infer it from a quiet week: 
 
 Create a workout template under a week — takes the parent weekId.
 
-A template holds one or more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. A template holds no volume until exercises are added, so the tier-aware volume lints run on `plan.exercise.create`, not here. The one warning here is a week that now fills all seven days with no day off; it is advisory and the template is still created.
+A template holds one or more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. A template holds no volume until exercises are added, so the tier-aware volume lints run on `plan.exercise.create`, not here. The one warning here comes once per week, on the template that leaves the week with no day off (a rest template is not a training day); it is advisory and the template is still created.
 
 **Parameters**
 
