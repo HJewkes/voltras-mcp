@@ -6,9 +6,10 @@ const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.ur
 };
 
 describe('prepack guard', () => {
-  it('rebuilds the production dashboard before checking the bundle', () => {
+  it('compiles the server, then rebuilds the dashboard, then checks the bundle', () => {
     const steps = pkg.scripts.prepack?.split('&&').map((s) => s.trim());
     expect(steps).toEqual([
+      'npm run build',
       'npm run build:dashboard',
       'node scripts/check-spa-bundle.mjs --absent dist/spa',
     ]);
