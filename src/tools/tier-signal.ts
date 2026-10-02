@@ -26,7 +26,12 @@
 import { localDate, readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
-import { validateHistory, type HistoricalTrainingSummary } from './tier-history.js';
+import {
+  capDropped,
+  cutToWindow,
+  validateHistory,
+  type HistoricalTrainingSummary,
+} from './tier-history.js';
 
 export type { HistoricalTrainingSummary } from './tier-history.js';
 
@@ -222,42 +227,44 @@ function daySpanWeeks(days: readonly string[]): number {
   return Math.floor((Date.parse(days[days.length - 1]) - Date.parse(days[0])) / MS_PER_WEEK);
 }
 
-/** Months from the summary's last day to the first logged day, or to asOf/now when none is logged. */
+/**
+ * Months from the summary's last day to the first logged day, or to asOf/now when none is
+ * logged, rounded to the 0.1 month the evidence shows so the gate reads the shown value.
+ */
 function derivedBreakMonths(
   importedDays: readonly string[],
   loggedDays: readonly string[],
-  asOf: string | undefined,
+  cutoff: string,
 ): number | null {
   const lastImported = importedDays.at(-1);
   if (lastImported === undefined) return null;
-  const resumedOn = loggedDays[0] ?? localDate(asOf ?? new Date().toISOString());
+  const resumedOn = loggedDays[0] ?? cutoff;
   const gapDays = Math.max(0, (Date.parse(resumedOn) - Date.parse(lastImported)) / DAY_MS);
-  return gapDays / DAYS_PER_MONTH;
+  return Math.round((gapDays / DAYS_PER_MONTH) * 10) / 10;
 }
 
-/** Validate a summary and union it with the logged days, honouring the same asOf cutoff. */
+/** Validate a summary, cut it at asOf (or today), and union it with the logged days. */
 function readImportedHistory(
   raw: HistoricalTrainingSummary,
   loggedDays: readonly string[],
   asOf: string | undefined,
 ): ImportedHistory {
   const { history, dropped } = validateHistory(raw);
-  const cutoff = asOf === undefined ? null : localDate(asOf);
-  const inWindow = (date: string): boolean => cutoff === null || date <= cutoff;
-  const importedDays = (history?.trainingDayDates ?? []).filter(inWindow);
+  const cutoff = localDate(asOf ?? new Date().toISOString());
+  const windowed = cutToWindow(history, loggedDays, cutoff);
   const logged = new Set(loggedDays);
-  const added = importedDays.filter((date) => !logged.has(date));
-  const breakMonths = derivedBreakMonths(importedDays, loggedDays, asOf);
+  const added = windowed.trainingDayDates.filter((date) => !logged.has(date));
+  const breakMonths = derivedBreakMonths(windowed.trainingDayDates, loggedDays, cutoff);
   return {
     unionDays: [...loggedDays, ...added].sort(),
-    stalled: (history?.stallDates ?? []).some(inWindow),
+    stalled: windowed.stallDates.length > 0,
     breakMonths,
     frequencyConsistent: frequencyFromAttendance(history?.attendanceConsistency ?? null),
     evidence: {
       historicalTrainingDays: added.length,
       historySource: history?.source ?? null,
-      historyBreakMonths: breakMonths === null ? null : Math.round(breakMonths * 10) / 10,
-      historyDropped: dropped,
+      historyBreakMonths: breakMonths,
+      historyDropped: capDropped([...dropped, ...windowed.dropped]),
     },
   };
 }

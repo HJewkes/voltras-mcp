@@ -16,11 +16,17 @@ export interface HistoricalTrainingSummary {
   attendanceConsistency: number | null;
 }
 
-/** A summary that passed validation: dates sorted and unique, stalls reduced to their dates. */
+/** One lift's first sustained stall. */
+export interface StallEntry {
+  lift: string;
+  date: string;
+}
+
+/** A summary that passed validation: dates sorted and unique, stalls sorted by date. */
 export interface ValidatedHistory {
   source: string;
   trainingDayDates: string[];
-  stallDates: string[];
+  stalls: StallEntry[];
   attendanceConsistency: number | null;
 }
 
@@ -60,18 +66,18 @@ function validDates(raw: unknown[], dropped: string[]): string[] {
   return [...seen].sort();
 }
 
-function validStallDates(raw: unknown, dropped: string[]): string[] {
+function validStalls(raw: unknown, dropped: string[]): StallEntry[] {
   if (!isRecord(raw)) {
     if (raw !== undefined) dropped.push('firstSustainedStallByLift: not an object');
     return [];
   }
-  const dates: string[] = [];
+  const stalls: StallEntry[] = [];
   for (const [lift, value] of Object.entries(raw)) {
     if (value === null) continue;
-    if (isIsoDate(value)) dates.push(value);
+    if (isIsoDate(value)) stalls.push({ lift, date: value });
     else dropped.push(`firstSustainedStallByLift.${lift}: not an ISO date or null`);
   }
-  return dates.sort();
+  return stalls.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function validAttendance(raw: unknown, dropped: string[]): number | null {
@@ -94,8 +100,57 @@ export function validateHistory(raw: unknown): HistoryValidation {
   const history: ValidatedHistory = {
     source: raw.source,
     trainingDayDates: validDates(raw.trainingDayDates, dropped),
-    stallDates: validStallDates(raw.firstSustainedStallByLift, dropped),
+    stalls: validStalls(raw.firstSustainedStallByLift, dropped),
     attendanceConsistency: validAttendance(raw.attendanceConsistency, dropped),
   };
   return { history, dropped };
+}
+
+/** The entries a lifter could have lived by `cutoff`, and why each other entry was cut. */
+export interface WindowedHistory {
+  trainingDayDates: string[];
+  stallDates: string[];
+  dropped: string[];
+}
+
+/**
+ * Cut what no lifter could have lived by `cutoff` (a local date): training days after it, and
+ * stalls after it or before the first training day, logged or imported.
+ */
+export function cutToWindow(
+  history: ValidatedHistory | null,
+  loggedDays: readonly string[],
+  cutoff: string,
+): WindowedHistory {
+  const dropped: string[] = [];
+  const trainingDayDates = (history?.trainingDayDates ?? []).filter((date) => {
+    if (date <= cutoff) return true;
+    dropped.push(`trainingDayDates: ${date} is after ${cutoff}`);
+    return false;
+  });
+  const firstDay = [loggedDays[0], trainingDayDates[0]]
+    .filter((day) => day !== undefined)
+    .sort()[0];
+  const stallDates = (history?.stalls ?? []).flatMap(({ lift, date }) => {
+    const reason =
+      date > cutoff
+        ? `is after ${cutoff}`
+        : firstDay === undefined || date < firstDay
+          ? 'is before the first training day'
+          : null;
+    if (reason === null) return [date];
+    dropped.push(`firstSustainedStallByLift.${lift}: ${date} ${reason}`);
+    return [];
+  });
+  return { trainingDayDates, stallDates, dropped };
+}
+
+/** Reasons listed in full before the rest collapse into a count. */
+export const MAX_DROPPED_LISTED = 50;
+
+/** The first MAX_DROPPED_LISTED reasons, then one line counting the rest. */
+export function capDropped(dropped: readonly string[]): string[] {
+  if (dropped.length <= MAX_DROPPED_LISTED) return [...dropped];
+  const rest = dropped.length - MAX_DROPPED_LISTED;
+  return [...dropped.slice(0, MAX_DROPPED_LISTED), `and ${rest} more dropped`];
 }

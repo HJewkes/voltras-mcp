@@ -248,6 +248,83 @@ describe('getTierSignal with an imported summary (VW-551)', () => {
     expect(signal.confidence).toBe('provisional');
   });
 
+  it('cuts future-dated summary days when no asOf is passed', async () => {
+    const store = await storeWith({ everPlateaued: true }, (s) => seedSpread(s, 1, 0));
+    const history = summary({ trainingDayDates: datesFrom('2099-01-01', 24, 7) });
+
+    const signal = await getTierSignal(stateOf(store), LOCAL_USER_ID, { history });
+    await store.close();
+
+    expect(signal).toMatchObject({
+      tier: 'beginner',
+      confidence: 'provisional',
+      derivedCeiling: 'beginner',
+      ceilingBasis: null,
+    });
+    expect(signal.evidence.historicalTrainingDays).toBe(0);
+    expect(signal.evidence.historyDropped).toHaveLength(24);
+    expect(signal.evidence.historyDropped?.[0]).toMatch(
+      /^trainingDayDates: 2099-01-01 is after \d{4}-\d{2}-\d{2}$/,
+    );
+  });
+
+  it('cuts a future-dated stall when no asOf is passed', async () => {
+    const store = await storeWith({ declaredTier: 'intermediate' }, (s) => seedSpread(s, 24, 90));
+    const history = summary({ firstSustainedStallByLift: { squat: '2099-06-01' } });
+
+    const signal = await getTierSignal(stateOf(store), LOCAL_USER_ID, { history });
+    await store.close();
+
+    expect(signal).toMatchObject({ tier: 'beginner', derivedCeiling: 'beginner' });
+    expect(signal.evidence).toMatchObject({ plateauDetected: false, plateauSource: null });
+    expect(signal.evidence.historyDropped).toEqual([
+      expect.stringMatching(
+        /^firstSustainedStallByLift\.squat: 2099-06-01 is after \d{4}-\d{2}-\d{2}$/,
+      ),
+    ]);
+  });
+
+  it('cuts a stall dated before the first training day', async () => {
+    const store = await storeWith({ declaredTier: 'intermediate' }, (s) => seedSpread(s, 24, 90));
+    const history = summary({
+      trainingDayDates: datesFrom('2024-09-04', 4, 7),
+      firstSustainedStallByLift: { bench: '2024-06-01' },
+    });
+
+    const signal = await getTierSignal(stateOf(store), LOCAL_USER_ID, { history });
+    await store.close();
+
+    expect(signal).toMatchObject({ tier: 'beginner', derivedCeiling: 'beginner' });
+    expect(signal.evidence.plateauDetected).toBe(false);
+    expect(signal.evidence.historyDropped).toEqual([
+      'firstSustainedStallByLift.bench: 2024-06-01 is before the first training day',
+    ]);
+  });
+
+  it('gates the derived break on the value it shows: 11.96 months reads 12 and closes', async () => {
+    const store = await storeWith({ everPlateaued: true, yearsTraining: 1 }, (s) =>
+      seedSpread(s, 6, 30),
+    );
+    const history = summary({ trainingDayDates: ['2023-12-20', '2024-01-03'] });
+
+    const signal = await getTierSignal(stateOf(store), LOCAL_USER_ID, { history });
+    await store.close();
+
+    expect(signal.evidence.historyBreakMonths).toBe(12);
+    expect(signal.ceilingBasis).toBeNull();
+  });
+
+  it('lists the first 50 dropped entries and counts the rest', async () => {
+    const store = await storeWith({});
+    const history = summary({ trainingDayDates: Array.from({ length: 60 }, (_, i) => `bad-${i}`) });
+
+    const signal = await getTierSignal(stateOf(store), LOCAL_USER_ID, { history });
+    await store.close();
+
+    expect(signal.evidence.historyDropped).toHaveLength(51);
+    expect(signal.evidence.historyDropped?.at(-1)).toBe('and 10 more dropped');
+  });
+
   it('reports a rejected summary in the evidence instead of throwing', async () => {
     const store = await storeWith({ everPlateaued: true });
 
@@ -276,7 +353,7 @@ describe('validateHistory', () => {
     expect(history).toEqual({
       source: 'synthetic-export',
       trainingDayDates: ['2024-05-01', '2024-05-02'],
-      stallDates: ['2024-04-01'],
+      stalls: [{ lift: 'row', date: '2024-04-01' }],
       attendanceConsistency: null,
     });
     expect(dropped).toEqual([
