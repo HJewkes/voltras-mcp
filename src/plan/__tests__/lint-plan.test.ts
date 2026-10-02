@@ -13,6 +13,7 @@ import {
   lintPriorityMuscleChangedMidBlock,
   lintSameMuscleHighVolumeConsecutiveDays,
   lintWeeklyVolume,
+  lintWeekWithoutOffDay,
   type LintPlanExercise,
 } from '../lint-plan.js';
 
@@ -502,5 +503,42 @@ describe('same_muscle_high_volume_consecutive_days', () => {
     });
 
     expect(warnings).toEqual([]);
+  });
+});
+
+describe('lintWeekWithoutOffDay (VW-619 rung 1)', () => {
+  const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  it('warns when the templates fill all seven days', () => {
+    const warnings = lintWeekWithoutOffDay(WEEKDAYS.map((dayLabel) => ({ dayLabel })));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ code: 'week_without_off_day', observed: 7, ceiling: 6 });
+  });
+
+  it('stays quiet for a six-day week, even with two sessions on one day', () => {
+    const days = [...WEEKDAYS.slice(0, 6), 'mon '].map((dayLabel) => ({ dayLabel }));
+
+    expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
+  it('counts morning and evening sessions on one weekday as one training day', () => {
+    const days = [
+      ...WEEKDAYS.slice(0, 6).map((dayLabel) => ({ dayLabel })),
+      { dayLabel: 'Mon AM' },
+      { dayLabel: 'Monday PM' },
+    ];
+
+    expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
+  it('does not count a rest template as a training day', () => {
+    const days = WEEKDAYS.map((dayLabel, i) => ({ dayLabel, name: i === 6 ? 'Rest' : 'Lift' }));
+
+    expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
+  it('counts each unlabelled template as a day of its own', () => {
+    expect(lintWeekWithoutOffDay(Array.from({ length: 7 }, () => ({})))).toHaveLength(1);
   });
 });

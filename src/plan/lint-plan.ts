@@ -42,7 +42,8 @@ export type PlanWarningCode =
   | 'hard_sets_per_muscle_per_week_over_tier_ceiling'
   | 'meso_length_grew_mid_block'
   | 'priority_muscle_changed_mid_block'
-  | 'same_muscle_high_volume_consecutive_days';
+  | 'same_muscle_high_volume_consecutive_days'
+  | 'week_without_off_day';
 
 export interface PlanWarning {
   code: PlanWarningCode;
@@ -432,4 +433,56 @@ function consecutiveDayWarnings(
     });
   }
   return warnings;
+}
+
+// --- VW-619: rung 1 of the fatigue-reduction ladder ---
+
+const DAYS_PER_WEEK = 7;
+
+export interface LintOffDayTemplate {
+  dayLabel?: string;
+  name?: string;
+}
+
+const WEEKDAY_PREFIX = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*(?![a-z])/;
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+const REST_WORD = /\brest\b/i;
+const OFF_ONLY = /^(off|day off|off day)$/i;
+
+/** A rest or off template plans no training, so it is the day off rather than a day used. */
+function isRestTemplate(template: LintOffDayTemplate): boolean {
+  return [template.name, template.dayLabel].some(
+    (text) => text !== undefined && (REST_WORD.test(text) || OFF_ONLY.test(text.trim())),
+  );
+}
+
+/** The training day a label names: "Mon AM" and "Monday PM" are both Monday. */
+function trainingDayKey(template: LintOffDayTemplate, index: number): string {
+  const label = template.dayLabel?.trim().toLowerCase() ?? '';
+  if (label === '') return `unlabelled ${index}`;
+  return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1] ?? label;
+}
+
+/**
+ * A week whose training templates fill all seven days leaves no day off, the first rung of
+ * the fatigue-reduction ladder (rp-s2-fatigue-reduction-ladder). Templates on one weekday or
+ * date are one training day, a rest template is not training, and an unlabelled template
+ * counts as a day of its own.
+ */
+export function lintWeekWithoutOffDay(templates: readonly LintOffDayTemplate[]): PlanWarning[] {
+  const days = new Set(
+    templates.flatMap((t, i) => (isRestTemplate(t) ? [] : [trainingDayKey(t, i)])),
+  );
+  if (days.size < DAYS_PER_WEEK) return [];
+  return [
+    {
+      code: 'week_without_off_day',
+      message:
+        `This week plans ${days.size} training days, so it has no day off. A day off is the ` +
+        'first and cheapest rung of fatigue management: it clears the fatigue one hard day ' +
+        'leaves behind before any deload is needed. Consider making one of these days a rest day.',
+      observed: days.size,
+      ceiling: DAYS_PER_WEEK - 1,
+    },
+  ];
 }
