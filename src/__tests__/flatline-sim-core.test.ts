@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { detectPlateau } from '@voltras/workout-analytics';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -15,7 +16,7 @@ import {
   recallLine,
   retroRecall,
 } from '../../scripts/lib/flatline-sim-core.mjs';
-import { flatline, plateauReferenceStepLbs } from '../analytics/flatline.js';
+import { plateauReferenceStepLbs } from '../analytics/stall-step.js';
 
 const wobblingFlat = (weeks: number) =>
   Array.from({ length: weeks }, (_, week) => ({ t: week * WEEK_MS, v: 40 + (week % 2) }));
@@ -73,7 +74,7 @@ type RetroCase = { loadLbs: number; rampClass: string };
 function referenceFires(points: { t: number; v: number }[], retroCase: RetroCase): boolean {
   const step = plateauReferenceStepLbs(retroCase.loadLbs);
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
-  const shipped = flatline(series, { expectedStepLbsPerWeek: step, minDays: 14 }) !== null;
+  const shipped = detectPlateau(series, { expectedRatePerWeek: step, minDays: 14 }).isPlateau;
   expect(readsFlat(points, step, STRATEGIES.rolling_top_2wk_min_21d_settled_1)).toBe(shipped);
   return shipped;
 }

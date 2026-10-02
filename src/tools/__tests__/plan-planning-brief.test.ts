@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { Flatline } from '../../analytics/flatline.js';
+import type { Flatline } from '../../analytics/stall-step.js';
 import type { StoredPriority, StoredTrainingBlock } from '../../store/types.js';
 import { readBriefAdvisories, type FlatlineReader } from '../plan-brief-advisories.js';
 

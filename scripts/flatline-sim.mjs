@@ -21,7 +21,7 @@
 // `--rule` picks the step every row judges by: reference, class, or hybrid
 // (VW-490 R7c's step, min of the two); the light_min_35d row on `--rule hybrid`
 // is R7c itself. Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs.
-// The real `flatline()` from dist/ is checked read for read against the row named
+// WA's `detectPlateau` rate mode is checked read for read against the row named
 // by `--shipped-as`, on the first 25 draws of every cell, and the run throws on
 // a disagreement.
 //
@@ -36,8 +36,8 @@ import { detectPlateau } from '@voltras/workout-analytics';
 import * as core from './lib/flatline-sim-core.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { flatline, plateauReferenceStepLbs } = await import(
-  path.resolve(here, '../dist/analytics/flatline.js')
+const { plateauReferenceStepLbs } = await import(
+  path.resolve(here, '../dist/analytics/stall-step.js')
 );
 const { programmedRampStepLbs } = await import(
   path.resolve(here, '../dist/analytics/goal-band.js')
@@ -103,7 +103,7 @@ flat, with the step read at the median top load of the lift's valued sessions: t
 own labelling. --rule class and hybrid take the class from the family the way
 \`sim:goal-ramp --retro\` does (squat and deadlift lower compound, the rest upper compound) at the
 intermediate tier. hybrid is VW-490 R7c: the smaller step, and the light_min_35d row.
-Every read is also checked against the real flatline() at the rule's step; a disagreement throws.
+Every read is also checked against WA detectPlateau rate mode at the rule's step; a disagreement throws.
 Without --retro the script runs the synthetic grid; see the header of this file.
 `;
 const RETRO = argument('retro', null);
@@ -138,8 +138,12 @@ function shippedVerdict(
   expectedStepLbsPerWeek = stepAt(points[points.length - 1].v),
 ) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
-  const options = { expectedStepLbsPerWeek, minDays: core.MIN_DAYS, smoothing };
-  return flatline(series, options) !== null;
+  const options = {
+    expectedRatePerWeek: expectedStepLbsPerWeek,
+    minDays: core.MIN_DAYS,
+    smoothing,
+  };
+  return detectPlateau(series, options).isPlateau;
 }
 
 const CANDIDATES = Object.fromEntries(
@@ -150,7 +154,7 @@ const CANDIDATES = Object.fromEntries(
 );
 const DEEPEST_CONFIRM = Math.max(...Object.values(core.STRATEGIES).map((s) => s.confirm ?? 1));
 
-/** The candidates the real `flatline()` must agree with, read for read: its default, and `smoothing: null`. */
+/** The candidates WA's rate mode must agree with, read for read: its default, and `smoothing: null`. */
 const SHIPPED_AS = argument('shipped-as', 'rolling_top_2wk_min_21d_settled_1');
 const RAW_AS = 'baseline';
 const PARITY_DRAWS_PER_CELL = 25;
@@ -162,7 +166,9 @@ function assertShippedParity(seen, verdicts) {
     shippedVerdict(seen, undefined) === verdicts[SHIPPED_AS] &&
     shippedVerdict(seen, null) === verdicts[RAW_AS];
   if (!agrees)
-    throw new Error(`flatline() disagrees with its candidate on ${JSON.stringify(seen)}`);
+    throw new Error(
+      `detectPlateau rate mode disagrees with its candidate on ${JSON.stringify(seen)}`,
+    );
 }
 
 /** One lifter, read weekly: which reads were flat, per candidate. */
@@ -360,7 +366,7 @@ function assertGateMatchesWa() {
 function report(results, draws) {
   const sections = [
     `Step: ${STEP_LABEL}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
-      `The real flatline() matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
+      `WA detectPlateau rate mode matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
     baselineSection(),
     quietSection(),
     summaryTable(results, {}, 'All cells pooled'),
@@ -390,12 +396,12 @@ function retroStep({ loadLbs, rampClass }) {
   return RULE === 'class' ? byClass : Math.min(reference, byClass);
 }
 
-/** The shipped row must match `flatline()` on every retro read, or the count is about a different rule. */
+/** The shipped row must match WA's rate mode on every retro read, or the count is about a different rule. */
 function retroFires(points, retroCase) {
   const step = retroStep(retroCase);
   const shipped = shippedVerdict(points, undefined, step);
   if (core.readsFlat(points, step, core.STRATEGIES[SHIPPED_AS]) !== shipped)
-    throw new Error(`flatline() disagrees with '${SHIPPED_AS}' on a retro read`);
+    throw new Error(`detectPlateau rate mode disagrees with '${SHIPPED_AS}' on a retro read`);
   return RULE === 'hybrid' ? core.readsFlat(points, step, core.STRATEGIES.light_min_35d) : shipped;
 }
 

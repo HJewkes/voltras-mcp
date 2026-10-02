@@ -131,7 +131,7 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
-import { flatline, plateauReferenceStepLbs, type Flatline } from '../analytics/flatline.js';
+import { flatlineOf, plateauReferenceStepLbs, type Flatline } from '../analytics/stall-step.js';
 import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
@@ -744,7 +744,8 @@ interface StallRun {
 
 /**
  * VW-452: a load run is a stall only when it is a flatline, judged against the
- * plateau's reference weekly step at the newest load. `volume` keeps WA's own finding.
+ * plateau's reference weekly step at the newest load by WA's rate mode (VW-677).
+ * `volume` keeps WA's window finding: it has no constant expected weekly rate.
  */
 function stallRun(
   series: TimeSeries,
@@ -755,11 +756,13 @@ function stallRun(
   if (metric === 'volume') {
     return { isStall: plateau.isPlateau, days: plateau.plateauDays, flatline: null };
   }
-  const found = flatline(series, {
-    expectedStepLbsPerWeek: plateauReferenceStepLbs(latestPoint(series).value),
-    thresholdPct: input.thresholdPct,
-    minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
-  });
+  const found = flatlineOf(
+    detectPlateau(series, {
+      expectedRatePerWeek: plateauReferenceStepLbs(latestPoint(series).value),
+      ...(input.thresholdPct !== undefined && { thresholdPct: input.thresholdPct }),
+      minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
+    }),
+  );
   return { isStall: found !== null, days: found?.days ?? 0, flatline: found };
 }
 

@@ -2,7 +2,7 @@
 // an open flatline, and a finishing block run past the accumulation-to-deload ratio. Advisory
 // copy only: the sitting decides, and nothing here blocks a plan.
 
-import type { Flatline } from '../analytics/flatline.js';
+import type { Flatline } from '../analytics/stall-step.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type StoredTrainingBlock } from '../store/types.js';
 import { computeHistoryTrend } from './metrics-tools.js';

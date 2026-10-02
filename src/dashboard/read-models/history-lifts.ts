@@ -17,7 +17,7 @@ import {
   type LiftSetInput,
 } from '@voltras/workout-analytics';
 
-import { flatline, plateauReferenceStepLbs } from '../../analytics/flatline.js';
+import { plateauReferenceStepLbs } from '../../analytics/stall-step.js';
 import {
   evidenceOf,
   groupRows,
@@ -150,8 +150,10 @@ function rawWindows(series: Series, step: number): { start: number; end: number;
     if (!found.isPlateau) continue;
     const from = Date.parse(prefix[end]!.ts) - found.plateauDays * 86_400_000;
     const start = prefix.findIndex((point) => Date.parse(point.ts) >= from);
-    const flat =
-      flatline(prefix, { expectedStepLbsPerWeek: step, minDays: plateauMinDays }) !== null;
+    const flat = detectPlateau(prefix, {
+      expectedRatePerWeek: step,
+      minDays: plateauMinDays,
+    }).isPlateau;
     const last = windows.at(-1);
     if (last !== undefined && start <= last.end)
       Object.assign(last, { end, flat: last.flat || flat });
