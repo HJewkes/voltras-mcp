@@ -92,7 +92,7 @@ npm run build:dashboard            # restores the production bundle
 appended to `body` beside `#root`. It adds no DOM inside the app tree, so the only extra
 nodes the app sees are the wrapper's hidden markers.
 
-![The overlay on #/goals at 1920 wide](images/fidelity-overlay-goals.png)
+![The overlay on #/goals at 1920 wide](../site/public/dev/fidelity-overlay-goals.png)
 
 ### Turning it on
 
