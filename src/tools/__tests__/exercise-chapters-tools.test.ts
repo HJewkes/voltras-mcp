@@ -113,6 +113,7 @@ function setup(): Harness {
   const store = openTestStore();
   const state = {
     store,
+    config: { adapter: 'node' },
     exercises: {
       list: () => CATALOG,
       getById: (id: string) => CATALOG.find((e) => e.id === id),

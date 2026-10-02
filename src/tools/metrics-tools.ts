@@ -515,7 +515,7 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       return computeE1RM(state, input);
 
     case 'history.trend':
-      return computeHistoryTrend(state, input);
+      return computeHistoryTrendWithWeekly(state, input);
 
     case 'history.weekly_volume':
       return computeHistoryWeeklyVolume(state, input);
@@ -1036,16 +1036,18 @@ function sessionSource(
   };
 }
 
-async function computeHistoryWeeklyVolume(
-  state: ServerState,
-  input: HistoryWeeklyVolumeInput,
-): Promise<HistoryWeeklyVolumeResult> {
-  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+/** The owner's eligible sets per session across the `weeks` window, every exercise. */
+interface WeeklyWindow {
+  fromIso: string;
+  sessions: StoredSession[];
+  eligibleBySession: Map<string, StoredSet[]>;
+}
+
+async function loadWeeklyWindow(state: ServerState, weeks: number): Promise<WeeklyWindow> {
   const fromIso = weeksAgoIso(weeks);
-  const period = { from: fromIso, to: new Date().toISOString() };
   // Owner-only by default (VW-169) — `listSessions` filters `lifter IS NULL`
-  // the same way `getSetsForExercise` does. No `exerciseId` here: this
-  // pipeline rolls up EVERY exercise, unlike `history.trend`.
+  // the same way `getSetsForExercise` does. No `exerciseId` here: the weekly
+  // rollup covers EVERY exercise, unlike the single-exercise trend series.
   const sessions = await state.store.listSessions({
     from: fromIso,
     limit: HISTORY_WEEKLY_VOLUME_SESSION_LIMIT,
@@ -1056,18 +1058,46 @@ async function computeHistoryWeeklyVolume(
       return [session.id, weeklyVolumeEligibleSets(raw, state.config.adapter)] as const;
     }),
   );
-  const eligibleBySession = new Map(eligibleEntries);
+  return { fromIso, sessions, eligibleBySession: new Map(eligibleEntries) };
+}
 
-  // Whole-session granularity for `getWeeklySummaries`: `sessionCount` and
-  // `topWeightLbs` are physical-session facts, not per-exercise ones.
-  const wholeSessionSources: ProcessedSessionSource[] = sessions
-    .filter((s) => (eligibleBySession.get(s.id)?.length ?? 0) > 0)
-    .map((s) => sessionSource(s, eligibleBySession.get(s.id)!));
-  const weeklySessions = toProcessedSessions(wholeSessionSources, eligibleBySession);
-  if (weeklySessions.length === 0) {
+/**
+ * The one weekly-summary build behind `history.weekly_volume` and
+ * `history.trend`'s `weekly`. Whole-session granularity for
+ * `getWeeklySummaries`: `sessionCount` and `topWeightLbs` are physical-session
+ * facts, not per-exercise ones. Empty when the window holds no eligible set.
+ */
+function buildWeeklySummaries(window: WeeklyWindow, weeks: number): WeeklySummary[] {
+  const wholeSessionSources: ProcessedSessionSource[] = window.sessions
+    .filter((s) => (window.eligibleBySession.get(s.id)?.length ?? 0) > 0)
+    .map((s) => sessionSource(s, window.eligibleBySession.get(s.id)!));
+  const weeklySessions = toProcessedSessions(wholeSessionSources, window.eligibleBySession);
+  return weeklySessions.length === 0 ? [] : getWeeklySummaries(weeklySessions, weeks);
+}
+
+/** `history.trend` plus the lifter's weekly summaries, the same ones `history.weekly_volume` reports. */
+async function computeHistoryTrendWithWeekly(
+  state: ServerState,
+  input: HistoryTrendInput,
+): Promise<HistoryTrendResult & { weekly: WeeklySummary[] }> {
+  const trend = await computeHistoryTrend(state, input);
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const weekly = buildWeeklySummaries(await loadWeeklyWindow(state, weeks), weeks);
+  return { ...trend, weekly };
+}
+
+async function computeHistoryWeeklyVolume(
+  state: ServerState,
+  input: HistoryWeeklyVolumeInput,
+): Promise<HistoryWeeklyVolumeResult> {
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const window = await loadWeeklyWindow(state, weeks);
+  const { sessions, eligibleBySession } = window;
+  const period = { from: window.fromIso, to: new Date().toISOString() };
+  const weekly = buildWeeklySummaries(window, weeks);
+  if (weekly.length === 0) {
     throw notFound(`no working sets in the last ${weeks} weeks`);
   }
-  const weekly = getWeeklySummaries(weeklySessions, weeks);
 
   // Per-(session, exercise) granularity for `getVolumeByMuscleGroup` — see
   // `groupByExerciseId`'s note on why one real session can become more than
@@ -2651,6 +2681,10 @@ const METRICS_COMPUTE_DESCRIPTION =
   "the detector's raw answer. `plateau.flatline` carries that run (days, points, slopeLbsPerWeek, " +
   "flatBelowLbsPerWeek, reasoning) or null. `volume` keeps the detector's own verdict and a " +
   'null flatline. A window with no working sets is NOT_FOUND. ' +
+  "VW-201: `weekly` is the owner's weekly summaries across EVERY exercise over the same lookback " +
+  'window — the very list `history.weekly_volume` returns as `weekly`, so a caller reads one ' +
+  "week's tonnage beside this exercise's series. It is an empty list when the window holds no " +
+  'eligible set, including the new-chapter state, never an error. ' +
   "VW-361: `chapterStartedAt` is where this exercise's comparable series restarts, or null " +
   'when no chapter is declared, and the window is CLAMPED to it — the lookback asked for is a ' +
   'floor, never a way back past the boundary, so the top-load PR a caller reads off `series` ' +
