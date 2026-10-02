@@ -42,21 +42,28 @@ export interface BlockWeeks {
   weeks: WeekShape[];
 }
 
-/** A dated block and its weeks, for the active-rest look-back. */
+/** One calendar week of a dated block; `off` is a skipped week or a planned week with no workouts. */
+export interface DatedWeek {
+  isDeload: boolean;
+  off: boolean;
+  endsOn: string;
+}
+
+/** A dated block and its calendar weeks, for the active-rest look-back. */
 export interface DatedBlockWeeks {
   startsOn: string;
   endsOn: string;
-  weeks: WeekShape[];
+  weeks: DatedWeek[];
 }
 
 /**
- * The tier the cadence prior reads, or `null` for a beginner, who gets no calendar cadence
- * (rp:rp-s4-beginner-no-deload-for-months). The clamp never derives advanced, so a
- * declaration of advanced is what selects the 3:1 to 4:1 prior.
+ * The tier the cadence prior reads, or `null` when the clamped tier is beginner, who gets no
+ * calendar cadence (rp:rp-s4-beginner-no-deload-for-months). The clamp never derives advanced,
+ * so past the beginner clamp a declaration of advanced selects the 3:1 to 4:1 prior.
  */
 export function cadenceTier(signal: Pick<TierSignal, 'tier' | 'declared'>): CadenceTier | null {
-  if (signal.declared === 'advanced') return 'advanced';
-  return signal.tier === 'beginner' ? null : signal.tier;
+  if (signal.tier === 'beginner') return null;
+  return signal.declared === 'advanced' ? 'advanced' : 'intermediate';
 }
 
 export function deloadCadenceAdvisory(
@@ -119,7 +126,7 @@ export function tierEvidenceAdvisory(history: readonly BlockWeeks[]): BriefAdvis
   };
 }
 
-/** Rung 5: no deload week followed by an off week anywhere in the last year of dated blocks. */
+/** Rung 5: no ended deload week followed by an ended off week in the last year of dated blocks. */
 export function activeRestAdvisory(
   blocks: readonly DatedBlockWeeks[],
   today: string,
@@ -146,21 +153,24 @@ export function activeRestAdvisory(
 
 type WeekKind = 'deload' | 'off' | 'train';
 
-/** Each block's weeks in order, with any whole weeks between blocks (and after the last) as off. */
+/**
+ * Each block's ended weeks in order, with any whole weeks between blocks (and after the last,
+ * up to today) as off. A week that has not ended has not happened, so it counts as nothing.
+ */
 function weekSequence(blocks: readonly DatedBlockWeeks[], today: string): WeekKind[] {
   const sequence: WeekKind[] = [];
   blocks.forEach((block, i) => {
-    sequence.push(...block.weeks.map(weekKind));
-    const nextStart = blocks[i + 1]?.startsOn ?? addDays(today, 1);
+    sequence.push(...block.weeks.filter((week) => week.endsOn < today).map(weekKind));
+    const nextStart = blocks[i + 1]?.startsOn ?? today;
     const gapDays = daysBetween(block.endsOn, nextStart) - 1;
     for (let w = 0; w < Math.floor(gapDays / 7); w++) sequence.push('off');
   });
   return sequence;
 }
 
-function weekKind(week: WeekShape): WeekKind {
+function weekKind(week: DatedWeek): WeekKind {
   if (week.isDeload) return 'deload';
-  return week.templates === 0 ? 'off' : 'train';
+  return week.off ? 'off' : 'train';
 }
 
 function hasActiveRest(sequence: readonly WeekKind[]): boolean {

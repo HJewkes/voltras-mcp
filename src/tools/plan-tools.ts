@@ -156,8 +156,9 @@ const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
   'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. ' +
   'A template holds no volume until exercises are added, so the tier-aware volume lints run ' +
-  'on `plan.exercise.create`, not here. The one warning here is a week that now fills all ' +
-  'seven days with no day off; it is advisory and the template is still created.';
+  'on `plan.exercise.create`, not here. The one warning here comes once per week, on the ' +
+  'template that leaves the week with no day off (a rest template is not a training day); it ' +
+  'is advisory and the template is still created.';
 const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
 const PLAN_TEMPLATE_LIST_DESCRIPTION =
   'List the workout templates belonging to one week (takes weekId).';
@@ -731,12 +732,18 @@ async function createTemplate(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putWorkoutTemplate(template);
-  return { template, warnings: await lintWeekOffDay(state, template.weekId) };
+  return { template, warnings: await lintWeekOffDay(state, template) };
 }
 
-async function lintWeekOffDay(state: ServerState, weekId: string): Promise<PlanWarning[]> {
+/** Warns once per week: only on the template that took the week's last day off. */
+async function lintWeekOffDay(
+  state: ServerState,
+  added: StoredWorkoutTemplate,
+): Promise<PlanWarning[]> {
   try {
-    return lintWeekWithoutOffDay(await state.store.getWorkoutTemplatesForWeek(weekId));
+    const week = await state.store.getWorkoutTemplatesForWeek(added.weekId);
+    const before = week.filter((template) => template.id !== added.id);
+    return lintWeekWithoutOffDay(before).length > 0 ? [] : lintWeekWithoutOffDay(week);
   } catch {
     return [];
   }
@@ -867,7 +874,7 @@ async function lintAcrossWeek(
     confidence,
   });
   const priority = await lintPriorityMuscle(state, current, weekExercises);
-  return [...weekly, ...consecutive, ...priority, ...lintWeekWithoutOffDay(weekTemplates)];
+  return [...weekly, ...consecutive, ...priority];
 }
 
 /** Fetches each template's planned exercises, reusing an already-known one to avoid a refetch. */

@@ -522,6 +522,22 @@ describe('lintWeekWithoutOffDay (VW-619 rung 1)', () => {
     expect(lintWeekWithoutOffDay(days)).toEqual([]);
   });
 
+  it('counts morning and evening sessions on one weekday as one training day', () => {
+    const days = [
+      ...WEEKDAYS.slice(0, 6).map((dayLabel) => ({ dayLabel })),
+      { dayLabel: 'Mon AM' },
+      { dayLabel: 'Monday PM' },
+    ];
+
+    expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
+  it('does not count a rest template as a training day', () => {
+    const days = WEEKDAYS.map((dayLabel, i) => ({ dayLabel, name: i === 6 ? 'Rest' : 'Lift' }));
+
+    expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
   it('counts each unlabelled template as a day of its own', () => {
     expect(lintWeekWithoutOffDay(Array.from({ length: 7 }, () => ({})))).toHaveLength(1);
   });

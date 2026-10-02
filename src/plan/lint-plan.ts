@@ -441,16 +441,37 @@ const DAYS_PER_WEEK = 7;
 
 export interface LintOffDayTemplate {
   dayLabel?: string;
+  name?: string;
+}
+
+const WEEKDAY_PREFIX = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*(?![a-z])/;
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+const REST_WORD = /\brest\b/i;
+const OFF_ONLY = /^(off|day off|off day)$/i;
+
+/** A rest or off template plans no training, so it is the day off rather than a day used. */
+function isRestTemplate(template: LintOffDayTemplate): boolean {
+  return [template.name, template.dayLabel].some(
+    (text) => text !== undefined && (REST_WORD.test(text) || OFF_ONLY.test(text.trim())),
+  );
+}
+
+/** The training day a label names: "Mon AM" and "Monday PM" are both Monday. */
+function trainingDayKey(template: LintOffDayTemplate, index: number): string {
+  const label = template.dayLabel?.trim().toLowerCase() ?? '';
+  if (label === '') return `unlabelled ${index}`;
+  return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1] ?? label;
 }
 
 /**
- * A week whose templates fill all seven days leaves no day off, the first rung of the
- * fatigue-reduction ladder (rp-s2-fatigue-reduction-ladder). Templates sharing a day label
- * are one training day; an unlabelled template counts as a day of its own.
+ * A week whose training templates fill all seven days leaves no day off, the first rung of
+ * the fatigue-reduction ladder (rp-s2-fatigue-reduction-ladder). Templates on one weekday or
+ * date are one training day, a rest template is not training, and an unlabelled template
+ * counts as a day of its own.
  */
 export function lintWeekWithoutOffDay(templates: readonly LintOffDayTemplate[]): PlanWarning[] {
   const days = new Set(
-    templates.map((t, i) => t.dayLabel?.trim().toLowerCase() || `unlabelled ${i}`),
+    templates.flatMap((t, i) => (isRestTemplate(t) ? [] : [trainingDayKey(t, i)])),
   );
   if (days.size < DAYS_PER_WEEK) return [];
   return [

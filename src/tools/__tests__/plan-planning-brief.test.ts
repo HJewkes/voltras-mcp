@@ -105,6 +105,18 @@ describe('staleness advisory', () => {
 });
 
 describe('deload cadence advisory', () => {
+  it('says nothing to a declared advanced lifter the clamp holds at beginner', async () => {
+    const state = stateOf([], { long: accumulation(8) });
+
+    const advisories = await readBriefAdvisories(
+      state,
+      block('long', 8),
+      readers('beginner', 'advanced'),
+    );
+
+    expect(advisories).toEqual([]);
+  });
+
   it('says nothing to a beginner, even after 8 weeks with no deload', async () => {
     const state = stateOf([], { long: accumulation(8) });
 
@@ -196,71 +208,78 @@ describe('tier evidence advisory', () => {
 });
 
 describe('active rest advisory', () => {
-  const trainingWeek = { isDeload: false, templates: 3 };
-  const deloadWeek = { isDeload: true, templates: 3 };
+  type Kind = 'train' | 'deload' | 'off';
+  const DAY_MS = 86_400_000;
+  const isoDate = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
-  /** Back-to-back dated 4-week blocks from 2026-01-05, each 3:1. */
+  /** A dated 4-week block starting at `startMs`, its weeks shaped by `kinds`. */
+  function datedBlock(startMs: number, kinds: Kind[]): DatedBlockWeeks {
+    return {
+      startsOn: isoDate(startMs),
+      endsOn: isoDate(startMs + (7 * kinds.length - 1) * DAY_MS),
+      weeks: kinds.map((kind, k) => ({
+        isDeload: kind === 'deload',
+        off: kind === 'off',
+        endsOn: isoDate(startMs + (7 * k + 6) * DAY_MS),
+      })),
+    };
+  }
+
+  /** Back-to-back 3:1 blocks from 2026-01-05; the tenth runs 2026-09-14 to 2026-10-11. */
   function datedYear(blockCount: number, offWeekAfter: number | null = null): DatedBlockWeeks[] {
     const out: DatedBlockWeeks[] = [];
-    let startsOn = Date.parse('2026-01-05');
+    let startMs = Date.parse('2026-01-05');
     for (let i = 0; i < blockCount; i++) {
-      const endsOn = startsOn + 27 * 86_400_000;
-      out.push({
-        startsOn: new Date(startsOn).toISOString().slice(0, 10),
-        endsOn: new Date(endsOn).toISOString().slice(0, 10),
-        weeks: [trainingWeek, trainingWeek, trainingWeek, deloadWeek],
-      });
-      const gap = i === offWeekAfter ? 7 : 0;
-      startsOn = endsOn + (1 + gap) * 86_400_000;
+      out.push(datedBlock(startMs, ['train', 'train', 'train', 'deload']));
+      startMs += (28 + (i === offWeekAfter ? 7 : 0)) * DAY_MS;
     }
     return out;
   }
 
-  it('names a missing active rest once when a year of blocks never took a week off', async () => {
-    const advisories = await readBriefAdvisories(
-      stateOf([], {}),
-      null,
-      readers('intermediate', 'intermediate', datedYear(10)),
-    );
-
-    expect(advisories.filter((advisory) => advisory.kind === 'active_rest')).toHaveLength(1);
-    expect(advisories[0]?.text).toContain('since 2025-10-01');
-    expect(advisories[0]?.rpIds).toEqual(['rp:rp-s2-fatigue-reduction-ladder']);
-  });
-
-  it('stays quiet when a deload week ran straight into a week between blocks', async () => {
-    const advisories = await readBriefAdvisories(
-      stateOf([], {}),
-      null,
-      readers('intermediate', 'intermediate', datedYear(10, 4)),
-    );
-
-    expect(advisories).toEqual([]);
-  });
-
-  it('stays quiet when the off week is a planned week with no workouts', async () => {
-    const blocks = datedYear(10);
-    blocks[2] = {
-      ...blocks[2]!,
-      weeks: [trainingWeek, deloadWeek, { isDeload: false, templates: 0 }, trainingWeek],
-    };
-
+  async function activeRest(blocks: DatedBlockWeeks[]) {
     const advisories = await readBriefAdvisories(
       stateOf([], {}),
       null,
       readers('intermediate', 'intermediate', blocks),
     );
+    return advisories.filter((advisory) => advisory.kind === 'active_rest');
+  }
 
-    expect(advisories).toEqual([]);
+  it('names a missing active rest once when a year of blocks never took a week off', async () => {
+    const found = await activeRest(datedYear(10));
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.text).toContain('since 2025-10-01');
+    expect(found[0]?.rpIds).toEqual(['rp:rp-s2-fatigue-reduction-ladder']);
+  });
+
+  it('stays quiet when a deload week ran straight into a week between blocks', async () => {
+    expect(await activeRest(datedYear(10, 4))).toEqual([]);
+  });
+
+  it('stays quiet when the off week is a planned week with no workouts', async () => {
+    const blocks = datedYear(10);
+    blocks[2] = datedBlock(Date.parse(blocks[2]!.startsOn), ['train', 'deload', 'off', 'train']);
+
+    expect(await activeRest(blocks)).toEqual([]);
+  });
+
+  it('does not count a deload and off week of the current block that have not ended', async () => {
+    const blocks = datedYear(10);
+    blocks[9] = datedBlock(Date.parse(blocks[9]!.startsOn), ['train', 'train', 'deload', 'off']);
+
+    expect(await activeRest(blocks)).toHaveLength(1);
   });
 
   it('stays quiet with under half a year of dated blocks to judge', async () => {
-    const recent = datedYear(10).slice(-4);
+    expect(await activeRest(datedYear(10).slice(-4))).toEqual([]);
+  });
 
+  it('keeps tier evidence and active rest silent for an advanced claim held at beginner', async () => {
     const advisories = await readBriefAdvisories(
-      stateOf([], {}),
-      null,
-      readers('intermediate', 'intermediate', recent),
+      stateOf([], { b: accumulation(8) }),
+      block('b', 8),
+      readers('beginner', 'advanced', datedYear(10)),
     );
 
     expect(advisories).toEqual([]);

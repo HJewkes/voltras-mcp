@@ -14,9 +14,10 @@ import {
   tierEvidenceAdvisory,
   type BlockWeeks,
   type DatedBlockWeeks,
+  type DatedWeek,
   type WeekShape,
 } from './plan-brief-cadence.js';
-import { placedBlocks } from './plan-schedule-tools.js';
+import { calendarOf, placedBlocks } from './plan-schedule-tools.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 export interface BriefAdvisory {
@@ -35,7 +36,7 @@ export type FlatlineReader = (state: AdvisoryState, exerciseId: string) => Promi
 export interface AdvisoryReaders {
   readFlatline: FlatlineReader;
   readTier: (state: AdvisoryState) => Promise<Pick<TierSignal, 'tier' | 'declared'>>;
-  readDatedBlocks: (state: AdvisoryState) => Promise<DatedBlockWeeks[]>;
+  readDatedBlocks: (state: AdvisoryState, today: string) => Promise<DatedBlockWeeks[]>;
   today: string;
 }
 
@@ -74,8 +75,8 @@ async function cadenceAdvisories(
   const history = finishing === null ? [] : await programHistory(state, finishing);
   const found = [
     finishing === null ? null : deloadCadenceAdvisory(finishing, history, tier),
-    signal.declared === 'advanced' ? tierEvidenceAdvisory(history) : null,
-    activeRestAdvisory(await readers.readDatedBlocks(state), readers.today),
+    tier === 'advanced' ? tierEvidenceAdvisory(history) : null,
+    activeRestAdvisory(await readers.readDatedBlocks(state, readers.today), readers.today),
   ];
   return found.filter((advisory) => advisory !== null);
 }
@@ -132,13 +133,33 @@ async function weekShapes(state: AdvisoryState, blockId: string): Promise<WeekSh
   );
 }
 
-async function readDatedBlocks(state: AdvisoryState): Promise<DatedBlockWeeks[]> {
+async function readDatedBlocks(state: AdvisoryState, today: string): Promise<DatedBlockWeeks[]> {
   const placed = await placedBlocks(state as ServerState);
   return Promise.all(
     placed.map(async (block) => ({
       startsOn: block.startsOn,
       endsOn: block.endsOn,
-      weeks: await weekShapes(state, block.blockId),
+      weeks: await datedWeeks(state, block.blockId, today),
     })),
   );
+}
+
+/** The block's calendar weeks; an extend skip, or a week row with no workouts, is off. */
+async function datedWeeks(
+  state: AdvisoryState,
+  blockId: string,
+  today: string,
+): Promise<DatedWeek[]> {
+  const calendar = await calendarOf(state as ServerState, blockId, today);
+  const rows = await state.store.getTrainingWeeksForBlock(blockId);
+  const templatesByPlanWeek = new Map<number, number>();
+  for (const row of rows) {
+    const templates = await state.store.getWorkoutTemplatesForWeek(row.id);
+    templatesByPlanWeek.set(row.orderIndex + 1, templates.length);
+  }
+  return calendar.weeks.map((week) => ({
+    isDeload: week.isDeload,
+    off: week.planWeek === null || templatesByPlanWeek.get(week.planWeek) === 0,
+    endsOn: week.endsOn,
+  }));
 }
