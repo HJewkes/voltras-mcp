@@ -3,7 +3,7 @@
 // The one exception is `loadRetro`, which reads the `--retro` file (VW-672).
 //
 // The series a lifter produces mirrors what `computeHistoryTrend` hands to
-// `flatline()`: one point per ISO week, carrying the week's TOP load, stamped
+// the stall rule: one point per ISO week, carrying the week's TOP load, stamped
 // on the Monday. Sessions inside a week share one true load and differ by noise.
 
 import { readFileSync } from 'node:fs';

@@ -2,7 +2,7 @@
 
 import { analyzeTrend, detectPlateau, slopeStandardError } from '@voltras/workout-analytics';
 
-import { flatline, plateauReferenceStepLbs } from '../../../src/analytics/flatline.js';
+import { plateauReferenceStepLbs } from '../../../src/analytics/stall-step.js';
 
 import { daysBetween, noonInstant } from './dates.js';
 import type { SessionPoint } from './series.js';
@@ -80,8 +80,10 @@ function rawWindows(points: readonly Valued[]): { start: number; end: number; fl
       Date.parse(prefix[end]!.ts) - found.plateauDays * 86_400_000,
     ).toISOString();
     const start = prefix.findIndex((point) => point.ts >= startDate);
-    const flat =
-      flatline(prefix, { expectedStepLbsPerWeek: step, minDays: PLATEAU_MIN_DAYS }) !== null;
+    const flat = detectPlateau(prefix, {
+      expectedRatePerWeek: step,
+      minDays: PLATEAU_MIN_DAYS,
+    }).isPlateau;
     const last = windows.at(-1);
     if (last !== undefined && start <= last.end)
       Object.assign(last, { end, flat: last.flat || flat });

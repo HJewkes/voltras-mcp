@@ -516,6 +516,14 @@ describe('metrics.compute — history.trend flatline (VW-452)', () => {
     expect(plateau.verdict).toBe('plateau');
   });
 
+  it('flags a stall under a quarter of the plateau step, so 0.7 lb a week at 100 lb is not flat (VW-677)', async () => {
+    const plateau = await plateauFor([100, 100.7, 101.4, 102.1, 102.8]);
+
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('none');
+    expect(plateau.flatline).toBeNull();
+  });
+
   it('keeps the detector verdict for volume, which has no load step to judge by', async () => {
     const plateau = await plateauFor([100, 102.5, 105, 107.5, 110], 'volume');
 
