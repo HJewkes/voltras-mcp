@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@voltras/node-sdk', () => ({}));
 
 const { registerCueTools } = await import('../cue-tools.js');
+import type { CueToolState } from '../cue-tools.js';
+import type { SetRiskReading } from '../../analytics/set-risk.js';
 const { CueEmitter, CueTeePublisher } = await import('../../voice/cue-emitter.js');
 
 import { CueSelector } from '../../voice/cue-templates.js';
@@ -22,7 +24,10 @@ interface FakeRegisteredTool {
   update(updates: { callback: (args: unknown, extra?: unknown) => Promise<ToolResult> }): void;
 }
 
-function setup(settings: CueSettings): {
+function setup(
+  settings: CueSettings,
+  slots?: CueToolState['slots'],
+): {
   call: (args: unknown) => Promise<{ body: Record<string, unknown>; isError?: boolean }>;
 } {
   const tool: FakeRegisteredTool = {
@@ -31,7 +36,8 @@ function setup(settings: CueSettings): {
     },
   };
   const placeholders = new Map<string, FakeRegisteredTool>([['system.set_cues', tool]]);
-  registerCueTools({} as never, { cueSettings: settings }, placeholders as never);
+  const state: CueToolState = { cueSettings: settings, ...(slots === undefined ? {} : { slots }) };
+  registerCueTools({} as never, state, placeholders as never);
   return {
     call: async (args) => {
       const result = await tool.callback!(args);
@@ -166,5 +172,67 @@ describe('system.set_cues', () => {
 
     expect(speakSpy).toHaveBeenCalledTimes(1);
     expect(published).toHaveLength(2);
+  });
+});
+
+describe('system.set_cues live set risk (VW-615)', () => {
+  const amber: SetRiskReading = {
+    band: 'amber',
+    points: 4,
+    factors: { exercise: 1, intensity: 2, load: 1, fatigue: 0 },
+    vetoes: [],
+    permitsIntraSet: false,
+  };
+
+  /** Slot `primary` lifting `set-a` with `amber` pinned; slot `left` lifting `set-b` with nothing pinned. */
+  function liftingSlots(): CueToolState['slots'] {
+    const live = (setId: string, pinned: SetRiskReading | undefined) => ({
+      set: { setId } as never,
+      setRiskReadingFor: (id: string) => (id === setId ? pinned : undefined),
+    });
+    return new Map([
+      ['primary', { live: live('set-a', amber) }],
+      ['left', { live: live('set-b', undefined) }],
+      ['right', { live: { set: undefined, setRiskReadingFor: () => undefined } }],
+    ]);
+  }
+
+  it('reports the mode and each live set band under risk', async () => {
+    // Arrange
+    const settings: CueSettings = { enabled: true, midSetEnabled: false, midSetMode: 'risk' };
+    const { call } = setup(settings, liftingSlots());
+
+    // Act
+    const { body } = await call({});
+
+    // Assert
+    expect(body).toMatchObject({ midSet: 'risk' });
+    expect(body.liveSetRisk).toEqual([
+      {
+        slot: 'primary',
+        setId: 'set-a',
+        band: 'amber',
+        points: 4,
+        factors: { exercise: 1, intensity: 2, load: 1, fatigue: 0 },
+        vetoes: [],
+      },
+      { slot: 'left', setId: 'set-b', band: null, points: null, factors: null, vetoes: [] },
+    ]);
+  });
+
+  it.each(['off', 'on'] as const)('keeps the %s reply shape unchanged', async (mode) => {
+    // Arrange
+    const settings: CueSettings = {
+      enabled: true,
+      midSetEnabled: mode === 'on',
+      midSetMode: mode,
+    };
+    const { call } = setup(settings, liftingSlots());
+
+    // Act
+    const { body } = await call({});
+
+    // Assert
+    expect(Object.keys(body).sort()).toEqual(['changed', 'cues', 'midSet', 'platformSupported']);
   });
 });

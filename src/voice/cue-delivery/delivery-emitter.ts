@@ -6,6 +6,7 @@
 
 import type { Rep } from '@voltras/workout-analytics';
 
+import type { SetRiskReading } from '../../analytics/set-risk.js';
 import { log } from '../../logger.js';
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';
 import type { Tier } from '../../tools/tier-signal.js';
@@ -20,6 +21,7 @@ import {
   type CueLine,
   type IntraSetPermit,
   type LedgerEntry,
+  type LedgerRisk,
 } from './budget.js';
 import { focusPhrase, reinforcementPhrase } from './focus-phrases.js';
 import { readSetFaults } from './focus-select.js';
@@ -91,6 +93,8 @@ export interface DeliveryEmitterDeps {
   repsFor: (context: SetContext) => readonly Rep[];
   signalsFor?: (context: SetContext) => SetSignals;
   intraSetPermit?: IntraSetPermit;
+  /** The set's pinned set-risk reading; read only under `VMCP_CUES_MIDSET=risk` (VW-615). */
+  setRiskFor?: (context: SetContext) => SetRiskReading | undefined;
   onDecision?: (record: DeliveryRecord) => void;
 }
 
@@ -309,10 +313,16 @@ export class DeliveryEmitter {
       tier: slotSet.tier,
       settings: this.deps.settings,
       intraSetPermit: this.deps.intraSetPermit ?? defaultIntraSetPermit,
+      ...this.riskFor(context),
     });
     const entry = ledger.entries[ledger.entries.length - 1];
     this.deps.onDecision?.({ ...entry, at: this.deps.clock(), text: candidate.text });
     return decision.admit;
+  }
+
+  private riskFor(context: SetContext): { risk?: LedgerRisk } {
+    if (this.deps.settings.midSetMode !== 'risk' || this.deps.setRiskFor === undefined) return {};
+    return { risk: ledgerRisk(this.deps.setRiskFor, context) };
   }
 
   private play(slotSet: SlotSet, interval: Interval, candidate: Candidate): void {
@@ -337,6 +347,21 @@ function intraRank(line: CueLine): number {
 
 function focusCandidate(focusId: CueFocusId, text: string): Candidate {
   return { line: { kind: 'focus', focusId }, text, interrupt: false, source: FOCUS_LINE_SOURCE };
+}
+
+// A lookup that throws is recorded as no reading, matching the permit's fail-safe deny.
+function ledgerRisk(
+  setRiskFor: (context: SetContext) => SetRiskReading | undefined,
+  context: SetContext,
+): LedgerRisk {
+  try {
+    const reading = setRiskFor(context);
+    if (reading === undefined) return null;
+    const { band, points, factors, vetoes } = reading;
+    return { band, points, factors: { ...factors }, vetoes: [...vetoes] };
+  } catch {
+    return null;
+  }
 }
 
 function ledgerFor(slotSet: SlotSet, line: CueLine): CueLedger {
