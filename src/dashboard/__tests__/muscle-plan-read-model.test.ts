@@ -182,6 +182,7 @@ describe('buildMusclePlanView', () => {
       plannedSetsThisWeek: 0,
       doneSetsThisWeek: 0,
       plannedRemaining: [],
+      frequency: { plannedPerWeek: 0, observedThisWeek: 0 },
     });
   });
 
@@ -248,5 +249,40 @@ describe('buildMusclePlanView', () => {
       now: NOW,
     };
     expect('weekIndex' in buildMusclePlanView(rows)).toBe(false);
+  });
+  it('reports planned and observed training days per muscle (VW-623)', () => {
+    const rows: MusclePlanRows = {
+      week: WEEK,
+      templates: [
+        { ...TEMPLATE_A, dayLabel: 'Mon AM' },
+        { id: 'tpl-c', name: 'Upper C', completed: false, dayLabel: 'Mon PM' },
+        { ...TEMPLATE_B, dayLabel: 'Thu' },
+      ],
+      plannedExercises: [
+        plannedExercise({ id: 'pe-a', workoutTemplateId: 'tpl-a' }),
+        plannedExercise({ id: 'pe-c', workoutTemplateId: 'tpl-c' }),
+        plannedExercise({
+          id: 'pe-b',
+          workoutTemplateId: 'tpl-b',
+          exerciseId: 'cable-chest-press',
+        }),
+      ],
+      completedSets: [
+        completedSet({ id: 's1' }),
+        completedSet({ id: 's2', startedAt: '2026-07-06T18:00:00.000Z' }),
+        completedSet({
+          id: 's3',
+          startedAt: '2026-07-07T10:00:00.000Z',
+          exerciseId: 'cable-chest-press',
+        }),
+      ],
+      catalog,
+      now: NOW,
+    };
+
+    const muscles = musclesOf(buildMusclePlanView(rows));
+
+    expect(muscles.get('chest')?.frequency).toEqual({ plannedPerWeek: 2, observedThisWeek: 2 });
+    expect(muscles.get('triceps')?.frequency).toEqual({ plannedPerWeek: 0, observedThisWeek: 0 });
   });
 });

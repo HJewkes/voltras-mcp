@@ -43,7 +43,9 @@ export type PlanWarningCode =
   | 'meso_length_grew_mid_block'
   | 'priority_muscle_changed_mid_block'
   | 'same_muscle_high_volume_consecutive_days'
-  | 'week_without_off_day';
+  | 'week_without_off_day'
+  | 'muscle_frequency_below_band'
+  | 'muscle_frequency_above_band';
 
 export interface PlanWarning {
   code: PlanWarningCode;
@@ -52,6 +54,8 @@ export interface PlanWarning {
   muscleGroup?: string;
   observed?: number;
   ceiling?: number;
+  /** The low end of a band, on a warning that sits below one (VW-623). */
+  floor?: number;
   tier?: Tier;
 }
 
@@ -450,14 +454,14 @@ const REST_WORD = /\brest\b/i;
 const OFF_ONLY = /^(off|day off|off day)$/i;
 
 /** A rest or off template plans no training, so it is the day off rather than a day used. */
-function isRestTemplate(template: LintOffDayTemplate): boolean {
+export function isRestTemplate(template: LintOffDayTemplate): boolean {
   return [template.name, template.dayLabel].some(
     (text) => text !== undefined && (REST_WORD.test(text) || OFF_ONLY.test(text.trim())),
   );
 }
 
 /** The training day a label names: "Mon AM" and "Monday PM" are both Monday. */
-function trainingDayKey(template: LintOffDayTemplate, index: number): string {
+export function trainingDayKey(template: LintOffDayTemplate, index: number): string {
   const label = template.dayLabel?.trim().toLowerCase() ?? '';
   if (label === '') return `unlabelled ${index}`;
   return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1] ?? label;

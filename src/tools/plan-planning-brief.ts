@@ -35,7 +35,7 @@ export interface PlanningBrief {
   unreviewedDays: number;
   /** Those days themselves, newest first, so a coach can name them. */
   unreviewedDayList: string[];
-  /** Staleness and deload-cadence notes for the sitting to weigh; never a block (VW-558). */
+  /** Staleness, deload-cadence and day-added notes for the sitting to weigh; never a block (VW-558). */
   advisories: BriefAdvisory[];
 }
 
@@ -83,7 +83,7 @@ export async function buildPlanningBrief(
       finishingBlock === null ? null : await buildGoalRealignment(state, finishingBlock.id),
     dietPhase: await dietPhaseView(state),
     ...(await readUnreviewed(state.store)),
-    advisories: await readBriefAdvisories(state, finishingBlock),
+    advisories: await readBriefAdvisories(state, finishingBlock, {}, next?.block ?? null),
   };
 }
 

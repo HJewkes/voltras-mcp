@@ -316,6 +316,28 @@ describe('plan.exercise.create lints', () => {
     expect(weekly[0]).toMatchObject({ muscleGroup: 'chest', observed: 21, ceiling: 20 });
   });
 
+  it('warns when a week trains chest on more days than the beginner band (VW-623)', async () => {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const frequencyAfter: PlanWarning[][] = [];
+    for (const [i, day] of days.entries()) {
+      const templateId = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, i, day))
+        .template.id;
+      const r = await addExercise(h, templateId, 'bench-press', 2, 0);
+      frequencyAfter.push(
+        body<{ warnings: PlanWarning[] }>(r).warnings.filter((w) =>
+          w.code.startsWith('muscle_frequency_'),
+        ),
+      );
+    }
+
+    expect(frequencyAfter.slice(0, 4).flat()).toEqual([]);
+    expect(frequencyAfter[4]).toMatchObject([
+      { code: 'muscle_frequency_above_band', muscleGroup: 'chest', observed: 5, ceiling: 4 },
+    ]);
+    expect(frequencyAfter[4]?.[0]?.message).toContain('planning prior');
+  });
+
   it('warns when the same muscle is stacked over ceiling on two consecutive templates', async () => {
     const programId = await makeProgram(h);
     const blockId = await makeBlock(h, programId, 4);
@@ -392,7 +414,8 @@ describe('plan.template.create lints (VW-619)', () => {
 
     expect(codes.flat()).toEqual(['week_without_off_day']);
     expect(codes[6]).toEqual(['week_without_off_day']);
-    expect(body<{ warnings: PlanWarning[] }>(exercise).warnings).toEqual([]);
+    const exerciseCodes = body<{ warnings: PlanWarning[] }>(exercise).warnings.map((w) => w.code);
+    expect(exerciseCodes).not.toContain('week_without_off_day');
   });
 
   it('stays quiet while the week keeps a day off', async () => {

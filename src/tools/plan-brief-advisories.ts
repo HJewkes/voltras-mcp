@@ -1,6 +1,6 @@
 // Advisories the planning brief carries into the sitting (VW-558 S10): a main lift going in on
-// an open flatline, and the deload cadence (VW-619, in plan-brief-cadence.ts). Advisory copy
-// only: the sitting decides, and nothing here blocks a plan.
+// an open flatline, the deload cadence (VW-619, in plan-brief-cadence.ts) and a training day
+// added too soon (VW-623, in plan-brief-frequency.ts). Advisory copy only: the sitting decides, and nothing here blocks a plan.
 
 import { todayLocal } from '../analytics/training-days.js';
 import type { Flatline } from '../analytics/stall-step.js';
@@ -17,11 +17,16 @@ import {
   type DatedWeek,
   type WeekShape,
 } from './plan-brief-cadence.js';
+import {
+  readProgramBlockDays,
+  trainingDayAddAdvisory,
+  type BlockDays,
+} from './plan-brief-frequency.js';
 import { calendarOf, placedBlocks } from './plan-schedule-tools.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 export interface BriefAdvisory {
-  kind: 'staleness' | 'deload_cadence' | 'tier_evidence' | 'active_rest';
+  kind: 'staleness' | 'deload_cadence' | 'tier_evidence' | 'active_rest' | 'frequency_progression';
   exerciseId: string | null;
   text: string;
   rpIds: string[];
@@ -37,6 +42,7 @@ export interface AdvisoryReaders {
   readFlatline: FlatlineReader;
   readTier: (state: AdvisoryState) => Promise<Pick<TierSignal, 'tier' | 'declared'>>;
   readDatedBlocks: (state: AdvisoryState, today: string) => Promise<DatedBlockWeeks[]>;
+  readBlockDays: (state: AdvisoryState, next: StoredTrainingBlock | null) => Promise<BlockDays[]>;
   today: string;
 }
 
@@ -44,6 +50,7 @@ export async function readBriefAdvisories(
   state: AdvisoryState,
   finishing: StoredTrainingBlock | null,
   overrides: Partial<AdvisoryReaders> = {},
+  next: StoredTrainingBlock | null = null,
 ): Promise<BriefAdvisory[]> {
   const readers = { ...defaultReaders(), ...overrides };
   const advisories: BriefAdvisory[] = [];
@@ -51,7 +58,12 @@ export async function readBriefAdvisories(
     const found = await readers.readFlatline(state, exerciseId);
     if (found !== null) advisories.push(stalenessAdvisory(exerciseId, found));
   }
-  return [...advisories, ...(await cadenceAdvisories(state, finishing, readers))];
+  const dayAdded = trainingDayAddAdvisory(await readers.readBlockDays(state, next));
+  return [
+    ...advisories,
+    ...(await cadenceAdvisories(state, finishing, readers)),
+    ...(dayAdded === null ? [] : [dayAdded]),
+  ];
 }
 
 function defaultReaders(): AdvisoryReaders {
@@ -59,6 +71,7 @@ function defaultReaders(): AdvisoryReaders {
     readFlatline: openFlatline,
     readTier: (state) => getTierSignal(state),
     readDatedBlocks,
+    readBlockDays: (state, next) => readProgramBlockDays(state.store, next),
     today: todayLocal(),
   };
 }
