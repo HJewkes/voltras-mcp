@@ -10,6 +10,7 @@ import {
   titanVirtualId,
   titanVirtualModule,
   transformSpaModule,
+  uninstrumentedNote,
   type ProgramLike,
   type SpaModuleOptions,
 } from '../spa/dev/fidelity/vite-plugin.js';
@@ -122,6 +123,19 @@ describe('transformSpaModule', () => {
 
     expect(result.instrumented).toEqual([]);
     expect(result.code).not.toContain('__vmcpWithProvenance');
+  });
+});
+
+describe('uninstrumentedNote', () => {
+  it('reports the unwrapped components to the registry, and nothing when there are none', () => {
+    const note = uninstrumentedNote(SOURCE, ['StatRow', 'Tile'], '/spa/dev/fidelity/registry.ts');
+
+    expect(parseAst(note).body.map((node) => node.type)).toEqual([
+      'ImportDeclaration',
+      'ExpressionStatement',
+    ]);
+    expect(note).toContain(`__vmcpNoteUninstrumented("${SOURCE}", ["StatRow","Tile"]);`);
+    expect(uninstrumentedNote(SOURCE, [], '/spa/dev/fidelity/registry.ts')).toBe('');
   });
 });
 

@@ -189,6 +189,20 @@ export function transformSpaModule(
   return { code: applyEdits(code, edits), instrumented, uninstrumented, titanImports };
 }
 
+/** Appended to a module with uninstrumented components so the overlay can list them at runtime. */
+export function uninstrumentedNote(
+  source: string,
+  names: readonly string[],
+  registryImport: string,
+): string {
+  if (names.length === 0) return '';
+  return [
+    '',
+    `import { noteUninstrumented as __vmcpNoteUninstrumented } from ${JSON.stringify(registryImport)};`,
+    `__vmcpNoteUninstrumented(${JSON.stringify(source)}, ${JSON.stringify(names)});`,
+  ].join('\n');
+}
+
 /** Source of the virtual module one titan import site resolves to: components wrapped, the rest passed through. */
 export function titanVirtualModule(id: string): string {
   const query = new URLSearchParams(id.slice(id.indexOf('?') + 1));
@@ -276,7 +290,9 @@ export function fidelityPlugin(spaRoot: string): Plugin {
       const result = transformSpaModule(code, this.parse(code) as unknown as ProgramLike, options);
       instrumentedCount += result.instrumented.length;
       uninstrumented.push(...result.uninstrumented.map((name) => `${options.source}#${name}`));
-      return result.code === code ? null : { code: result.code, map: null };
+      const registry = path.join(spaRoot, 'dev', 'fidelity', 'registry.ts');
+      const out = result.code + uninstrumentedNote(options.source, result.uninstrumented, registry);
+      return out === code ? null : { code: out, map: null };
     },
     buildEnd() {
       logger?.info(
