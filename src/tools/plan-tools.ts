@@ -235,7 +235,10 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'before the previous day count held for 2 blocks; and, when the next block is the last ' +
   'before an active rest, an offer of one more weekly session for each specialized muscle ' +
   'limited by fatigue (biceps and delts; never hamstrings, never for a beginner or in a ' +
-  'fat-loss phase), noting when the specialization is younger than 2 mesocycles. The ratio and ' +
+  'fat-loss phase), noting when the specialization is younger than 2 mesocycles. The active ' +
+  'rest is a deload week then a week off: a week named or phased rest or off, or an empty week ' +
+  'in a block that has workouts; an empty week in a block with none is not yet built, so it is ' +
+  'never a week off. The ratio and ' +
   'the hold are planning ' +
   'priors; the deload trigger stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
