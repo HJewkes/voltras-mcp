@@ -4,6 +4,7 @@
 // fat-loss phase, never for a beginner. Advisory copy only: the sitting decides.
 
 import type { TitanMuscleGroup } from '../exercises/muscle-map.js';
+import { hasOffWord, hasRestWord } from '../plan/rest-label.js';
 import { isSpecializedMuscle, priorityMuscleSlugs } from '../plan/specialization.js';
 import type { StoredPriority } from '../store/types.js';
 import { GOAL_GUARDRAIL_THRESHOLDS } from './goal-guardrails.js';
@@ -92,12 +93,11 @@ function earlyCaveat(label: string, mesosHeld: number): string {
 
 type WeekKind = 'deload' | 'off' | 'train';
 
-// "Rest-pause" is a set technique, not a week off.
-const OFF_WORD = /\b(off|rest)\b(?![-\s]?pause)/i;
-
 /** A week whose name or phase says it is off or a rest: the explicit marker, built or not. */
 function markedOff(week: WeekShape): boolean {
-  return [week.name, week.phaseType].some((text) => text !== undefined && OFF_WORD.test(text));
+  return [week.name, week.phaseType].some(
+    (text) => text !== undefined && (hasOffWord(text) || hasRestWord(text)),
+  );
 }
 
 /**
