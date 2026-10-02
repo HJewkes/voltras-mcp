@@ -156,8 +156,8 @@ const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
   'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. ' +
   'A template holds no volume until exercises are added, so the tier-aware volume lints run ' +
-  'on `plan.exercise.create`, not here. `warnings` carries only `week_without_off_day`, when ' +
-  'the week now fills all seven days; it is advisory and the template is still created.';
+  'on `plan.exercise.create`, not here. The one warning here is a week that now fills all ' +
+  'seven days with no day off; it is advisory and the template is still created.';
 const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
 const PLAN_TEMPLATE_LIST_DESCRIPTION =
   'List the workout templates belonging to one week (takes weekId).';
@@ -219,11 +219,11 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'suggested start is the Monday after the current block ends, else today when today is a ' +
   'Monday, even if a session was already logged today, else the next Monday. Each `history` ' +
   'says how that block\u2019s dates changed, in one sentence (`fact`). `advisories` are notes to ' +
-  'weigh, never blocks: `staleness` (a main lift on an open flatline), `deload_cadence` (the ' +
-  'finishing block ran past its tier\u2019s accumulation-to-deload prior; silent for a beginner), ' +
-  '`tier_evidence` (a declared advanced lifter went 6+ weeks with no deload) and `active_rest` ' +
-  '(no deload week plus off week in the last 12 months). The ratio is a planning prior; the ' +
-  'deload trigger stays performance-based. Then date the block with ' +
+  'weigh, never blocks: a main lift on an open flatline; the finishing block run past its ' +
+  'tier\u2019s accumulation-to-deload prior (never for a beginner); a declared advanced lifter ' +
+  'with 6+ weeks and no deload, as evidence against the tier; and no active rest (a deload week ' +
+  'then an off week) in the last 12 months. The ratio is a planning prior; the deload trigger ' +
+  'stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
 
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
