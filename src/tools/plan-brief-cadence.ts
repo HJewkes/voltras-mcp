@@ -34,6 +34,8 @@ export type CadenceTier = 'intermediate' | 'advanced';
 export interface WeekShape {
   isDeload: boolean;
   templates: number;
+  name?: string;
+  phaseType?: string;
 }
 
 /** A block of the finishing block's program, up to and including it, in order. */
