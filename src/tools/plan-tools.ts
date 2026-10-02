@@ -178,7 +178,10 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32), and each ' +
   "target muscle's training days this week against its recovery-tier frequency band, a " +
   'planning prior (VW-623): too few days is judged only once the week has filled enough days to ' +
-  'reach the band, and a frequency warning is returned only by the write that changed it. Each ' +
+  'reach the band, and a frequency warning is returned only by the write that changed it. Past ' +
+  'the beginner tier, a muscle declared `specialize` that the inserted exercise trains warns ' +
+  'when the template holds only one distinct exercise for it: a specialized muscle gets two per ' +
+  'session, a back-burner muscle one (VW-624). Each ' +
   'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
@@ -229,7 +232,11 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'tier\u2019s accumulation-to-deload prior (never for a beginner); a declared advanced lifter ' +
   'with 6+ weeks and no deload, as evidence against the tier; no active rest (a deload week ' +
   'then an off week) in the last 12 months; and the next block adding a training day a week ' +
-  'before the previous day count held for 2 blocks. The ratio and the hold are planning ' +
+  'before the previous day count held for 2 blocks; and, when the next block is the last ' +
+  'before an active rest, an offer of one more weekly session for each specialized muscle ' +
+  'limited by fatigue (biceps and delts; never hamstrings, never for a beginner or in a ' +
+  'fat-loss phase), noting when the specialization is younger than 2 mesocycles. The ratio and ' +
+  'the hold are planning ' +
   'priors; the deload trigger stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
 
