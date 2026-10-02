@@ -98,3 +98,11 @@ jobs:
           test -f dist/bin.js || (echo "dist/bin.js missing" && exit 1)
           test -f dist/server.js || (echo "dist/server.js missing" && exit 1)
           echo "Build verification passed"
+      # The fidelity overlay is dev tooling (VW-431): prove the production SPA carries none of it.
+      - run: npm run build:dashboard
+      - name: Fidelity overlay absent from the production SPA
+        run: node scripts/check-spa-bundle.mjs --absent dist/spa
+      # Positive control, so the absence check cannot pass vacuously.
+      - run: npm run build:dashboard:fidelity -- --outDir "$RUNNER_TEMP/spa-fidelity"
+      - name: Fidelity overlay present in the fidelity build
+        run: node scripts/check-spa-bundle.mjs --present "$RUNNER_TEMP/spa-fidelity"

@@ -22,6 +22,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run typecheck:spa",
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
+    "build:dashboard:fidelity": "vite build --config src/dashboard/spa/vite.config.ts --mode fidelity",
     "start": "node ./dist/bin.js",
     "dashboard:sim": "node scripts/dashboard-sim.mjs",
     "dashboard:preview": "node scripts/dashboard-preview.mjs",
