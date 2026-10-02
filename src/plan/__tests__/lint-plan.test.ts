@@ -13,7 +13,9 @@ import {
   lintPriorityMuscleChangedMidBlock,
   lintSameMuscleHighVolumeConsecutiveDays,
   lintWeeklyVolume,
+  isRestTemplate,
   lintWeekWithoutOffDay,
+  trainingDayKey,
   type LintPlanExercise,
 } from '../lint-plan.js';
 
@@ -536,6 +538,37 @@ describe('lintWeekWithoutOffDay (VW-619 rung 1)', () => {
     const days = WEEKDAYS.map((dayLabel, i) => ({ dayLabel, name: i === 6 ? 'Rest' : 'Lift' }));
 
     expect(lintWeekWithoutOffDay(days)).toEqual([]);
+  });
+
+  it('flags a seven-day week that includes a Rest-pause template', () => {
+    const days = WEEKDAYS.map((dayLabel, i) => ({
+      dayLabel,
+      name: i === 6 ? 'Rest-pause arms' : 'Lift',
+    }));
+
+    expect(lintWeekWithoutOffDay(days)).toMatchObject([{ code: 'week_without_off_day' }]);
+  });
+
+  it.each(['Rest', 'Rest day', 'Off', 'rest - mobility', 'Active rest', 'Day off'])(
+    'counts "%s" as a rest template',
+    (name) => {
+      expect(isRestTemplate({ name })).toBe(true);
+    },
+  );
+
+  it.each(['Rest-pause arms', 'Rest pause arms', 'Offset squats', 'Upper A'])(
+    'counts "%s" as a training day',
+    (name) => {
+      expect(isRestTemplate({ name })).toBe(false);
+    },
+  );
+
+  it('reads only real weekday tokens as a weekday', () => {
+    expect(trainingDayKey({ dayLabel: 'Sunrise' }, 3)).toBe('sunrise');
+    expect(trainingDayKey({ dayLabel: 'Monster' }, 3)).toBe('monster');
+    for (const label of ['Tues', 'Tuesday PM', 'Thurs', 'Weds']) {
+      expect(trainingDayKey({ dayLabel: label }, 3)).toMatch(/^(tue|thu|wed)$/);
+    }
   });
 
   it('counts each unlabelled template as a day of its own', () => {

@@ -448,9 +448,11 @@ export interface LintOffDayTemplate {
   name?: string;
 }
 
-const WEEKDAY_PREFIX = /^(mon|tue|wed|thu|fri|sat|sun)[a-z]*(?![a-z])/;
+const WEEKDAY_PREFIX =
+  /^(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:s|nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?![a-z])/;
 const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
-const REST_WORD = /\brest\b/i;
+// "Rest-pause" is a set technique, not a day off; "Active rest" is still a day without lifting.
+const REST_WORD = /\brest\b(?![-\s]?pause)/i;
 const OFF_ONLY = /^(off|day off|off day)$/i;
 
 /** A rest or off template plans no training, so it is the day off rather than a day used. */
@@ -464,7 +466,7 @@ export function isRestTemplate(template: LintOffDayTemplate): boolean {
 export function trainingDayKey(template: LintOffDayTemplate, index: number): string {
   const label = template.dayLabel?.trim().toLowerCase() ?? '';
   if (label === '') return `unlabelled ${index}`;
-  return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1] ?? label;
+  return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1]?.slice(0, 3) ?? label;
 }
 
 /**

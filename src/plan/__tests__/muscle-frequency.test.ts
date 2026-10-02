@@ -234,6 +234,15 @@ describe('counting training days', () => {
     expect(frequency.get('triceps')).toBe(1);
   });
 
+  it('counts a Rest-pause template as a training day', () => {
+    const templates: FrequencyTemplate[] = [
+      { dayLabel: 'Mon', exercises: [{ muscleGroups: ['biceps'] }] },
+      { dayLabel: 'Wed', name: 'Rest-pause arms', exercises: [{ muscleGroups: ['biceps'] }] },
+    ];
+
+    expect(plannedWeeklyFrequency(templates).get('biceps')).toBe(2);
+  });
+
   it('counts only target credit, never a day a muscle was hit as a secondary', () => {
     const day = [
       [
