@@ -8,11 +8,11 @@
 // soft cap of MAX_SLOTS — stay locked down even if the tool layer is
 // later refactored.
 
-import { chmodSync, mkdtempSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // SDK stub — `VoltraClient` is constructed by `resetPrimarySlot` and
 // instantiated directly by the test bodies; the real class would pull in
@@ -67,13 +67,29 @@ function connectedClient(deviceId?: string): InstanceType<typeof VoltraClient> {
 
 import type { ServerState } from '../server-state.js';
 
+const tmpDirs: string[] = [];
+
+function makeTmpDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tmpDirs.splice(0)) {
+    // A test may leave a directory read-only on purpose; restore it so removal works.
+    chmodSync(dir, 0o700);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 /**
  * Each state gets its OWN bindings file under a fresh tmpdir — `swapSlots`
  * writes through to disk (VMCP-04.10), and a shared path would let one
  * test's swap leak into the next one's assertions.
  */
 function makeBindingsStore(): InstanceType<typeof SlotBindingsStore> {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-slot-lifecycle-'));
+  const dir = makeTmpDir('vmcp-slot-lifecycle-');
   return SlotBindingsStore.open(join(dir, 'slot-bindings.json'));
 }
 
@@ -467,8 +483,7 @@ describe('swapSlots — persisted device↔side bindings', () => {
     rightClient: InstanceType<typeof VoltraClient>;
   } {
     const bindingsPath =
-      opts.bindingsPath ??
-      join(mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-')), 'slot-bindings.json');
+      opts.bindingsPath ?? join(makeTmpDir('vmcp-swap-bindings-'), 'slot-bindings.json');
     const state = {
       slots: new Map(),
       slotBindings: SlotBindingsStore.open(bindingsPath),
@@ -539,7 +554,7 @@ describe('swapSlots — persisted device↔side bindings', () => {
   });
 
   it('drops the binding for a device that lands in `primary` rather than guessing a side', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-'));
+    const dir = makeTmpDir('vmcp-swap-bindings-');
     const bindingsPath = join(dir, 'slot-bindings.json');
     const state = {
       slots: new Map(),
@@ -560,7 +575,7 @@ describe('swapSlots — persisted device↔side bindings', () => {
   });
 
   it('leaves memory AND disk untouched when the binding write fails', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-'));
+    const dir = makeTmpDir('vmcp-swap-bindings-');
     const bindingsPath = join(dir, 'slot-bindings.json');
     const { state } = makeBilateralState({ bindingsPath });
     state.slotBindings.bind('V-A', 'left');

@@ -61,7 +61,8 @@ function listFiles(dir: string, prefix = ''): string[] {
  * the inventory is not a site page.
  */
 function generateInto(outDir: string, inventoryPath: string): GeneratorReport {
-  const reportPath = join(mkdtempSync(join(tmpdir(), 'vmcp-ref-report-')), 'report.json');
+  const reportDir = mkdtempSync(join(tmpdir(), 'vmcp-ref-report-'));
+  const reportPath = join(reportDir, 'report.json');
   const args = [
     GENERATOR,
     '--out',
@@ -71,14 +72,18 @@ function generateInto(outDir: string, inventoryPath: string): GeneratorReport {
     '--skill-inventory',
     inventoryPath,
   ];
-  const result = spawnSync(process.execPath, args, {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(`gen-tool-reference.mjs failed:\n${result.stdout}\n${result.stderr}`);
+  try {
+    const result = spawnSync(process.execPath, args, {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+      throw new Error(`gen-tool-reference.mjs failed:\n${result.stdout}\n${result.stderr}`);
+    }
+    return JSON.parse(readFileSync(reportPath, 'utf8')) as GeneratorReport;
+  } finally {
+    rmSync(reportDir, { recursive: true, force: true });
   }
-  return JSON.parse(readFileSync(reportPath, 'utf8')) as GeneratorReport;
 }
 
 /** The `## \`name\`` block for one tool, up to the next tool heading. */
