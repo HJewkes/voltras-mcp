@@ -47,6 +47,7 @@ import {
   type LintPlanExercise,
   type PlanWarning,
 } from '../plan/lint-plan.js';
+import { lintSpecializedMuscleExercises, specializedMuscles } from '../plan/specialization.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
 import { targetMusclesOf } from './metrics-tools.js';
 import {
@@ -836,16 +837,32 @@ async function lintTemplateVolume(
       tier,
       confidence,
     });
-    const crossTemplateWarnings = await lintAcrossWeek(
-      state,
-      { templateId: workoutTemplateId, exercises: siblings, addedId },
-      tier,
-      confidence,
-    );
-    return [...sessionWarnings, ...crossTemplateWarnings];
+    const added = { templateId: workoutTemplateId, exercises: siblings, addedId };
+    const crossTemplateWarnings = await lintAcrossWeek(state, added, tier, confidence);
+    const specialization = await lintSpecialization(state, added, tier, confidence);
+    return [...sessionWarnings, ...specialization, ...crossTemplateWarnings];
   } catch {
     return [];
   }
+}
+
+/** The specialization lint (VW-624), only for the muscles the inserted exercise trains. */
+async function lintSpecialization(
+  state: ServerState,
+  added: AddedExercise,
+  tier: Tier,
+  confidence: TierConfidence,
+): Promise<PlanWarning[]> {
+  const row = added.exercises.find((e) => e.id === added.addedId);
+  if (row === undefined) return [];
+  const trained = targetMusclesOf(state, row.exerciseId);
+  const priorities = await state.store.listPriorities(LOCAL_USER_ID);
+  return lintSpecializedMuscleExercises({
+    exercises: added.exercises.map((e) => toLintExercise(state, e)),
+    specialized: specializedMuscles(priorities).filter((m) => trained.includes(m)),
+    tier,
+    confidence,
+  });
 }
 
 interface TemplateExerciseBucket {

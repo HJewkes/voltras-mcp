@@ -1,17 +1,16 @@
 // The planning brief's frequency-progression advisory (VW-623, B28): the block being planned adds
 // a training day before the program has held its current day count for two blocks. RP holds the
-// count for 2-3 mesocycles before adding a day (rp-s5-frequency-progression-conservative). Advisory
+// count for 2-3 mesocycles before adding a day (rp-s5-frequency-progression-conservative), the same
+// hold B45 puts on priority changes, so both read minMesosBeforeSwitch (VW-624). Advisory
 // copy only: the hold is a planning prior, and nothing here blocks a plan.
 
 import type { LintOffDayTemplate } from '../plan/lint-plan.js';
 import { trainingDaysOf } from '../plan/muscle-frequency.js';
 import type { StoredTrainingBlock } from '../store/types.js';
+import { GOAL_GUARDRAIL_THRESHOLDS } from './goal-guardrails.js';
 import type { BriefAdvisory } from './plan-brief-advisories.js';
 
 const FREQUENCY_PROGRESSION = 'rp:rp-s5-frequency-progression-conservative';
-
-/** The low end of RP's 2-3 mesocycle hold. */
-const MIN_HELD_BLOCKS = 2;
 
 /** A block of the program in order, with its training days a week, or `null` when none are planned. */
 export interface BlockDays {
@@ -30,7 +29,7 @@ export function trainingDayAddAdvisory(blocks: readonly BlockDays[]): BriefAdvis
   const previous = earlier.at(-1);
   if (previous?.trainingDays == null || next.trainingDays <= previous.trainingDays) return null;
   const held = heldBlocks(earlier);
-  if (held >= MIN_HELD_BLOCKS) return null;
+  if (held >= GOAL_GUARDRAIL_THRESHOLDS.minMesosBeforeSwitch) return null;
   return {
     kind: 'frequency_progression',
     exerciseId: null,

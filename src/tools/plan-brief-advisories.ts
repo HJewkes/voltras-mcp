@@ -1,6 +1,7 @@
 // Advisories the planning brief carries into the sitting (VW-558 S10): a main lift going in on
 // an open flatline, the deload cadence (VW-619, in plan-brief-cadence.ts) and a training day
-// added too soon (VW-623, in plan-brief-frequency.ts). Advisory copy only: the sitting decides, and nothing here blocks a plan.
+// added too soon (VW-623, in plan-brief-frequency.ts) and the specialization frequency bump (VW-624,
+// in plan-brief-specialization.ts). Advisory copy only: the sitting decides, and nothing here blocks a plan.
 
 import { todayLocal } from '../analytics/training-days.js';
 import type { Flatline } from '../analytics/stall-step.js';
@@ -22,11 +23,20 @@ import {
   trainingDayAddAdvisory,
   type BlockDays,
 } from './plan-brief-frequency.js';
+import { frequencyBumpAdvisories, isFinalBeforeActiveRest } from './plan-brief-specialization.js';
+import { isSpecializedMuscle } from '../plan/specialization.js';
+import { readDietPhaseState } from './diet-phase-state.js';
 import { calendarOf, placedBlocks } from './plan-schedule-tools.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 export interface BriefAdvisory {
-  kind: 'staleness' | 'deload_cadence' | 'tier_evidence' | 'active_rest' | 'frequency_progression';
+  kind:
+    | 'staleness'
+    | 'deload_cadence'
+    | 'tier_evidence'
+    | 'active_rest'
+    | 'frequency_progression'
+    | 'specialization_frequency_bump';
   exerciseId: string | null;
   text: string;
   rpIds: string[];
@@ -43,6 +53,7 @@ export interface AdvisoryReaders {
   readTier: (state: AdvisoryState) => Promise<Pick<TierSignal, 'tier' | 'declared'>>;
   readDatedBlocks: (state: AdvisoryState, today: string) => Promise<DatedBlockWeeks[]>;
   readBlockDays: (state: AdvisoryState, next: StoredTrainingBlock | null) => Promise<BlockDays[]>;
+  readDietPhase: (state: AdvisoryState) => Promise<string>;
   today: string;
 }
 
@@ -63,6 +74,7 @@ export async function readBriefAdvisories(
     ...advisories,
     ...(await cadenceAdvisories(state, finishing, readers)),
     ...(dayAdded === null ? [] : [dayAdded]),
+    ...(await specializationAdvisories(state, next, readers)),
   ];
 }
 
@@ -72,6 +84,7 @@ function defaultReaders(): AdvisoryReaders {
     readTier: (state) => getTierSignal(state),
     readDatedBlocks,
     readBlockDays: (state, next) => readProgramBlockDays(state.store, next),
+    readDietPhase: async (state) => (await readDietPhaseState(state as ServerState)).phase,
     today: todayLocal(),
   };
 }
@@ -92,6 +105,31 @@ async function cadenceAdvisories(
     activeRestAdvisory(await readers.readDatedBlocks(state, readers.today), readers.today),
   ];
   return found.filter((advisory) => advisory !== null);
+}
+
+/** The frequency bump offer for the block being planned, read only when a muscle is specialized. */
+async function specializationAdvisories(
+  state: AdvisoryState,
+  next: StoredTrainingBlock | null,
+  readers: AdvisoryReaders,
+): Promise<BriefAdvisory[]> {
+  if (next === null) return [];
+  const priorities = await state.store.listPriorities(LOCAL_USER_ID);
+  if (!priorities.some(isSpecializedMuscle)) return [];
+  const following = (await state.store.getTrainingBlocksForProgram(next.programId))
+    .filter((block) => block.orderIndex > next.orderIndex)
+    .sort((a, b) => a.orderIndex - b.orderIndex)[0];
+  const followingWeeks = following === undefined ? [] : await weekShapes(state, following.id);
+  return frequencyBumpAdvisories({
+    blockName: next.name,
+    priorities,
+    tier: (await readers.readTier(state)).tier,
+    dietPhase: await readers.readDietPhase(state),
+    finalBeforeActiveRest: isFinalBeforeActiveRest(
+      await weekShapes(state, next.id),
+      followingWeeks,
+    ),
+  });
 }
 
 /** The lifts the lifter declared as priorities: the main lifts a sitting plans around. */

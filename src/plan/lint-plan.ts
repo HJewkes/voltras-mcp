@@ -45,7 +45,8 @@ export type PlanWarningCode =
   | 'same_muscle_high_volume_consecutive_days'
   | 'week_without_off_day'
   | 'muscle_frequency_below_band'
-  | 'muscle_frequency_above_band';
+  | 'muscle_frequency_above_band'
+  | 'specialized_muscle_single_exercise';
 
 export interface PlanWarning {
   code: PlanWarningCode;
@@ -118,7 +119,7 @@ const HARD_SETS_PER_MUSCLE_PER_WEEK_FLOOR: Record<Tier, number> = {
   advanced: 0,
 };
 
-const PROVISIONAL_SUFFIX =
+export const PROVISIONAL_SUFFIX =
   ' (tier is provisional; set `profile.set_training_background` to confirm)';
 
 const REAL_FIX = 'Technique and effort before more sets';
