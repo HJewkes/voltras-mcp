@@ -42,7 +42,8 @@ export type PlanWarningCode =
   | 'hard_sets_per_muscle_per_week_over_tier_ceiling'
   | 'meso_length_grew_mid_block'
   | 'priority_muscle_changed_mid_block'
-  | 'same_muscle_high_volume_consecutive_days';
+  | 'same_muscle_high_volume_consecutive_days'
+  | 'week_without_off_day';
 
 export interface PlanWarning {
   code: PlanWarningCode;
@@ -432,4 +433,35 @@ function consecutiveDayWarnings(
     });
   }
   return warnings;
+}
+
+// --- VW-619: rung 1 of the fatigue-reduction ladder ---
+
+const DAYS_PER_WEEK = 7;
+
+export interface LintOffDayTemplate {
+  dayLabel?: string;
+}
+
+/**
+ * A week whose templates fill all seven days leaves no day off, the first rung of the
+ * fatigue-reduction ladder (rp-s2-fatigue-reduction-ladder). Templates sharing a day label
+ * are one training day; an unlabelled template counts as a day of its own.
+ */
+export function lintWeekWithoutOffDay(templates: readonly LintOffDayTemplate[]): PlanWarning[] {
+  const days = new Set(
+    templates.map((t, i) => t.dayLabel?.trim().toLowerCase() || `unlabelled ${i}`),
+  );
+  if (days.size < DAYS_PER_WEEK) return [];
+  return [
+    {
+      code: 'week_without_off_day',
+      message:
+        `This week plans ${days.size} training days, so it has no day off. A day off is the ` +
+        'first and cheapest rung of fatigue management: it clears the fatigue one hard day ' +
+        'leaves behind before any deload is needed. Consider making one of these days a rest day.',
+      observed: days.size,
+      ceiling: DAYS_PER_WEEK - 1,
+    },
+  ];
 }

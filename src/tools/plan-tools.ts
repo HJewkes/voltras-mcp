@@ -43,6 +43,7 @@ import {
   lintPriorityMuscleChangedMidBlock,
   lintSameMuscleHighVolumeConsecutiveDays,
   lintWeeklyVolume,
+  lintWeekWithoutOffDay,
   type LintPlanExercise,
   type PlanWarning,
 } from '../plan/lint-plan.js';
@@ -154,8 +155,9 @@ const PLAN_WEEK_LIST_DESCRIPTION =
 const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
   'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. ' +
-  'Returns `warnings: []` — a template holds no volume until exercises are added, so the ' +
-  'tier-aware volume lints run on `plan.exercise.create`, not here.';
+  'A template holds no volume until exercises are added, so the tier-aware volume lints run ' +
+  'on `plan.exercise.create`, not here. `warnings` carries only `week_without_off_day`, when ' +
+  'the week now fills all seven days; it is advisory and the template is still created.';
 const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
 const PLAN_TEMPLATE_LIST_DESCRIPTION =
   'List the workout templates belonging to one week (takes weekId).';
@@ -216,7 +218,12 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'boundary) and `dietPhase` (null when none is declared; raise it for the next block). The ' +
   'suggested start is the Monday after the current block ends, else today when today is a ' +
   'Monday, even if a session was already logged today, else the next Monday. Each `history` ' +
-  'says how that block\u2019s dates changed, in one sentence (`fact`). Then date the block with ' +
+  'says how that block\u2019s dates changed, in one sentence (`fact`). `advisories` are notes to ' +
+  'weigh, never blocks: `staleness` (a main lift on an open flatline), `deload_cadence` (the ' +
+  'finishing block ran past its tier\u2019s accumulation-to-deload prior; silent for a beginner), ' +
+  '`tier_evidence` (a declared advanced lifter went 6+ weeks with no deload) and `active_rest` ' +
+  '(no deload week plus off week in the last 12 months). The ratio is a planning prior; the ' +
+  'deload trigger stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
 
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
@@ -706,10 +713,10 @@ async function listWeeksForBlock(
 // --- workout templates ---
 
 /**
- * `warnings` is always empty here and that is not an oversight: a template is
- * created before it holds any exercise, so there is no volume to measure yet.
- * The key ships anyway so a caller can read `warnings` off both create tools
- * without branching on which one it called.
+ * A template is created before it holds any exercise, so there is no volume to
+ * measure yet; the only lint here is the week's shape, whether it still has a
+ * day off (VW-619). Advisory like every lint: a store hiccup costs the warning,
+ * never the write.
  */
 async function createTemplate(
   state: ServerState,
@@ -724,7 +731,15 @@ async function createTemplate(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putWorkoutTemplate(template);
-  return { template, warnings: [] };
+  return { template, warnings: await lintWeekOffDay(state, template.weekId) };
+}
+
+async function lintWeekOffDay(state: ServerState, weekId: string): Promise<PlanWarning[]> {
+  try {
+    return lintWeekWithoutOffDay(await state.store.getWorkoutTemplatesForWeek(weekId));
+  } catch {
+    return [];
+  }
 }
 
 async function getTemplate(
@@ -852,7 +867,7 @@ async function lintAcrossWeek(
     confidence,
   });
   const priority = await lintPriorityMuscle(state, current, weekExercises);
-  return [...weekly, ...consecutive, ...priority];
+  return [...weekly, ...consecutive, ...priority, ...lintWeekWithoutOffDay(weekTemplates)];
 }
 
 /** Fetches each template's planned exercises, reusing an already-known one to avoid a refetch. */

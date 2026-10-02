@@ -360,6 +360,31 @@ describe('plan.exercise.create lints', () => {
   });
 });
 
+describe('plan.template.create lints (VW-619)', () => {
+  const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  async function fillWeek(days: string[]): Promise<PlanWarning[]> {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    let warnings: PlanWarning[] = [];
+    for (const [i, day] of days.entries()) {
+      warnings = body<{ warnings: PlanWarning[] }>(
+        await makeTemplateAt(h, weekId, i, day),
+      ).warnings;
+    }
+    return warnings;
+  }
+
+  it('flags the template that leaves the week with no off day', async () => {
+    const warnings = await fillWeek(WEEKDAYS);
+
+    expect(warnings.map((w) => w.code)).toEqual(['week_without_off_day']);
+  });
+
+  it('stays quiet while the week keeps a day off', async () => {
+    expect(await fillWeek(WEEKDAYS.slice(0, 6))).toEqual([]);
+  });
+});
+
 describe('plan lint on the seed weight table (VW-563)', () => {
   function perMuscle(r: ToolResult): [string | undefined, number | undefined][] {
     return body<{ warnings: PlanWarning[] }>(r)

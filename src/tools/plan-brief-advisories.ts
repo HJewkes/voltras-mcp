@@ -1,20 +1,26 @@
 // Advisories the planning brief carries into the sitting (VW-558 S10): a main lift going in on
-// an open flatline, and a finishing block run past the accumulation-to-deload ratio. Advisory
-// copy only: the sitting decides, and nothing here blocks a plan.
+// an open flatline, and the deload cadence (VW-619, in plan-brief-cadence.ts). Advisory copy
+// only: the sitting decides, and nothing here blocks a plan.
 
+import { todayLocal } from '../analytics/training-days.js';
 import type { Flatline } from '../analytics/stall-step.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type StoredTrainingBlock } from '../store/types.js';
 import { computeHistoryTrend } from './metrics-tools.js';
-
-/**
- * The longest accumulation run before a deload is due, in weeks: the long end of 3:1 to 5:1.
- * rp:rp-s2-fatigue-reduction-ladder (intermediates roughly 4:1 or 5:1, advanced 3:1 or 4:1).
- */
-export const MAX_ACCUMULATION_WEEKS = 5;
+import {
+  activeRestAdvisory,
+  cadenceTier,
+  deloadCadenceAdvisory,
+  tierEvidenceAdvisory,
+  type BlockWeeks,
+  type DatedBlockWeeks,
+  type WeekShape,
+} from './plan-brief-cadence.js';
+import { placedBlocks } from './plan-schedule-tools.js';
+import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 export interface BriefAdvisory {
-  kind: 'staleness' | 'deload_cadence';
+  kind: 'staleness' | 'deload_cadence' | 'tier_evidence' | 'active_rest';
   exerciseId: string | null;
   text: string;
   rpIds: string[];
@@ -25,18 +31,53 @@ type AdvisoryState = Pick<ServerState, 'store'>;
 /** The trailing flatline on a lift's top-load trend, or `null` when it has none or no history. */
 export type FlatlineReader = (state: AdvisoryState, exerciseId: string) => Promise<Flatline | null>;
 
+/** What the advisories read beyond the plan rows; each is injectable so a test can pin it. */
+export interface AdvisoryReaders {
+  readFlatline: FlatlineReader;
+  readTier: (state: AdvisoryState) => Promise<Pick<TierSignal, 'tier' | 'declared'>>;
+  readDatedBlocks: (state: AdvisoryState) => Promise<DatedBlockWeeks[]>;
+  today: string;
+}
+
 export async function readBriefAdvisories(
   state: AdvisoryState,
   finishing: StoredTrainingBlock | null,
-  readFlatline: FlatlineReader = openFlatline,
+  overrides: Partial<AdvisoryReaders> = {},
 ): Promise<BriefAdvisory[]> {
+  const readers = { ...defaultReaders(), ...overrides };
   const advisories: BriefAdvisory[] = [];
   for (const exerciseId of await mainLiftIds(state)) {
-    const found = await readFlatline(state, exerciseId);
+    const found = await readers.readFlatline(state, exerciseId);
     if (found !== null) advisories.push(stalenessAdvisory(exerciseId, found));
   }
-  const cadence = finishing === null ? null : await deloadCadenceAdvisory(state, finishing);
-  return cadence === null ? advisories : [...advisories, cadence];
+  return [...advisories, ...(await cadenceAdvisories(state, finishing, readers))];
+}
+
+function defaultReaders(): AdvisoryReaders {
+  return {
+    readFlatline: openFlatline,
+    readTier: (state) => getTierSignal(state),
+    readDatedBlocks,
+    today: todayLocal(),
+  };
+}
+
+/** The cadence family, all silent for a beginner (rp:rp-s4-beginner-no-deload-for-months). */
+async function cadenceAdvisories(
+  state: AdvisoryState,
+  finishing: StoredTrainingBlock | null,
+  readers: AdvisoryReaders,
+): Promise<BriefAdvisory[]> {
+  const signal = await readers.readTier(state);
+  const tier = cadenceTier(signal);
+  if (tier === null) return [];
+  const history = finishing === null ? [] : await programHistory(state, finishing);
+  const found = [
+    finishing === null ? null : deloadCadenceAdvisory(finishing, history, tier),
+    signal.declared === 'advanced' ? tierEvidenceAdvisory(history) : null,
+    activeRestAdvisory(await readers.readDatedBlocks(state), readers.today),
+  ];
+  return found.filter((advisory) => advisory !== null);
 }
 
 /** The lifts the lifter declared as priorities: the main lifts a sitting plans around. */
@@ -67,46 +108,37 @@ function stalenessAdvisory(exerciseId: string, found: Flatline): BriefAdvisory {
   };
 }
 
-async function deloadCadenceAdvisory(
+/** The finishing block's program up to and including it, each block with its weeks in order. */
+async function programHistory(
   state: AdvisoryState,
   finishing: StoredTrainingBlock,
-): Promise<BriefAdvisory | null> {
-  const weeks = await state.store.getTrainingWeeksForBlock(finishing.id);
-  const run = longestAccumulationRun(weeks.map((week) => week.isDeload));
-  const hasDeload = weeks.some((week) => week.isDeload);
-  if (weeks.length === 0 || (hasDeload && run <= MAX_ACCUMULATION_WEEKS)) return null;
-  const record = await deloadRecord(state, finishing.programId);
-  const shape = hasDeload
-    ? `runs ${run} accumulation weeks before its deload`
-    : `has ${run} weeks and no deload week`;
-  return {
-    kind: 'deload_cadence',
-    exerciseId: null,
-    text:
-      `"${finishing.name}" ${shape}, past the 3:1 to 5:1 accumulation-to-deload ratio ` +
-      `(rp:rp-s2-fatigue-reduction-ladder). ${record} Beginners may go months without one ` +
-      '(rp:rp-s4-beginner-no-deload-for-months); the trigger stays performance-based.',
-    rpIds: ['rp:rp-s2-fatigue-reduction-ladder', 'rp:rp-s4-beginner-no-deload-for-months'],
-  };
+): Promise<BlockWeeks[]> {
+  const blocks = (await state.store.getTrainingBlocksForProgram(finishing.programId))
+    .filter((block) => block.id === finishing.id || block.orderIndex < finishing.orderIndex)
+    .sort((a, b) => a.orderIndex - b.orderIndex);
+  return Promise.all(
+    blocks.map(async (block) => ({ block, weeks: await weekShapes(state, block.id) })),
+  );
 }
 
-function longestAccumulationRun(deloads: readonly boolean[]): number {
-  let longest = 0;
-  let current = 0;
-  for (const isDeload of deloads) {
-    current = isDeload ? 0 : current + 1;
-    longest = Math.max(longest, current);
-  }
-  return longest;
+async function weekShapes(state: AdvisoryState, blockId: string): Promise<WeekShape[]> {
+  const weeks = await state.store.getTrainingWeeksForBlock(blockId);
+  const ordered = [...weeks].sort((a, b) => a.orderIndex - b.orderIndex);
+  return Promise.all(
+    ordered.map(async (week) => ({
+      isDeload: week.isDeload,
+      templates: (await state.store.getWorkoutTemplatesForWeek(week.id)).length,
+    })),
+  );
 }
 
-/** The lifter's own record: how many of the program's blocks planned a deload week. */
-async function deloadRecord(state: AdvisoryState, programId: string): Promise<string> {
-  const blocks = await state.store.getTrainingBlocksForProgram(programId);
-  let withDeload = 0;
-  for (const block of blocks) {
-    const weeks = await state.store.getTrainingWeeksForBlock(block.id);
-    if (weeks.some((week) => week.isDeload)) withDeload += 1;
-  }
-  return `${withDeload} of this program's ${blocks.length} blocks planned a deload week.`;
+async function readDatedBlocks(state: AdvisoryState): Promise<DatedBlockWeeks[]> {
+  const placed = await placedBlocks(state as ServerState);
+  return Promise.all(
+    placed.map(async (block) => ({
+      startsOn: block.startsOn,
+      endsOn: block.endsOn,
+      weeks: await weekShapes(state, block.blockId),
+    })),
+  );
 }
