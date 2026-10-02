@@ -23,9 +23,12 @@
 // session rather than filtering by user id, the same single-user posture `profile-tools.ts`
 // takes by keying off `LOCAL_USER_ID`.
 
-import { readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
+import { localDate, readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
+import { validateHistory, type HistoricalTrainingSummary } from './tier-history.js';
+
+export type { HistoricalTrainingSummary } from './tier-history.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
 
@@ -62,16 +65,36 @@ export interface TierSignalEvidence {
    */
   unreviewedDays: number;
   firstSessionAt: string | null;
+  /** The logged span; with an imported summary, the wider of that and the union's day span. */
   weeksSpanned: number;
-  /** Whether the logged history alone clears the 24-day, 12-week gate. */
+  /** Whether logged history, unioned with any imported summary, clears the 24-day, 12-week gate. */
   loggedHistoryMet: boolean;
-  /** The longest run of days between two logged training days; `null` with fewer than two. */
+  /** The longest run of days between two training days, imported ones included; `null` with fewer than two. */
   longestLoggedGapDays: number | null;
   plateauDetected: boolean;
   /** null = not enough data / not computed by this MVP (needs a later increment). */
   techniqueStableUnderLoad: boolean | null;
+  /** From an imported summary's attendance when one was passed; otherwise null. */
   frequencyConsistent: boolean | null;
   planOwnershipObserved: boolean | null;
+  /** Imported days not already logged, after dedupe by local date. Present only with a summary (VW-551). */
+  historicalTrainingDays?: number;
+  /** The summary's `source`; `null` when it was rejected outright. Present only with a summary. */
+  historySource?: string | null;
+  /** Which evidence said the lifter has plateaued. Present only with a summary. */
+  plateauSource?: PlateauSource;
+  /** The last break derived from the summary, in months; `null` when not derived. Present only with a summary. */
+  historyBreakMonths?: number | null;
+  /** Summary entries dropped at validation, or the whole summary rejected, each with its reason. */
+  historyDropped?: string[];
+}
+
+export type PlateauSource = 'self_report' | 'history' | 'both' | null;
+
+export interface TierSignalOptions {
+  asOf?: string;
+  /** An imported training-history summary; validated here, never trusted as typed. */
+  history?: HistoricalTrainingSummary;
 }
 
 export interface TierSignal {
@@ -127,6 +150,12 @@ const RETURNER_MIN_YEARS_TRAINING = 1;
  */
 const MAX_BREAK_MONTHS = 12;
 
+/**
+ * Attendance at or above this share of planned weeks reads as consistent frequency.
+ * ENGINEERING DEFAULT: three planned weeks in four. Evidence only; it never moves the tier.
+ */
+const MIN_CONSISTENT_ATTENDANCE = 0.75;
+
 function weeksBetween(first: string | null, last: string | null): number {
   if (first === null || last === null) return 0;
   const spanMs = new Date(last).getTime() - new Date(first).getTime();
@@ -142,13 +171,15 @@ function longestGapDays(days: readonly string[]): number | null {
 
 /**
  * The returner path: declared prior training, a last break under a year, and no logged gap of
- * a year or more. An unanswered break question never opens it.
+ * a year or more. An answered break question wins over a break derived from an imported
+ * summary; with neither, the path stays closed.
  */
 function isReturner(
   profile: StoredTrainingProfile | undefined,
   longestLoggedGapDays: number | null,
+  derivedBreakMonths: number | null,
 ): boolean {
-  const breakMonths = profile?.lastBreakMonths;
+  const breakMonths = profile?.lastBreakMonths ?? derivedBreakMonths ?? undefined;
   return (
     (profile?.yearsTraining ?? 0) >= RETURNER_MIN_YEARS_TRAINING &&
     breakMonths !== undefined &&
@@ -167,11 +198,157 @@ function ceilingBasisOf(
   return returner ? 'returner' : null;
 }
 
+/** What an imported summary adds to the logged read (VW-551). */
+interface ImportedHistory {
+  unionDays: string[];
+  stalled: boolean;
+  breakMonths: number | null;
+  frequencyConsistent: boolean | null;
+  evidence: Required<
+    Pick<
+      TierSignalEvidence,
+      'historicalTrainingDays' | 'historySource' | 'historyBreakMonths' | 'historyDropped'
+    >
+  >;
+}
+
+function frequencyFromAttendance(attendance: number | null): boolean | null {
+  return attendance === null ? null : attendance >= MIN_CONSISTENT_ATTENDANCE;
+}
+
+/** Whole weeks between the first and last of some local dates, oldest first. */
+function daySpanWeeks(days: readonly string[]): number {
+  if (days.length < 2) return 0;
+  return Math.floor((Date.parse(days[days.length - 1]) - Date.parse(days[0])) / MS_PER_WEEK);
+}
+
+/** Months from the summary's last day to the first logged day, or to asOf/now when none is logged. */
+function derivedBreakMonths(
+  importedDays: readonly string[],
+  loggedDays: readonly string[],
+  asOf: string | undefined,
+): number | null {
+  const lastImported = importedDays.at(-1);
+  if (lastImported === undefined) return null;
+  const resumedOn = loggedDays[0] ?? localDate(asOf ?? new Date().toISOString());
+  const gapDays = Math.max(0, (Date.parse(resumedOn) - Date.parse(lastImported)) / DAY_MS);
+  return gapDays / DAYS_PER_MONTH;
+}
+
+/** Validate a summary and union it with the logged days, honouring the same asOf cutoff. */
+function readImportedHistory(
+  raw: HistoricalTrainingSummary,
+  loggedDays: readonly string[],
+  asOf: string | undefined,
+): ImportedHistory {
+  const { history, dropped } = validateHistory(raw);
+  const cutoff = asOf === undefined ? null : localDate(asOf);
+  const inWindow = (date: string): boolean => cutoff === null || date <= cutoff;
+  const importedDays = (history?.trainingDayDates ?? []).filter(inWindow);
+  const logged = new Set(loggedDays);
+  const added = importedDays.filter((date) => !logged.has(date));
+  const breakMonths = derivedBreakMonths(importedDays, loggedDays, asOf);
+  return {
+    unionDays: [...loggedDays, ...added].sort(),
+    stalled: (history?.stallDates ?? []).some(inWindow),
+    breakMonths,
+    frequencyConsistent: frequencyFromAttendance(history?.attendanceConsistency ?? null),
+    evidence: {
+      historicalTrainingDays: added.length,
+      historySource: history?.source ?? null,
+      historyBreakMonths: breakMonths === null ? null : Math.round(breakMonths * 10) / 10,
+      historyDropped: dropped,
+    },
+  };
+}
+
+function plateauSourceOf(selfReport: boolean, history: boolean): PlateauSource {
+  if (selfReport && history) return 'both';
+  if (selfReport) return 'self_report';
+  return history ? 'history' : null;
+}
+
+/** The training-day read behind both gates: logged days, plus an imported summary when passed. */
+interface HistoryRead {
+  loggedDays: string[];
+  firstSessionAt: string | null;
+  unionDays: string[];
+  weeksSpanned: number;
+  imported: ImportedHistory | null;
+}
+
+async function readHistory(
+  store: TierSignalState['store'],
+  asOf: string | undefined,
+  summary: HistoricalTrainingSummary | undefined,
+): Promise<HistoryRead> {
+  const asOfFilter = asOf === undefined ? {} : { to: asOf };
+  const loggedDays = await readTrainingDaysMatching(store, asOfFilter);
+  const span = await store.getSessionDateSpan({ endedOnly: true, ...asOfFilter });
+  const loggedWeeks = weeksBetween(span.first, span.last);
+  if (summary === undefined) {
+    return {
+      loggedDays,
+      firstSessionAt: span.first,
+      unionDays: loggedDays,
+      weeksSpanned: loggedWeeks,
+      imported: null,
+    };
+  }
+  const imported = readImportedHistory(summary, loggedDays, asOf);
+  const weeksSpanned = Math.max(loggedWeeks, daySpanWeeks(imported.unionDays));
+  return {
+    loggedDays,
+    firstSessionAt: span.first,
+    unionDays: imported.unionDays,
+    weeksSpanned,
+    imported,
+  };
+}
+
+function sourceOf(declared: Tier | null, tier: Tier): TierSource {
+  if (declared === null) return 'default';
+  return tier === declared ? 'declared' : 'derived';
+}
+
+interface Gates {
+  everPlateaued: boolean;
+  loggedHistoryMet: boolean;
+  longestLoggedGapDays: number | null;
+  ceilingBasis: TierCeilingBasis;
+}
+
+function gatesOf(profile: StoredTrainingProfile | undefined, read: HistoryRead): Gates {
+  const everPlateaued = (profile?.everPlateaued ?? false) || (read.imported?.stalled ?? false);
+  const loggedHistoryMet =
+    read.unionDays.length >= MIN_TRAINING_DAYS && read.weeksSpanned >= MIN_WEEKS_SPANNED;
+  const longestLoggedGapDays = longestGapDays(read.unionDays);
+  const returner = isReturner(profile, longestLoggedGapDays, read.imported?.breakMonths ?? null);
+  return {
+    everPlateaued,
+    loggedHistoryMet,
+    longestLoggedGapDays,
+    ceilingBasis: ceilingBasisOf(everPlateaued, loggedHistoryMet, returner),
+  };
+}
+
+/** The evidence keys only an imported summary adds; none at all without one. */
+function importedEvidenceOf(
+  imported: ImportedHistory | null,
+  profile: StoredTrainingProfile | undefined,
+): Partial<TierSignalEvidence> {
+  if (imported === null) return {};
+  return {
+    ...imported.evidence,
+    plateauSource: plateauSourceOf(profile?.everPlateaued ?? false, imported.stalled),
+  };
+}
+
 /**
  * The crude ceiling (§6.2), the returner path, and the §3.1 output shape.
  *
  * ```
- * loggedHistoryMet = trainingDaysLogged >= 24 and weeksSpanned >= 12
+ * loggedHistoryMet = trainingDays >= 24 and weeksSpanned >= 12   (logged, unioned with any summary)
  * confidence = loggedHistoryMet ? 'confident' : 'provisional'
  * ceiling = everPlateaued and (loggedHistoryMet or returner) ? 'intermediate' : 'beginner'
  * tier = min(declared ?? 'beginner', ceiling)
@@ -180,53 +357,43 @@ function ceilingBasisOf(
  * `advanced` is never produced by the ceiling (§3.5): it can only come from an explicit
  * `declared_tier = 'advanced'`, and the clamp still applies to it.
  *
- * `asOf` counts only sessions that started at or before that instant; omitted, the whole
- * history counts. The profile and the unreviewed-day count are always read as they stand now.
+ * `asOf` counts only sessions that started at or before that instant, and only imported days
+ * and stalls on or before its local date; omitted, the whole history counts. The profile and
+ * the unreviewed-day count are always read as they stand now. It may be passed positionally
+ * or in `options`. With no `history`, the output is exactly what it was before VW-551.
  */
 export async function getTierSignal(
   state: TierSignalState,
   userId: string = LOCAL_USER_ID,
-  asOf?: string,
+  asOfOrOptions?: string | TierSignalOptions,
 ): Promise<TierSignal> {
+  const options = typeof asOfOrOptions === 'string' ? { asOf: asOfOrOptions } : asOfOrOptions;
   const profile = await state.store.getTrainingProfile(userId);
-  const asOfFilter = asOf === undefined ? {} : { to: asOf };
-  const days = await readTrainingDaysMatching(state.store, asOfFilter);
-  const span = await state.store.getSessionDateSpan({ endedOnly: true, ...asOfFilter });
-  const weeksSpanned = weeksBetween(span.first, span.last);
-  const everPlateaued = profile?.everPlateaued ?? false;
-  const loggedHistoryMet = days.length >= MIN_TRAINING_DAYS && weeksSpanned >= MIN_WEEKS_SPANNED;
-  const longestLoggedGapDays = longestGapDays(days);
-  const ceilingBasis = ceilingBasisOf(
-    everPlateaued,
-    loggedHistoryMet,
-    isReturner(profile, longestLoggedGapDays),
-  );
-  const derivedCeiling: Tier = ceilingBasis === null ? 'beginner' : 'intermediate';
-
+  const read = await readHistory(state.store, options?.asOf, options?.history);
+  const gates = gatesOf(profile, read);
+  const derivedCeiling: Tier = gates.ceilingBasis === null ? 'beginner' : 'intermediate';
   const unreviewed = await readUnreviewed(state.store);
   const declared = isTier(profile?.declaredTier) ? profile.declaredTier : null;
   const tier = minTier(declared ?? 'beginner', derivedCeiling);
-  const source: TierSource =
-    declared === null ? 'default' : tier === declared ? 'declared' : 'derived';
-
   return {
     tier,
-    confidence: loggedHistoryMet ? 'confident' : 'provisional',
-    source,
+    confidence: gates.loggedHistoryMet ? 'confident' : 'provisional',
+    source: sourceOf(declared, tier),
     derivedCeiling,
-    ceilingBasis,
+    ceilingBasis: gates.ceilingBasis,
     declared,
     evidence: {
-      trainingDaysLogged: days.length,
+      trainingDaysLogged: read.loggedDays.length,
       unreviewedDays: unreviewed.unreviewedDays,
-      firstSessionAt: span.first,
-      weeksSpanned,
-      loggedHistoryMet,
-      longestLoggedGapDays,
-      plateauDetected: everPlateaued,
+      firstSessionAt: read.firstSessionAt,
+      weeksSpanned: read.weeksSpanned,
+      loggedHistoryMet: gates.loggedHistoryMet,
+      longestLoggedGapDays: gates.longestLoggedGapDays,
+      plateauDetected: gates.everPlateaued,
       techniqueStableUnderLoad: null,
-      frequencyConsistent: null,
+      frequencyConsistent: read.imported?.frequencyConsistent ?? null,
       planOwnershipObserved: null,
+      ...importedEvidenceOf(read.imported, profile),
     },
   };
 }
