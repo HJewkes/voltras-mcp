@@ -81,6 +81,13 @@ describe('specialization frequency bump', () => {
     expect(advisories).toEqual([]);
   });
 
+  it('makes one offer per declared ref, naming only the slugs it bumps', () => {
+    const advisories = frequencyBumpAdvisories(input({ priorities: [specialize('arms')] }));
+
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]?.text).toContain('arms (biceps)');
+  });
+
   it('gives no offer for a specialized muscle that is not fatigue-limited', () => {
     expect(frequencyBumpAdvisories(input({ priorities: [specialize('quads')] }))).toEqual([]);
   });
@@ -144,6 +151,42 @@ describe('final block before an active rest', () => {
   it('does not hold for a block with no training week', () => {
     expect(isFinalBeforeActiveRest([deload, off], [])).toBe(false);
   });
+
+  it('does not read a scaffolded, still-empty next block as weeks off', () => {
+    const emptyDeload: WeekShape = { isDeload: true, templates: 0 };
+
+    expect(
+      isFinalBeforeActiveRest([train, train, train, deload], [off, off, off, emptyDeload]),
+    ).toBe(false);
+  });
+
+  it('gives an empty block with no markers no active rest, whatever follows it', () => {
+    const scaffold: WeekShape = { isDeload: false, templates: 0 };
+    const emptyDeload: WeekShape = { isDeload: true, templates: 0 };
+
+    expect(isFinalBeforeActiveRest([scaffold, scaffold, scaffold, emptyDeload], [])).toBe(false);
+    expect(isFinalBeforeActiveRest([scaffold, scaffold, emptyDeload], [scaffold])).toBe(false);
+  });
+
+  it('reads an empty block through its markers: a deload week then a week named active rest', () => {
+    const scaffold: WeekShape = { isDeload: false, templates: 0 };
+    const emptyDeload: WeekShape = { isDeload: true, templates: 0 };
+    const activeRest: WeekShape = { isDeload: false, templates: 0, name: 'Active rest' };
+
+    expect(isFinalBeforeActiveRest([scaffold, scaffold, emptyDeload, activeRest], [])).toBe(true);
+  });
+
+  it('takes a week phased off in an unbuilt following block as the week off', () => {
+    const markedOff: WeekShape = { isDeload: false, templates: 0, phaseType: 'off' };
+
+    expect(isFinalBeforeActiveRest([train, train, deload], [markedOff])).toBe(true);
+  });
+
+  it('does not take a rest-pause week for a week off', () => {
+    const restPause: WeekShape = { isDeload: false, templates: 0, phaseType: 'rest-pause' };
+
+    expect(isFinalBeforeActiveRest([train, train, deload], [restPause])).toBe(false);
+  });
 });
 
 describe('the bump on the planning brief', () => {
@@ -181,7 +224,7 @@ describe('the bump on the planning brief', () => {
   it('offers the bump on the block being planned when an active rest follows it', async () => {
     const { state, blocks } = stateOf([specialize('shoulders')], {
       next: [train, train, deload],
-      rest: [off],
+      rest: [{ ...off, name: 'Active rest' }],
     });
 
     const advisories = await readBriefAdvisories(
@@ -191,11 +234,8 @@ describe('the bump on the planning brief', () => {
       blocks[0]!,
     );
 
-    expect(advisories.map((a) => a.kind)).toEqual([
-      'specialization_frequency_bump',
-      'specialization_frequency_bump',
-      'specialization_frequency_bump',
-    ]);
+    expect(advisories.map((a) => a.kind)).toEqual(['specialization_frequency_bump']);
+    expect(advisories[0]?.text).toContain('shoulders (front delts, side delts, rear delts)');
   });
 
   it('reads the diet phase and drops the bump in a fat-loss phase', async () => {

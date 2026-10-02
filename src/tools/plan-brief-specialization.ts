@@ -46,22 +46,29 @@ export interface FrequencyBumpInput {
   finalBeforeActiveRest: boolean;
 }
 
-/** One offer per bumpable slug of each specialized muscle; empty unless every gate passes. */
+/** One offer per specialized muscle ref with a bumpable slug; empty unless every gate passes. */
 export function frequencyBumpAdvisories(
   input: FrequencyBumpInput,
   lists: MuscleLists = DEFAULT_LISTS,
 ): BriefAdvisory[] {
   if (input.tier === 'beginner' || input.dietPhase === 'fat-loss') return [];
   if (!input.finalBeforeActiveRest) return [];
-  return input.priorities.filter(isSpecializedMuscle).flatMap((priority) =>
-    priorityMuscleSlugs(priority.ref)
-      .filter((muscle) => lists.fatigueLimited.has(muscle) && !lists.systemic.has(muscle))
-      .map((muscle) => bumpAdvisory(input.blockName, muscle, priority.mesosHeld)),
-  );
+  return input.priorities.filter(isSpecializedMuscle).flatMap((priority) => {
+    const bumpable = priorityMuscleSlugs(priority.ref).filter(
+      (muscle) => lists.fatigueLimited.has(muscle) && !lists.systemic.has(muscle),
+    );
+    if (bumpable.length === 0) return [];
+    return [bumpAdvisory(input.blockName, muscleLabel(priority.ref, bumpable), priority.mesosHeld)];
+  });
 }
 
-function bumpAdvisory(blockName: string, muscle: string, mesosHeld: number): BriefAdvisory {
-  const label = muscle.replaceAll('_', ' ');
+/** The declared ref, naming the slugs it bumps when they are not the ref itself: "arms (biceps)". */
+function muscleLabel(ref: string, slugs: readonly string[]): string {
+  const named = slugs.map((slug) => slug.replaceAll('_', ' ')).join(', ');
+  return slugs.length === 1 && slugs[0] === ref ? named : `${ref} (${named})`;
+}
+
+function bumpAdvisory(blockName: string, label: string, mesosHeld: number): BriefAdvisory {
   const early = mesosHeld < GOAL_GUARDRAIL_THRESHOLDS.minMesosBeforeSwitch;
   return {
     kind: 'specialization_frequency_bump',
@@ -85,22 +92,39 @@ function earlyCaveat(label: string, mesosHeld: number): string {
 
 type WeekKind = 'deload' | 'off' | 'train';
 
-function weekKind(week: WeekShape): WeekKind {
-  if (week.isDeload) return 'deload';
-  return week.templates === 0 ? 'off' : 'train';
+// "Rest-pause" is a set technique, not a week off.
+const OFF_WORD = /\b(off|rest)\b(?![-\s]?pause)/i;
+
+/** A week whose name or phase says it is off or a rest: the explicit marker, built or not. */
+function markedOff(week: WeekShape): boolean {
+  return [week.name, week.phaseType].some((text) => text !== undefined && OFF_WORD.test(text));
+}
+
+/**
+ * An unmarked week with no workouts is off only in a block that has workouts. In a block with
+ * none it is scaffolding, a training week not yet built, so it can never stand in for a week off.
+ */
+function blockKinds(weeks: readonly WeekShape[]): WeekKind[] {
+  const built = weeks.some((week) => week.templates > 0);
+  return weeks.map((week) => {
+    if (week.isDeload) return 'deload';
+    if (markedOff(week)) return 'off';
+    return week.templates === 0 && built ? 'off' : 'train';
+  });
 }
 
 /**
  * True when the block's last training week is followed by a deload week and then an off week,
  * inside the block or running into the block after it: an active rest comes straight after it.
+ * An unbuilt block counts only through its markers, so an empty one with none gets no offer.
  */
 export function isFinalBeforeActiveRest(
   blockWeeks: readonly WeekShape[],
   followingWeeks: readonly WeekShape[],
 ): boolean {
-  const own = blockWeeks.map(weekKind);
+  const own = blockKinds(blockWeeks);
   const lastTrain = own.lastIndexOf('train');
   if (lastTrain === -1) return false;
-  const tail = [...own.slice(lastTrain + 1), ...followingWeeks.map(weekKind)];
+  const tail = [...own.slice(lastTrain + 1), ...blockKinds(followingWeeks)];
   return tail[0] === 'deload' && tail[1] === 'off';
 }

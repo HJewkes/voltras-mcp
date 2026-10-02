@@ -180,6 +180,8 @@ async function weekShapes(state: AdvisoryState, blockId: string): Promise<WeekSh
     ordered.map(async (week) => ({
       isDeload: week.isDeload,
       templates: (await state.store.getWorkoutTemplatesForWeek(week.id)).length,
+      ...(week.name !== undefined ? { name: week.name } : {}),
+      ...(week.phaseType !== undefined ? { phaseType: week.phaseType } : {}),
     })),
   );
 }
