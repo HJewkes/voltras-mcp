@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  peakConcentricBaseline,
+  meanConcentricBaseline,
   summarizeSetForTrigger,
   velocityLossBaseline,
 } from '../channel-payloads.js';
@@ -38,7 +38,7 @@ describe('velocityLossBaseline', () => {
     expect(repNumber).toBe(2);
     // Unfiltered, the pull would have been the baseline and every later rep
     // would have read as a ~47% loss.
-    expect(peakConcentricBaseline(reps)).toBeCloseTo(POSITIONING_PULL.peakMps, 6);
+    expect(meanConcentricBaseline(reps)).toBeCloseTo(POSITIONING_PULL.peakMps, 6);
   });
 
   it('(a) keeps the loss on the rep after the pull under a 25% threshold', () => {
@@ -51,7 +51,7 @@ describe('velocityLossBaseline', () => {
   it('(b) leaves an ordinary set on the unfiltered baseline', () => {
     const reps = makeWorkingSet(5);
 
-    expect(velocityLossBaseline(reps).velocity).toBeCloseTo(peakConcentricBaseline(reps), 6);
+    expect(velocityLossBaseline(reps).velocity).toBeCloseTo(meanConcentricBaseline(reps), 6);
     expect(velocityLossBaseline(reps).repNumber).toBe(1);
   });
 
@@ -70,7 +70,7 @@ describe('velocityLossBaseline', () => {
   it('(d) does not exclude either rep of a two-rep set', () => {
     const reps = makeWorkingSet(2);
 
-    expect(velocityLossBaseline(reps).velocity).toBeCloseTo(peakConcentricBaseline(reps), 6);
+    expect(velocityLossBaseline(reps).velocity).toBeCloseTo(meanConcentricBaseline(reps), 6);
   });
 });
 
@@ -90,8 +90,8 @@ describe('vbt_summary agrees with the trigger about which reps were work', () =>
     const working = makeWorkingSet(3).map((rep, i) => ({ ...rep, repNumber: i + 2 }));
     const summary = summarize([makeShapedRep(1, POSITIONING_PULL), ...working]);
 
-    expect(summary.peak_rep_v).toBeCloseTo(WORKING_REP.peakMps, 2);
-    expect(summary.peak_rep_number).toBe(2);
+    expect(summary.baseline_rep_v).toBeCloseTo(WORKING_REP.peakMps, 2);
+    expect(summary.baseline_rep_number).toBe(2);
     expect(summary.first_rep_v).toBeCloseTo(WORKING_REP.peakMps, 2);
   });
 

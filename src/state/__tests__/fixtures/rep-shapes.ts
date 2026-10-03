@@ -14,16 +14,19 @@ export const WORKING_REP = { romM: 0.5, peakMps: 0.85 };
 interface RepShape {
   romM: number;
   peakMps: number;
+  /** Mean concentric velocity, m/s. Defaults to the peak, as a flat rep. */
+  meanMps?: number;
   /** Movement samples in the concentric; 1 marks an in-progress rep. */
   movementSamples?: number;
 }
 
 export function makeShapedRep(repNumber: number, shape: RepShape): Rep {
   const movementSampleCount = shape.movementSamples ?? 4;
+  const meanMps = shape.meanMps ?? shape.peakMps;
   return {
     repNumber,
-    concentric: makePhase(shape.romM, shape.peakMps, movementSampleCount, 1000),
-    eccentric: makePhase(shape.romM, shape.peakMps * 0.6, movementSampleCount, 1400),
+    concentric: makePhase(shape.romM, shape.peakMps, meanMps, movementSampleCount, 1000),
+    eccentric: makePhase(shape.romM, shape.peakMps * 0.6, meanMps * 0.6, movementSampleCount, 1400),
   };
 }
 
@@ -40,6 +43,7 @@ export function makeWorkingSet(count: number): Rep[] {
 function makePhase(
   romM: number,
   peakMps: number,
+  meanMps: number,
   movementSampleCount: number,
   startTime: number,
 ): Rep['concentric'] {
@@ -60,7 +64,7 @@ function makePhase(
     endTime: startTime + movementSampleCount * 50,
     startPosition: 0,
     endPosition: romM,
-    _totalVelocity: peakMps * movementSampleCount,
+    _totalVelocity: meanMps * movementSampleCount,
     _totalForce: 50 * movementSampleCount,
     _totalLoad: 0,
     _movementSampleCount: movementSampleCount,

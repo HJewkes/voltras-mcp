@@ -289,17 +289,18 @@ export interface PreviousSetSummary {
 }
 
 /**
- * Aggregate per-rep concentric peak velocities and return the simple mean
- * in m/s. Returns null when no reps have any concentric movement (would
- * otherwise be 0 — and we want the model to distinguish "we don't know" from
- * "it was a zero set").
+ * Aggregate per-rep MEAN concentric velocities and return the simple mean in
+ * m/s (VW-484: it averaged per-rep PEAKS under a name that says mean).
+ * Returns null when no reps have any concentric movement (would otherwise be
+ * 0 — and we want the model to distinguish "we don't know" from "it was a
+ * zero set").
  */
-export function meanConcentricPeakVelocity(reps: readonly Rep[]): number | null {
+export function meanConcentricVelocityOfSet(reps: readonly Rep[]): number | null {
   let total = 0;
   let count = 0;
   for (const rep of reps) {
     if (rep.concentric._movementSampleCount > 0) {
-      total += rep.concentric.peakVelocity;
+      total += getPhaseMeanVelocity(rep.concentric);
       count += 1;
     }
   }
@@ -322,7 +323,7 @@ export function summarizePreviousSet(prev: StoredSet): PreviousSetSummary {
     set_id: prev.id,
     rep_count: prev.reps.length,
     weight_lbs: prev.weightLbs ?? null,
-    mean_concentric_velocity: meanConcentricPeakVelocity(normalised.reps),
+    mean_concentric_velocity: meanConcentricVelocityOfSet(normalised.reps),
   };
 }
 
@@ -801,11 +802,10 @@ export function serializeRepForPayload(rep: Rep): StoredRepVbt {
 }
 
 /**
- * Highest peak concentric velocity across a rep array. Returns 0 when the
- * array is empty or no rep has a positive concentric peak. This is the
- * canonical VBT fatigue baseline — measuring loss from the athlete's best
- * rep, not the first rep (rep 1 is routinely a cable-engagement artifact
- * with a tiny ROM and a meaninglessly low velocity; VMCP-02.24).
+ * Highest PEAK concentric velocity across a rep array. Read only by the
+ * progression hold (`plan-tools.ts`), which VW-484 deliberately left on peaks:
+ * moving it changes load suggestions, which is a separate question from when a
+ * live set stops. Its own task tracks the move.
  */
 export function peakConcentricBaseline(reps: readonly Rep[]): number {
   let max = 0;
@@ -818,8 +818,31 @@ export function peakConcentricBaseline(reps: readonly Rep[]): number {
 }
 
 /**
+ * Highest MEAN concentric velocity across a rep array. Returns 0 when the
+ * array is empty or no rep moved. This is the canonical VBT fatigue baseline —
+ * measuring loss from the athlete's best rep, not the first rep (rep 1 is
+ * routinely a cable-engagement artifact with a tiny ROM and a meaninglessly
+ * low velocity; VMCP-02.24).
+ *
+ * MEAN, not peak (VW-484). The thresholds this baseline is compared against
+ * come from studies that measure mean or mean-propulsive velocity, and every
+ * other velocity-loss surface — the wall, the analytics library, the fitted
+ * RIR curve — already reads the mean.
+ */
+export function meanConcentricBaseline(reps: readonly Rep[]): number {
+  let max = 0;
+  for (const rep of reps) {
+    const velocity = getPhaseMeanVelocity(rep.concentric);
+    if (velocity > max) {
+      max = velocity;
+    }
+  }
+  return max;
+}
+
+/**
  * Rep number (1-indexed) at which the velocity baseline was set — the rep
- * with the highest peak concentric velocity. Ties prefer the earlier rep so
+ * with the highest mean concentric velocity. Ties prefer the earlier rep so
  * the model can reason "baseline came from rep 1, current from rep 8"
  * without ambiguity.
  */
@@ -842,7 +865,7 @@ export function velocityLossBaseline(reps: readonly Rep[]): {
 } {
   const eligible = selectEligibleReps(reps);
   return {
-    velocity: peakConcentricBaseline(eligible),
+    velocity: meanConcentricBaseline(eligible),
     repNumber: baselineRepNumberFor(eligible),
   };
 }
@@ -851,8 +874,9 @@ export function baselineRepNumberFor(reps: readonly Rep[]): number {
   let best = 0;
   let idx = 0;
   for (let i = 0; i < reps.length; i++) {
-    if (reps[i].concentric.peakVelocity > best) {
-      best = reps[i].concentric.peakVelocity;
+    const velocity = getPhaseMeanVelocity(reps[i].concentric);
+    if (velocity > best) {
+      best = velocity;
       idx = i;
     }
   }
@@ -862,18 +886,20 @@ export function baselineRepNumberFor(reps: readonly Rep[]): number {
 }
 
 interface VbtSummary {
+  /** Every velocity below is MEAN concentric, m/s (VW-484). */
+  velocity_measure: 'mean_concentric';
   first_rep_v: number | null;
-  /** Baseline velocity: the highest peak concentric velocity across the set. */
-  peak_rep_v: number | null;
-  /** 1-indexed rep number where the peak baseline was set. */
-  peak_rep_number: number | null;
+  /** Baseline velocity: the highest mean concentric velocity across the set. */
+  baseline_rep_v: number | null;
+  /** 1-indexed rep number where the baseline was set. */
+  baseline_rep_number: number | null;
   last_rep_v: number | null;
   /**
-   * `(peak - last) / peak × 100`. Canonical VBT velocity loss: how far the
-   * final rep slowed from the set's fastest rep. Always ≥ 0 (the last rep
-   * can be at most the peak). Matches the `velocity_loss_exceeded` trigger
-   * event's convention — both measure loss from the peak baseline, not from
-   * a contaminated rep-1 baseline (VMCP-02.12, .24).
+   * `(baseline - last) / baseline × 100`. Canonical VBT velocity loss: how far
+   * the final rep slowed from the set's fastest rep. Always ≥ 0 (the last rep
+   * can be at most the baseline). Matches the `velocity_loss_exceeded` trigger
+   * event's convention — both measure loss from the same baseline, on the same
+   * measure, not from a contaminated rep-1 baseline (VMCP-02.12, .24).
    */
   velocity_loss_pct: number | null;
   mean_velocity: number | null;
@@ -882,9 +908,10 @@ interface VbtSummary {
 function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   if (reps.length === 0) {
     return {
+      velocity_measure: 'mean_concentric',
       first_rep_v: null,
-      peak_rep_v: null,
-      peak_rep_number: null,
+      baseline_rep_v: null,
+      baseline_rep_number: null,
       last_rep_v: null,
       velocity_loss_pct: null,
       mean_velocity: null,
@@ -899,20 +926,21 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   // did you finish", and a short or slow last rep is the fatigue signal
   // itself, not an artifact to filter out.
   const eligible = selectEligibleReps(reps);
-  const firstRaw = eligible[0].concentric.peakVelocity;
-  const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
-  const { velocity: peakRaw, repNumber } = velocityLossBaseline(reps);
+  const firstRaw = getPhaseMeanVelocity(eligible[0].concentric);
+  const lastRaw = getPhaseMeanVelocity(reps[reps.length - 1].concentric);
+  const { velocity: baselineRaw, repNumber } = velocityLossBaseline(reps);
   const lossPct =
-    reps.length < 2 || peakRaw <= 0
+    reps.length < 2 || baselineRaw <= 0
       ? null
-      : Number((100 * ((peakRaw - lastRaw) / peakRaw)).toFixed(1));
+      : Number((100 * ((baselineRaw - lastRaw) / baselineRaw)).toFixed(1));
   return {
+    velocity_measure: 'mean_concentric',
     first_rep_v: roundMps(firstRaw),
-    peak_rep_v: roundMps(peakRaw),
-    peak_rep_number: repNumber,
+    baseline_rep_v: roundMps(baselineRaw),
+    baseline_rep_number: repNumber,
     last_rep_v: roundMps(lastRaw),
     velocity_loss_pct: lossPct,
-    mean_velocity: meanConcentricPeakVelocity(eligible),
+    mean_velocity: meanConcentricVelocityOfSet(eligible),
   };
 }
 
@@ -1078,8 +1106,8 @@ export function buildEffortTargetReachedPayload(
 
 /**
  * Build the meta + content for a `velocity_loss_exceeded` channel event.
- * Baseline = highest peak concentric velocity seen so far in the set;
- * `current` = peak concentric velocity of the just-finalized rep. The
+ * Baseline = highest MEAN concentric velocity seen so far in the set;
+ * `current` = mean concentric velocity of the just-finalized rep (VW-484). The
  * `baselineRepNumber` gives PT Claude the rep at which the baseline was
  * established (sidesteps "is this baseline rep 1's setup pause artifact?").
  *
@@ -1120,6 +1148,7 @@ export function buildVelocityLossExceededPayload(
     ...(spec.intent !== undefined ? { training_intent: spec.intent } : {}),
     baseline_velocity: baselineMps.toFixed(3),
     current_velocity: currentMps.toFixed(3),
+    velocity_measure: 'mean_concentric',
     rep_count_at_threshold: String(actualReps),
     // VMCP-02.63: the class the gate let through. A consumer reading
     // `movement_class: 'pull'` here is looking at a set that opted back in via
