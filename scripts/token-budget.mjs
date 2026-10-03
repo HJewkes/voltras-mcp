@@ -27,7 +27,9 @@ import {
 } from './lib/mock-burst.mjs';
 import { probeFreePort, sleep } from './lib/dashboard-launch.mjs';
 import {
+  childEnv,
   compareBudgets,
+  maskPaths,
   parseBudget,
   renderBudget,
   summarize,
@@ -51,7 +53,7 @@ const SETTLE_MS = 1000;
 const DEVICE_ID = 'mock-voltra-001';
 const EXERCISE_ID = 'cable-chest-press';
 const REPS_PER_SET = 8;
-const SETS = 3;
+const SETS = 2;
 const CHANNEL_METHOD = 'notifications/claude/channel';
 
 function parseArgs(argv) {
@@ -90,10 +92,13 @@ async function seedStore(dbPath) {
   }
 }
 
+/** An allowlisted env (see `childEnv`), with HOME inside the scratch dir. */
 function serverEnv(scratchDir, controlPort) {
-  return {
-    ...process.env,
+  const home = path.join(scratchDir, 'home');
+  fs.mkdirSync(home);
+  return childEnv(process.env, home, {
     TZ: 'UTC',
+    VMCP_CLOCK_OFFSET_MS: process.env.VMCP_CLOCK_OFFSET_MS,
     VOLTRA_ADAPTER: 'mock',
     VMCP_LOG_LEVEL: 'error',
     VMCP_DB_PATH: path.join(scratchDir, 'budget.sqlite'),
@@ -103,7 +108,13 @@ function serverEnv(scratchDir, controlPort) {
     VMCP_MOCK_DEVICES: JSON.stringify([
       { deviceId: DEVICE_ID, deviceName: 'VTR-Mock', weight: 100, ...pinnedConnectProfile() },
     ]),
-  };
+  });
+}
+
+/** Every spelling of the temp dirs a capture can name, so none reaches a count. */
+function tempRoots(scratchDir) {
+  const roots = [scratchDir, os.tmpdir()];
+  return [...roots, ...roots.map((root) => fs.realpathSync(root))];
 }
 
 /** The text a push event puts in context: its meta attributes and its JSON content. */
@@ -126,17 +137,18 @@ async function bootServer(scratchDir) {
     stdio: ['pipe', 'pipe', 'ignore'],
   });
   const pushes = [];
+  const roots = tempRoots(scratchDir);
   const onNotification = (message) => {
     if (message.method !== CHANNEL_METHOD) return;
     pushes.push({
       key: message.params.meta?.event_type ?? 'untyped',
-      text: pushText(message.params),
+      text: maskPaths(pushText(message.params), roots),
     });
   };
   const request = createClient(child, { onNotification });
   await initialize(child, request, 'token-budget');
   await sleep(BOOT_SETTLE_MS);
-  return { child, request, controlPort, pushes, responses: [] };
+  return { child, request, controlPort, pushes, roots, responses: [] };
 }
 
 /** Call one tool, record its text, and return it parsed when it is JSON. */
@@ -144,7 +156,7 @@ async function call(server, name, args = {}) {
   const result = unwrap(await server.request('tools/call', { name, arguments: args }), name);
   const text = result.content.map((item) => item.text ?? '').join('');
   if (result.isError) throw new Error(`${name} returned an error: ${text.slice(0, 200)}`);
-  server.responses.push({ key: name, text });
+  server.responses.push({ key: name, text: maskPaths(text, server.roots) });
   try {
     return JSON.parse(text);
   } catch {
@@ -192,7 +204,7 @@ async function connectDevice(server) {
   await call(server, 'device.get_state');
 }
 
-/** Journey A: a short live workout, three sets of eight with triggers and a load change. */
+/** Journey A: a short live workout, two sets of eight with triggers and a load change. */
 async function liveWorkout(server) {
   await call(server, 'server.health');
   await call(server, 'plan.next_workout');

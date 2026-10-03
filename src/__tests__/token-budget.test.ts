@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  TEMP_PATH_PLACEHOLDER,
+  childEnv,
   compareBudgets,
   estimateTokens,
+  maskPaths,
   parseBudget,
   renderBudget,
   summarize,
@@ -100,6 +103,47 @@ describe('token estimate', () => {
 
     expect(estimateTokens(prose)).toBeCloseTo(20, 5);
     expect(estimateTokens(numeric)).toBeCloseTo(numeric.length / 1.9, 5);
+  });
+});
+
+describe('child server env', () => {
+  const parent = {
+    PATH: '/usr/bin',
+    NODE_OPTIONS: '--max-old-space-size=4096',
+    HOME: '/parent-shell',
+    VMCP_TRUECOACH_OUTBOX: '/parent-shell/outbox',
+    VMCP_TRUECOACH_SUBMIT_ON_END: '1',
+    VMCP_RECORD_SESSION: '1',
+    VMCP_REST_TIMER: 'on',
+    VOLTRAS_EFFORT_CUE: 'on',
+  };
+
+  it('never passes the outbox, the recorder or a cue switch from the parent shell', () => {
+    const env = childEnv(parent, '/scratch/home', { VOLTRA_ADAPTER: 'mock' });
+
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      NODE_OPTIONS: '--max-old-space-size=4096',
+      HOME: '/scratch/home',
+      VOLTRA_ADAPTER: 'mock',
+    });
+  });
+});
+
+describe('temp path masking', () => {
+  it('counts a long macOS temp path the same as a short Linux one', () => {
+    const health = (dir: string) => JSON.stringify({ dbPath: `${dir}/budget.sqlite` });
+    const mac = '/var/folders/92/abcdefghijklmnopqrstuvwxyz0123/T/vmcp-budget-Ab12Cd';
+    const linux = '/tmp/vmcp-budget-Xy34Zw';
+
+    expect(maskPaths(health(mac), [mac])).toBe(maskPaths(health(linux), [linux]));
+    expect(maskPaths(health(linux), [linux])).toContain(TEMP_PATH_PLACEHOLDER);
+  });
+
+  it('masks the longest root first, so a nested scratch dir leaves no suffix behind', () => {
+    const masked = maskPaths('/tmp/vmcp-budget-Ab12Cd/home', ['/tmp', '/tmp/vmcp-budget-Ab12Cd']);
+
+    expect(masked).toBe(`${TEMP_PATH_PLACEHOLDER}/home`);
   });
 });
 

@@ -5,33 +5,37 @@ import { StringDecoder } from 'node:string_decoder';
 
 const REQUEST_TIMEOUT_MS = 20000;
 
+/** Call `onMessage` with each JSON line `stream` emits; a non-JSON line is skipped. */
+function readMessages(stream, onMessage) {
+  // A multi-byte UTF-8 character can land across two `data` events on a large
+  // response; `StringDecoder` holds the incomplete tail back until it completes.
+  const decoder = new StringDecoder('utf8');
+  let buffer = '';
+  stream.on('data', (chunk) => {
+    buffer += decoder.write(chunk);
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const message = parseLine(line);
+      if (message !== null) onMessage(message);
+    }
+  });
+}
+
 /**
  * Wire a request function onto `child`. Every message without an `id` (a
  * server notification) goes to `onNotification`, in arrival order.
  */
 export function createClient(child, { onNotification = () => {}, timeoutMs } = {}) {
   const pending = new Map();
-  // A multi-byte UTF-8 character can land across two `data` events on a large
-  // response; `StringDecoder` holds the incomplete tail back until it completes.
-  const decoder = new StringDecoder('utf8');
-  let buffer = '';
   let nextId = 1;
-  const dispatch = (message) => {
+  readMessages(child.stdout, (message) => {
     if (message.id === undefined) return onNotification(message);
     const waiter = pending.get(message.id);
     if (!waiter) return undefined;
     clearTimeout(waiter.timer);
     pending.delete(message.id);
     return waiter.resolve(message);
-  };
-  child.stdout.on('data', (chunk) => {
-    buffer += decoder.write(chunk);
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const message = parseLine(line);
-      if (message !== null) dispatch(message);
-    }
   });
   return function request(method, params) {
     const id = nextId++;

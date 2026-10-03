@@ -242,3 +242,26 @@ export function compareBudgets(committed, current) {
   }
   return failures;
 }
+
+/** Parent variables a child server may inherit; everything else, every `VMCP_*` included, is dropped. */
+const INHERITED_ENV = /^(PATH|NODE_[A-Z0-9_]+|TMPDIR)$/;
+
+/**
+ * The child server's whole environment: the allowlisted parent variables, `home`
+ * as HOME, then `overrides`. A shell's outbox, recorder or cue switches never reach it.
+ */
+export function childEnv(parentEnv, home, overrides) {
+  const inherited = Object.entries(parentEnv).filter(([name]) => INHERITED_ENV.test(name));
+  return { ...Object.fromEntries(inherited), HOME: home, ...overrides };
+}
+
+/** Stands in for any temp path in a capture, so a macOS run and a Linux run count the same. */
+export const TEMP_PATH_PLACEHOLDER = '<tmp>';
+
+/** Replace every root (and its JSON-escaped form) with the placeholder, longest root first. */
+export function maskPaths(text, roots) {
+  const forms = roots.flatMap((root) => [root, JSON.stringify(root).slice(1, -1)]);
+  const unique = [...new Set(forms)].filter((form) => form.length > 1);
+  unique.sort((a, b) => b.length - a.length);
+  return unique.reduce((masked, form) => masked.split(form).join(TEMP_PATH_PLACEHOLDER), text);
+}

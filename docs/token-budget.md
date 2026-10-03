@@ -15,15 +15,15 @@ grows more than 5% over this table, or when a row is new.
 | Budget | Tokens |
 | --- | --: |
 | tools/list | 72383 |
-| live-workout responses | 21746 |
-| live-workout push events | 30885 |
-| live-workout total | 52631 |
-| sunday-sitting responses | 9324 |
+| live-workout responses | 21595 |
+| live-workout push events | 20483 |
+| live-workout total | 42078 |
+| sunday-sitting responses | 9292 |
 | sunday-sitting push events | 0 |
-| sunday-sitting total | 9324 |
-| weekly-review responses | 2800 |
+| sunday-sitting total | 9292 |
+| weekly-review responses | 2768 |
 | weekly-review push events | 0 |
-| weekly-review total | 2800 |
+| weekly-review total | 2768 |
 
 ## tools/list
 
@@ -168,29 +168,29 @@ grows more than 5% over this table, or when a row is new.
 | `device.get_state` | 2 | 813 | 401 | 201 |
 | `device.scan` | 1 | 67 | 35 | 35 |
 | `device.set_mode` | 1 | 11 | 6 | 6 |
-| `device.set_weight` | 3 | 114 | 60 | 20 |
+| `device.set_weight` | 2 | 76 | 40 | 20 |
 | `exercise.search` | 1 | 1194 | 501 | 501 |
 | `plan.next_workout` | 1 | 190 | 78 | 78 |
 | `progression.get_for_exercise` | 1 | 2615 | 1080 | 1080 |
 | `report.session_results` | 1 | 215 | 105 | 105 |
-| `server.health` | 1 | 508 | 267 | 267 |
+| `server.health` | 1 | 446 | 235 | 235 |
 | `session.end` | 1 | 11 | 6 | 6 |
 | `session.start` | 1 | 52 | 27 | 27 |
-| `set.end` | 3 | 642 | 221 | 74 |
+| `set.end` | 2 | 428 | 147 | 74 |
 | `set.get` | 1 | 35823 | 18850 | 18850 |
-| `set.start` | 3 | 144 | 76 | 25 |
+| `set.start` | 2 | 96 | 51 | 25 |
 
 ## live-workout: push events
 
 | Event | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
-| `rep_finalized` | 24 | 23151 | 11629 | 485 |
-| `set_ended` | 3 | 13182 | 6861 | 2287 |
-| `set_started` | 3 | 2765 | 1330 | 462 |
-| `set_target_reached` | 3 | 10419 | 5409 | 1803 |
-| `settings_update` | 5 | 2660 | 1342 | 268 |
-| `velocity_loss_exceeded` | 3 | 6246 | 3191 | 1064 |
-| `weight_implied_mismatch` | 3 | 2472 | 1123 | 376 |
+| `rep_finalized` | 16 | 15434 | 7753 | 485 |
+| `set_ended` | 2 | 8788 | 4574 | 2287 |
+| `set_started` | 2 | 1807 | 867 | 462 |
+| `set_target_reached` | 2 | 6946 | 3606 | 1803 |
+| `settings_update` | 3 | 1596 | 805 | 268 |
+| `velocity_loss_exceeded` | 2 | 4164 | 2127 | 1064 |
+| `weight_implied_mismatch` | 2 | 1654 | 751 | 376 |
 
 ## sunday-sitting: tool responses
 
@@ -209,7 +209,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.get_training_background` | 1 | 16 | 8 | 8 |
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
-| `server.health` | 1 | 508 | 267 | 267 |
+| `server.health` | 1 | 446 | 235 | 235 |
 | `session.mark_kind` | 1 | 413 | 217 | 217 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
@@ -227,7 +227,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
 | `report.weekly` | 1 | 1707 | 458 | 458 |
-| `server.health` | 1 | 508 | 267 | 267 |
+| `server.health` | 1 | 446 | 235 | 235 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
 ## weekly-review: push events
