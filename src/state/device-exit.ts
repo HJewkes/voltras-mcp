@@ -9,8 +9,8 @@
 import type { VoltraClient } from '@voltras/node-sdk';
 
 import { log } from '../logger.js';
-import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
-import { getSlot, type ServerState } from '../state/server-state.js';
+import { reapGuidedLoadScaffold } from './guided-load-reap.js';
+import { getSlot, type ServerState } from './server-state.js';
 
 /** Phases in which the SDK's guided-load state machine is still running. */
 export const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engaging', 'active']);

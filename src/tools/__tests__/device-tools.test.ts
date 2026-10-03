@@ -92,7 +92,7 @@ vi.mock('../../state/event-bridge.js', () => ({
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
-const { MODE_ECHO_POLL_MS } = await import('../device-handler-helpers.js');
+const { MODE_ECHO_POLL_MS } = await import('../../state/mode-echo.js');
 const { CoercionWatch } = await import('../../state/coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 const { ModeRevertGuard, MODE_REVERT_WINDOW_MS } = await import('../../state/mode-revert-guard.js');

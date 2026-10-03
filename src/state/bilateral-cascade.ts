@@ -47,7 +47,7 @@
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
 import { mapSdkError } from '../errors.js';
-import { waitForModeEcho } from '../tools/device-handler-helpers.js';
+import { waitForModeEcho } from './mode-echo.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { LeaseFence } from './lease-fence.js';
 import { MODE_REVERT_WINDOW_MS, type ModeRevertGuard } from './mode-revert-guard.js';
