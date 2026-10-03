@@ -15,12 +15,13 @@
 //                                            [--skill-inventory path.md]
 
 import { spawn, spawnSync } from 'node:child_process';
-import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import prettier from 'prettier';
+
+import { createClient, initialize, unwrap } from './lib/mcp-stdio-client.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
@@ -34,7 +35,6 @@ const SKILL_INVENTORY = path.join(
 /** Files this generator copies text out of, and so must never harvest. */
 const RENDERED_SOURCES = new Set([PUSH_EVENTS_DOC]);
 const BOOT_SETTLE_MS = 2000;
-const REQUEST_TIMEOUT_MS = 20000;
 
 function parseArgs(argv) {
   const args = {
@@ -88,51 +88,6 @@ function isolatedEnv(scratchDir) {
   };
 }
 
-function createClient(child) {
-  const pending = new Map();
-  // A multi-byte UTF-8 character (e.g. an em dash) can land across two
-  // separate `data` events on a large response — `tools/list` grows with
-  // every tool's schema. `chunk.toString()` decodes each chunk in isolation
-  // and mangles a split character into a replacement-character run;
-  // `StringDecoder` holds back a trailing incomplete sequence until the byte
-  // that completes it arrives, decoding the same as one contiguous buffer.
-  const decoder = new StringDecoder('utf8');
-  let buffer = '';
-  let nextId = 1;
-  child.stdout.on('data', (chunk) => {
-    buffer += decoder.write(chunk);
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const waiter = pending.get(message.id);
-      if (!waiter) continue;
-      clearTimeout(waiter.timer);
-      pending.delete(message.id);
-      waiter.resolve(message);
-    }
-  });
-  return function request(method, params) {
-    const id = nextId++;
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timed out: ${method}`)), REQUEST_TIMEOUT_MS);
-      pending.set(id, { resolve, timer });
-    });
-  };
-}
-
-function unwrap(response, method) {
-  if (response.error) throw new Error(`${method} failed: ${JSON.stringify(response.error)}`);
-  return response.result;
-}
-
 /** Boot the mock server and read back its whole advertised surface. */
 async function readServerSurface(scratchDir) {
   const child = spawn(process.execPath, [BIN_PATH], {
@@ -142,17 +97,7 @@ async function readServerSurface(scratchDir) {
   });
   try {
     const request = createClient(child);
-    unwrap(
-      await request('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'gen-tool-reference', version: '1' },
-      }),
-      'initialize',
-    );
-    child.stdin.write(
-      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
-    );
+    await initialize(child, request, 'gen-tool-reference');
     // The bootstrap swaps placeholder handlers for real ones after the handshake.
     await new Promise((resolve) => setTimeout(resolve, BOOT_SETTLE_MS));
     return {

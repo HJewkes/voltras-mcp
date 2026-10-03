@@ -53,6 +53,8 @@
     "changelog:check": "node scripts/check-changelog.mjs",
     "changelog:fold": "node scripts/fold-changelog.mjs",
     "docs:check": "node scripts/check-docs.mjs",
+    "budget": "node scripts/token-budget.mjs",
+    "budget:check": "node scripts/token-budget.mjs --check",
     "check:nul-bytes": "node scripts/check-nul-bytes.mjs",
     "sim:rest": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/adaptive-rest-sim.js",
     "sim:rest:replay": "npm run sim:rest -- --replay",
