@@ -181,7 +181,7 @@ import { evaluateEffortCue } from './effort-cue.js';
 import { logEffortGateDisagreement } from './effort-gate-disagreement.js';
 import { markSettingChange, repinEffortContext } from './effort-pin.js';
 import { onSetStarted } from './set-start-seam.js';
-import { guardClientListeners } from './guard-listener.js';
+import { guardClientListeners, guardStep } from './guard-listener.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -502,6 +502,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   const { client, live } = slot;
   const slotId = slot.slotId;
   const listeners = guardClientListeners(client, slot);
+  // VW-869: the non-critical steps of the frame and set-summary listeners run
+  // through these, so a throw in one cannot skip the rep publish or set close.
+  const frameStep = (step: string, fn: () => void): void => guardStep('frame', slot, step, fn);
+  const setSummaryStep = (step: string, fn: () => void): void =>
+    guardStep('set_summary', slot, step, fn);
   const server = state.server;
   const channels = state.channels;
   const slotChannels = channels.forSlot(slotId);
@@ -691,14 +696,16 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // protocol bytes cross this tap. Shared derivation with VMCP-02.58's
       // Tier-1 cue matcher.
       if (liveSignals !== undefined) {
-        liveSignals.frame({
-          t: sample.timestamp,
-          phase: mapPhase(phase),
-          position: frame.position,
-          velocity: sample.velocity,
-          force: sample.force,
-          repInProgress: live.set !== undefined ? live.set.reps.length : null,
-        });
+        frameStep('live_signal', () =>
+          liveSignals.frame({
+            t: sample.timestamp,
+            phase: mapPhase(phase),
+            position: frame.position,
+            velocity: sample.velocity,
+            force: sample.force,
+            repInProgress: live.set !== undefined ? live.set.reps.length : null,
+          }),
+        );
       }
 
       // ── Idle-arm rep detection ────────────────────────────────────────────
@@ -767,7 +774,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       live.processSample(sample);
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
-        notifySlot(server, slotId, SET_URI, setUriForSlot);
+        frameStep('notify', () => notifySlot(server, slotId, SET_URI, setUriForSlot));
         // Publish a `rep_finalized` channel event only when a rep has
         // actually closed. Per workout-analytics's `addSampleToSet`:
         //   - The first CONCENTRIC sample creates rep 1 in-progress
@@ -819,23 +826,26 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // fitness-units-only signal so the dashboard can update its live
           // per-rep readout without waiting for the next 2000 ms snapshot poll.
           if (liveSignals !== undefined) {
-            liveSignals.rep({
-              repIndex: finalizedIndex + 1,
-              vCon: roundMps(getPhaseMeanVelocity(finalizedRep.concentric)),
-              // WA 2.0.0: `getRepRangeOfMotion` already returns metres, because
-              // `sample.position` is fed in as metres at the bridge above — no
-              // post-hoc mm→m conversion needed any more. VW-160: velocity is
-              // metres/second for the same reason, so these only round.
-              rom: getRepRangeOfMotion(finalizedRep),
-              peakVelocity: roundMps(finalizedRep.concentric.peakVelocity),
-              peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
-            });
+            frameStep('live_signal_rep', () =>
+              liveSignals.rep({
+                repIndex: finalizedIndex + 1,
+                vCon: roundMps(getPhaseMeanVelocity(finalizedRep.concentric)),
+                // WA 2.0.0: `getRepRangeOfMotion` already returns metres, because
+                // `sample.position` is fed in as metres at the bridge above — no
+                // post-hoc mm→m conversion needed any more. VW-160: velocity is
+                // metres/second for the same reason, so these only round.
+                rom: getRepRangeOfMotion(finalizedRep),
+                peakVelocity: roundMps(finalizedRep.concentric.peakVelocity),
+                peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
+              }),
+            );
           }
           // Reset the idle watchdog — an active lifter must never trip
           // the abandonment alarm. Safe to call unconditionally; no-op
           // when the set has no idle_timeout_ms specs registered.
-          if (set.watch !== undefined) {
-            resetIdleWatchdog(state, set.setId, set.watch);
+          const watch = set.watch;
+          if (watch !== undefined) {
+            frameStep('idle_watchdog', () => resetIdleWatchdog(state, set.setId, watch));
           }
           // Evaluate any registered trigger DSL specs against the
           // finalized rep. F14/F15 rewrite: triggers are advisory cues
@@ -843,13 +853,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // coach the user, but they never force-close the set. The
           // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
-          markSettingChange(state, live, set.setId, finalizedRep.repNumber, device);
-          if (state.config?.effortCue === 'on') {
-            evaluateEffortCue(live, slotChannels, set, finalizedIndex, device);
-          } else {
-            evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
-          }
-          logEffortGateDisagreement(set, finalizedIndex, device);
+          frameStep('setting_change', () =>
+            markSettingChange(state, live, set.setId, finalizedRep.repNumber, device),
+          );
+          frameStep('cue', () => {
+            if (state.config?.effortCue === 'on') {
+              evaluateEffortCue(live, slotChannels, set, finalizedIndex, device);
+            } else {
+              evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
+            }
+          });
+          frameStep('effort_gate', () => logEffortGateDisagreement(set, finalizedIndex, device));
         }
       }
     }),
@@ -962,18 +976,20 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // emits the single `set_ended` channel event (`closed_by='device'`).
       // Ghost setSummary after `set.end` already closed the set: silent
       // drop (the explicit tool finalize already cleared `live.set`).
-      debug.events.push({
-        capturedAt: Date.now(),
-        type: 'pre_summary',
-        payload: {
-          schemaVersion: payload.schemaVersion,
-          targetWeightTenths: payload.targetWeightTenths,
-          repCount: payload.repCount,
-          totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
-          rawHex: Buffer.from(payload.raw).toString('hex'),
-          rawLength: payload.raw.length,
-        },
-      });
+      setSummaryStep('debug_capture', () =>
+        debug.events.push({
+          capturedAt: Date.now(),
+          type: 'pre_summary',
+          payload: {
+            schemaVersion: payload.schemaVersion,
+            targetWeightTenths: payload.targetWeightTenths,
+            repCount: payload.repCount,
+            totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
+            rawHex: Buffer.from(payload.raw).toString('hex'),
+            rawLength: payload.raw.length,
+          },
+        }),
+      );
       const set = live.snapshotSet();
       if (set === undefined) {
         return;
@@ -988,7 +1004,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // Modes that don't emit a per-set close (rowing, iso, custom-curves)
       // fall through to the inactivity watchdog defined below
       // (`SET_INACTIVITY_TIMEOUT_MS`).
-      live.applySetSummary(payload);
+      setSummaryStep('apply_summary', () => live.applySetSummary(payload));
       // VMCP-02.29 PR4: finalize the parallel firmware-rep pipeline BEFORE
       // `finalizeSet` discards the set. The last rep never fires its own
       // `onPerRep` 'return' boundary (the device disengages after the final
@@ -1003,10 +1019,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // carried no unique data, and was a second reconciliation surface. No
       // consumer read it by name. `set_ended` (emitted by `finalizeSet` below)
       // is now the single per-set close event.
-      finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
+      setSummaryStep('firmware_reps', () =>
+        finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload),
+      );
       // Poke the set resource so polling clients refresh on the device close
       // (independent of the channel event; `finalizeSet` does not notify).
-      notifySlot(server, slotId, SET_URI, setUriForSlot);
+      setSummaryStep('notify', () => notifySlot(server, slotId, SET_URI, setUriForSlot));
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
           log.warn('event-bridge: set_ended_by_device finalize failed', err);
