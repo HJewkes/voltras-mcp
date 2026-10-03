@@ -115,6 +115,11 @@ export interface SlotState {
    */
   unwireBridge?: () => void;
   /**
+   * Throws the bridge's guarded listeners caught on this slot, per event label
+   * (VW-809). Absent until the first one; `device.get_state` reports it.
+   */
+  listenerFaults?: Record<string, number>;
+  /**
    * Inactivity-watchdog threshold (in ms) for the next bridge-minted
    * guided-load auto-set. Set by `device.start_guided_load` before the
    * SDK trigger fires; read once and cleared by the bridge's
