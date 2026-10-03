@@ -25,7 +25,7 @@ defines it and the other two statuses.
 | Page                                          | Dashboard route      | What is missing                                                                           | Tracking                  |
 | --------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------- | ------------------------- |
 | [Body map](/coming-soon/body-map)             | `#/body`             | Only shown on seeded data so far; landmarks are population defaults; recovery has no page | VW-146 (internal tracker) |
-| [Goals page](/coming-soon/goals-page)         | `#/goals`            | Only exercised on seeded data so far; reachable by URL only; block week not shown         | VW-514 (internal tracker) |
+| [Goals page](/coming-soon/goals-page)         | `#/goals`            | Only exercised on seeded data so far; block week not shown                                | VW-514 (internal tracker) |
 | [Effort readout](/coming-soon/effort-readout) | `#/` and `#/summary` | RPE and RIR held back until a trusted curve fitted to you exists                          | VW-485 (internal tracker) |
 
 The [Roadmap](/roadmap) is the wider list of things present in the code that do not yet do

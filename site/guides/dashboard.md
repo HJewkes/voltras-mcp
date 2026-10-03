@@ -54,8 +54,8 @@ rows seeded into the store, because the per-muscle reads leave mock sets out
 
 ## The five screens
 
-The dashboard is one page with five hash routes. The nav rail on the left has four entries:
-**live**, **program**, **review** and **body** (`src/dashboard/spa/panels/DashboardChrome.tsx:34-39`).
+The dashboard is one page with five hash routes. The nav rail on the left has five entries:
+**live**, **review**, **program**, **goals** and **body** (`src/dashboard/spa/panels/DashboardChrome.tsx`).
 An unknown route opens the live page (`src/dashboard/spa/routing.ts:48-60`).
 
 | Screen          | Status                                 | Route       | How to open it                                  | What you do there                                                                                   |
@@ -63,7 +63,7 @@ An unknown route opens the live page (`src/dashboard/spa/routing.ts:48-60`).
 | Live            | Available                              | `#/`        | The dashboard URL, or **live** in the rail      | Watch the current set: rep velocity against the loss lines, the fatigue card, and the prescription. |
 | Plan builder    | Available                              | `#/plan`    | **program** in the rail                         | Browse the exercise catalog, then build, change or reorder a workout.                               |
 | Session summary | Available                              | `#/summary` | **review** in the rail; `#/summary/<sessionId>` | Read one session back: totals, the fatigue verdict, each set, and a load recommendation.            |
-| Goals           | [Coming soon](/coming-soon/goals-page) | `#/goals`   | By URL only: the rail has no entry for it       | Built but not usable yet. Its page says what is missing.                                            |
+| Goals           | [Coming soon](/coming-soon/goals-page) | `#/goals`   | **goals** in the rail                           | Built but not usable yet. Its page says what is missing.                                            |
 | Body            | [Coming soon](/coming-soon/body-map)   | `#/body`    | **body** in the rail                            | Built but not usable yet. Its page says what is missing.                                            |
 
 The [dashboard pages](/reference/dashboard-pages) reference lists the data each screen reads.

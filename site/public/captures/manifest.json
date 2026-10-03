@@ -19,8 +19,8 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 42972,
-      "sha256": "662357a5ef450f9ed141f45bf0a6e841037ef782ecde27aa19172d1b51635f78"
+      "bytes": 44610,
+      "sha256": "77259dc841116412a52698149f8e16ea4427774f1fd72e960a005f1942be2f00"
     },
     {
       "name": "live-mid-set",
@@ -47,8 +47,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 824442,
-      "sha256": "ad849bb2427242ee857676d0902e2b60133001170efe80dba5c9506721300b85"
+      "bytes": 826088,
+      "sha256": "981c54141493c6147672d6521272b9c426bd46a305412c81dcd9f7fd3f0ae213"
     },
     {
       "name": "live-rest",
@@ -70,8 +70,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 117574,
-      "sha256": "6ac91218ce6e992136615aad26a30f466a6f5f3443b233bf542059b2fd528f1c"
+      "bytes": 119296,
+      "sha256": "aca387a3c3d5e187e8cf16b0cb424535aa9c9e64f281d66839702cbafbda4db9"
     },
     {
       "name": "session-summary",
@@ -94,8 +94,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 65476,
-      "sha256": "a2aa1efa35e4f07ed39fce967166f1887f30575f56a6ff37e06402a955b6f05a"
+      "bytes": 66325,
+      "sha256": "80d984328b81969372d101b9c2722219d3a2a591b232980af632ddff13637de3"
     },
     {
       "name": "plan-builder",
@@ -117,8 +117,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 119399,
-      "sha256": "11ad196c2eb19d155ec19fcfac8ac26e11353379d551b7745606fc52dda8e436"
+      "bytes": 120884,
+      "sha256": "ce3a27183b751390a397c9fade1896d1bfc512b044314d72d449fbacf56e9f9f"
     },
     {
       "name": "live-slowing",
@@ -138,8 +138,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 911449,
-      "sha256": "07209f9fc54e942d480f4be6fb4f01ed4e1ee9ebf3bcbfcfd85c43561f234b2c"
+      "bytes": 912638,
+      "sha256": "db791050ef7f248ae4cf9d73ee9a9a65e10594f275588473b2864d988d1ad4b5"
     },
     {
       "name": "live-dual-mid-set",
@@ -161,8 +161,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 289614,
-      "sha256": "fbe923688167815da98b41d57e47cb44ef22e3c2f3ebf8fac342e75c9bf2b5a6"
+      "bytes": 289065,
+      "sha256": "6abc2dbfb866b3854c7b58d8237781485f309c0f5e5756f29388ab6a3a24f2f9"
     },
     {
       "name": "goals",
@@ -185,8 +185,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 88675,
-      "sha256": "798bcb373d8b89a2884e754f8f46833635f222bd167b2e836e4ea854501c1aeb"
+      "bytes": 90325,
+      "sha256": "4fcba0838e541043990e2fac82c83f48ccf4115bf95c1bb1077fce56c3d05e15"
     },
     {
       "name": "goals-phone",
@@ -209,8 +209,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 390,
       "height": 844,
-      "bytes": 51692,
-      "sha256": "ead52843252793415da7799eaf69b545b66f036e336c3e2344a3f5003771e91f"
+      "bytes": 53152,
+      "sha256": "04cb5789bf9bff68aeb0045324299375661f16e6b3b7e384e0e91eeecea719c0"
     },
     {
       "name": "goals-whole-body",
@@ -226,8 +226,8 @@
       "assertedValues": ["196.2"],
       "width": 1440,
       "height": 900,
-      "bytes": 98145,
-      "sha256": "76e6a4b487ad3f42b5bd5fc06c072696db79b23a9207599111b9f9c5c683c267"
+      "bytes": 100023,
+      "sha256": "6b1e3c9eb7abcadc1e343fa1609d49340e0d58f3284ae5e3f75ba24f8813037d"
     },
     {
       "name": "goals-whole-body-phone",
@@ -243,8 +243,8 @@
       "assertedValues": ["196.2"],
       "width": 390,
       "height": 844,
-      "bytes": 62063,
-      "sha256": "b365e586f2b934b69279cb0973f928d07215a187e581c7f1743ef6158b98a91d"
+      "bytes": 63421,
+      "sha256": "a0efeb6fa14c38921e8c36b614627f7d9e15eb0e86d6005089c0cc06f85d7040"
     },
     {
       "name": "body-week",
@@ -267,8 +267,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 194677,
-      "sha256": "3c7ab7d4492c07482ddf8460bcbb0fb7ee809f4ca149f672f0d6bd0882bb8a6e"
+      "bytes": 196309,
+      "sha256": "dac33813732f371a6a2299136096b29694cb6bc251821f939c3e3acffd86cd4c"
     },
     {
       "name": "body-drill",
@@ -296,8 +296,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 214986,
-      "sha256": "9ed37caf852cd951f3bef430a621b58251d7424b6b5dc0777ef7a9b448bbc64b"
+      "bytes": 216535,
+      "sha256": "f2f70322c7b167dbed11f98e6680f8c4de0c6dfb8da3660ea9859a348473ded9"
     }
   ],
   "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
