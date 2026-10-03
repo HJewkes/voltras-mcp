@@ -181,6 +181,7 @@ import { evaluateEffortCue } from './effort-cue.js';
 import { logEffortGateDisagreement } from './effort-gate-disagreement.js';
 import { markSettingChange, repinEffortContext } from './effort-pin.js';
 import { onSetStarted } from './set-start-seam.js';
+import { guardClientListeners } from './guard-listener.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -500,6 +501,7 @@ export function wireEventBridge(state: ServerState): () => void {
 export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => void {
   const { client, live } = slot;
   const slotId = slot.slotId;
+  const listeners = guardClientListeners(client, slot);
   const server = state.server;
   const channels = state.channels;
   const slotChannels = channels.forSlot(slotId);
@@ -613,7 +615,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onRawFrame === 'function') {
     pushUnsub(
       unsubs,
-      client.onRawFrame((data: Uint8Array) => {
+      listeners.onRawFrame((data: Uint8Array) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'raw_frame',
@@ -632,7 +634,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onFrame((frame: TelemetryFrame) => {
+    listeners.onFrame((frame: TelemetryFrame) => {
       debug.frames.push({
         sequence: frame.sequence,
         timestamp: frame.timestamp,
@@ -855,7 +857,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onPerRep((payload: PerRepEvent) => {
+    listeners.onPerRep((payload: PerRepEvent) => {
       // Diagnostic capture: full device payload to debug ring for byte-level
       // analysis. The PerRepEvent fires twice per real rep (pull start +
       // return start, same repCount); both phases land in the debug buffer.
@@ -925,7 +927,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSummary((payload: SummaryEvent) => {
+    listeners.onSummary((payload: SummaryEvent) => {
       // End-of-set vendor frame. Capture on the active set so the
       // finalize path can read-and-clear it for the persisted payload
       // (the `set_ended*` payload's `device_summary` block — see
@@ -951,7 +953,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSetSummary((payload: SetSummaryEvent) => {
+    listeners.onSetSummary((payload: SetSummaryEvent) => {
       // Vendor set-summary report — emitted by the device per-set
       // in WT/RB/Damper after all reps complete (renamed from `preSummary`
       // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
@@ -1015,7 +1017,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onInProgress((payload: InProgressEvent) => {
+    listeners.onInProgress((payload: InProgressEvent) => {
       // Device emits this continuously during workout mode (~1 Hz
       // heartbeat). The bridge no longer treats `onInProgress` as a
       // close signal — that heuristic (`SET_START_GRACE_MS = 500ms`)
@@ -1134,7 +1136,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onGuidedLoadState === 'function') {
     pushUnsub(
       unsubs,
-      client.onGuidedLoadState((gls: GuidedLoadState) => {
+      listeners.onGuidedLoadState((gls: GuidedLoadState) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'guided_load_state',
@@ -1210,7 +1212,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSettingsUpdate((settings: SdkSettingsUpdate) => {
+    listeners.onSettingsUpdate((settings: SdkSettingsUpdate) => {
       debug.events.push({
         capturedAt: Date.now(),
         type: 'settings_update',
@@ -1306,7 +1308,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onStateDump === 'function') {
     pushUnsub(
       unsubs,
-      client.onStateDump((dump: SdkStateDump) => {
+      listeners.onStateDump((dump: SdkStateDump) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'state_dump',
@@ -1362,7 +1364,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onConnectionStateChange((connState) => {
+    listeners.onConnectionStateChange((connState) => {
       debug.events.push({
         capturedAt: Date.now(),
         type: 'connection_state_change',

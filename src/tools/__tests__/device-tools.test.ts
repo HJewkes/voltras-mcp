@@ -1319,6 +1319,19 @@ describe('registerDeviceTools', () => {
       });
     });
 
+    it('reports the event handler failures caught on the slot only once there are some', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({});
+      const reg = placeholders.get('device.get_state')!;
+
+      const before = await invoke(reg, {});
+      slot.listenerFaults = { frame: 2 };
+      const after = await invoke(reg, {});
+
+      expect(before.payload.listener_faults).toBeUndefined();
+      expect(after.payload.listener_faults).toEqual({ frame: 2 });
+    });
+
     it('composes the response from live.snapshotDevice plus client live state', async () => {
       const slot = state.slots.get('primary')!;
       slot.live = makeFakeLive({
