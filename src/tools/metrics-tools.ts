@@ -1031,7 +1031,7 @@ function sessionSource(
 ): ProcessedSessionSource {
   return {
     id: session.id,
-    startedAt: earliestStartedAt(eligibleSets),
+    startedAt: localWallClockIso(earliestStartedAt(eligibleSets)),
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
   };
 }
