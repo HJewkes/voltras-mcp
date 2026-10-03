@@ -283,6 +283,29 @@ describe('TrueCoachClient.fetchWorkoutPages', () => {
     );
   });
 
+  it('keeps the shell command and its stderr out of a failed password command (VW-878)', async () => {
+    const fetchImpl = stubFetch([]);
+
+    const failure = client(fetchImpl, {
+      password: undefined,
+      passwordCommand: 'echo secret-stderr-marker >&2; exit 3',
+    }).fetchWorkoutPages({ refresh: false });
+
+    await expect(failure).rejects.toMatchObject({ code: 'TRUECOACH_PASSWORD_CMD_FAILED' });
+    await expect(failure).rejects.not.toThrow(/secret-stderr-marker|exit 3/);
+  });
+
+  it('keeps a body snippet out of an unreadable response (VW-878)', async () => {
+    const fetchImpl = stubFetch([
+      new Response('<html>invented-body-snippet</html>', { status: 200 }),
+    ]);
+
+    const failure = client(fetchImpl).fetchWorkoutPages({ refresh: false });
+
+    await expect(failure).rejects.toMatchObject({ code: 'TRUECOACH_BAD_RESPONSE' });
+    await expect(failure).rejects.not.toThrow(/invented-body-snippet/);
+  });
+
   it('reads the password from VMCP_TRUECOACH_PASSWORD_CMD stdout', async () => {
     const fetchImpl = stubFetch([
       json({ access_token: TOKEN, user_id: 4242 }),

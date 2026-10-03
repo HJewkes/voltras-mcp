@@ -19,6 +19,7 @@
 // With a single stdio client — today's only shape — the first WRITE call
 // acquires and nothing ever contends, so behaviour is unchanged.
 
+import { UserFacingError } from '../user-facing-error.js';
 import type { ClientId } from '../client-connection.js';
 
 /**
@@ -63,7 +64,7 @@ export interface LeaseDenied {
 export type LeaseDecision = LeaseGranted | LeaseDenied;
 
 /** Raised when a transfer is begun while one is already in progress. */
-export class TransferInProgressError extends Error {
+export class TransferInProgressError extends UserFacingError {
   constructor() {
     super('a lease transfer is already in progress');
     this.name = 'TransferInProgressError';

@@ -5936,7 +5936,8 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(`SELECT 1 AS present FROM exercise_setups WHERE id = ?`)
       .get(key.setupId);
     if (row === undefined) {
-      throw new Error(
+      throw codedError(
+        'UNKNOWN_SETUP',
         `unknown setup ${JSON.stringify(key.setupId)}: no such row in exercise_setups. ` +
           'Setup ids come from the ROM clustering — run baselines.recalc { inferSetups: true } first.',
       );

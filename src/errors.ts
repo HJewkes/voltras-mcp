@@ -80,7 +80,8 @@ const OWN_WORDING: Readonly<Record<Exclude<ErrorCodeType, SafeSdkCode>, string>>
   UNKNOWN: GENERIC_SDK_MESSAGE,
 };
 
-const UNHANDLED_MESSAGE = `The server hit an unexpected error. ${RECONNECT}`;
+const UNHANDLED_MESSAGE =
+  'The server hit an unexpected error. Retry; if it keeps failing, check the server log.';
 
 function errorCode(err: unknown): unknown {
   return err instanceof Error ? (err as { code?: unknown }).code : undefined;

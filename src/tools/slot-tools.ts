@@ -16,6 +16,7 @@
 // direct BLE-adapter library references in this file.
 
 import { mapSdkError, UserFacingError } from '../errors.js';
+import { log } from '../logger.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import { z } from 'zod';
@@ -215,6 +216,7 @@ export function registerSlotTools(
         await client.setMode(prevModeValue as TrainingMode);
       } catch (revertErr) {
         const msg = mapSdkError(revertErr).message;
+        log.debug('slot.identify revert error', revertErr);
         // Log loudly — device is stuck in Damper and the user needs to know.
         console.error(
           `slot.identify: revert to ${previousModeName} failed for slot \`${slotId}\`: ${msg}`,

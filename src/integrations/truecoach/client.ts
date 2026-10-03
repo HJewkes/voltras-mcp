@@ -220,7 +220,14 @@ export class TrueCoachClient {
     try {
       return await response.json();
     } catch (err) {
-      throw this.#redactor.error(err, 'TRUECOACH_BAD_RESPONSE');
+      log.debug(
+        'truecoach response was not JSON',
+        this.#redactor.error(err, 'TRUECOACH_BAD_RESPONSE').message,
+      );
+      throw new TrueCoachError(
+        'TRUECOACH_BAD_RESPONSE',
+        'TrueCoach answered with a body that was not JSON.',
+      );
     }
   }
 
@@ -286,7 +293,14 @@ export class TrueCoachClient {
       const { stdout } = await execFileAsync('/bin/sh', ['-c', command], { encoding: 'utf8' });
       return stdout.trim();
     } catch (err) {
-      throw this.#redactor.error(err, 'TRUECOACH_PASSWORD_CMD_FAILED');
+      log.debug(
+        'truecoach password command failed',
+        this.#redactor.error(err, 'TRUECOACH_PASSWORD_CMD_FAILED').message,
+      );
+      throw new TrueCoachError(
+        'TRUECOACH_PASSWORD_CMD_FAILED',
+        'The TrueCoach password command failed. Check VMCP_TRUECOACH_PASSWORD_CMD runs on its own.',
+      );
     }
   }
 
