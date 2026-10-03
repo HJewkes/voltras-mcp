@@ -97,7 +97,7 @@ describe('wrapHandler', () => {
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toEqual({
       code: 'CONNECTION_LOST',
-      message: 'disconnected mid-command',
+      message: 'The connection to the device dropped. Call device.connect, then retry.',
     });
   });
 
