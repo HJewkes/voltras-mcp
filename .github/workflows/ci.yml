@@ -98,6 +98,8 @@ jobs:
           test -f dist/bin.js || (echo "dist/bin.js missing" && exit 1)
           test -f dist/server.js || (echo "dist/server.js missing" && exit 1)
           echo "Build verification passed"
+      # Context cost of tools/list and three scripted journeys against docs/token-budget.md (VW-831).
+      - run: npm run budget:check
       # The fidelity overlay is dev tooling (VW-431): prove the production SPA carries none of it.
       - run: npm run build:dashboard
       - name: Fidelity overlay absent from the production SPA
