@@ -32,6 +32,7 @@
 // accept `timeoutMs` on the input schema (per spec R11) and forward it as
 // the SDK's `timeout` field.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { DiscoveredDevice, GuidedLoadState, VoltraClient } from '@voltras/node-sdk';
@@ -2155,7 +2156,7 @@ function copyDefinedFields<K extends keyof DeviceSnapshot>(
  * importing the SDK's error class hierarchy directly here.
  */
 function throwSdkLike(code: string, message: string): never {
-  const err = new Error(message) as Error & { code: string };
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   throw err;
 }

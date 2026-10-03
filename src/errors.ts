@@ -5,6 +5,9 @@
 
 import { VoltraSDKError, type ErrorCodeType } from '@voltras/node-sdk';
 import { log } from './logger.js';
+import { UserFacingError } from './user-facing-error.js';
+
+export { UserFacingError };
 
 export interface MappedError {
   code: string;
@@ -77,6 +80,8 @@ const OWN_WORDING: Readonly<Record<Exclude<ErrorCodeType, SafeSdkCode>, string>>
   UNKNOWN: GENERIC_SDK_MESSAGE,
 };
 
+const UNHANDLED_MESSAGE = `The server hit an unexpected error. ${RECONNECT}`;
+
 function errorCode(err: unknown): unknown {
   return err instanceof Error ? (err as { code?: unknown }).code : undefined;
 }
@@ -106,16 +111,17 @@ export function mapSdkError(err: unknown): MappedError {
   if (err instanceof VoltraSDKError) {
     return { code: err.code, message: sdkMessage(err) };
   }
-  if (err instanceof Error) {
-    const code =
-      'code' in err && typeof (err as { code?: unknown }).code === 'string'
-        ? (err as { code: string }).code
-        : 'UNKNOWN';
-    log.debug('unhandled error', err.message, err.stack);
+  if (err instanceof UserFacingError) {
+    const code = typeof errorCode(err) === 'string' ? (errorCode(err) as string) : 'UNKNOWN';
     const field = (err as { field?: unknown }).field;
     return typeof field === 'string'
       ? { code, message: err.message, field }
       : { code, message: err.message };
+  }
+  if (err instanceof Error) {
+    log.debug('unhandled error', err.message, err.stack);
+    const code = errorCode(err);
+    return { code: typeof code === 'string' ? code : 'UNKNOWN', message: UNHANDLED_MESSAGE };
   }
   return { code: 'UNKNOWN', message: String(err) };
 }

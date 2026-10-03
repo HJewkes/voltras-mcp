@@ -10,6 +10,7 @@
 // byte — no trim, no tightening, no paraphrase — because a commitment in someone else's words
 // carries none of the weight the whole mechanism depends on (LIT section 1.2).
 
+import { UserFacingError } from '../errors.js';
 import { commitmentWeekOf } from '../accountability/commitment-week.js';
 import { isIsoDate, isMonday } from '../plan/block-calendar.js';
 import { mondaysAround } from '../plan/block-placement.js';
@@ -18,7 +19,7 @@ import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type CommitmentDay, type StoredCommitment } from '../store/types.js';
 import type { z } from 'zod';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

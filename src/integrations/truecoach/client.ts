@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { TrueCoachConfig } from '../../config.js';
+import { UserFacingError } from '../../user-facing-error.js';
 import { log } from '../../logger.js';
 import { SecretRedactor } from './redact.js';
 import type { RawWorkoutsPage } from './types.js';
@@ -45,7 +46,7 @@ const DEFAULT_TOKEN_TTL_MS = 60 * 60 * 1_000;
 const PER_PAGE = 50;
 const SECRET_FILE_MODE = 0o600;
 
-export class TrueCoachError extends Error {
+export class TrueCoachError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

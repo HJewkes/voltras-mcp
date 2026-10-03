@@ -23,6 +23,7 @@
 // Error-channel convention matches `session-tools.ts`: a thrown `ToolError`
 // with a `code` field is preserved by `mapSdkError` -> `errorResult`.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -131,7 +132,7 @@ type SetCapture = Pick<
   | 'cueRecord'
 >;
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

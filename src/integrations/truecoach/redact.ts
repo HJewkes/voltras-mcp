@@ -12,6 +12,8 @@
 // into a regex engine. `String.replaceAll` on a string needle has no such
 // surface.
 
+import { UserFacingError } from '../../user-facing-error.js';
+
 export const REDACTED = '[REDACTED]';
 
 /** Below this length a "secret" is common enough text that scrubbing it would mangle unrelated output. */
@@ -67,7 +69,7 @@ export class SecretRedactor {
       err instanceof Error && typeof (err as Error & { code?: unknown }).code === 'string'
         ? (err as Error & { code: string }).code
         : fallbackCode;
-    const wrapped = new Error(message);
+    const wrapped = new UserFacingError(message);
     (wrapped as Error & { code: string }).code = code;
     return wrapped;
   }

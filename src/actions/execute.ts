@@ -41,6 +41,7 @@
 // because that would assert an outcome nobody knows.
 
 import { createHash } from 'node:crypto';
+import { mapSdkError } from '../errors.js';
 import { z } from 'zod';
 
 import { actionEntry, type ActionTier } from './allowlist.js';
@@ -299,7 +300,7 @@ async function runHandler(
   try {
     raw = await handler(input);
   } catch (err) {
-    return { ok: false, code: 'HANDLER_THREW', result: { message: (err as Error).message } };
+    return { ok: false, code: 'HANDLER_THREW', result: { message: mapSdkError(err).message } };
   }
   const payload = toolResultPayload(raw);
   if (raw.isError !== true) return { ok: true, result: payload };

@@ -9,6 +9,7 @@
 // would be wrong about a deload week, and being wrong here silently deletes
 // training days from the lifter's own record. The list reports; a person rules.
 
+import { UserFacingError } from '../errors.js';
 import type { z } from 'zod';
 
 import { reviewDayOf, reviewDays, type ReviewDay } from '../analytics/session-review.js';
@@ -19,7 +20,7 @@ import { LOCAL_USER_ID, type SessionReviewRow } from '../store/types.js';
 import type { SessionKind } from '../store/session-kind.js';
 
 /** Same shape every other tool module's local one has; `wrapHandler` keeps the code. */
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

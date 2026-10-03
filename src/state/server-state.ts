@@ -34,6 +34,7 @@
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
+import { UserFacingError } from '../errors.js';
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
 import { setCatalog } from '@voltras/workout-analytics';
@@ -185,7 +186,7 @@ export const PRIMARY_SLOT = 'primary' as const;
 export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): SlotState {
   const slot = state.slots.get(slotId);
   if (!slot) {
-    throw new Error(`Unknown slot: ${slotId}`);
+    throw new UserFacingError(`Unknown slot: ${slotId}`);
   }
   return slot;
 }

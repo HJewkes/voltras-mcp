@@ -18,6 +18,7 @@
 // set row and replaces the entire rep array, so retries (e.g. force-end on
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
+import { UserFacingError } from '../user-facing-error.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
@@ -2738,7 +2739,7 @@ function sameCommitmentContent(latest: StoredCommitment, input: DeclareCommitmen
 }
 
 function weeksExist(blockId: string): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     `block ${blockId} already has week rows; scaffoldWeeks only builds an empty block.`,
   );
   (err as Error & { code: string }).code = 'WEEKS_EXIST';
@@ -2746,7 +2747,7 @@ function weeksExist(blockId: string): Error {
 }
 
 function blockScheduleInvalid(blockId: string, problem: string): Error {
-  const err = new Error(`block ${blockId}: ${problem}.`);
+  const err = new UserFacingError(`block ${blockId}: ${problem}.`);
   (err as Error & { code: string }).code = 'BLOCK_SCHEDULE_INVALID';
   return err;
 }
@@ -2760,7 +2761,7 @@ function isThenable(value: unknown): boolean {
 }
 
 function asyncTransactionRefused(): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     'A store transaction callback returned a promise; store transactions must stay synchronous.',
   );
   (err as Error & { code: string }).code = 'STORE_TRANSACTION_ASYNC';
@@ -2768,7 +2769,7 @@ function asyncTransactionRefused(): Error {
 }
 
 function nestedTransactionOverlap(): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     'A nested store transaction was opened beside another one still open; nest them in sequence.',
   );
   (err as Error & { code: string }).code = 'STORE_TRANSACTION_OVERLAP';
@@ -2785,7 +2786,7 @@ interface TransactionFrame {
 }
 
 function transactionBusy(): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     'The store is inside a caller-owned transaction, and this call came from outside it.',
   );
   (err as Error & { code: string }).code = 'STORE_TRANSACTION_BUSY';
@@ -6645,8 +6646,8 @@ function createSchemaIncompatibleError(path: string, found: number): Error {
     `SQLite schema at ${path} has user_version=${found}; ` +
     `expected ${SCHEMA_VERSION}. Automatic migration is not supported in v1. ` +
     `Move or delete the file and let voltras-mcp recreate it.`;
-  const err = new Error(message);
-  (err as Error & { code: string }).code = 'SCHEMA_INCOMPATIBLE';
+  const err = new UserFacingError(message);
+  (err as UserFacingError & { code: string }).code = 'SCHEMA_INCOMPATIBLE';
   return err;
 }
 
@@ -7025,7 +7026,7 @@ function assertGoalTargetMovable(
  * a SQLite failure, because it is a rule being enforced rather than a fault.
  */
 function createFixedTargetError(id: string, field: 'committedValue' | 'stretchValue'): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     `goal target ${id} was already accepted; ${field} cannot change. ` +
       `Retire it with an outcome, or stamp a new chapter, and derive a new target.`,
   );
@@ -7068,8 +7069,8 @@ function createChangedTargetError(id: string): Error {
   );
 }
 
-function codedError(code: string, message: string): Error {
-  const err = new Error(message);
+function codedError(code: string, message: string): UserFacingError {
+  const err = new UserFacingError(message);
   (err as Error & { code: string }).code = code;
   return err;
 }

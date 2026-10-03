@@ -12,6 +12,7 @@
 // There is no delete tool. `block_schedules` refuses to lose a block that has history (FK
 // RESTRICT), and un-dating is `plan.block.schedule` with `startsOn: null`, which keeps it.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -49,7 +50,7 @@ import {
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

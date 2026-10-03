@@ -20,6 +20,7 @@
 // primary slot. Slots allocated through `createSlot` after that point pick up
 // the wiring inline, no extra step needed.
 
+import { UserFacingError } from '../user-facing-error.js';
 import { VoltraClient } from '@voltras/node-sdk';
 
 import { LiveState, type DeviceSnapshot } from './live-state.js';
@@ -321,8 +322,8 @@ function currentBindings(state: ServerState, updates: SlotBindingUpdate[]): Slot
  * unchanged when it appears on a thrown error, surfacing it as the tool
  * response's structured error code.
  */
-function makeCodedError(code: string, message: string): Error {
-  const err = new Error(message) as Error & { code: string };
+function makeCodedError(code: string, message: string): UserFacingError {
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   return err;
 }

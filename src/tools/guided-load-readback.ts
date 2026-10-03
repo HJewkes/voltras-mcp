@@ -51,6 +51,7 @@
 // tested, the DEVICE-sourced confirmation path is not. Those need a bench
 // sitting, and both tickets stay open until one happens.
 
+import { UserFacingError } from '../errors.js';
 import { MODE_REVERT_WINDOW_MS } from '../state/mode-revert-guard.js';
 import { MODE_ECHO_POLL_MS } from './device-handler-helpers.js';
 import { GUIDED_LOAD_ACTIVE_PHASES } from './device-exit.js';
@@ -130,7 +131,7 @@ export interface ReadBackWaitOptions {
 }
 
 function readBackError(code: string, message: string): never {
-  const err = new Error(message) as Error & { code: string };
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   throw err;
 }

@@ -289,6 +289,22 @@ describe('slot.identify', () => {
       expect(typeof body.revertWarning).toBe('string');
       expect(String(body.revertWarning)).toMatch(/Damper/i);
     });
+
+    it('keeps a device id in the revert error out of the revertWarning (VW-878)', async () => {
+      setup('Weight Training');
+      let callCount = 0;
+      client.setMode = vi.fn(async () => {
+        callCount += 1;
+        if (callCount === 2) throw new Error('peripheral AA:BB:CC:DD:EE:FF write failed');
+      });
+
+      const promise = identifyCb({ durationMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      const body = payload(await promise) as Record<string, unknown>;
+
+      expect(String(body.revertWarning)).toMatch(/Damper/i);
+      expect(String(body.revertWarning)).not.toContain('AA:BB:CC:DD:EE:FF');
+    });
   });
 
   // ── VMCP-02.53 — multi-word modes must reverse-map, not strand in Damper ──

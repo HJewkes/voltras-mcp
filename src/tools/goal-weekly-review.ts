@@ -22,6 +22,7 @@
 // re-proposal is a NEW proposal beside it, never an edit of it (methodology
 // §4; plan v2 §1.7, B55).
 
+import { UserFacingError } from '../errors.js';
 import { todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock, type PlanningRead } from '../plan/current-block.js';
 import type { z } from 'zod';
@@ -59,7 +60,7 @@ export const BODYWEIGHT_RATE_ADVISORY_CODE = 'bodyweight_rate_reproposal';
 /** Bumped when the loop below changes, so old answers stay re-scorable. */
 export const BODYWEIGHT_RATE_ADVISORY_VERSION = 'bodyweight-rate-advisory@1.0.0';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

@@ -15,6 +15,7 @@
 // All BLE interaction flows through the slot's `client` — AC-14 forbids any
 // direct BLE-adapter library references in this file.
 
+import { mapSdkError, UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import { z } from 'zod';
@@ -118,7 +119,7 @@ const SLOT_UNBIND_DESCRIPTION =
 // ── Private helpers ───────────────────────────────────────────────────────
 
 function throwSdkLike(code: string, message: string): never {
-  const err = new Error(message) as Error & { code: string };
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   throw err;
 }
@@ -213,7 +214,7 @@ export function registerSlotTools(
       try {
         await client.setMode(prevModeValue as TrainingMode);
       } catch (revertErr) {
-        const msg = revertErr instanceof Error ? revertErr.message : String(revertErr);
+        const msg = mapSdkError(revertErr).message;
         // Log loudly — device is stuck in Damper and the user needs to know.
         console.error(
           `slot.identify: revert to ${previousModeName} failed for slot \`${slotId}\`: ${msg}`,

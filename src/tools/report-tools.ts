@@ -13,6 +13,7 @@
 // itself runs on the mock adapter), and the working sets picked by the shared
 // `selectWorkingSets` rule so a ramp-up does not read as a light top set.
 
+import { UserFacingError } from '../errors.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { buildGoalLines, type WeeklyGoalLine } from './report-goals.js';
 import { datedWeeksOverlapping, scheduleChangeLines } from './report-calendar.js';
@@ -63,7 +64,7 @@ export const REPORT_SESSION_RESULTS_DESCRIPTION =
   'and an exercise with no working set is omitted. Read-only and local: it queries ' +
   'the store and makes no network call. The session must already be ended.';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

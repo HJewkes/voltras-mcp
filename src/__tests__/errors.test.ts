@@ -18,7 +18,7 @@ vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: FakeVoltraSDKError,
 }));
 
-const { mapSdkError } = await import('../errors.js');
+const { mapSdkError, UserFacingError } = await import('../errors.js');
 const { ErrorCode } = await vi.importActual<typeof VoltraSdk>('@voltras/node-sdk');
 
 const SAFE_SDK_CODES = ['NOT_CONNECTED', 'ALREADY_CONNECTED'];
@@ -90,22 +90,21 @@ describe('mapSdkError', () => {
       code: 'ALREADY_CONNECTED',
     });
     const result = mapSdkError(err);
-    expect(result).toEqual({
-      code: 'ALREADY_CONNECTED',
-      message: 'already paired',
-    });
+    expect(result.code).toBe('ALREADY_CONNECTED');
+    expect(result.message).not.toContain('already paired');
   });
 
   it('returns code "UNKNOWN" when an Error has no `code` field', () => {
     const result = mapSdkError(new Error('boom'));
-    expect(result).toEqual({ code: 'UNKNOWN', message: 'boom' });
+    expect(result.code).toBe('UNKNOWN');
+    expect(result.message).not.toContain('boom');
   });
 
   it('treats a non-string `code` field as missing and falls back to "UNKNOWN"', () => {
     const err = Object.assign(new Error('weird'), { code: 42 });
     const result = mapSdkError(err);
     expect(result.code).toBe('UNKNOWN');
-    expect(result.message).toBe('weird');
+    expect(result.message).not.toContain('weird');
   });
 
   it('maps a non-Error throw (string) to UNKNOWN with stringified message', () => {
@@ -126,7 +125,32 @@ describe('mapSdkError', () => {
     // Force a stack containing a recognizable frame marker.
     err.stack = 'Error: noisy\n    at someFn (file.ts:1:1)';
     const result = mapSdkError(err);
-    expect(result.message).toBe('noisy');
     expect(result.message).not.toContain('at ');
+  });
+});
+
+describe('mapSdkError plain and user-facing errors (VW-878)', () => {
+  it('words a plain Error by fixed text, not its message', () => {
+    const mapped = mapSdkError(new Error('peripheral AA:BB:CC:DD:EE:FF dropped'));
+    expect(mapped.code).toBe('UNKNOWN');
+    expect(mapped.message).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
+  it('words a plain Error that carries a code the same way, keeping the code', () => {
+    const err = Object.assign(new Error('peripheral AA:BB:CC:DD:EE:FF dropped'), { code: 'EIO' });
+    expect(mapSdkError(err).code).toBe('EIO');
+    expect(mapSdkError(err).message).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
+  it('keeps the code, field and message of our own UserFacingError', () => {
+    class OwnError extends UserFacingError {
+      readonly code = 'INVALID_INPUT';
+      readonly field = 'weightLbs';
+    }
+    expect(mapSdkError(new OwnError('weightLbs must be positive'))).toEqual({
+      code: 'INVALID_INPUT',
+      message: 'weightLbs must be positive',
+      field: 'weightLbs',
+    });
   });
 });

@@ -11,6 +11,7 @@
 // and never from a planned/done count: the escalation ladder is keyed to
 // direction, and a raw count would let a bad week read as a trend.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -80,7 +81,7 @@ const WEEKDAY_NAMES = [
  */
 const LIFTER_NAME_PLACEHOLDER = 'You';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
