@@ -2,7 +2,7 @@
 diataxis: explanation
 audience: [lifter, coach]
 status: coming-soon
-statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data and is reachable by URL only. The current block week and unreviewed-history notice are served but not yet shown.'
+statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data. The current block week and unreviewed-history notice are served but not yet shown.'
 tracking: VW-514 (internal tracker)
 sources:
   - src/dashboard/spa/goals/GoalsPage.tsx
@@ -57,10 +57,6 @@ set straight into the store so there is something to beat
 goal states you can preview are all seeded into a scratch store
 (`src/docs/preview-seeds.ts:8-18`). Nobody has yet checked the page after declaring and
 accepting a real goal.
-
-**It is reachable by URL only.** The side rail has no goals entry, so you have to type
-`/app#/goals` (`src/dashboard/spa/panels/DashboardChrome.tsx:34-40`,
-`src/dashboard/spa/panels/DashboardChrome.tsx:56-59`).
 
 **Two things are served but not shown.** The dashboard sends the current block week and a
 count of history you have not reviewed yet (`src/dashboard/server.ts:1053-1059`). The page

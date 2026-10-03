@@ -118,8 +118,7 @@ If `dist/` or `dist/spa/` is missing, the command stops and names the build step
 
 `body` and `plan` reuse the scenarios that produce this site's screenshots, so the page you
 browse matches the published images. `goals` has a seed of its own
-(`src/docs/preview-seeds.ts`). The goals page has no entry in the dashboard's navigation
-rail yet, so you reach it by URL only (`src/dashboard/spa/panels/DashboardChrome.tsx`).
+(`src/docs/preview-seeds.ts`). Open it from **goals** in the dashboard's navigation rail.
 
 `--state` applies to `goals` only. It takes one of `calibrating`, `recalibration_offered`,
 `recalibration_declined`, `on_track`, `fast_climb`, `behind`, `stalled`, `ahead`,

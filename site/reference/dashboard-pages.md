@@ -40,7 +40,7 @@ that says what does not work.
 | Available                              | `#/`        | The dashboard URL itself, or **live** in the nav rail.                                  | `/api/snapshot` (polled), `/api/stream` (server-sent events), `/api/session-plan` |
 | Available                              | `#/plan`    | **program** in the nav rail.                                                            | `/api/plan-tree`, `/api/exercises`; edits go to `/api/plan/*`                     |
 | Available                              | `#/summary` | **review** in the nav rail, for the latest session; `#/summary/:sessionId` for another. | `/api/session-summary/:sessionId`                                                 |
-| [Coming soon](/coming-soon/goals-page) | `#/goals`   | By URL only: the nav rail has no entry for it.                                          | `/api/goals`, `/api/goal-progress`                                                |
+| [Coming soon](/coming-soon/goals-page) | `#/goals`   | **goals** in the nav rail.                                                              | `/api/goals`, `/api/goal-progress`                                                |
 | [Coming soon](/coming-soon/body-map)   | `#/body`    | **body** in the nav rail.                                                               | `/api/muscle-week`, `/api/muscle-strength`, `/api/muscle-plan`                    |
 
 ## What each page shows

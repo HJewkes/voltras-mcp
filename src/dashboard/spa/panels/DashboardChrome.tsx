@@ -15,7 +15,8 @@
  * The rail is deliberately narrowed to the routes that EXIST. `defaultNavItems`
  * ships four categories (Live · Review · Plan · Body); a nav button that does
  * nothing is worse chrome than no button, so an item appears only once its
- * route is in {@link NAV_ROUTES}. `body` joined them with VW-338.
+ * route is in {@link NAV_ROUTES}. `body` joined them with VW-338; `goals`, which
+ * titan's categories do not carry, joined with VW-845 on titan's target glyph.
  *
  * Chrome inputs (devices, session state) are read from the store here rather
  * than passed down, so a route that knows nothing about BLE still renders a
@@ -23,7 +24,13 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
-import { DashboardShell, defaultNavItems, type SessionState } from '@titan-design/react-ui';
+import {
+  DashboardShell,
+  TargetIcon,
+  workoutNavItems,
+  type SessionState,
+  type SideNavItem,
+} from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
@@ -31,16 +38,28 @@ import { routeHash, type Route } from '../routing';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage';
 import { PinnedLiveStripSlot } from './PinnedLiveStripSlot';
 
-/** Nav key ⇄ route. The nav rail renders exactly these, in this order. */
-const NAV_ROUTES: Record<string, Route> = {
+/**
+ * Nav key ⇄ route. The nav rail renders exactly these, in this order: what is
+ * happening, what happened, the plan, the goals that plan serves, then the body.
+ */
+export const NAV_ROUTES: Record<string, Route> = {
   live: { name: 'live' },
-  program: { name: 'plan' },
   review: { name: 'summary', sessionId: 'latest' },
+  program: { name: 'plan' },
+  goals: { name: 'goals' },
   body: { name: 'body' },
 };
 
-/** titan's default categories, filtered to the ones that route somewhere. */
-const NAV_ITEMS = defaultNavItems.filter((item) => item.key in NAV_ROUTES);
+const GOALS_NAV_ITEM: SideNavItem = {
+  key: 'goals',
+  label: 'Goals',
+  icon: <TargetIcon size={20} color="currentColor" />,
+};
+
+/** titan's categories plus Goals, keyed and ordered by {@link NAV_ROUTES}. */
+const NAV_ITEMS = Object.keys(NAV_ROUTES).flatMap((key) =>
+  [...workoutNavItems, GOALS_NAV_ITEM].filter((item) => item.key === key),
+);
 
 /** The nav key a route highlights. Inverse of {@link NAV_ROUTES}. */
 export function navKeyForRoute(route: Route): string {
@@ -54,8 +73,6 @@ export function navKeyForRoute(route: Route): string {
     case 'body':
       return 'body';
     case 'goals':
-      // No rail entry yet (`NAV_ITEMS` has no `goals` key) — the route is reached
-      // by URL only, same as `#/goals` itself; this key simply matches nothing.
       return 'goals';
   }
 }
