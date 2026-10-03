@@ -5,6 +5,12 @@
 // reports it on the console. Wrapping each bridge listener keeps the failure
 // inside the bridge: the voltras logger records it and the slot counts it, so
 // `device.get_state` can show an operator that an event was dropped.
+//
+// The listener guard is the outer backstop. Inside a listener, a step that only
+// derives something (analytics, live signals, cues) runs through
+// `guardStep` (VW-869), so its throw is counted the same way while the
+// listener's critical step (closing the set, publishing a finalized rep) still
+// runs.
 
 import type { VoltraClient } from '@voltras/node-sdk';
 import { log } from '../logger.js';
@@ -55,6 +61,18 @@ export function guardListener<A extends unknown[]>(
   };
 }
 
+/**
+ * Run one non-critical step of a listener. A throw is logged and counted on
+ * `slot` under the listener's `label`, and the listener carries on.
+ */
+export function guardStep(label: string, slot: GuardedSlot, step: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    recordListenerFault(label, slot, err, step);
+  }
+}
+
 /** A view of `client` whose `on*` methods register guarded listeners. */
 export function guardClientListeners(client: VoltraClient, slot: GuardedSlot): GuardedListeners {
   const guarded = {} as Record<ListenerName, (listener: AnyListener) => unknown>;
@@ -67,8 +85,9 @@ export function guardClientListeners(client: VoltraClient, slot: GuardedSlot): G
   return guarded as GuardedListeners;
 }
 
-function recordListenerFault(label: string, slot: GuardedSlot, err: unknown): void {
+function recordListenerFault(label: string, slot: GuardedSlot, err: unknown, step?: string): void {
   const faults = (slot.listenerFaults ??= {});
   faults[label] = (faults[label] ?? 0) + 1;
-  log.error(`event-bridge: ${label} listener threw on slot ${slot.slotId}`, err);
+  const where = step === undefined ? `${label} listener` : `${label} listener step ${step}`;
+  log.error(`event-bridge: ${where} threw on slot ${slot.slotId}`, err);
 }
