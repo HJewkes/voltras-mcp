@@ -7,6 +7,7 @@
 //
 // Confidentiality: coaching metadata only, no protocol data.
 
+import { UserFacingError } from '../errors.js';
 import type {
   AdvisoryAnswer,
   AdvisoryAnswerRetire,
@@ -21,7 +22,7 @@ export type AdvisoryAnswerOutcome =
 
 type AnswerStore = Pick<SessionStore, 'answerAdvisoryIfOpen' | 'listAdvisoryDecisions'>;
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

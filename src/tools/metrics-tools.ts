@@ -72,6 +72,7 @@
 // set defaults to the heaviest pre-working-load set rather than the first
 // rep of the session — see `selectReadinessProbeSet`.
 
+import { UserFacingError } from '../errors.js';
 import {
   analyzeTrend,
   assessRepQuality,
@@ -2477,7 +2478,7 @@ function recommendLoad(
   return { targetVelocity, recommendedLoad, confidence: profile.confidence };
 }
 
-class CodedError extends Error {
+class CodedError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

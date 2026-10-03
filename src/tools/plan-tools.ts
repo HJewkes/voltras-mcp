@@ -12,6 +12,7 @@
 // in `registerStartingPlaceholders`; we hot-swap the real handler via
 // `RegisteredTool.update({ callback })`.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -96,7 +97,7 @@ import { lintMuscleFrequencyChange, type FrequencyTemplate } from '../plan/muscl
 import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   /** The input field to fix, for a caller that cannot read the message (VW-537). */
   readonly field: string | undefined;

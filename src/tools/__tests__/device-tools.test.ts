@@ -721,7 +721,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       // The manager error is rethrown so callers see the failure ...
       expect(isError).toBe(true);
-      expect(String(payload.message)).toMatch(/manager kaboom/);
+      expect(String(payload.message)).not.toMatch(/manager kaboom/);
       // ... but the defensive teardown still ran: client is disposed,
       // adapter close was attempted, primary slot was reset to a fresh client.
       expect(client.dispose).toHaveBeenCalled();

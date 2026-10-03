@@ -6,6 +6,7 @@
 // drive the hold duration deterministically without real wall-clock waits.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { log } from '../../logger.js';
 
 // Stub the SDK so the static import chain doesn't pull native peers.
 class FakeVoltraSDKError extends Error {
@@ -288,6 +289,41 @@ describe('slot.identify', () => {
       expect(body.identifiedFor).toBe(1000);
       expect(typeof body.revertWarning).toBe('string');
       expect(String(body.revertWarning)).toMatch(/Damper/i);
+    });
+
+    it('keeps the raw revert error at debug level (VW-878)', async () => {
+      setup('Weight Training');
+      const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
+      let callCount = 0;
+      client.setMode = vi.fn(async () => {
+        callCount += 1;
+        if (callCount === 2) throw new Error('BLE write failed');
+      });
+
+      const promise = identifyCb({ durationMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      await promise;
+
+      expect(debug.mock.calls.flat().some((arg) => String(arg).includes('BLE write failed'))).toBe(
+        true,
+      );
+      debug.mockRestore();
+    });
+
+    it('keeps a device id in the revert error out of the revertWarning (VW-878)', async () => {
+      setup('Weight Training');
+      let callCount = 0;
+      client.setMode = vi.fn(async () => {
+        callCount += 1;
+        if (callCount === 2) throw new Error('peripheral AA:BB:CC:DD:EE:FF write failed');
+      });
+
+      const promise = identifyCb({ durationMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      const body = payload(await promise) as Record<string, unknown>;
+
+      expect(String(body.revertWarning)).toMatch(/Damper/i);
+      expect(String(body.revertWarning)).not.toContain('AA:BB:CC:DD:EE:FF');
     });
   });
 

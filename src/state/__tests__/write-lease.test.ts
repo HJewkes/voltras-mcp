@@ -4,6 +4,7 @@
 // timers, no sleeps.
 
 import { describe, it, expect } from 'vitest';
+import { mapSdkError } from '../../errors.js';
 import { WriteLease, DEFAULT_LEASE_IDLE_MS } from '../write-lease.js';
 
 /** Lease with a controllable clock and pin predicate. */
@@ -314,5 +315,19 @@ describe('generation (VMCP-01.65)', () => {
     lease.release('b');
 
     expect(lease.generation()).toBe(held);
+  });
+});
+
+describe('transfer refusal wording (VW-878)', () => {
+  it('reaches a client with its own message, not the generic one', () => {
+    const { lease } = makeLease();
+    lease.beginTransfer();
+    let thrown: unknown;
+    try {
+      lease.beginTransfer();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(mapSdkError(thrown).message).toBe('a lease transfer is already in progress');
   });
 });

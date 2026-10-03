@@ -27,6 +27,7 @@
 // enforces "at least one"; this file enforces "if both, id wins" by clearing
 // `exerciseName` whenever `exerciseId` is present before persisting.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -78,7 +79,7 @@ import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
  * Error type used by tool handlers to signal a known, mapped error code.
  * `wrapHandler` -> `mapSdkError` will preserve the `code` field on the wire.
  */
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

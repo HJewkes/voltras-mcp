@@ -6,6 +6,7 @@
 // or rotation as an upper-body one. An exercise the catalog cannot place gets
 // the band's own default class rather than a guess.
 
+import { UserFacingError } from '../errors.js';
 import { GOAL_BAND_CONSTANTS, type RampClass } from '../analytics/goal-band.js';
 import { ExerciseService, type Exercise } from './exercise-service.js';
 
@@ -22,7 +23,7 @@ export function rampClassOf(exercise: RampClassifiable | undefined): RampClass {
   return LOWER_BODY_PATTERNS.has(exercise.movementPattern) ? 'lower_compound' : 'upper_compound';
 }
 
-export class CatalogNotLoadedError extends Error {
+export class CatalogNotLoadedError extends UserFacingError {
   readonly code = 'CATALOG_NOT_LOADED';
 
   constructor() {

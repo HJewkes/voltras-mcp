@@ -342,6 +342,33 @@ describe('surrendering the device on transfer', () => {
     expect(await state.store.getSet('set-1')).toBeDefined();
   });
 
+  it('keeps a device id in a failed unload out of the surrender report (VW-878)', async () => {
+    await startSetOn(a);
+    Object.defineProperty(state.slots.get('primary')!.client, 'unloadDevice', {
+      value: () => Promise.reject(new Error('peripheral AA:BB:CC:DD:EE:FF write failed')),
+      configurable: true,
+    });
+
+    const result = await call(b, 'system.lease_acquire', { force: true });
+
+    const slots = result.payload.surrender as Array<Record<string, unknown>>;
+    const entry = slots.find((s) => s.slotId === 'primary');
+    expect(String(entry?.error)).toContain('failed to unload');
+    expect(JSON.stringify(result.payload)).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
+  it('keeps a device id in a failed finalize out of the surrender report (VW-878)', async () => {
+    await startSetOn(a);
+    state.store.putSet = () => Promise.reject(new Error('peripheral AA:BB:CC:DD:EE:FF vanished'));
+
+    const result = await call(b, 'system.lease_acquire', { force: true });
+
+    const slots = result.payload.surrender as Array<Record<string, unknown>>;
+    const entry = slots.find((s) => s.slotId === 'primary');
+    expect(String(entry?.error)).toContain('failed to finalize');
+    expect(JSON.stringify(result.payload)).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
   it('REFUSES a forced steal when nothing could be unloaded', async () => {
     // The branch that decides whether a possibly-loaded device changes hands.
     await startSetOn(a);

@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mapSdkError } from '../../errors.js';
 
 // SDK stub — `VoltraClient` is constructed by `resetPrimarySlot` and
 // instantiated directly by the test bodies; the real class would pull in
@@ -127,6 +128,11 @@ describe('createSlot', () => {
   it('errors when the slot id is already taken', () => {
     const state = makeStateWithPrimary();
     expect(() => createSlot(state, PRIMARY_SLOT, new VoltraClient())).toThrow(/already exists/i);
+    try {
+      createSlot(state, PRIMARY_SLOT, new VoltraClient());
+    } catch (err) {
+      expect(mapSdkError(err).message).toMatch(/already exists/i);
+    }
   });
 
   it('enforces the MAX_SLOTS soft cap on CONNECTED slots (two devices in this release)', () => {

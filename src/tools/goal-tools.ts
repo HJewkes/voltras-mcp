@@ -23,6 +23,7 @@
 // its optimistic one, and accepting a value outside the band never moves the
 // band to match.
 
+import { UserFacingError } from '../errors.js';
 import { todayLocal } from '../analytics/training-days.js';
 import {
   contextInFrame,
@@ -116,7 +117,7 @@ const DEFAULT_HORIZON_WEEKS = 12;
 /** The reconciliation every proposal and acceptance carries (plan §1.7). */
 const COMMITTED_EDGE_RP_IDS = ['rp:rp-s10-underpromise-overdeliver-goal-setting'];
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

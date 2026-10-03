@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { TrueCoachConfig } from '../../config.js';
+import { UserFacingError } from '../../user-facing-error.js';
 import { log } from '../../logger.js';
 import { SecretRedactor } from './redact.js';
 import type { RawWorkoutsPage } from './types.js';
@@ -45,7 +46,7 @@ const DEFAULT_TOKEN_TTL_MS = 60 * 60 * 1_000;
 const PER_PAGE = 50;
 const SECRET_FILE_MODE = 0o600;
 
-export class TrueCoachError extends Error {
+export class TrueCoachError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -219,7 +220,14 @@ export class TrueCoachClient {
     try {
       return await response.json();
     } catch (err) {
-      throw this.#redactor.error(err, 'TRUECOACH_BAD_RESPONSE');
+      log.debug(
+        'truecoach response was not JSON',
+        this.#redactor.error(err, 'TRUECOACH_BAD_RESPONSE').message,
+      );
+      throw new TrueCoachError(
+        'TRUECOACH_BAD_RESPONSE',
+        'TrueCoach answered with a body that was not JSON.',
+      );
     }
   }
 
@@ -285,7 +293,14 @@ export class TrueCoachClient {
       const { stdout } = await execFileAsync('/bin/sh', ['-c', command], { encoding: 'utf8' });
       return stdout.trim();
     } catch (err) {
-      throw this.#redactor.error(err, 'TRUECOACH_PASSWORD_CMD_FAILED');
+      log.debug(
+        'truecoach password command failed',
+        this.#redactor.error(err, 'TRUECOACH_PASSWORD_CMD_FAILED').message,
+      );
+      throw new TrueCoachError(
+        'TRUECOACH_PASSWORD_CMD_FAILED',
+        'The TrueCoach password command failed. Check VMCP_TRUECOACH_PASSWORD_CMD runs on its own.',
+      );
     }
   }
 

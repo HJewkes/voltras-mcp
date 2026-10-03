@@ -318,7 +318,17 @@ describe('createWeightFastPath — rejections', () => {
     await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
     expect(types(h.events)).toEqual(['voice_command_rejected', 'voice_input']);
     expect(h.events[0].meta.reason).toBe('set_failed');
-    expect(body(h.events[0]).detail).toBe('device rejected the write');
+    expect(body(h.events[0]).detail).not.toContain('device rejected the write');
+  });
+
+  it('keeps a device id in a failed write out of the pushed detail (VW-878)', async () => {
+    const setWeight = vi.fn(async () => {
+      throw new Error('peripheral AA:BB:CC:DD:EE:FF write failed');
+    });
+    const h = buildHarness([slotSpec('primary')], { setWeight });
+    await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
+    expect(h.events[0].meta.reason).toBe('set_failed');
+    expect(JSON.stringify(h.events)).not.toContain('AA:BB:CC:DD:EE:FF');
   });
 
   it('degrades to voice_input when no fast-path context is wired', async () => {

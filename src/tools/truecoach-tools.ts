@@ -14,6 +14,7 @@
 // created only when missing, so repeated imports accumulate weeks in one place
 // instead of forking the tree.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -79,7 +80,7 @@ export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
   'hand; the coach has not been asked for consent yet. Do not present it as a sanctioned ' +
   'integration.';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   /** The input field to fix, for a caller that cannot read the message (VW-537). */
   readonly field: string | undefined;
