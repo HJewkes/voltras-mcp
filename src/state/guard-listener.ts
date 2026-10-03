@@ -39,8 +39,7 @@ export type GuardedListeners = {
 
 /**
  * Wrap `fn` so a throw is logged and counted on `slot` instead of escaping
- * into the SDK. Only the event label and slot id reach the log, never the
- * event payload.
+ * into the SDK. The log gets the slot, the label and the error, never the payload.
  */
 export function guardListener<A extends unknown[]>(
   label: string,

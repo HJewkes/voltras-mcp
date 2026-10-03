@@ -847,7 +847,7 @@ export function velocityLossBaseline(reps: readonly Rep[]): {
   };
 }
 
-export function baselineRepNumberFor(reps: readonly Rep[]): number {
+function baselineRepNumberFor(reps: readonly Rep[]): number {
   let best = 0;
   let idx = 0;
   for (let i = 0; i < reps.length; i++) {
