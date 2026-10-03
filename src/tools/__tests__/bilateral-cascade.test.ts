@@ -412,7 +412,8 @@ describe('bilateral.cascade', () => {
     const results = payload.results as SlotResult[];
     const secondaryResult = results.find((r) => r.slot === 'secondary');
     expect(secondaryResult?.applied.weightLbs?.ok).toBe(false);
-    expect(secondaryResult?.applied.weightLbs?.error).toMatch(/range error/);
+    expect(secondaryResult?.applied.weightLbs?.error).toMatch(/does not support that setting/);
+    expect(secondaryResult?.applied.weightLbs?.error).not.toMatch(/5-200/);
     expect(secondaryResult?.applied.weightLbs?.value).toBe(75);
     expect(secondaryResult?.applied.mode?.ok).toBe(true);
     expect(secondaryResult?.applied.eccentricPercent?.ok).toBe(true);
@@ -455,7 +456,7 @@ describe('bilateral.cascade', () => {
     const results = payload.results as SlotResult[];
     expect(results).toHaveLength(1);
     expect(results[0].applied.mode?.ok).toBe(false);
-    expect(results[0].applied.mode?.error).toMatch(/mode rejected/);
+    expect(results[0].applied.mode?.error).toMatch(/does not support that setting/);
     // The skipped setters never produced an `applied` entry — keeps the
     // payload honest about what was actually attempted.
     expect(results[0].applied.weightLbs).toBeUndefined();
