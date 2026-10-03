@@ -71,7 +71,11 @@ import {
   getSlot,
 } from '../state/server-state.js';
 import type { ActiveSet, DeviceSnapshot, PendingDisconnectNotice } from '../state/live-state.js';
-import { MODE_REVERT_WINDOW_MS, type ModeRevertAbort } from '../state/mode-revert-guard.js';
+import {
+  isModeRevertStillActive,
+  MODE_REVERT_WINDOW_MS,
+  type ModeRevertAbort,
+} from '../state/mode-revert-guard.js';
 import type { SlotBinding } from '../state/slot-bindings.js';
 import {
   createSlot,
@@ -111,11 +115,10 @@ import {
   shouldPreflightWeightTraining,
   buildGuidedLoadTrackedFields,
   teardownBleResources,
-  isModeRevertStillActive,
-  waitForModeEcho,
 } from './device-handler-helpers.js';
+import { waitForModeEcho } from '../state/mode-echo.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
-import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from './device-exit.js';
+import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from '../state/device-exit.js';
 import {
   readBackGuidedLoadExit,
   readBackGuidedLoadTrigger,
@@ -125,7 +128,7 @@ import {
 // The exit path moved to `device-exit.ts` (VW-200) so the stop-the-machine
 // callers need not import the whole tool surface. Re-exported here because
 // every existing call site imports it from this module.
-export { unloadSlot } from './device-exit.js';
+export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`

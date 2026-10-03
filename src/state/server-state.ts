@@ -64,7 +64,7 @@ import { RestTimerRegistry } from './rest-timer.js';
 import { createPassiveScanState, type PassiveScanState } from './passive-scanner.js';
 import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
-import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
+import { makeVoiceHolder, type VoiceListenerHolder } from './voice-holder.js';
 import { makeCueSettings, type CueSettings } from '../voice/cue-settings.js';
 
 /**

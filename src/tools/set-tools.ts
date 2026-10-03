@@ -98,8 +98,8 @@ import { cueRecordFor } from '../state/effort-cue.js';
 import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
 import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
-import { isModeRevertStillActive } from './device-handler-helpers.js';
-import { stopMotorForRest, type SetStopOutcome } from './device-exit.js';
+import { isModeRevertStillActive } from '../state/mode-revert-guard.js';
+import { stopMotorForRest, type SetStopOutcome } from '../state/device-exit.js';
 
 /**
  * The v7 capture fields stamped onto a stored set at close. A subset of

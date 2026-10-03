@@ -16,7 +16,7 @@ import {
   readBackGuidedLoadTrigger,
   readBackUnload,
 } from '../guided-load-readback.js';
-import { MODE_ECHO_POLL_MS } from '../device-handler-helpers.js';
+import { MODE_ECHO_POLL_MS } from '../../state/mode-echo.js';
 
 const noFence = (): void => undefined;
 

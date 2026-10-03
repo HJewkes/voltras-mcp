@@ -101,7 +101,7 @@ import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channe
 import { publishImbalanceResult, publishMaxResult } from './isometric-result-emit.js';
 import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
 import { checkMountLoad, ISOMETRIC_MAX_PEAK_LBS_PER_UNIT } from '../state/mount-load-gate.js';
-import { unloadSlot } from './device-exit.js';
+import { unloadSlot } from '../state/device-exit.js';
 import { wrapHandler } from './helpers.js';
 
 class ToolError extends Error {

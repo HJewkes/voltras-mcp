@@ -52,8 +52,8 @@
 // sitting, and both tickets stay open until one happens.
 
 import { MODE_REVERT_WINDOW_MS } from '../state/mode-revert-guard.js';
-import { MODE_ECHO_POLL_MS } from './device-handler-helpers.js';
-import { GUIDED_LOAD_ACTIVE_PHASES } from './device-exit.js';
+import { MODE_ECHO_POLL_MS } from '../state/mode-echo.js';
+import { GUIDED_LOAD_ACTIVE_PHASES } from '../state/device-exit.js';
 
 /** Where an observed value came from. Never claim `device` for local state. */
 export type ReadBackSource = 'device' | 'server';
