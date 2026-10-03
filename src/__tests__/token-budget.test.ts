@@ -116,6 +116,12 @@ describe('committed docs/token-budget.md', () => {
     ]);
   });
 
+  it('still parses once a formatter has aligned its columns', () => {
+    const aligned = text.replace(/^\| `([^`]+)` \|/gm, '| `$1`    |');
+
+    expect(parseBudget(aligned)).toEqual(committed);
+  });
+
   it('is exactly what the generator renders, so nobody edited it by hand', () => {
     expect(renderBudget(committed)).toBe(text);
   });

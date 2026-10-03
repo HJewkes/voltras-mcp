@@ -169,7 +169,7 @@ function readSections(markdown) {
       sections.set(line.slice(3).trim(), current);
       continue;
     }
-    const cells = /^\| `([^`]+)` \|(.*)\|$/.exec(line);
+    const cells = /^\|\s*`([^`]+)`\s*\|(.*)\|\s*$/.exec(line);
     if (current === null || cells === null) continue;
     current.push([cells[1], ...cells[2].split('|').map((cell) => Number(cell.trim()))]);
   }
