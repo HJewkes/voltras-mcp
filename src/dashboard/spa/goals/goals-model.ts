@@ -92,7 +92,7 @@ export function muscleRollupRows(data: GoalsPageData): GoalPriorityRow[] {
 }
 
 /** The readings `GoalLiftCard` can plot. One outside the meso has no week to sit on. */
-export function cardActuals(view: GoalProgressView): GoalLiftActual[] {
+function cardActuals(view: GoalProgressView): GoalLiftActual[] {
   return view.actuals.flatMap((actual) =>
     actual.weekIndex === undefined ? [] : [{ weekIndex: actual.weekIndex, value: actual.value }],
   );

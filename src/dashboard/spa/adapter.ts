@@ -45,7 +45,7 @@ import { limbLabel, limbSlotBadge } from './limb';
 import { convertMass, type MassUnit } from './live-page/mass';
 
 /** Peak concentric velocity (m/s) for a rep, via WA. Null when unavailable. */
-export function repPeakVelocityMps(rep: Rep): number | null {
+function repPeakVelocityMps(rep: Rep): number | null {
   const v = getRepPeakVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
@@ -73,7 +73,7 @@ export function repMeanVelocityMps(rep: Rep): number | null {
  * (lifting) verdict, so folding in eccentric peaks would overstate it. WA force
  * samples are already lbs (`WorkoutSample.force`), so no conversion is needed.
  */
-export function repPeakConcentricForceLbs(rep: Rep): number | null {
+function repPeakConcentricForceLbs(rep: Rep): number | null {
   const f = rep.concentric.peakForce;
   return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : null;
 }

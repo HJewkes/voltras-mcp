@@ -104,7 +104,7 @@ function markersById(attribute: string): Map<string, Element> {
 }
 
 /** Each entry's rect is the DOM range between its markers, in document order (outermost first). */
-export function measureEntries(entries: readonly FidelityEntry[]): MeasuredEntry[] {
+function measureEntries(entries: readonly FidelityEntry[]): MeasuredEntry[] {
   const starts = markersById(MARKER_START_ATTR);
   const ends = markersById(MARKER_END_ATTR);
   const order = new Map([...starts.keys()].map((id, index) => [id, index]));

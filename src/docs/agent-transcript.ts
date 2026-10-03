@@ -215,7 +215,7 @@ function encodedShape(text: string): string | null {
   return null;
 }
 
-export function assertValueSafe(name: string, value: unknown): void {
+function assertValueSafe(name: string, value: unknown): void {
   if (typeof value === 'number' && !Number.isFinite(value)) {
     throw new ScreenSafetyError('VALUE_REFUSED', `"${name}" is not a finite number`);
   }

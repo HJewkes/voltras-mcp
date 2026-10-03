@@ -70,7 +70,7 @@ export function intensityLevel(relativeIntensity: unknown, t: SetRiskThresholds)
   return levelFromEdges(relativeIntensity, t.intensityModerate, t.intensityHigh);
 }
 
-export function loadLevel(loadLbs: unknown, t: SetRiskThresholds): RiskLevel | null {
+function loadLevel(loadLbs: unknown, t: SetRiskThresholds): RiskLevel | null {
   if (!isNonNegativeNumber(loadLbs)) return null;
   if (t.loadModerateLbs === null || t.loadHighLbs === null) return MAX_LEVEL;
   return levelFromEdges(loadLbs, t.loadModerateLbs, t.loadHighLbs);
@@ -83,7 +83,7 @@ function priorDecayFor(setIndex: number, priorSetDecayed: unknown): boolean | nu
   return absentOnFirstSet ? false : null;
 }
 
-export function fatigueLevel(
+function fatigueLevel(
   setIndex: unknown,
   priorSetDecayed: unknown,
   t: SetRiskThresholds,

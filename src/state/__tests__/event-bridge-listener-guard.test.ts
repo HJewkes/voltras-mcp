@@ -14,8 +14,9 @@ vi.mock('@voltras/node-sdk', () => ({
   TrainingModeNames: { 0: 'Idle', 1: 'Weight Training' },
 }));
 
-vi.mock('../effort-gate-disagreement.js', () => ({
-  logEffortGateDisagreement: vi.fn(),
+vi.mock('../effort-pin.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  markSettingChange: vi.fn(),
 }));
 
 const { LiveState } = await import('../live-state.js');
@@ -25,7 +26,7 @@ const { SetWatchdog } = await import('../set-watchdog.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 const { CoercionWatch } = await import('../coercion-watch.js');
 const { RestTimerRegistry } = await import('../rest-timer.js');
-const { logEffortGateDisagreement } = await import('../effort-gate-disagreement.js');
+const { markSettingChange } = await import('../effort-pin.js');
 const { log } = await import('../../logger.js');
 
 type Frame = { sequence: number; timestamp: number; phase: number } & Record<string, number>;
@@ -130,19 +131,21 @@ describe('bridge listener guard (VW-809)', () => {
 
   afterEach(() => {
     errorSpy.mockRestore();
-    vi.mocked(logEffortGateDisagreement).mockReset();
+    vi.mocked(markSettingChange).mockReset();
   });
 
   it('records the next rep after an analytics path throws on one rep', () => {
     const h = makeHarness();
     startSet(h.live);
-    vi.mocked(logEffortGateDisagreement).mockImplementationOnce(() => {
+    vi.mocked(markSettingChange).mockImplementationOnce(() => {
       throw new Error('injected analytics failure');
     });
 
     let seq = feedRep(h.client, 1);
+    expect(() => {
+      seq = feedRep(h.client, seq);
+    }).not.toThrow();
     seq = feedRep(h.client, seq);
-    expect(() => feedRep(h.client, seq)).not.toThrow();
     h.client.fireFrame({ sequence: 99, timestamp: 20_000, phase: 1, position: 0, velocity: 800 });
 
     expect(finalizedRepIndexes(h.publish)).toHaveLength(3);

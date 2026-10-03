@@ -137,8 +137,6 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-505: when the lifter declared the commitment `accountability.state` reports.
   'declaredAt',
   'disconnect_notice',
-  // VW-809: `device.get_state` counts bridge event handlers that failed on a slot.
-  'listener_faults',
   'diveBomb',
   'diveBombCount',
   'dwellLengthenedMs',
@@ -165,6 +163,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'biasPct',
   'fitFor',
   'highLbs',
+  // VW-809: `device.get_state` counts bridge event handlers that failed on a slot.
+  'listener_faults',
   'lowLbs',
   'seeLbs',
   'seePct',

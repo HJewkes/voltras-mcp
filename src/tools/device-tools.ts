@@ -569,11 +569,6 @@ export function registerDeviceTools(
   //     pipeline). Capped at MAX_SLOTS.
   //   * Explicit `slot: <existing-id>`: error — disconnect first or pick
   //     another slot.
-  //
-  // Known intermediate limitation: the event bridge is only re-wired for
-  // PRIMARY_SLOT. Frames, rep boundaries, and connection events from
-  // non-primary slots are NOT yet bridged. Step 4 fans the bridge out per
-  // slot with channel-meta tagging.
   install(
     placeholders,
     'device.connect',

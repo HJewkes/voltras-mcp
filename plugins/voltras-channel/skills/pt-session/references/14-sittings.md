@@ -50,7 +50,6 @@ No device. 30 to 40 minutes. Say the plan in one breath first: "Six things: your
 ```
 plan.current_block           → expect state: "undated_only", the program's name, block: null, nextBlock: null,
                                planning.due: true, planning.reason: "No block has dates yet."
-                               planning.due: true, planning.reason: "No block has dates yet."
 goal.list                    → expect no priorities
 profile.get_onboarding_gaps  → missing[], lastBreakQuestion, goalRealism, medicalClearanceRequired
 profile.get_body_metrics     → expect no readings
@@ -90,7 +89,7 @@ profile.log_bodyweight {bodyweightLbs: <the health log's number>,
 - A wrong entry: call again with the same `measuredAt` and restate the whole reading. The update replaces every optional field.
 - If earlier readings from this week exist in the health log and the owner offers them, copy each one with its own `measuredAt`. The goal's start value is the mean of the readings in the last 30 days, so more readings make a steadier start.
 
-Read back: "Logged <n> lb for this morning, copied from your health log." Then say what one reading can and cannot do. The 7-day mean needs 3 readings in 7 days. A rate verdict needs about two weeks of weigh-ins. The first real rate review falls two weeks after the first reading's `measuredAt`; compute that date from `profile.get_body_metrics` and say it.
+Read back: "Logged <n> lb for this morning, copied from your health log." Then say what one reading can and cannot do. The 7-day mean needs 3 readings in 7 days. A rate verdict needs about two weeks of weigh-ins after the first reading. No tool returns a review date, so say the rule and name no date.
 
 ### Step 3. The break-length question
 
@@ -165,7 +164,7 @@ plan.block.planning_brief    → state, planning, finishing, next, suggested, co
 Read back, from the result and not from memory:
 
 - `finishing`: expect **null**, and `realignment`: expect **null**. No block has dates, so the server treats none as finishing. Do not invent a read of an earlier undated block. If the owner asks, say it was never dated and stays as undated history.
-- `next.block.name`: the next undated block, which `next.block.name` returns. Read its name, `weeksCount` and `next.weekRows` back, and each week's name and workouts from `plan.block.calendar` after dating. The server picks the first block of the program with no workout ever done. If `next` is null or names a block that does not look like the re-entry block, stop and ask.
+- `next.block`: the next undated block. Read its name, `weeksCount` and `next.weekRows` back, and each week's name and workouts from `plan.block.calendar` after dating. The server picks the first block of the program with no workout ever done. If `next` is null or names a block that does not look like the re-entry block, stop and ask.
 - `suggested.startsOn` and `suggested.endsOn`: expect the first Monday on or after today, and the Sunday that ends the block's weeks. Compare `startsOn` with ruling (b), the first Monday after this sitting. They match unless the sitting falls on a Monday, when `suggested.basis` counts today. Then say so and ask which Monday they want. `suggested.deloadWeek`: expect null. `suggested.basis`: "the first Monday from today, counting today when it is a Monday".
 - `conflicts`: expect none.
 - `dietPhase`: now set from Step 4. If it still reads null, go back to Step 4.
@@ -173,10 +172,12 @@ Read back, from the result and not from memory:
 Ask: **"Start <next.block.name> on <weekday and date of suggested.startsOn>, <weeksCount> weeks, ending <weekday and date of suggested.endsOn>?"** On yes:
 
 ```
-plan.block.schedule {blockId: <next.block.id from the brief>, startsOn: <the suggested.startsOn they confirmed>,
+plan.block.schedule {blockId: <next.block.id from the brief>, startsOn: <the Monday they confirmed>,
                      reason: <their words, or "first dated block">}
 plan.block.calendar {blockId}
 ```
+
+The confirmed Monday is `suggested.startsOn`, or another Monday they chose. For another Monday, take it from the Mondays a `NOT_A_MONDAY` refusal lists on either side of a date, or from `plan.block.calendar` for a block already dated. Never compute it yourself.
 
 Read back the start, the end, the weeks and their template counts from the calendar. A week with `templateCount: 0` has nothing planned; say so if you see one.
 
@@ -332,7 +333,7 @@ Signals: load-velocity points, estimated loads for S3, up to 2 failure anchors, 
 1. Connect, `plan.next_workout` → "Lower A": squat, Romanian deadlift (6 to 10), lateral raise, face pull (10 to 15).
 2. Signal block, first 10 minutes, only if the owner asks for it: a two-unit mode change check (VW-162) and a post-connect state read (VW-415). Your part is `device.set_mode` per slot, `device.get_state`, and reporting `requested_mode` against `active_mode` and `state_confirmed` exactly as read.
 3. Lower-body load discovery. **No failure sets**: spinal-loaded and single-leg movements are excluded.
-4. Label every set. The store has no labelled lower-body training sets, so these are the first start values for any lower-body goal.
+4. Label every set. Read `progression.get_for_exercise {exerciseId}` for each lower-body lift before the first set. If it shows no labelled working sets, these sets are the first start values for any lower-body goal.
 5. End as S1.
 
 ## S3. The third training day: Upper B, the second failure session (outline)
