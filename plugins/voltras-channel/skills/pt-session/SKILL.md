@@ -35,7 +35,7 @@ references/
   11-dated-blocks-and-planning-sitting.md     block dates, missed weeks, current block, the planning sitting
   12-onboarding-gaps-and-tier-signal.md   session zero, the break-length question, the tier signal
   13-effort-rir-and-failure-sets.md       what you may claim about effort, the RIR fit, safe failure sets
-  14-sittings.md                          the preflight, the Sunday 2026-09-20 script, then S1 to S3
+  14-sittings.md                          the preflight, the first goals sitting script (S0), then S1 to S3
   15-tool-inventory.md                    every tool, grouped by job: when, and the rule that matters
 ```
 
@@ -159,7 +159,7 @@ No device, no lease, no session. Run the preflight first (`14`). The order matte
 4. Then proposals, read out with both edges.
 5. Then acceptance, one target at a time, on the lifter's word.
 
-The Sunday 2026-09-20 script, with exact calls, questions, decision points and read-backs, is in **`references/14-sittings.md`**, with outlines for S1 to S3.
+The first goals sitting script (S0), with exact calls, questions, decision points and read-backs, is in **`references/14-sittings.md`**, with outlines for S1 to S3.
 
 ### Review unreviewed days before you read history (VW-489)
 
@@ -167,7 +167,7 @@ This applies once the server has `session.review_list` (voltras-mcp #479, store 
 
 **Before any sitting that reads history (goals, tier, attendance, the weekly review, block planning) call `session.review_list`.** If it returns any day, review those days with the lifter before you read a single number. A session nobody has marked is excluded from training days, tier evidence, attendance goals, reports, trends, baselines and the RIR-velocity fit, so an empty history may mean "not yet reviewed" rather than "not yet trained". `report.weekly`, the tier signal, `goal.propose_targets`, `plan.block.planning_brief` and `accountability.*` all carry `unreviewedDays` and will tell you which. Mark with `session.mark_kind`: one session, one local day, or a date range. **Always run a range with `dryRun: true` first.** A real range call must also pass `expectSessions` equal to the count the dry run reported, or it is refused; the refusal names the real count. A day or range call only classifies sessions nobody has marked. One already marked the other kind comes back under `skippedAlreadyMarked` and is left alone unless you pass `reclassify: true`, so **after a bulk mark, correcting a day back needs `reclassify: true`**. Days are dated the way the reports date them, by when the work ended, so an evening session that ran past midnight is listed, marked and counted under one date. **Never guess a kind.** Ask. A light day of real training and a bench test are indistinguishable in the data, and marking a real workout as a test deletes a day from the lifter's own record. Sets from sessions marked `test` never feed the RIR-velocity calibration (owner's ruling, 2026-09-19).
 
-After the review, every "expect" in `references/14-sittings.md` that counts training days must be re-read from the tools: those numbers were written before session kinds existed.
+After the review, every "expect" in `references/14-sittings.md` that counts training days must be re-read from the tools, never taken from the script.
 
 ## Cues and voice
 
