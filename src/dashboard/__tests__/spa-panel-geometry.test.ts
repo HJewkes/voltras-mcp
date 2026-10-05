@@ -1,20 +1,16 @@
 // Unit tests for the shared live-panel geometry.
 //
-// The point of `panel-geometry.ts` is that the IDLE stage and the LIVE stage size themselves
-// from ONE set of numbers, so entering the first set of a session does not relayout the wall.
-// These assert the derivations both stages call — the constants themselves are the contract
-// with titan's `LiveFatiguePanel` and are checked by rendering, not here.
+// The IDLE stage and the LIVE stage size themselves from ONE geometry — titan's `panelLayout`
+// and `panelBodySplit` — so entering the first set of a session does not relayout the wall.
+// `panel-geometry.ts` keeps only the stage-side body-height rule; the rows below pin the values
+// titan hands both stages, so a titan bump that moves them is a visible diff here.
 
+import { HERO_EYEBROW_ALLOWANCE, panelBodySplit, panelLayout } from '@titan-design/react-ui';
 import { describe, expect, it } from 'vitest';
 
 import {
-  FATIGUE_CARD_WIDTH,
   FATIGUE_PANEL_CHROME,
   FATIGUE_PANEL_FALLBACK_BODY,
-  HERO_EYEBROW_ALLOWANCE,
-  PANEL_COLUMN_GAP,
-  PANEL_PAD,
-  heroPlotHeight,
   panelBodyHeight,
 } from '../spa/live-page/panel-geometry.js';
 
@@ -32,23 +28,27 @@ describe('panelBodyHeight', () => {
   });
 });
 
-describe('heroPlotHeight', () => {
-  it('reserves the eyebrow allowance above the plot', () => {
-    expect(heroPlotHeight(508)).toBe(508 - HERO_EYEBROW_ALLOWANCE);
+describe('titan panel geometry the idle stage prefigures', () => {
+  it('lays a wall-width stage out side by side with titan’s gap and fluid card', () => {
+    const layout = panelLayout(1920);
+
+    expect(layout.stacked).toBe(false);
+    expect(layout.gap).toBe(16);
+    expect(layout.cardWidth).toBe(422);
   });
 
-  it('floors at zero rather than inverting on a tiny body', () => {
-    expect(heroPlotHeight(10)).toBe(0);
-  });
-});
+  it('splits a side-by-side body into a full-height card and an eyebrow-trimmed hero', () => {
+    const split = panelBodySplit(508, panelLayout(1920));
 
-describe('panel column geometry', () => {
-  it('matches the LiveFatiguePanel body row the idle stage prefigures', () => {
-    // Changing any of these without changing titan is what makes the empty→live transition
-    // jump, so they are pinned rather than merely exported.
-    expect(PANEL_PAD).toBe(24);
-    expect(PANEL_COLUMN_GAP).toBe(18);
-    expect(FATIGUE_CARD_WIDTH).toBe(318);
-    expect(FATIGUE_PANEL_CHROME).toBe(PANEL_PAD * 2);
+    expect(split).toEqual({ heroHeight: 508 - HERO_EYEBROW_ALLOWANCE, cardHeight: 508 });
+  });
+
+  it('stacks a phone-width stage with a full-content-width card', () => {
+    const layout = panelLayout(390);
+    const split = panelBodySplit(508, layout);
+
+    expect(layout.stacked).toBe(true);
+    expect(layout.cardWidth).toBe(390 - layout.padding * 2);
+    expect(split.cardHeight).toBeGreaterThan(split.heroHeight);
   });
 });
