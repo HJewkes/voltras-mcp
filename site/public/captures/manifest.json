@@ -19,8 +19,8 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 44610,
-      "sha256": "77259dc841116412a52698149f8e16ea4427774f1fd72e960a005f1942be2f00"
+      "bytes": 44604,
+      "sha256": "9d8199315d46ecfcdd006198a6e6463be6308775e450ec766ad78dbbc92cd877"
     },
     {
       "name": "live-mid-set",
