@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to a PR branch supersedes its older run. Each push to main gets its own group (keyed by sha),
+# because a shared group would still cancel a pending run when a third queues (VW-888).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   pull-requests: read
