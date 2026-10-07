@@ -51,7 +51,9 @@ function makePhase(
     endTime: overrides.endTime ?? 0,
     startPosition: overrides.startPos ?? 0,
     endPosition: overrides.endPos ?? 0,
-    _totalVelocity: 0,
+    // Flat reps: the mean concentric velocity equals the peak, so a fixture
+    // reads the same before and after the gate moved to the mean (VW-484).
+    _totalVelocity: (overrides.peakVelocity ?? 0) * (overrides.movementSampleCount ?? 0),
     _totalForce: 0,
     _totalLoad: 0,
     _movementSampleCount: overrides.movementSampleCount ?? 0,
@@ -177,7 +179,7 @@ describe('decideCue — velocity_loss_exceeded → slowdown (urgent)', () => {
 
 describe('decideCue — set_ended → set_complete', () => {
   it('extracts reps, seconds, and velocity loss', () => {
-    // Two reps 850→500 mm/s peak → 41.2% peak-to-last loss; 90s duration.
+    // Two flat reps 850→500 mm/s → 41.2% best-to-last loss; 90s duration.
     const event = buildSetEndedPayload(storedSet([makeRep(1, 850, 500), makeRep(2, 500, 400)]));
     expect(decideCue(event)).toEqual({
       category: 'set_complete',
