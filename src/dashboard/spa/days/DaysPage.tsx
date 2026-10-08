@@ -136,7 +136,7 @@ function RangeCard(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Elemen
           <Typography variant="subtitle1">{rangePrompt(flow)}</Typography>
           <RangeKindPick flow={flow} />
           {flow.selection !== null && rangeCardOpen(flow) ? (
-            <PreviewFor flow={flow} narrow={narrow} />
+            <PreviewFor flow={flow} narrow={narrow} inset={false} />
           ) : (
             <Button size="md" isDisabled={flow.selection === null} onPress={flow.previewRange}>
               <ButtonLabel tone="on-solid">Preview</ButtonLabel>
@@ -148,7 +148,11 @@ function RangeCard(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Elemen
   );
 }
 
-function PreviewFor(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Element | null {
+function PreviewFor(props: {
+  flow: DaysFlow;
+  narrow: boolean;
+  inset: boolean;
+}): React.JSX.Element | null {
   const { flow } = props;
   if (flow.selection === null) return null;
   return (
@@ -158,6 +162,7 @@ function PreviewFor(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Eleme
       busy={flow.pending !== null}
       error={flow.error}
       fullWidth={props.narrow}
+      inset={props.inset}
       onConfirm={flow.confirm}
       onFlip={flow.flipMarked}
       onRetry={flow.retry}
@@ -187,7 +192,7 @@ function DayList(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Element 
           onPick={(kind) => flow.pickDay(day.day, kind)}
           onTap={() => flow.tapRow(day.day)}
         >
-          {picked?.day === day.day && <PreviewFor flow={flow} narrow={narrow} />}
+          {picked?.day === day.day && <PreviewFor flow={flow} narrow={narrow} inset />}
         </DayRow>
       ))}
     </div>

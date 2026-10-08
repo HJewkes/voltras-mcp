@@ -84,6 +84,8 @@ export interface MarkPreviewCardProps {
   busy: boolean;
   error: DaysError | null;
   fullWidth: boolean;
+  /** Pads the card when it sits under a row; the range card already pads its own content. */
+  inset: boolean;
   onConfirm(): void;
   onFlip(): void;
   onRetry(): void;
@@ -110,7 +112,12 @@ export function MarkPreviewCard(props: MarkPreviewCardProps): React.JSX.Element 
   const confirmable = preview !== null && !props.busy && !writesNothing(preview);
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', gap: SPACE.sm, padding: SPACE.md }}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: SPACE.sm,
+        padding: props.inset ? SPACE.md : 0,
+      }}
       data-testid="mark-preview-card"
     >
       {props.error !== null && <DaysAlert error={props.error} onRetry={props.onRetry} />}
