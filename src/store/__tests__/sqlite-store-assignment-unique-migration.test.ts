@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredProgramAssignment } from '../types.js';
 
-const CURRENT_VERSION = 41;
+const CURRENT_VERSION = 42;
 const FROM_VERSIONS = [37, 40] as const;
 const AT = '2026-09-21T18:00:00.000Z';
 
