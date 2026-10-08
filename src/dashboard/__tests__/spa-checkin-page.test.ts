@@ -148,7 +148,7 @@ describe.each([false, true])('the check-in screens (narrow=%s)', (narrow) => {
 describe('the review step without an advisory to answer', () => {
   it('offers no answer buttons when there is no proposal', () => {
     const html = renderToStaticMarkup(
-      createElement(WeeklyReviewStep, reviewProps({ view: { kind: 'no_proposal' } })),
+      createElement(WeeklyReviewStep, reviewProps({ view: { kind: 'no_proposal', notes: [] } })),
     );
     expect(html).toContain('No change proposed this week');
     expect(html).not.toContain('Accept');

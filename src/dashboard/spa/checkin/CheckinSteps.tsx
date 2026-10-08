@@ -145,10 +145,14 @@ function SkipButton(props: {
 /** What a failed post tells the user. `invalid_input` is shown inline by the field instead. */
 export function StepErrorAlert(props: {
   error: StepError | null;
+  /** The step shows `invalid_input` beside its own field, so the alert leaves it out. */
+  inlineInvalid?: boolean;
   onRetry: () => void;
 }): React.JSX.Element | null {
   const { error } = props;
-  if (error === null || error.kind === 'invalid_input') return null;
+  if (error === null || (error.kind === 'invalid_input' && props.inlineInvalid === true)) {
+    return null;
+  }
   const retryable = error.kind === 'not_saved' || error.kind === 'indeterminate';
   return (
     <Alert status="error" accessibilityRole="alert">
@@ -169,6 +173,8 @@ function errorTitle(error: StepError): string {
       return NOT_SAVED_TITLE;
     case 'indeterminate':
       return 'Could not confirm that this was saved';
+    case 'invalid_input':
+      return error.message;
     default:
       return 'The dashboard refused this step';
   }
@@ -215,7 +221,7 @@ export function BodyweightStep(props: BodyweightStepProps): React.JSX.Element {
           onChangeText={props.onNote}
         />
       </FormField>
-      <StepErrorAlert error={props.error} onRetry={props.onNext} />
+      <StepErrorAlert error={props.error} inlineInvalid onRetry={props.onNext} />
       <Footer narrow={props.narrow}>
         <SkipButton busy={props.busy} narrow={props.narrow} onPress={props.onSkip} />
         <PrimaryButton
@@ -296,9 +302,11 @@ export function WeeklyReviewStep(props: WeeklyReviewStepProps): React.JSX.Elemen
   return (
     <StepCard title="Weekly review" narrow={props.narrow}>
       {props.view === null ? (
-        <Typography variant="body1" color="secondary">
-          Reading this week...
-        </Typography>
+        props.error === null && (
+          <Typography variant="body1" color="secondary">
+            Reading this week...
+          </Typography>
+        )
       ) : (
         <ReviewBody view={props.view} />
       )}
@@ -338,7 +346,16 @@ function ReviewBody(props: { view: ReviewView }): React.JSX.Element {
         </>
       );
     case 'no_proposal':
-      return <Typography variant="body1">No change proposed this week</Typography>;
+      return (
+        <>
+          <Typography variant="body1">No change proposed this week</Typography>
+          {view.notes.map((note) => (
+            <Typography key={note} variant="body2" color="secondary">
+              {note}
+            </Typography>
+          ))}
+        </>
+      );
     case 'answered':
       return <Typography variant="body1">{`Your answer stands: ${view.userResponse}`}</Typography>;
     case 'open':

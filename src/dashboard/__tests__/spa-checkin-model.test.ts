@@ -99,7 +99,7 @@ describe('review result to step', () => {
 
   it('shows no change when there is no proposal, and goes to done', () => {
     const view = viewOfReview(review({ proposal: null, advisory: null }));
-    expect(view).toEqual({ kind: 'no_proposal' });
+    expect(view).toEqual({ kind: 'no_proposal', notes: [] });
     expect(stepAfterReview(view)).toBe('done');
   });
 

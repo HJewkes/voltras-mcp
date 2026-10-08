@@ -10,7 +10,7 @@ import { View } from 'react-native';
 import { useStore } from 'zustand';
 import { Surface } from '@titan-design/react-ui';
 
-import { postAction, type ActionResponse } from '../api-client.js';
+import { ActionRefusedError, postAction, type ActionResponse } from '../api-client.js';
 import { dashboardStore } from '../store';
 import { useIsNarrowViewport } from '../use-viewport';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage';
@@ -85,8 +85,10 @@ async function send<T>(
       flowId: ctx.flowId,
       flowStep,
     });
+    ctx.ids.forget(flowStep);
     return { ok: true, value: res.result };
   } catch (err) {
+    if (err instanceof ActionRefusedError) ctx.ids.forget(flowStep);
     return { ok: false, error: stepErrorOf(err) };
   }
 }
@@ -148,7 +150,7 @@ function reviewLine(view: ReviewView): string | null {
     case 'gap':
       return view.notes.join(' ');
     case 'no_proposal':
-      return 'No change proposed this week';
+      return ['No change proposed this week', ...view.notes].join('. ');
     case 'answered':
       return `Weekly review: ${view.userResponse} (already answered)`;
     case 'open':
@@ -232,18 +234,22 @@ function useCheckinFlow(post: Post) {
     });
 
   const lastResponse = useRef<ReviewResponse | null>(null);
-  const respond = (response: ReviewResponse): Promise<boolean> =>
-    run(async () => {
-      lastResponse.current = response;
+  const respond = async (response: ReviewResponse): Promise<boolean> => {
+    lastResponse.current = response;
+    let reenter = false;
+    const ran = await run(async () => {
       const out = await answerReview(ctx.current as FlowContext, response);
       if (out.ok) return advance(`Weekly review: ${response}`);
-      if (out.error.kind === 'rerun_review') {
-        entered.current = false;
-        return patch({ review: null, error: null });
-      }
-      if (out.error.kind === 'already_answered') return advance('Weekly review: already answered');
+      reenter = out.error.kind === 'rerun_review' || out.error.kind === 'already_answered';
+      if (reenter) return patch({ review: null, error: null });
       patch({ error: out.error });
     });
+    if (!reenter) return ran;
+    // The refused answer is a stored outcome and its id was dropped, so this entry is a new
+    // post: it reads the proposal's current state, the open advisory again or the standing answer.
+    lastResponse.current = null;
+    return enter();
+  };
 
   const retryReview = (): Promise<boolean> =>
     lastResponse.current === null ? enter() : respond(lastResponse.current);
