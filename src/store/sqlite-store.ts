@@ -182,7 +182,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-export const SCHEMA_VERSION = 43;
+export const SCHEMA_VERSION = 44;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -537,6 +537,16 @@ const UI_ACTIONS_NO_REPLACE_TRIGGER_SQL = `
     AFTER INSERT ON ui_actions
     WHEN NEW.rowid < 1
     BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;`;
+
+/**
+ * The activity feed's keyset order (VW-910). `listActivity` sorts on `created_at DESC, action_id
+ * DESC` and pages from a cursor over the same pair; with only `idx_ui_actions_created` the
+ * tiebreak forced a temp B-tree over every matching row, about 0.4 s a page at 1.5M rows. Owned
+ * by the v44 step so the index exists on a migrated and a fresh store alike.
+ */
+const UI_ACTIONS_ACTIVITY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_activity
+    ON ui_actions(created_at DESC, action_id DESC);`;
 
 const uiActionsTableSql = (name: string): string => `
   CREATE TABLE IF NOT EXISTS ${name} (
@@ -2370,6 +2380,23 @@ function migrateV42ToV43(db: DatabaseSync): void {
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
     db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
     db.exec('PRAGMA user_version = 43');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v43 -> v44: index the activity keyset (VW-910). An index only, no rows or triggers touched, so
+ * `ui_actions_no_replace` and the rowid pin carry over. The stamp sits inside the transaction: a
+ * kill mid-step leaves the file at 43 with no index, and the next open builds it again.
+ */
+function migrateV43ToV44(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_ACTIVITY_INDEX_SQL);
+    db.exec('PRAGMA user_version = 44');
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -5574,8 +5601,10 @@ export class SqliteSessionStore implements SessionStore {
       bindings.push(filter.until);
     }
     if (filter?.after !== undefined) {
-      clauses.push('(created_at < ? OR (created_at = ? AND action_id < ?))');
-      bindings.push(filter.after.createdAt, filter.after.createdAt, filter.after.actionId);
+      // A row-value compare lets the planner seek into `idx_ui_actions_activity`; the OR form
+      // scanned from the newest row down to the cursor (VW-910).
+      clauses.push('(created_at, action_id) < (?, ?)');
+      bindings.push(filter.after.createdAt, filter.after.actionId);
     }
     const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
     bindings.push(filter?.limit ?? 50);
@@ -6808,6 +6837,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 42) {
     migrateV42ToV43(db);
+  }
+  if (current <= 43) {
+    migrateV43ToV44(db);
   }
 }
 

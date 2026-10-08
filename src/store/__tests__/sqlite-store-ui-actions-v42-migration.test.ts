@@ -16,7 +16,7 @@ import { verifyStore } from '../portable/verify.js';
 import type { SqliteSessionStore } from '../sqlite-store.js';
 import { openSqliteTestStore } from './open-test-store.js';
 
-const CURRENT_VERSION = 43;
+const CURRENT_VERSION = 44;
 const PRIOR_VERSION = 41;
 
 /** `ui_actions` as it stood at v41: no `mcp`, no reason, summary or session. */
