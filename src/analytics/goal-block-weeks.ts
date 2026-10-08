@@ -18,16 +18,10 @@
 //
 // PURE apart from the process timezone, which `localDate` reads: every instant is an input.
 
-import { addDays } from '../plan/block-calendar.js';
+import { addDays, mondayOf } from '../plan/block-calendar.js';
 import { localDate, localMidnightIso } from './training-days.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** The Monday of the calendar week containing a 'YYYY-MM-DD' date. */
-function mondayOf(date: string): string {
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  return addDays(date, -((weekday + 6) % 7));
-}
 
 function daysBetween(from: string, to: string): number {
   return Math.round(

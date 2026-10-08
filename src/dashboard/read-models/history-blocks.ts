@@ -21,11 +21,11 @@ import {
   evidenceOf,
   groupRows,
   historyTrainingDays,
-  isoWeekStart,
   workRows,
   type HistoryEvidence,
   type HistorySetRow,
 } from './history-rows.js';
+import { mondayOf } from '../../plan/block-calendar.js';
 
 export const BOUNDARY_CHOICES = [
   'planned_deload',
@@ -123,10 +123,10 @@ export function blockSpans(
   boundaries: readonly HistoryBoundary[],
 ): HistoryBlockSpan[] {
   if (days.length === 0) return [];
-  const first = isoWeekStart(days[0]!);
+  const first = mondayOf(days[0]!);
   const kept = boundaries.filter((b) => b.choice !== 'not_a_boundary' && b.week > first);
   const edges = [first, ...kept.map((b) => b.week).sort()];
-  const ends = [...edges.slice(1), addDays(isoWeekStart(days.at(-1)!), 7)];
+  const ends = [...edges.slice(1), addDays(mondayOf(days.at(-1)!), 7)];
   return edges.map((start, index) => ({ start, nextStart: ends[index]! }));
 }
 
@@ -163,7 +163,7 @@ function blockView(
   next: HistoryBlockSpan | undefined,
 ): HistoryBlockView {
   const trainedDays = days.filter((day) => inside(day, span));
-  const trainedWeeks = new Set(trainedDays.map(isoWeekStart)).size;
+  const trainedWeeks = new Set(trainedDays.map(mondayOf)).size;
   return {
     index,
     ...span,
@@ -186,7 +186,7 @@ function gapSpans(
     const after = days[i]!;
     const gap = daysBetween(after, endsOn);
     if (gap <= SEGMENT_RULE.breakGapDays) return [];
-    const week = isoWeekStart(endsOn);
+    const week = mondayOf(endsOn);
     const choice = boundaryAt.get(week)?.choice ?? null;
     const bridged = choice !== null && BRIDGING.has(choice);
     return [{ after, endsOn, days: gap, week, choice, bridged }];
@@ -208,7 +208,7 @@ function weeklyTopLoads(rows: readonly HistorySetRow[]): Map<string, Map<string,
           : [{ day: row.day, load: row.load, reps: row.reps, sets: row.sets }],
       );
       for (const point of (buildLiftSeries(sets) as LiftSeries).points) {
-        const week = isoWeekStart(point.day);
+        const week = mondayOf(point.day);
         weekly.set(week, Math.max(weekly.get(week) ?? 0, point.topLoad));
       }
       return [lift, weekly];

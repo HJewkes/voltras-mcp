@@ -30,6 +30,7 @@ const LOCAL_TIME_TEST_FILES = [
   'src/accountability/__tests__/commitment-week-local-time.test.ts',
   'src/dashboard/__tests__/banner-clears-via-skip.test.ts',
   'src/plan/__tests__/block-calendar-local-time.test.ts',
+  'src/plan/__tests__/calendar-dates-local-time.test.ts',
   'src/tools/__tests__/goal-targets-on-blocks.test.ts',
   'src/tools/__tests__/metrics-tools-weekly-local-week.test.ts',
   'src/tools/__tests__/weekly-checkin-anchor.test.ts',

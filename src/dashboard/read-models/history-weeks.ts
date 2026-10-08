@@ -21,11 +21,11 @@ import {
   evidenceOf,
   groupRows,
   historyTrainingDays,
-  isoWeekStart,
   workRows,
   type HistoryEvidence,
   type HistorySetRow,
 } from './history-rows.js';
+import { mondayOf } from '../../plan/block-calendar.js';
 
 export type HistorySource = 'history' | 'live';
 
@@ -61,7 +61,7 @@ function reportedExercisesByWeek(rows: readonly HistorySetRow[]): Map<string, nu
   const names = new Map<string, Set<string>>();
   for (const row of rows) {
     if (!row.writtenOut) continue;
-    const week = isoWeekStart(row.day);
+    const week = mondayOf(row.day);
     names.set(week, (names.get(week) ?? new Set()).add(row.exerciseId ?? row.exerciseName));
   }
   return new Map([...names].map(([week, set]) => [week, set.size]));
@@ -78,7 +78,7 @@ export function buildHistoryWeeksView(input: HistoryWeeksInput): HistoryWeeksVie
     },
     rule,
   );
-  const byWeek = groupRows(rows, (row) => isoWeekStart(row.day));
+  const byWeek = groupRows(rows, (row) => mondayOf(row.day));
   const weeks = segmentation.weeks.map((week: LabelledWeek) => {
     const inWeek = byWeek.get(week.week) ?? [];
     return {
