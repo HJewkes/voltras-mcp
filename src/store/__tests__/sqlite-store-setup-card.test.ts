@@ -139,7 +139,7 @@ describe('v18 -> v19 migration', () => {
 
     const raw = new DatabaseSync(dbPath);
     const version = raw.prepare('PRAGMA user_version').get() as { user_version: number };
-    expect(version.user_version).toBe(42);
+    expect(version.user_version).toBe(43);
     raw.close();
   });
 

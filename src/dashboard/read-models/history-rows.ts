@@ -54,12 +54,6 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 }
 
-/** The Monday of the ISO week `day` falls in. */
-export function isoWeekStart(day: string): string {
-  const weekday = new Date(Date.parse(day)).getUTCDay();
-  return addDays(day, -((weekday + 6) % 7));
-}
-
 /** A noon-UTC instant for `day`, which reads as the same date in any zone within 11 hours. */
 export function noonInstant(day: string): string {
   return `${day}T12:00:00.000Z`;
