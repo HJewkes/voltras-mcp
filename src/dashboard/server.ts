@@ -131,6 +131,12 @@
 //                          `cursor`, `limit` clamped to 200. Rows carry only
 //                          `ACTIVITY_ROW_FIELDS` (see `activity.ts`).
 //
+//   ── Day review (VW-899, VW-847) ──────────────────────────────────────────
+//   GET /api/session-review — `{ days, unreviewedDays }`: the local days still
+//                          waiting for a training or test mark, newest first
+//                          (`kind=any` for every day), `limit` clamped to 200.
+//                          See `session-review-api.ts`.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -251,6 +257,7 @@ import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
 import { readTopBanner, type BannerStore } from './read-models/banners.js';
 import { parseActivityQuery, readActivity } from './activity.js';
+import { parseSessionReviewQuery, readSessionReview } from './session-review-api.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -698,6 +705,10 @@ async function handleRequest(
   }
   if (pathname === '/api/activity') {
     await serveActivity(res, state, url);
+    return;
+  }
+  if (pathname === '/api/session-review') {
+    await serveSessionReview(res, state, url);
     return;
   }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
@@ -1164,6 +1175,30 @@ async function serveActivity(
   }
   const store = { listActivity: listActivity.bind(state.store) };
   sendJson(res, 200, await readActivity(store, query));
+}
+
+/**
+ * `GET /api/session-review` (VW-899): the days to mark training or test. A
+ * store without the review read answers 501, as `/api/goals` does, because an
+ * empty list would claim every day is already marked.
+ */
+async function serveSessionReview(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  const { listSessionReviewRows } = state.store;
+  if (listSessionReviewRows === undefined) {
+    sendJson(res, 501, { error: 'session_review_unavailable' });
+    return;
+  }
+  const query = parseSessionReviewQuery(url.searchParams);
+  if ('error' in query) {
+    sendJson(res, 400, { error: 'invalid_input', message: query.error });
+    return;
+  }
+  const store = { listSessionReviewRows: listSessionReviewRows.bind(state.store) };
+  sendJson(res, 200, await readSessionReview(store, query));
 }
 
 async function serveSessionSummary(

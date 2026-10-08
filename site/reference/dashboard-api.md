@@ -1,6 +1,6 @@
 ---
 title: Dashboard API
-description: The wall dashboard's HTTP routes for developers, the per-muscle and goal-coach response shapes, the command trail, and the plan builder's write routes.
+description: The wall dashboard's HTTP routes for developers, the per-muscle and goal-coach response shapes, the command trail, the day review read, and the plan builder's write routes.
 diataxis: reference
 audience: [developer]
 status: available
@@ -9,6 +9,8 @@ sources:
   - src/dashboard/README.md
   - src/dashboard/server.ts
   - src/dashboard/activity.ts
+  - src/dashboard/session-review-api.ts
+  - src/analytics/session-review.ts
   - src/dashboard/write-guard.ts
   - src/store/sqlite-store.ts
   - src/dashboard/muscle-strength-api.ts
@@ -30,8 +32,8 @@ voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1`
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
 `/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
-`/api/muscle-recovery`, `/api/goals`, `/api/goal-progress`, `/api/session-summary/:sessionId`
-— are all reads. That's the live-view surface (`README.md`). `/api/muscle-plan` (VW-331) rolls up the active training week into
+`/api/muscle-recovery`, `/api/goals`, `/api/goal-progress`, `/api/session-review`,
+`/api/session-summary/:sessionId` — are all reads. That's the live-view surface (`README.md`). `/api/muscle-plan` (VW-331) rolls up the active training week into
 planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
 planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
 how much you actually trained each muscle this week, and whether that is a lot or a little.
@@ -222,6 +224,48 @@ same loopback-only, no-token rule as every route above (`src/dashboard/activity.
   `nextCursor` back as `cursor` for the next page. It is `null` on the last page.
 - A row written before the session opened (for example a connect) has no `sessionId`. To
   show those beside a session's rows, filter by `since` and `until` instead.
+
+## Day review (`/api/session-review`)
+
+`GET /api/session-review` (VW-899) serves the past local days that still need a training or
+test mark, newest first. It is a read, with the same loopback-only, no-token rule as every
+route above (`src/dashboard/session-review-api.ts`).
+
+```json
+{
+  "days": [
+    {
+      "day": "2026-09-03",
+      "kind": "mixed",
+      "sessionIds": ["…", "…"],
+      "exercises": [
+        { "name": "Row", "exerciseId": "row", "sets": 4, "workingSets": 3, "topLoadLbs": 120 }
+      ],
+      "sets": 4,
+      "workingSets": 3,
+      "spanMinutes": 150,
+      "allEnded": true,
+      "planned": false
+    }
+  ],
+  "unreviewedDays": 2
+}
+```
+
+- **Which days.** By default, a day appears when at least one of its sessions has no mark.
+  Its `kind` is `unreviewed` when none of them do, and `mixed` when some are marked. A day
+  marked only training and test is `mixed` too, but it is not waiting, so it appears only
+  with `kind=any`. `kind=any` returns every day, each with its `kind`: `training`, `test`,
+  `mixed` or `unreviewed`. Any other `kind` answers 400 `invalid_input`.
+- **A day is a whole day.** Each day lists all its sessions, marked ones too, so the page can
+  say what a mark would leave alone.
+- **The date of a session** is the local date it ended on. A session that ran past midnight
+  belongs to the next day. This is the same date `session.mark_kind { day }` takes and the
+  training-day count uses.
+- **`unreviewedDays`** counts every waiting day, not only those on the page. It is the same
+  number `/api/goals` reports as `review.unreviewedDays`.
+- **Paging:** `limit` defaults to 60, and any larger value is cut to 200. A `limit` that is not
+  a positive whole number answers 400 `invalid_input`.
 
 ## Plan builder write routes
 
