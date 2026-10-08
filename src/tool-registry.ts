@@ -254,9 +254,12 @@ export type ToolName = CoreToolName | MockToolName;
 export type ToolAccess = 'read' | 'write';
 
 /**
- * Access class for every tool. Exhaustive by construction: `Record<ToolName,
- * …>` makes tsc reject a missing entry, and `tool-registry.test.ts` catches the
- * inverse (a stale entry for a tool that no longer exists).
+ * Access class for every tool. Exhaustive by construction: `satisfies
+ * Record<ToolName, …>` makes tsc reject a missing entry, and
+ * `tool-registry.test.ts` catches the inverse (a stale entry for a tool that no
+ * longer exists). `satisfies` rather than an annotation keeps each entry's
+ * literal class, which `WriteToolName` in `actions/command-summary.ts` is
+ * derived from.
  *
  * Four entries are `write` by POLICY rather than by literal state mutation —
  * each verified against its handler, each annotated below. When in doubt the
@@ -264,7 +267,7 @@ export type ToolAccess = 'read' | 'write';
  * interfere with a live lift, while a wrongly-`write` one only costs an
  * unnecessary lease error.
  */
-export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
+export const TOOL_ACCESS = {
   // Radio. `device.scan` mutates nothing in this repo, but it drives the BLE
   // radio through the SDK manager and so contends with noble's write mutex —
   // `write` on that basis alone (device-tools.ts:393).
@@ -467,7 +470,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',
-};
+} as const satisfies Record<ToolName, ToolAccess>;
 
 /** Access class for `name`, or `undefined` if it is not a known tool. */
 export function toolAccess(name: string): ToolAccess | undefined {
