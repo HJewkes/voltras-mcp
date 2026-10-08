@@ -1,11 +1,11 @@
 // `import`: a fresh store at the manifest's schema version, loaded in one
 // transaction (VW-534).
 //
-// THE TRIGGERS ARE SATISFIED, NEVER BYPASSED. Five of this schema's six
-// RAISE(ABORT) triggers fire BEFORE UPDATE or BEFORE DELETE; the sixth,
-// `ui_actions_no_replace`, fires on an insert only over an id already present,
-// which a load into a fresh store never meets because each id is unique in its
-// source. A load that only ever inserts therefore honours append-only
+// THE TRIGGERS ARE SATISFIED, NEVER BYPASSED. Five of this schema's seven
+// RAISE(ABORT) triggers fire BEFORE UPDATE or BEFORE DELETE. The two on
+// `ui_actions` inserts refuse an id or rowid already present and a rowid below 1;
+// a load into a fresh store meets neither, because each id is unique in its
+// source and the load names no rowid. A load that only ever inserts therefore honours append-only
 // `block_schedules` and `commitments`, complete-once and never-deleted
 // `ui_actions`, without the loader knowing they exist. The one row the load does
 // delete is the local user the production open path seeds, and `users` carries

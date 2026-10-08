@@ -1,6 +1,7 @@
 // The audit trail refuses a REPLACE (VW-903). SQLite's REPLACE removes the conflicting row
 // without firing a DELETE trigger, so `ui_actions_no_delete` alone let `REPLACE INTO` rewrite
-// any row. The v43 step adds a BEFORE INSERT trigger that refuses an insert over a taken id.
+// any row. The v43 step refuses an insert over a taken id or a taken rowid, and pins the rowid
+// in complete-once so an `UPDATE OR REPLACE` cannot move one row onto another.
 // This file proves the refusal on a current store and on a store created at v42, and that
 // every legal write still works.
 //
@@ -10,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { exportStore } from '../portable/export.js';
 import { importStore } from '../portable/import.js';
@@ -103,13 +104,81 @@ function userVersion(file: string): number {
   });
 }
 
-/** A store as v42 left it: today's shape with no replace trigger, stamped 42. */
+function rowidOf(file: string, actionId: string): number {
+  return withRawDb(file, (db) => {
+    const row = db
+      .prepare('SELECT rowid AS id FROM ui_actions WHERE action_id = ?')
+      .get(actionId) as { id: number };
+    return row.id;
+  });
+}
+
+/** Names `rowid` explicitly: a REPLACE that collides on it, not on `action_id`. */
+function replaceAtRowid(file: string, verb: string, rowid: number): void {
+  withRawDb(file, (db) =>
+    db.exec(
+      `${verb} INTO ui_actions (rowid, action_id, action_name, actor, surface, input_hash,
+         result_status, created_at)
+       VALUES (${rowid}, 'act-forged', 'forged.action', 'coach', 'phone', 'h-forged', 'ok',
+         '${LATER}')`,
+    ),
+  );
+}
+
+/** Completes the pending row while moving it onto another row's rowid. */
+function moveOntoRowid(file: string, rowid: number): void {
+  withRawDb(file, (db) =>
+    db.exec(
+      `UPDATE OR REPLACE ui_actions SET rowid = ${rowid}, result_status = 'ok'
+        WHERE action_id = 'act-pending'`,
+    ),
+  );
+}
+
+/** Complete-once as v42 left it: every column pinned except the hidden rowid. */
+const V42_COMPLETE_ONCE_SQL = `
+  CREATE TRIGGER ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.device_id IS OLD.device_id
+      AND NEW.reason IS OLD.reason
+      AND NEW.summary_json IS OLD.summary_json
+      AND NEW.session_id IS OLD.session_id
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
+
+/** A store as v42 left it: today's rows, the v42 triggers, stamped 42. */
 async function v42Store(file: string): Promise<void> {
   await seededStore(file);
   withRawDb(file, (db) => {
     db.exec('DROP TRIGGER ui_actions_no_replace');
+    db.exec('DROP TRIGGER ui_actions_positive_rowid');
+    db.exec('DROP TRIGGER ui_actions_complete_once');
+    db.exec(V42_COMPLETE_ONCE_SQL);
     db.exec(`PRAGMA user_version = ${PRIOR_VERSION}`);
   });
+}
+
+function triggerNames(file: string): string[] {
+  return withRawDb(file, (db) =>
+    (
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'ui_actions'`,
+        )
+        .all() as unknown as { name: string }[]
+    )
+      .map((row) => row.name)
+      .sort(),
+  );
 }
 
 describe('a REPLACE on the ui_actions audit trail, on a current store', () => {
@@ -141,6 +210,44 @@ describe('a REPLACE on the ui_actions audit trail, on a current store', () => {
     ).toThrow(/complete once/);
 
     expect(rows(path)).toEqual(before);
+  });
+
+  it.each(['REPLACE', 'INSERT OR REPLACE'])(
+    "refuses %s that names a completed row's rowid under a new id",
+    async (verb) => {
+      await seededStore(path);
+      const before = rows(path);
+
+      expect(() => replaceAtRowid(path, verb, rowidOf(path, 'act-ok'))).toThrow(REFUSED);
+
+      expect(rows(path)).toEqual(before);
+    },
+  );
+
+  it("refuses an UPDATE OR REPLACE that moves one row onto another row's rowid", async () => {
+    await seededStore(path);
+    const before = rows(path);
+
+    expect(() => moveOntoRowid(path, rowidOf(path, 'act-ok'))).toThrow(/complete once/);
+
+    expect(rows(path)).toEqual(before);
+  });
+
+  it.each([-1, 0])('refuses a row placed at rowid %i', async (rowid) => {
+    await seededStore(path);
+    const before = rows(path);
+
+    expect(() => replaceAtRowid(path, 'INSERT', rowid)).toThrow(REFUSED);
+
+    expect(rows(path)).toEqual(before);
+  });
+
+  it('accepts an insert that names a free rowid', async () => {
+    await seededStore(path);
+
+    replaceAtRowid(path, 'INSERT', 1000);
+
+    expect(rowidOf(path, 'act-forged')).toBe(1000);
   });
 
   it('still accepts an ordinary insert of a new id', async () => {
@@ -236,6 +343,47 @@ describe('the v43 step, from a store created at v42', () => {
     expect(() => replaceRow(path, 'REPLACE', 'act-ok')).toThrow(REFUSED);
     expect(() => replaceRow(path, 'INSERT OR REPLACE', 'act-pending')).toThrow(REFUSED);
     expect(rows(path)).toEqual(before);
+  });
+
+  it('lets both rowid bypasses through before the step runs', async () => {
+    await v42Store(path);
+
+    replaceAtRowid(path, 'REPLACE', rowidOf(path, 'act-ok'));
+    moveOntoRowid(path, rowidOf(path, 'act-forged'));
+
+    expect(rows(path)).toEqual([expect.objectContaining({ action_id: 'act-pending' })]);
+  });
+
+  it('refuses both rowid bypasses once it has run', async () => {
+    await v42Store(path);
+    await openSqliteTestStore({ path }).close();
+    const before = rows(path);
+
+    expect(() => replaceAtRowid(path, 'REPLACE', rowidOf(path, 'act-ok'))).toThrow(REFUSED);
+    expect(() => moveOntoRowid(path, rowidOf(path, 'act-ok'))).toThrow(/complete once/);
+    expect(rows(path)).toEqual(before);
+  });
+
+  it('leaves a file stamped 42 with no new trigger when it stops before its stamp', async () => {
+    await v42Store(path);
+    const v42Triggers = triggerNames(path);
+    const exec = DatabaseSync.prototype.exec;
+    const spy = vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (
+      this: DatabaseSync,
+      sql: string,
+    ) {
+      if (sql === `PRAGMA user_version = ${CURRENT_VERSION}`) throw new Error('killed');
+      exec.call(this, sql);
+    });
+
+    try {
+      expect(() => openSqliteTestStore({ path })).toThrow('killed');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(userVersion(path)).toBe(PRIOR_VERSION);
+    expect(triggerNames(path)).toEqual(v42Triggers);
   });
 
   it('keeps the idempotent replay working on the upgraded store', async () => {

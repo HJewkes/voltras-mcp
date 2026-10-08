@@ -480,7 +480,9 @@ const UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL = `
  * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
  * migrated from v36 already carries the v36 trigger, which would otherwise survive and
  * leave `device_id` the one column an out-of-band UPDATE could rewrite. The v42 step does the
- * same to hold `reason`, `summary_json` and `session_id` fixed.
+ * same to hold `reason`, `summary_json` and `session_id` fixed, and the v43 step to hold the
+ * hidden `rowid` fixed: an `UPDATE OR REPLACE` that moves a row onto another row's rowid
+ * deletes that row without firing `ui_actions_no_delete` (VW-903).
  */
 const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
@@ -488,6 +490,7 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
     WHEN NOT (
       OLD.result_status = 'pending'
       AND NEW.result_status IN ('ok','error')
+      AND NEW.rowid = OLD.rowid
       AND NEW.action_id = OLD.action_id
       AND NEW.action_name = OLD.action_name
       AND NEW.actor = OLD.actor
@@ -514,13 +517,25 @@ const UI_ACTION_SESSION_INDEX_SQL = `
  * before the conflict is resolved, so it refuses any insert whose id is already taken, however
  * it resolves conflicts. That includes `ON CONFLICT DO NOTHING`, so `claimUiAction` reads first.
  *
+ * The table has a second unique key, the hidden `rowid`, and an insert that names one can
+ * REPLACE the row holding it, so the trigger checks that too. In a BEFORE INSERT trigger an
+ * auto-assigned rowid reads as -1, which is why -1 is skipped; the AFTER INSERT trigger keeps
+ * every rowid at 1 or above, so no row can sit at -1 for a named one to replace.
+ *
  * Owned by the v43 step, not `SCHEMA_SQL`: an older binary claims with `DO NOTHING`, and the
  * version bump is what keeps one from opening a store whose trigger would refuse its replays.
  */
 const UI_ACTIONS_NO_REPLACE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_no_replace
     BEFORE INSERT ON ui_actions
-    WHEN EXISTS (SELECT 1 FROM ui_actions WHERE action_id = NEW.action_id)
+    WHEN EXISTS (
+      SELECT 1 FROM ui_actions
+       WHERE action_id = NEW.action_id OR (NEW.rowid <> -1 AND rowid = NEW.rowid)
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;
+  CREATE TRIGGER IF NOT EXISTS ui_actions_positive_rowid
+    AFTER INSERT ON ui_actions
+    WHEN NEW.rowid < 1
     BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;`;
 
 const uiActionsTableSql = (name: string): string => `
@@ -2341,12 +2356,25 @@ function migrateV41ToV42(db: DatabaseSync): void {
 }
 
 /**
- * v42 -> v43: refuse a REPLACE on the audit trail (VW-903). One trigger, no rows touched;
- * see `UI_ACTIONS_NO_REPLACE_TRIGGER_SQL`. Runs on a fresh store too, which is where a fresh
- * store gets it.
+ * v42 -> v43: refuse a REPLACE on the audit trail (VW-903). Triggers only, no rows touched;
+ * see `UI_ACTIONS_NO_REPLACE_TRIGGER_SQL`. Complete-once is dropped and recreated to pin the
+ * rowid. Runs on a fresh store too, which is where a fresh store gets them.
+ *
+ * The step stamps 43 inside its own transaction: a v42 binary's replay would throw on these
+ * triggers, so a file that has them must never read as 42, even after a kill mid-open.
  */
 function migrateV42ToV43(db: DatabaseSync): void {
-  db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('PRAGMA user_version = 43');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
