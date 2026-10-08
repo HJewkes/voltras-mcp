@@ -34,6 +34,7 @@ const LOCAL_TIME_TEST_FILES = [
   'src/plan/__tests__/calendar-dates-local-time.test.ts',
   'src/tools/__tests__/goal-targets-on-blocks.test.ts',
   'src/tools/__tests__/metrics-tools-weekly-local-week.test.ts',
+  'src/tools/__tests__/plan-progression-re-entry-local-time.test.ts',
   'src/tools/__tests__/weekly-checkin-anchor.test.ts',
 ];
 // tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.

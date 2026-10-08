@@ -49,7 +49,14 @@ import {
   type PlanWarning,
 } from '../plan/lint-plan.js';
 import { lintSpecializedMuscleExercises, specializedMuscles } from '../plan/specialization.js';
-import { readReEntry, type ReEntryResult } from './re-entry-read.js';
+import {
+  readLastTime,
+  readReEntry,
+  staleBasisReEntry,
+  type LastTime,
+  type ReEntryResult,
+  type StaleBasisReEntry,
+} from './re-entry-read.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
 import { targetMusclesOf } from './metrics-tools.js';
 import {
@@ -87,6 +94,7 @@ import {
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
 import { todayLocal } from '../analytics/training-days.js';
+import { classifyBreak } from '../analytics/re-entry.js';
 import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
 import {
@@ -336,6 +344,9 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'exactly where it was. When the phase changed the answer the `reasoning` string says so in a ' +
   'clause; relay that clause, never the bare delta. A named guest lifter always gets the ' +
   "unknown phase: the owner's declaration is a claim about the owner's eating. " +
+  '`lastTime`: basis start and age in days, `stale` from 15. A stale basis in a short or ' +
+  'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it; ' +
+  'any other stale basis holds. A stale basis never unlocks a set. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -1079,6 +1090,10 @@ export interface ProgressionSuggestion {
    * CHECKED, not guess from a missing field.
    */
   dietPhaseContext: DietPhaseContext;
+  /** VW-907: the basis session's age. Set by `plan.suggest_progression` only. */
+  lastTime?: LastTime;
+  /** VW-907: present only when `lastTime` is stale and the break band scales a load. */
+  reEntry?: StaleBasisReEntry;
 }
 
 /**
@@ -1608,8 +1623,84 @@ async function suggestProgression(
     tier: tierSignal.tier,
     dietPhase,
   });
-  return { plannedExercise: planned, suggestion: { ...suggestion, tier } };
+  const basisAge = await readBasisAge(state, basisSessionId, sets);
+  return {
+    plannedExercise: planned,
+    suggestion: { ...applyStaleBasis(suggestion, basisAge), tier },
+  };
 }
+
+interface BasisAge {
+  lastTime: LastTime;
+  topLoadLbs: number | undefined;
+}
+
+/** VW-907: read here, like the tier, so `computeProgressionDelta` stays store-free. */
+async function readBasisAge(
+  state: ServerState,
+  basisSessionId: string,
+  sets: StoredSet[],
+): Promise<BasisAge | null> {
+  const session = await state.store.getSession(basisSessionId);
+  if (session === undefined) return null;
+  const workingSets = selectWorkingSets(sets);
+  const lastWorkingEnd = workingSets
+    .map((set) => set.endedAt)
+    .sort()
+    .at(-1);
+  const trainingDayInstant = session.endedAt ?? lastWorkingEnd ?? session.startedAt;
+  return {
+    lastTime: readLastTime(session.startedAt, trainingDayInstant, todayLocal()),
+    topLoadLbs: topLoadOf(workingSets),
+  };
+}
+
+/**
+ * A stale basis overrides the delta (owner rule, 2026-09-26): in a short or medium break the
+ * delta is the step down to the re-entry load, not a progression off a session that old. With no
+ * load to scale (a long break, or a session that recorded none) it holds. Either way no set is
+ * added: the medium band is one working set per muscle. The other gates report as read.
+ */
+function applyStaleBasis(
+  suggestion: ProgressionSuggestion,
+  basisAge: BasisAge | null,
+): ProgressionSuggestion {
+  if (basisAge === null) return suggestion;
+  const { lastTime, topLoadLbs } = basisAge;
+  if (!lastTime.stale) return { ...suggestion, lastTime };
+  const reEntry = staleBasisReEntry(lastTime, topLoadLbs);
+  const since = `Last time was ${lastTime.daysAgo} days ago, before a break`;
+  const read = suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
+  const stale = {
+    ...suggestion,
+    repDelta: 0,
+    basis: 'fixed' as const,
+    gates: { ...suggestion.gates, setsUnlocked: false },
+    lastTime,
+  };
+  if (reEntry === null || topLoadLbs === undefined) {
+    const rest = classifyBreak(lastTime.daysAgo) === 'long' ? LONG_BREAK_NOTE : NO_LOAD_NOTE;
+    const reasoning = `${since}: ${rest} The gates read that session: ${read}`;
+    return { ...stale, delta: PROGRESSION_HOLD_LBS, reasoning };
+  }
+  const percent = Math.round(reEntry.loadFactor * 100);
+  return {
+    ...stale,
+    delta: reEntry.loadLbs - topLoadLbs,
+    reasoning:
+      `${since} (${reEntry.band}): step down from ${topLoadLbs} lb to ${reEntry.loadLbs} lb, ` +
+      `${percent}% of that load rounded down, never under 5 lb (${reEntry.source}), rather ` +
+      `than progress off a stale basis. The gates read that session: ${read}`,
+    reEntry,
+  };
+}
+
+const SETS_UNLOCKED_CLAUSE = ', sets unlocked: consider +1 set next session';
+
+const LONG_BREAK_NOTE =
+  'hold; no old load is scaled after a break this long, so re-enter through ' +
+  "`profile.get_starting_prescription`'s feeler set.";
+const NO_LOAD_NOTE = 'hold; that session recorded no load to scale, so nothing is added to it.';
 
 /**
  * Pick the session id whose stored sets the progression heuristic reads from.
@@ -1931,7 +2022,7 @@ function routeHitHigh(
   const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
   const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
-    const unlock = gates.setsUnlocked ? ', sets unlocked: consider +1 set next session' : '';
+    const unlock = gates.setsUnlocked ? SETS_UNLOCKED_CLAUSE : '';
     return {
       delta: PROGRESSION_HOLD_LBS,
       repDelta: 0,
