@@ -5,7 +5,8 @@
  * null, never the day's stored kind, so the screen never guesses a mark. In range mode
  * the pick is replaced by a tap that sets a bound, and the rows between the bounds highlight.
  *
- * Layout through `style`, colour through tokens (the SPA's react-native-web rule).
+ * Layout through `style`, colour through tokens (the SPA's react-native-web rule). Each `Radio`
+ * states `aria-checked` itself because titan's emits no checked state on web.
  */
 import React from 'react';
 import {
@@ -46,11 +47,11 @@ const KIND_BADGE: Record<ReviewDay['kind'], { label: string; color: BadgeColor }
   test: { label: 'test', color: 'default' },
 };
 
-/** `Tue 15 Sep` from a local calendar date, read at local noon so no zone moves the day. */
+/** `Tue Sep 15` from a local calendar date, read at local noon so no zone moves the day. */
 export function dayHeading(day: string): string {
   const date = new Date(`${day}T12:00:00`);
-  const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' });
-  const rest = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const weekday = date.toLocaleDateString('en-US', { weekday: 'short' });
+  const rest = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return `${weekday} ${rest}`;
 }
 
@@ -107,8 +108,12 @@ function KindPick(props: {
       isDisabled={props.disabled}
       aria-label={`Mark ${props.day}`}
     >
-      <Radio value="training">Training</Radio>
-      <Radio value="test">Test</Radio>
+      <Radio value="training" aria-checked={props.picked === 'training'}>
+        Training
+      </Radio>
+      <Radio value="test" aria-checked={props.picked === 'test'}>
+        Test
+      </Radio>
     </RadioGroup>
   );
 }

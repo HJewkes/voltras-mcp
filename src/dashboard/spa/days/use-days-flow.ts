@@ -124,22 +124,35 @@ function useDayList() {
   return { page, readError, showAll, setShowAll, load };
 }
 
-export function useDaysFlow(): DaysFlow {
-  const visit = useVisit();
-  const list = useDayList();
+/** What the owner has picked: one day, or a range draft while range mode is on. */
+function useSelectionState() {
   const [daySelection, setDaySelection] = useState<Selection | null>(null);
   const [rangeMode, setRangeMode] = useState(false);
   const [range, setRange] = useState<RangeDraft>(EMPTY_RANGE);
+  const selection = rangeMode ? rangeSelection(range) : daySelection;
+  const reset = (nextRangeMode: boolean): void => {
+    setRangeMode(nextRangeMode);
+    setRange(EMPTY_RANGE);
+    setDaySelection(null);
+  };
+  return { daySelection, setDaySelection, rangeMode, range, setRange, selection, reset };
+}
+
+type Visit = ReturnType<typeof useVisit>;
+type DayList = ReturnType<typeof useDayList>;
+
+/**
+ * Posts one preview or mark and runs what its outcome leads to, explicitly: a saved mark
+ * refetches; a mismatch re-previews under a new id and keeps its alert; a missing day or an
+ * unknown outcome refetches. A confirm is never sent on the owner's behalf.
+ */
+function usePoster(visit: Visit, list: DayList, onMarked: () => void) {
   const [pending, setPending] = useState<Phase | null>(null);
   const [error, setError] = useState<DaysError | null>(null);
   const [failed, setFailed] = useState<Phase | null>(null);
   const [saved, setSaved] = useState<SavedMark | null>(null);
   const [, setGateVersion] = useState(0);
   const current = useRef<Selection | null>(null);
-  const latch = useRef(createMutationLatch({ minHoldMs: MIN_LATCH_HOLD_MS })).current;
-
-  const selection = rangeMode ? rangeSelection(range) : daySelection;
-  current.current = selection;
 
   const post = async (sel: Selection, phase: Phase, keep: DaysError | null = null) => {
     setPending(phase);
@@ -155,16 +168,11 @@ export function useDaysFlow(): DaysFlow {
       setGateVersion((v) => v + 1);
     }
   };
-
   const afterMark = async (result: MarkResult): Promise<void> => {
     setSaved({ result, warning: rederiveWarning(result, list.page?.days ?? []) });
-    setDaySelection(null);
-    setRange(EMPTY_RANGE);
-    setRangeMode(false);
+    onMarked();
     await list.load();
   };
-
-  /** A mismatch re-previews under a new id and keeps its alert; a confirm stays the owner's tap. */
   const afterFailure = async (sel: Selection, phase: Phase, err: unknown): Promise<void> => {
     const daysError = daysErrorOf(err);
     setError(daysError);
@@ -173,59 +181,87 @@ export function useDaysFlow(): DaysFlow {
     if (next === 'refetch') await list.load();
     if (next === 'preview') await post(sel, 'preview', daysError);
   };
+  return { pending, error, setError, failed, saved, setSaved, current, post };
+}
 
-  const select = (sel: Selection): void => {
-    setSaved(null);
-    current.current = sel;
-    void post(sel, 'preview');
-  };
-
+export function useDaysFlow(): DaysFlow {
+  const visit = useVisit();
+  const list = useDayList();
+  const picks = useSelectionState();
+  const poster = usePoster(visit, list, () => picks.reset(false));
+  const latch = useRef(createMutationLatch({ minHoldMs: MIN_LATCH_HOLD_MS })).current;
+  const { selection } = picks;
+  poster.current.current = selection;
   return {
     ...list,
     reload: () => void list.load(),
-    rangeMode,
-    range,
+    rangeMode: picks.rangeMode,
+    range: picks.range,
     selection,
     preview: selection === null ? null : visit.gate.previewFor(selection),
-    pending,
-    error,
-    saved,
-    pickDay(day, kind) {
-      const sel: Selection = { scope: 'day', day, kind, reclassify: false };
-      setDaySelection(sel);
-      select(sel);
-    },
+    pending: poster.pending,
+    error: poster.error,
+    saved: poster.saved,
+    ...pickActions(picks, poster),
+    ...postActions(selection, visit, poster, latch),
+  };
+}
+
+type Picks = ReturnType<typeof useSelectionState>;
+type Poster = ReturnType<typeof usePoster>;
+
+/** Every edit stales the held preview by changing the selection the gate is keyed on. */
+function pickActions(picks: Picks, poster: Poster) {
+  const select = (sel: Selection): void => {
+    poster.setSaved(null);
+    poster.current.current = sel;
+    void poster.post(sel, 'preview');
+  };
+  const pickDayWith = (sel: Selection): void => {
+    picks.setDaySelection(sel);
+    select(sel);
+  };
+  return {
+    pickDay: (day: string, kind: MarkKind) =>
+      pickDayWith({ scope: 'day', day, kind, reclassify: false }),
     flipMarked() {
-      if (daySelection?.scope !== 'day') return;
-      const sel: Selection = { ...daySelection, reclassify: true };
-      setDaySelection(sel);
-      select(sel);
+      const current = picks.daySelection;
+      if (current?.scope === 'day') pickDayWith({ ...current, reclassify: true });
     },
     toggleRange() {
-      setRangeMode(!rangeMode);
-      setRange(EMPTY_RANGE);
-      setDaySelection(null);
-      setError(null);
+      picks.reset(!picks.rangeMode);
+      poster.setError(null);
     },
-    tapRow(day) {
-      setRange(nextRangeDraft(range, day));
-      setError(null);
+    tapRow(day: string) {
+      picks.setRange(nextRangeDraft(picks.range, day));
+      poster.setError(null);
     },
-    pickRangeKind(kind) {
-      setRange({ ...range, kind });
-      setError(null);
+    pickRangeKind(kind: MarkKind) {
+      picks.setRange({ ...picks.range, kind });
+      poster.setError(null);
     },
     previewRange() {
-      if (selection !== null) select(selection);
+      if (picks.selection !== null) select(picks.selection);
     },
+  };
+}
+
+/** Confirm and Retry share one latch, so a double tap posts once. */
+function postActions(
+  selection: Selection | null,
+  visit: Visit,
+  poster: Poster,
+  latch: ReturnType<typeof createMutationLatch>,
+) {
+  return {
     confirm() {
       if (selection === null || !visit.gate.canConfirm(selection)) return;
-      void latch.run(() => post(selection, 'mark'));
+      void latch.run(() => poster.post(selection, 'mark'));
     },
     retry() {
       if (selection === null) return;
-      const phase = failed === 'mark' && visit.gate.canConfirm(selection) ? 'mark' : 'preview';
-      void latch.run(() => post(selection, phase));
+      const markable = poster.failed === 'mark' && visit.gate.canConfirm(selection);
+      void latch.run(() => poster.post(selection, markable ? 'mark' : 'preview'));
     },
   };
 }

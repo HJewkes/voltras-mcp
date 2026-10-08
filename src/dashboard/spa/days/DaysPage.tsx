@@ -79,7 +79,6 @@ function AllMarked(): React.JSX.Element {
     <div style={{ display: 'flex', gap: SPACE.xs, alignItems: 'baseline' }}>
       <Typography variant="subtitle1">Every day is marked</Typography>
       <Link
-        href={GOALS_HASH}
         color="primary"
         onPress={() => {
           window.location.hash = GOALS_HASH;
@@ -99,8 +98,12 @@ function RangeKindPick(props: { flow: DaysFlow }): React.JSX.Element {
       orientation="horizontal"
       aria-label="Mark the range as"
     >
-      <Radio value="training">Training</Radio>
-      <Radio value="test">Test</Radio>
+      <Radio value="training" aria-checked={props.flow.range.kind === 'training'}>
+        Training
+      </Radio>
+      <Radio value="test" aria-checked={props.flow.range.kind === 'test'}>
+        Test
+      </Radio>
     </RadioGroup>
   );
 }
@@ -191,6 +194,17 @@ function DayList(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Element 
   );
 }
 
+/**
+ * Whether the selection's own card is on screen to carry its error. A refetch can drop the
+ * picked day from the list (`NOT_FOUND`), and its error must not vanish with the row.
+ */
+function selectionShown(flow: DaysFlow): boolean {
+  const selection = flow.selection;
+  if (flow.rangeMode || selection === null) return flow.rangeMode;
+  if (selection.scope !== 'day') return true;
+  return (flow.page?.days ?? []).some((day) => day.day === selection.day);
+}
+
 function Body(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Element {
   const { flow, narrow } = props;
   if (flow.page === null) {
@@ -201,6 +215,9 @@ function Body(props: { flow: DaysFlow; narrow: boolean }): React.JSX.Element {
     <>
       {flow.readError !== null && <DaysAlert error={flow.readError} onRetry={flow.reload} />}
       {flow.saved !== null && <SavedNotice saved={flow.saved} />}
+      {flow.error !== null && !selectionShown(flow) && (
+        <DaysAlert error={flow.error} onRetry={flow.retry} />
+      )}
       {flow.page.unreviewedDays === 0 && <AllMarked />}
       {flow.rangeMode && !narrow && <RangeCard flow={flow} narrow={narrow} />}
       <DayList flow={flow} narrow={narrow} />

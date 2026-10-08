@@ -105,10 +105,9 @@ function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JS
   const line = unreviewedLine(props.unreviewedDays);
   if (line === null) return null;
   return (
-    <Text style={{ color, fontSize: 14 }}>
-      {line}{' '}
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: SPACE.xs }}>
+      <Text style={{ color, fontSize: 14 }}>{line}</Text>
       <Link
-        href={DAYS_HASH}
         color="primary"
         onPress={() => {
           window.location.hash = DAYS_HASH;
@@ -116,7 +115,7 @@ function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JS
       >
         {REVIEW_DAYS_LINK}
       </Link>
-    </Text>
+    </div>
   );
 }
 
