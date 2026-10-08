@@ -49,6 +49,7 @@ import {
   type PlanWarning,
 } from '../plan/lint-plan.js';
 import { lintSpecializedMuscleExercises, specializedMuscles } from '../plan/specialization.js';
+import { readReEntry, type ReEntryResult } from './re-entry-read.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
 import { targetMusclesOf } from './metrics-tools.js';
 import {
@@ -255,7 +256,7 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
-  'about planning the next block. ' +
+  'about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
@@ -1374,9 +1375,14 @@ type NextWorkoutResult =
 export async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
-): Promise<NextWorkoutResult & { planning: PlanningRead }> {
+): Promise<NextWorkoutResult & { planning: PlanningRead; reEntry: ReEntryResult }> {
   const read = await resolveCurrentBlock(state.store, todayLocal());
-  return { ...(await nextWorkoutFor(state, read, input.programId)), planning: read.planning };
+  const reEntry = await readReEntry(state.store, todayLocal(), new Date().toISOString());
+  return {
+    ...(await nextWorkoutFor(state, read, input.programId)),
+    planning: read.planning,
+    reEntry,
+  };
 }
 
 async function nextWorkoutFor(

@@ -534,6 +534,15 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // null whenever `silentReason` says why nothing was offered.
   'recompReAsk',
   'silentReason',
+  // VW-906: `plan.next_workout`'s read of the break since the last training day.
+  'reEntry',
+  'daysSinceLastTrainingDay',
+  'lastTrainingDay',
+  'windowEndsOn',
+  'gapDays',
+  'loadFactor',
+  'sourceKind',
+  'sourceRef',
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
