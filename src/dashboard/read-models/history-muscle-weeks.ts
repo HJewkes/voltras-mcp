@@ -22,12 +22,12 @@ import { attributionFor, type MuscleCatalogLookup } from './muscle-set-scope.js'
 import {
   evidenceOf,
   groupRows,
-  isoWeekStart,
   noonInstant,
   workRows,
   type HistoryEvidence,
   type HistorySetRow,
 } from './history-rows.js';
+import { mondayOf } from '../../plan/block-calendar.js';
 import { MUSCLE_MAP_VERSION, type TitanMuscleGroup } from '../../exercises/muscle-map.js';
 
 export const HISTORY_MUSCLE_WEEK_CONSTANTS = {
@@ -140,7 +140,7 @@ function historyWeek(
 export function buildHistoryMuscleWeeksView(
   input: HistoryMuscleWeeksInput,
 ): HistoryMuscleWeeksView {
-  const byWeek = groupRows(workRows(input.rows), (row) => isoWeekStart(row.day));
+  const byWeek = groupRows(workRows(input.rows), (row) => mondayOf(row.day));
   const weeks = [...byWeek.keys()]
     .sort()
     .map((week) => historyWeek(week, byWeek.get(week)!, input.catalog));

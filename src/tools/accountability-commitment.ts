@@ -12,8 +12,7 @@
 
 import { UserFacingError } from '../errors.js';
 import { commitmentWeekOf } from '../accountability/commitment-week.js';
-import { isIsoDate, isMonday } from '../plan/block-calendar.js';
-import { mondaysAround } from '../plan/block-placement.js';
+import { assertMonday, type MondayProblem } from '../plan/block-calendar.js';
 import type { AccountabilityDeclareCommitmentInput } from '../schemas/accountability.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type CommitmentDay, type StoredCommitment } from '../store/types.js';
@@ -75,7 +74,8 @@ export async function declareCommitment(
   assertDistinctDays(input.days);
   assertOwnWords(input.ifThen, 'The if-then sentence');
   assertOwnWords(input.wording, 'The commitment wording');
-  const weekOf = input.weekOf === undefined ? commitmentWeekOf(now) : assertMonday(input.weekOf);
+  if (input.weekOf !== undefined) assertMonday(input.weekOf, notACommitmentWeek);
+  const weekOf = input.weekOf ?? commitmentWeekOf(now);
   const declared = await state.store.declareCommitment({
     userId: LOCAL_USER_ID,
     effectiveFrom: weekOf,
@@ -116,13 +116,12 @@ function assertOwnWords(text: string, subject: string): void {
   throw new ToolError('INVALID_INPUT', `${subject} is the lifter's own and cannot be empty.`);
 }
 
-function assertMonday(date: string): string {
-  if (!isIsoDate(date)) {
-    throw new ToolError('INVALID_INPUT', `weekOf ${date} is not a calendar date.`);
+function notACommitmentWeek(problem: MondayProblem): ToolError {
+  if (problem.kind === 'not-a-date') {
+    return new ToolError('INVALID_INPUT', `weekOf ${problem.date} is not a calendar date.`);
   }
-  if (isMonday(date)) return date;
-  const { before, after } = mondaysAround(date);
-  throw new ToolError(
+  const { date, before, after } = problem;
+  return new ToolError(
     'INVALID_INPUT',
     `A commitment week starts on a Monday; ${date} is not one. ` +
       `The Mondays either side are ${before} and ${after}.`,

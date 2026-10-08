@@ -5,6 +5,8 @@
 // `validateHistory` checks it at the boundary: a bad entry is dropped with a reason, a
 // malformed summary is rejected with a reason, and neither ever throws into the tool path.
 
+import { isIsoDate } from '../plan/block-calendar.js';
+
 export interface HistoricalTrainingSummary {
   /** Where the summary came from, echoed into the evidence so the coach can name it. */
   source: string;
@@ -34,22 +36,6 @@ export interface HistoryValidation {
   /** `null` when the summary as a whole was rejected; the reason is in `dropped`. */
   history: ValidatedHistory | null;
   dropped: string[];
-}
-
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** A real calendar date in 'YYYY-MM-DD' form; '2025-02-30' fails the round trip. */
-export function isIsoDate(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const match = ISO_DATE.exec(value);
-  if (match === null) return false;
-  const [year, month, day] = match.slice(1).map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  return (
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
