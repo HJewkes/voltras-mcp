@@ -27,6 +27,7 @@
 // enforces "at least one"; this file enforces "if both, id wins" by clearing
 // `exerciseName` whenever `exerciseId` is present before persisting.
 
+import { endStaleLiveSession } from '../state/idle-session-close.js';
 import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
@@ -339,6 +340,8 @@ async function startSession(
   input: z.infer<typeof SessionStartInput>,
 ): Promise<{ sessionId: string }> {
   const slot = getSlot(state, input.slot);
+  // VW-856: a session with no rep for the idle window is ended at its last rep, not refused.
+  await endStaleLiveSession(state, input.slot ?? PRIMARY_SLOT, new Date());
   if (slot.live.session !== undefined) {
     throw new ToolError('SESSION_ALREADY_ACTIVE', 'A session is already active.');
   }

@@ -3894,6 +3894,27 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToSession));
   }
 
+  async listOpenSessions(): Promise<StoredSession[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at ASC`)
+      .all() as unknown as SessionRow[];
+    return Promise.resolve(rows.map(rowToSession));
+  }
+
+  async getLastRepAt(sessionId: string): Promise<string | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(at) AS at FROM (
+           SELECT MAX(observed_at) AS at FROM idle_reps WHERE session_id = ?
+           UNION ALL
+           SELECT MAX(ended_at) AS at FROM sets
+            WHERE session_id = ? AND id IN (SELECT set_id FROM reps)
+         )`,
+      )
+      .get(sessionId, sessionId) as { at: string | null } | undefined;
+    return Promise.resolve(row?.at ?? undefined);
+  }
+
   async countSessions(filter: SessionCountFilter = {}): Promise<number> {
     const { where, params } = sessionCountPredicates(filter);
     // `sort` / `limit` / `offset` are intentionally not applied: they describe

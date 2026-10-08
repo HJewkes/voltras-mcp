@@ -168,7 +168,7 @@ describe('idle-rep durable capture', () => {
     });
     live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
     });
@@ -258,14 +258,14 @@ describe('idle-rep durable capture', () => {
     const { live, client, putIdleRep } = makeHarness({ connectedDeviceId: 'AA:BB:CC' });
     live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
     });
     live.startSet({
       setId: 'set-1',
       sessionId: 'sess-1',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       reps: [],
       status: 'active',
     });
@@ -297,7 +297,7 @@ describe('idle-rep durable capture', () => {
       });
       live.startSession({
         sessionId: 'sess-1',
-        startedAt: '2025-01-01T00:00:00.000Z',
+        startedAt: new Date().toISOString(),
         setIds: [],
         status: 'active',
         verboseIdleReps: true,
