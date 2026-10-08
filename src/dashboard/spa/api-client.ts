@@ -17,6 +17,8 @@
  * a real error and surfaces as one.
  */
 
+import type { ActivityPage, ActorLabel } from '../activity.js';
+
 /** `<meta name>` the server substitutes the token into. Mirrors `write-guard.ts`. */
 const TOKEN_META_NAME = 'vmcp-write-token';
 
@@ -235,4 +237,29 @@ export function postAction<T = unknown>(
     },
     meta?.actionId,
   );
+}
+
+/** Filters for {@link fetchActivity}; every one is optional. `actor` is the feed's label. */
+export interface ActivityFilter {
+  sessionId?: string;
+  flowId?: string;
+  actor?: ActorLabel;
+  since?: string;
+  until?: string;
+  status?: 'ok' | 'error' | 'pending';
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * One page of the command trail (VW-893). Page by passing the response's `nextCursor` back as
+ * `cursor` until it is null.
+ */
+export function fetchActivity(filter: ActivityFilter = {}): Promise<ActivityPage> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filter)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const query = params.toString();
+  return readJson<ActivityPage>(`/api/activity${query === '' ? '' : `?${query}`}`);
 }

@@ -1,6 +1,6 @@
 ---
 title: Dashboard API
-description: The wall dashboard's HTTP routes for developers, the per-muscle and goal-coach response shapes, and the plan builder's write routes.
+description: The wall dashboard's HTTP routes for developers, the per-muscle and goal-coach response shapes, the command trail, and the plan builder's write routes.
 diataxis: reference
 audience: [developer]
 status: available
@@ -8,12 +8,13 @@ sources:
   - src/store/types.ts
   - src/dashboard/README.md
   - src/dashboard/server.ts
+  - src/dashboard/activity.ts
   - src/dashboard/write-guard.ts
   - src/store/sqlite-store.ts
   - src/dashboard/muscle-strength-api.ts
   - src/analytics/side-comparison.ts
   - scripts/dashboard-mock-drive.mjs
-lastVerified: 2026-09-28
+lastVerified: 2026-10-07
 ---
 
 # Dashboard API
@@ -176,6 +177,51 @@ Two rules shape the answer, and both exist to stop it over-claiming:
 
 The full response shape is in
 [`src/dashboard/README.md`](https://github.com/HJewkes/voltras-mcp/blob/main/src/dashboard/README.md).
+
+## Command trail (`/api/activity`)
+
+`GET /api/activity` (VW-893) serves the command trail: one row per write, whether an agent
+made it through an MCP tool or you made it with a tap on the wall. It is a read, with the
+same loopback-only, no-token rule as every route above (`src/dashboard/activity.ts`).
+
+```json
+{
+  "rows": [
+    {
+      "id": "…",
+      "at": "2026-08-01T10:00:00.000Z",
+      "completedAt": "2026-08-01T10:00:00.120Z",
+      "actor": "person",
+      "surface": "wall",
+      "tool": "profile.log_bodyweight",
+      "summary": { "bodyweightLbs": 180 },
+      "reason": null,
+      "outcome": "ok",
+      "code": null,
+      "sessionId": "…",
+      "flowId": null,
+      "flowStep": null,
+      "deviceId": null
+    }
+  ],
+  "nextCursor": "WyIyMDI2…"
+}
+```
+
+- **Rows hold only these fourteen keys.** The summary is a short, fixed list of fitness
+  fields such as a load, a rep count or a goal id. Most device tools record their name only.
+  The trail never serves the call's arguments, their hash or the tool's result.
+- **`actor`** is `person` (a tap on the wall or phone), `agent` (an MCP tool call) or `rule`
+  (the scheduler).
+- **`outcome`** is `ok`, `error` or `pending`. `pending` means the call never finished, so
+  whether it took effect is unknown.
+- **Filters:** `sessionId`, `flowId`, `actor` (`person`, `agent` or `rule`), `status` (`ok`,
+  `error` or `pending`), and `since` and `until` (ISO dates or date-times, both inclusive).
+  A bad value answers 400 `invalid_input`.
+- **Paging:** newest first. `limit` defaults to 50, and any larger value is cut to 200. Pass
+  `nextCursor` back as `cursor` for the next page. It is `null` on the last page.
+- A row written before the session opened (for example a connect) has no `sessionId`. To
+  show those beside a session's rows, filter by `since` and `until` instead.
 
 ## Plan builder write routes
 

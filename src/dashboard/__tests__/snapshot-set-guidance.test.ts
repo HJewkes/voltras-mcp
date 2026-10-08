@@ -3,8 +3,14 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
+import type * as NodeSdk from '@voltras/node-sdk';
 
-vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: class extends Error {} }));
+// The server now reaches the public mode names through the audit summary (VW-893), so the
+// real `TrainingMode` passes through the mock.
+vi.mock('@voltras/node-sdk', async (importOriginal) => ({
+  VoltraSDKError: class extends Error {},
+  TrainingMode: (await importOriginal<typeof NodeSdk>()).TrainingMode,
+}));
 
 const { registerTimerTools, __resetTimerState } = await import('../../tools/timer-tools.js');
 const { startDashboardServer } = await import('../server.js');

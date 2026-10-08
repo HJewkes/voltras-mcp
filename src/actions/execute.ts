@@ -46,6 +46,8 @@ import { z } from 'zod';
 
 import { actionEntry, type ActionTier } from './allowlist.js';
 import type { CapturedTool, CapturedTools } from './capture-handlers.js';
+import { summariseCommand, type WriteToolName } from './command-summary.js';
+import { toolAccess } from '../tool-registry.js';
 import type {
   ClaimUiActionInput,
   ClaimUiActionOutcome,
@@ -81,6 +83,8 @@ export interface ActionRequest {
   deviceId?: string | undefined;
   flowId?: string | undefined;
   flowStep?: string | undefined;
+  /** The session open when the action arrived, read by the caller. */
+  sessionId?: string | undefined;
   input: unknown;
 }
 
@@ -127,6 +131,7 @@ export async function executeAction(
   if (!parsed.ok) {
     return refusal(400, 'invalid_input', parsed.message);
   }
+  const summaryJson = commandSummaryJson(entry.tool, request.input);
   return executeAudited(
     {
       actionName: request.name,
@@ -136,12 +141,25 @@ export async function executeAction(
       ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
       ...(request.flowId === undefined ? {} : { flowId: request.flowId }),
       ...(request.flowStep === undefined ? {} : { flowStep: request.flowStep }),
+      ...(summaryJson === undefined ? {} : { summaryJson }),
+      ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
       inputHash: hashInput(request.input),
       tier: entry.tier,
       run: () => runHandler(tool.handler, request.input),
     },
     deps,
   );
+}
+
+/**
+ * The allowlisted summary a wall tap's row holds, so the feed shows it in the
+ * same terms as an agent's call of the same tool (VW-893). `undefined` for a
+ * name that is not a write tool (most plan routes) and for a name-only tool.
+ */
+export function commandSummaryJson(name: string, input: unknown): string | undefined {
+  if (toolAccess(name) !== 'write') return undefined;
+  const summary = summariseCommand(name as WriteToolName, input);
+  return summary === null ? undefined : JSON.stringify(summary);
 }
 
 /** One audited write: what to record, and what to run once the id is claimed. */

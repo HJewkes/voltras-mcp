@@ -124,6 +124,13 @@
 //                          200 `{ banner: null }` — nothing to say is a valid
 //                          answer here, unlike the plan routes' 501.
 //
+//   ── Command trail (VW-893, VW-849) ───────────────────────────────────────
+//   GET /api/activity     — `{ rows, nextCursor }`: the audit trail, newest
+//                          first, filtered by `sessionId`, `flowId`, `actor`,
+//                          `since`, `until` and `status`, keyset-paged by
+//                          `cursor`, `limit` clamped to 200. Rows carry only
+//                          `ACTIVITY_ROW_FIELDS` (see `activity.ts`).
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -191,6 +198,7 @@ import {
   UI_ACTION_DEVICE_ID_MAX_LENGTH,
 } from '../store/ui-action-device-id.js';
 import {
+  commandSummaryJson,
   executeAction,
   executeAudited,
   hashInput,
@@ -242,6 +250,7 @@ import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
 import { readTopBanner, type BannerStore } from './read-models/banners.js';
+import { parseActivityQuery, readActivity } from './activity.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -334,6 +343,8 @@ export interface DashboardServerState {
     /** The action audit trail (VW-502). Optional for the same reason the rest are. */
     claimUiAction?: ActionStore['claimUiAction'];
     completeUiAction?: ActionStore['completeUiAction'];
+    /** The feed behind `GET /api/activity` (VW-893). */
+    listActivity?: SessionStore['listActivity'];
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore> &
     Partial<GoalProgressStore>;
@@ -683,6 +694,10 @@ async function handleRequest(
   }
   if (pathname === '/api/banners') {
     await serveBanners(res, state);
+    return;
+  }
+  if (pathname === '/api/activity') {
+    await serveActivity(res, state, url);
     return;
   }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
@@ -1127,6 +1142,30 @@ async function serveBanners(res: ServerResponse, state: DashboardServerState): P
   sendJson(res, 200, { banner });
 }
 
+/**
+ * `GET /api/activity` (VW-893): one page of the audit trail. Same auth as
+ * every other read. A store without the feed answers 501, as the plan routes
+ * do, because an empty page would claim nothing was ever recorded.
+ */
+async function serveActivity(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  const { listActivity } = state.store;
+  if (listActivity === undefined) {
+    sendJson(res, 501, { error: 'activity_unavailable' });
+    return;
+  }
+  const query = parseActivityQuery(url.searchParams);
+  if ('error' in query) {
+    sendJson(res, 400, { error: 'invalid_input', message: query.error });
+    return;
+  }
+  const store = { listActivity: listActivity.bind(state.store) };
+  sendJson(res, 200, await readActivity(store, query));
+}
+
 async function serveSessionSummary(
   res: ServerResponse,
   state: DashboardServerState,
@@ -1226,11 +1265,15 @@ async function handleAction(
     sendJson(res, 400, { error: 'invalid_input', message: request.error });
     return;
   }
-  const outcome = await executeAction(request, {
-    store: state.store,
-    tools: state.actionTools,
-    now: () => new Date(),
-  });
+  const { sessionId } = activeSessionContext(state);
+  const outcome = await executeAction(
+    { ...request, sessionId },
+    {
+      store: state.store,
+      tools: state.actionTools,
+      now: () => new Date(),
+    },
+  );
   sendActionOutcome(res, outcome);
 }
 
@@ -1397,6 +1440,9 @@ async function handlePlanMutation(
     return;
   }
   const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
+  const actionName = PLAN_ROUTE_ACTION_NAMES[route.kind];
+  const summaryJson = commandSummaryJson(actionName, payload);
+  const { sessionId } = activeSessionContext(state);
   if (!hasActionStore(store)) {
     // No audit table (a test fake, an older store): the write still happens.
     // Degrading to an unaudited write is better than refusing the plan builder,
@@ -1406,7 +1452,7 @@ async function handlePlanMutation(
   }
   const outcome = await executeAudited(
     {
-      actionName: PLAN_ROUTE_ACTION_NAMES[route.kind],
+      actionName,
       // A client that sends no id gets a minted one, which records the write
       // but buys NO retry safety: a retry mints another id and runs again.
       // The SPA sends its own; see `spa/api-client.ts`.
@@ -1415,6 +1461,8 @@ async function handlePlanMutation(
       actor: 'user',
       surface,
       ...device,
+      ...(summaryJson === undefined ? {} : { summaryJson }),
+      ...(sessionId === undefined ? {} : { sessionId }),
       inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
       run,
     },
