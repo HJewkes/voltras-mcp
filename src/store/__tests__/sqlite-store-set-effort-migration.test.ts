@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredSet } from '../types.js';
 
-const CURRENT_VERSION = 43;
+const CURRENT_VERSION = 44;
 const FROM_VERSIONS = [37, 39] as const;
 
 /** What v38 and v39 added elsewhere, taken back off so a v37 file is genuinely v37. */
