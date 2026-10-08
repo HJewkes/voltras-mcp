@@ -181,6 +181,20 @@ do not resubmit". **Nothing sweeps pending rows at boot**: rewriting one to
 `error` would assert an outcome nobody knows. `listUiActions({ status:
 'pending' })` is the read for a later surface to show them.
 
+### Marking days (VW-847)
+
+`session.mark_kind` is allowlisted at W2, so the wall can mark a day or a range
+training or test through the same handler the MCP tool runs. The action layer
+adds no rule of its own: the range guard stays in the handler, and a real
+`from`/`to` call without `expectSessions` equal to every matched session leaves
+one `error` row, `EXPECTED_SESSIONS_MISMATCH`, and changes nothing. The expected
+count is the sum of the four disjoint lists a dry run returns (`newlyClassified`,
+`reclassified`, `skippedAlreadyMarked`, `alreadyThisKind`), never
+`newlyClassified` alone. A dry run goes through the action route too and leaves
+one `ok` row. The wall sends `reclassify` on a single day only, never on a range.
+`mark-kind-actions.test.ts` pins this through `executeAction` with captured
+handlers.
+
 ### The MCP door (VW-892)
 
 Every write-classified MCP tool call leaves one row, actor `coach`, surface `mcp`,
