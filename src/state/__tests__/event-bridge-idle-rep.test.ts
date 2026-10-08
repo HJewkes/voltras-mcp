@@ -187,7 +187,7 @@ describe('idle-rep surfacing', () => {
     );
     live.startSession({
       sessionId: 'sess-verbose',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       verboseIdleReps: true,
@@ -281,14 +281,14 @@ describe('idle-rep surfacing', () => {
     function startSet(): void {
       live.startSession({
         sessionId: 'sess-1',
-        startedAt: '2025-01-01T00:00:00.000Z',
+        startedAt: new Date().toISOString(),
         setIds: [],
         status: 'active',
       });
       live.startSet({
         setId: 'set-1',
         sessionId: 'sess-1',
-        startedAt: '2025-01-01T00:00:00.000Z',
+        startedAt: new Date().toISOString(),
         reps: [],
         status: 'active',
       });
@@ -405,7 +405,7 @@ describe('idle-rep batched summary (default, VMCP-02.11)', () => {
     // Default-mode session — verboseIdleReps omitted (= false).
     live.startSession({
       sessionId: 'sess-default',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
     });
@@ -546,7 +546,7 @@ describe('idle-rep verbose-mode opt-in (VMCP-02.11)', () => {
     );
     live.startSession({
       sessionId: 'sess-verbose',
-      startedAt: '2025-01-01T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       verboseIdleReps: true,
