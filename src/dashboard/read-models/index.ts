@@ -78,7 +78,6 @@ export {
   daysBetween,
   evidenceOf,
   historyTrainingDays,
-  isoWeekStart,
   type HistoryEvidence,
   type HistoryEvidenceKind,
   type HistorySetRow,
