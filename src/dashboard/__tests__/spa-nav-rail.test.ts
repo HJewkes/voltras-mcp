@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { DashboardChrome, NAV_ROUTES, navKeyForRoute } from '../spa/panels/DashboardChrome.js';
-import { routeHash, type Route } from '../spa/routing.js';
+import { parseRoute, routeHash, type Route } from '../spa/routing.js';
 
 /** One route per name; the `Record` makes a new route name fail to compile here. */
 const EVERY_ROUTE: Record<Route['name'], Route> = {
@@ -16,6 +16,7 @@ const EVERY_ROUTE: Record<Route['name'], Route> = {
   summary: { name: 'summary', sessionId: 'latest' },
   goals: { name: 'goals' },
   body: { name: 'body' },
+  checkin: { name: 'checkin' },
 };
 
 function renderRail(route: Route): string {
@@ -32,9 +33,20 @@ describe('the dashboard nav rail', () => {
     expect(routeHash(NAV_ROUTES.goals)).toBe('#/goals');
   });
 
-  it('shows Goals between Plan and Body', () => {
+  it('round-trips the check-in route through its hash', () => {
+    expect(routeHash({ name: 'checkin' })).toBe('#/checkin');
+    expect(parseRoute('#/checkin')).toEqual({ name: 'checkin' });
+    expect(parseRoute(routeHash(NAV_ROUTES.checkin))).toEqual({ name: 'checkin' });
+  });
+
+  it('highlights the Check-in entry on the check-in route', () => {
+    expect(navKeyForRoute({ name: 'checkin' })).toBe('checkin');
+    expect(renderRail({ name: 'checkin' })).toContain('aria-label="Check-in"');
+  });
+
+  it('shows Goals between Plan and Check-in, then Body', () => {
     const markup = renderRail({ name: 'live' });
-    const order = ['Live', 'Review', 'Plan', 'Goals', 'Body'].map((label) =>
+    const order = ['Live', 'Review', 'Plan', 'Goals', 'Check-in', 'Body'].map((label) =>
       markup.indexOf(`aria-label="${label}"`),
     );
 
