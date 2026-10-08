@@ -344,9 +344,8 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'exactly where it was. When the phase changed the answer the `reasoning` string says so in a ' +
   'clause; relay that clause, never the bare delta. A named guest lifter always gets the ' +
   "unknown phase: the owner's declaration is a claim about the owner's eating. " +
-  '`lastTime` gives the basis session start and its age in days; `stale` is 15+ days. A stale ' +
-  'basis in a short or medium break adds `reEntry` (band, `loadLbs`, `loadFactor`, cited ' +
-  'source) and the delta becomes the step down to `loadLbs`; the gates still report. ' +
+  '`lastTime`: basis start and age in days, `stale` from 15. A stale basis in a short or ' +
+  'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
