@@ -932,9 +932,10 @@ export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];
 
 /**
  * Where an action was submitted from. A KIND of surface, never a particular one: two walls
- * both say `wall`, and `deviceId` is what tells them apart (VW-521).
+ * both say `wall`, and `deviceId` is what tells them apart (VW-521). `mcp` is an agent's tool
+ * call (VW-849).
  */
-export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram'] as const;
+export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram', 'mcp'] as const;
 export type UiActionSurface = (typeof UI_ACTION_SURFACES)[number];
 
 /**
@@ -959,6 +960,12 @@ export interface StoredUiAction {
   deviceId?: string;
   flowId?: string;
   flowStep?: string;
+  /** Why the action was taken, when the caller said. Absent on every row written before v42. */
+  reason?: string;
+  /** An allowlisted summary of the input. Never the argument blob. Absent before v42. */
+  summaryJson?: string;
+  /** The session open at call entry. No foreign key: a missing session never refuses a row. */
+  sessionId?: string;
   /** sha256 over the canonical JSON of the input, hashed AFTER the tool's parse. */
   inputHash: string;
   resultStatus: UiActionStatus;
@@ -979,8 +986,29 @@ export interface ClaimUiActionInput {
   deviceId?: string;
   flowId?: string;
   flowStep?: string;
+  /** Fixed at the claim: the complete-once trigger holds these three against later edits. */
+  reason?: string;
+  summaryJson?: string;
+  sessionId?: string;
   inputHash: string;
   createdAt: string;
+}
+
+/**
+ * Filter for {@link SessionStore.listActivity}. Newest first, keyset-paged on
+ * `(createdAt, actionId)`: `after` is the last row of the previous page.
+ */
+export interface ListActivityFilter {
+  sessionId?: string;
+  flowId?: string;
+  actor?: UiActionActor;
+  status?: UiActionStatus;
+  /** Inclusive lower bound on `createdAt`. */
+  since?: string;
+  /** Inclusive upper bound on `createdAt`. */
+  until?: string;
+  after?: { createdAt: string; actionId: string };
+  limit?: number;
 }
 
 /** Arguments to {@link SessionStore.completeUiAction}. */
@@ -2623,6 +2651,12 @@ export interface SessionStore extends ExerciseSetupStore {
     status?: UiActionStatus;
     limit?: number;
   }): Promise<StoredUiAction[]>;
+
+  /**
+   * The activity feed's read: newest first by `(createdAt, actionId)`, filtered, and paged
+   * by `after` (the last row of the previous page). Default limit 50.
+   */
+  listActivity(filter?: ListActivityFilter): Promise<StoredUiAction[]>;
 
   // --- Priorities and goal targets (VW-349) ---
 
