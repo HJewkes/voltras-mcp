@@ -7,6 +7,8 @@ import {
   createAttemptIds,
   createPreviewGate,
   daysErrorOf,
+  daysReadErrorOf,
+  settleFailure,
   daysInRange,
   errorCopy,
   expectSessions,
@@ -67,7 +69,7 @@ describe('markInput', () => {
   });
 
   it('sends reclassify only for a day that asks for it', () => {
-    expect(markInput(day, 'mark')).toEqual({ kind: 'training', day: '2026-09-01' });
+    expect(markInput(day, 'mark', 1)).toEqual({ kind: 'training', day: '2026-09-01' });
     expect(markInput({ ...day, reclassify: true }, 'preview')).toEqual({
       kind: 'training',
       day: '2026-09-01',
@@ -147,7 +149,7 @@ describe('attempt ids', () => {
 
   it('holds one id per step', () => {
     const ids = createAttemptIds(counter());
-    const input = markInput(day, 'mark');
+    const input = markInput(day, 'mark', 1);
     expect(ids.idFor('mark', input)).not.toBe(ids.idFor('preview', input));
   });
 });
@@ -191,7 +193,9 @@ describe('error to state and follow-up', () => {
   });
 
   it('names an unknown refusal by its code', () => {
-    expect(errorCopy(daysErrorOf(refused('SOMETHING')))).toBe('Refused: SOMETHING');
+    expect(errorCopy(daysErrorOf(refused('SOMETHING')))).toBe(
+      'The dashboard refused that (SOMETHING)',
+    );
   });
 });
 
@@ -200,7 +204,7 @@ describe('preview copy', () => {
     expect(previewLines(result())).toEqual([
       'Mark 2 sessions on 2 days as training',
       '7 sets change',
-      '1 already marked test stay as they are',
+      '1 already marked test stays as it is',
       '3 already training',
       '2026-09-01, 2026-09-02',
     ]);
@@ -214,10 +218,89 @@ describe('preview copy', () => {
     expect(lines.some((l) => l.includes('already'))).toBe(false);
   });
 
-  it('warns with the exercises whose baselines were not refreshed', () => {
-    expect(rederiveWarning(result())).toBeNull();
-    expect(rederiveWarning(result({ rederiveFailed: ['squat', 'press'] }))).toBe(
-      'Saved. The baselines for squat, press were not refreshed',
+  it('names the exercises whose baselines were not refreshed, not their ids', () => {
+    const days = [
+      { exercises: [{ name: 'Squat', exerciseId: 'ex-1' }, { name: 'Press' }] },
+    ] as unknown as ReviewDay[];
+    expect(rederiveWarning(result({ rederiveFailed: ['ex-1'] }), days)).toBe(
+      'Saved. The baselines for Squat were not refreshed',
+    );
+    expect(rederiveWarning(result({ rederiveFailed: ['ex-1', 'ex-9'] }), days)).toBe(
+      'Saved. The baselines for Squat, 1 other exercise were not refreshed',
+    );
+  });
+
+  it('says so when nothing new is marked', () => {
+    expect(previewLines(result({ newlyClassified: [] }))[0]).toBe(
+      'No new sessions to mark as training',
     );
   });
 });
+
+describe('error copy', () => {
+  it('reads the handler refusal as invalid input with its own text', () => {
+    const error = daysErrorOf(
+      new ActionRefusedError({
+        code: 'INVALID_INPUT',
+        result: { message: 'from must not be after to' },
+        status: 400,
+        actionId: 'x',
+      }),
+    );
+    expect(error).toEqual({ kind: 'invalid_input', message: 'from must not be after to' });
+  });
+
+  it('treats a server-side refusal as not saved', () => {
+    expect(daysErrorOf(refused500())).toEqual({ kind: 'not_saved' });
+  });
+
+  it('never calls a failed read "not saved"', () => {
+    expect(errorCopy(daysReadErrorOf())).not.toMatch(/not saved/i);
+  });
+});
+
+describe('settleFailure', () => {
+  const held = () => {
+    let n = 0;
+    const ids = createAttemptIds(() => `id-${String(++n)}`);
+    const gate = createPreviewGate();
+    gate.record(range, result());
+    return { ids, gate };
+  };
+
+  it('drops the preview and the step id after a mismatch', () => {
+    const { ids, gate } = held();
+    const input = markInput(range, 'preview');
+    const first = ids.idFor('range_preview', input);
+    settleFailure(refused('EXPECTED_SESSIONS_MISMATCH'), 'range_preview', ids, gate);
+    expect(gate.canConfirm(range)).toBe(false);
+    expect(ids.idFor('range_preview', input)).not.toBe(first);
+  });
+
+  it('keeps the id and the preview after a transport failure', () => {
+    const { ids, gate } = held();
+    const input = markInput(range, 'preview');
+    const first = ids.idFor('range_preview', input);
+    settleFailure(new TypeError('fetch failed'), 'range_preview', ids, gate);
+    expect(gate.canConfirm(range)).toBe(true);
+    expect(ids.idFor('range_preview', input)).toBe(first);
+  });
+
+  it('keeps the id but drops the preview on an indeterminate write', () => {
+    const { ids, gate } = held();
+    const input = markInput(range, 'mark', 4);
+    const first = ids.idFor('range_mark', input);
+    settleFailure(new IndeterminateWriteError('unsure', first), 'range_mark', ids, gate);
+    expect(gate.canConfirm(range)).toBe(false);
+    expect(ids.idFor('range_mark', input)).toBe(first);
+  });
+});
+
+function refused500(): ActionRefusedError {
+  return new ActionRefusedError({
+    code: 'action_unavailable',
+    result: null,
+    status: 500,
+    actionId: 'x',
+  });
+}
