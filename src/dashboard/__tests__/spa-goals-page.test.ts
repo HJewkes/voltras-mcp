@@ -544,6 +544,19 @@ describe('the goals page says when history is withheld (VW-514)', () => {
     expect(html).not.toContain('1 days');
   });
 
+  it('links the line to the review-days page (VW-847)', () => {
+    const html = render(withUnreviewed(3));
+
+    const link = html.indexOf('role="link"');
+    expect(link).toBeGreaterThan(html.indexOf('These numbers leave out 3 days'));
+    expect(html.slice(link)).toContain('Review these days');
+  });
+
+  it('shows no review-days link when no day is waiting', () => {
+    expect(render(withUnreviewed(0))).not.toContain('Review these days');
+    expect(render(withUnreviewed(undefined))).not.toContain('Review these days');
+  });
+
   it('renders the same DOM as before when nothing is withheld or the field is absent', () => {
     const { data } = baseData();
     const before = render(data);

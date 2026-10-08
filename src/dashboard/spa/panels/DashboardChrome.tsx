@@ -72,7 +72,9 @@ export function navKeyForRoute(route: Route): string {
       return 'live';
     case 'body':
       return 'body';
+    // Reached from the goals line, not the rail (VW-847 Q3), so it lights the page it serves.
     case 'goals':
+    case 'days':
       return 'goals';
   }
 }

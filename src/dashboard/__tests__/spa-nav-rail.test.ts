@@ -16,6 +16,7 @@ const EVERY_ROUTE: Record<Route['name'], Route> = {
   summary: { name: 'summary', sessionId: 'latest' },
   goals: { name: 'goals' },
   body: { name: 'body' },
+  days: { name: 'days' },
 };
 
 function renderRail(route: Route): string {
@@ -30,6 +31,13 @@ describe('the dashboard nav rail', () => {
   it('sends the Goals entry to the goals page', () => {
     expect(navKeyForRoute({ name: 'goals' })).toBe('goals');
     expect(routeHash(NAV_ROUTES.goals)).toBe('#/goals');
+  });
+
+  it('lights Goals on the review-days page, which has no rail item of its own (VW-847)', () => {
+    const markup = renderRail({ name: 'days' });
+
+    expect(navKeyForRoute({ name: 'days' })).toBe('goals');
+    expect(markup).not.toContain('aria-label="Days"');
   });
 
   it('shows Goals between Plan and Body', () => {
