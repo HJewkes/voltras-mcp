@@ -345,7 +345,8 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'clause; relay that clause, never the bare delta. A named guest lifter always gets the ' +
   "unknown phase: the owner's declaration is a claim about the owner's eating. " +
   '`lastTime`: basis start and age in days, `stale` from 15. A stale basis in a short or ' +
-  'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it. ' +
+  'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it; ' +
+  'any other stale basis holds. A stale basis never unlocks a set. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -1642,16 +1643,23 @@ async function readBasisAge(
 ): Promise<BasisAge | null> {
   const session = await state.store.getSession(basisSessionId);
   if (session === undefined) return null;
+  const workingSets = selectWorkingSets(sets);
+  const lastWorkingEnd = workingSets
+    .map((set) => set.endedAt)
+    .sort()
+    .at(-1);
+  const trainingDayInstant = session.endedAt ?? lastWorkingEnd ?? session.startedAt;
   return {
-    lastTime: readLastTime(session.startedAt, todayLocal()),
-    topLoadLbs: topLoadOf(selectWorkingSets(sets)),
+    lastTime: readLastTime(session.startedAt, trainingDayInstant, todayLocal()),
+    topLoadLbs: topLoadOf(workingSets),
   };
 }
 
 /**
  * A stale basis overrides the delta (owner rule, 2026-09-26): in a short or medium break the
- * delta is the step down to the re-entry load, not a progression off a session that old. The
- * gates still report what that session showed.
+ * delta is the step down to the re-entry load, not a progression off a session that old. With no
+ * load to scale (a long break, or a session that recorded none) it holds. Either way no set is
+ * added: the medium band is one working set per muscle. The other gates report as read.
  */
 function applyStaleBasis(
   suggestion: ProgressionSuggestion,
@@ -1662,29 +1670,37 @@ function applyStaleBasis(
   if (!lastTime.stale) return { ...suggestion, lastTime };
   const reEntry = staleBasisReEntry(lastTime, topLoadLbs);
   const since = `Last time was ${lastTime.daysAgo} days ago, before a break`;
+  const read = suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
+  const stale = {
+    ...suggestion,
+    repDelta: 0,
+    basis: 'fixed' as const,
+    gates: { ...suggestion.gates, setsUnlocked: false },
+    lastTime,
+  };
   if (reEntry === null || topLoadLbs === undefined) {
     const rest = classifyBreak(lastTime.daysAgo) === 'long' ? LONG_BREAK_NOTE : NO_LOAD_NOTE;
-    return { ...suggestion, lastTime, reasoning: `${since}: ${rest} ${suggestion.reasoning}` };
+    const reasoning = `${since}: ${rest} The gates read that session: ${read}`;
+    return { ...stale, delta: PROGRESSION_HOLD_LBS, reasoning };
   }
   const percent = Math.round(reEntry.loadFactor * 100);
   return {
-    ...suggestion,
+    ...stale,
     delta: reEntry.loadLbs - topLoadLbs,
-    repDelta: 0,
-    basis: 'fixed',
     reasoning:
       `${since} (${reEntry.band}): step down from ${topLoadLbs} lb to ${reEntry.loadLbs} lb, ` +
-      `${percent}% of that load (${reEntry.source}), rather than progress off a stale basis. ` +
-      `The gates read that session: ${suggestion.reasoning}`,
-    lastTime,
+      `${percent}% of that load rounded down, never under 5 lb (${reEntry.source}), rather ` +
+      `than progress off a stale basis. The gates read that session: ${read}`,
     reEntry,
   };
 }
 
+const SETS_UNLOCKED_CLAUSE = ', sets unlocked: consider +1 set next session';
+
 const LONG_BREAK_NOTE =
-  'no old load is scaled after a break this long; re-enter through ' +
+  'hold; no old load is scaled after a break this long, so re-enter through ' +
   "`profile.get_starting_prescription`'s feeler set.";
-const NO_LOAD_NOTE = 'that session recorded no load to scale.';
+const NO_LOAD_NOTE = 'hold; that session recorded no load to scale, so nothing is added to it.';
 
 /**
  * Pick the session id whose stored sets the progression heuristic reads from.
@@ -2006,7 +2022,7 @@ function routeHitHigh(
   const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
   const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
-    const unlock = gates.setsUnlocked ? ', sets unlocked: consider +1 set next session' : '';
+    const unlock = gates.setsUnlocked ? SETS_UNLOCKED_CLAUSE : '';
     return {
       delta: PROGRESSION_HOLD_LBS,
       repDelta: 0,

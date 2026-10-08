@@ -82,8 +82,17 @@ const LOAD_STEP_LBS = 5;
 // A factor of one third lands a hair under a whole step in floating point (150 / 3).
 const ROUNDING_SLACK = 1e-9;
 
-export function readLastTime(startedAt: string, today: string): LastTime {
-  const daysAgo = daysBetween(localDate(startedAt), today);
+/**
+ * `trainingDayInstant` dates the session the way the VW-462 training-day rule does (its end, or
+ * its last working set's end), so a session that crosses local midnight reads the same day here
+ * as on `plan.next_workout`.
+ */
+export function readLastTime(
+  startedAt: string,
+  trainingDayInstant: string,
+  today: string,
+): LastTime {
+  const daysAgo = daysBetween(localDate(trainingDayInstant), today);
   return { startedAt, daysAgo, stale: classifyBreak(daysAgo) !== 'none' };
 }
 
@@ -91,6 +100,10 @@ export function readLastTime(startedAt: string, today: string): LastTime {
  * The re-entry load for a stale basis in the short or medium band, rounded down to a 5 lb step.
  * `null` when the basis is fresh, has no load, or the break is long enough that no old load is
  * scaled at all.
+ *
+ * Never under one 5 lb step: that step is the smallest load change this tool suggests, so a light
+ * lift (10 lb x one third) re-enters at 5 lb rather than at 0. Never above the old load either: a
+ * top load of 5 lb or less holds where it was.
  */
 export function staleBasisReEntry(
   lastTime: LastTime,
@@ -101,10 +114,10 @@ export function staleBasisReEntry(
   if (band !== 'short' && band !== 'medium') return null;
   const rule = RE_ENTRY_RULES[band];
   const loadFactor = rule.value.loadFactor ?? 1;
-  const scaled = (topLoadLbs * loadFactor + ROUNDING_SLACK) / LOAD_STEP_LBS;
+  const steps = Math.floor((topLoadLbs * loadFactor + ROUNDING_SLACK) / LOAD_STEP_LBS);
   return {
     band,
-    loadLbs: Math.floor(scaled) * LOAD_STEP_LBS,
+    loadLbs: Math.min(topLoadLbs, Math.max(1, steps) * LOAD_STEP_LBS),
     loadFactor,
     source: citation(rule.sourceKind, rule.sourceRef),
   };

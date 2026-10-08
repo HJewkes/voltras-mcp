@@ -509,7 +509,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.suggest_progression': {
     job: 'planSuggest',
     when: '"What next time?"',
-    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta. When `lastTime` is stale, use the `loadLbs` in `reEntry` and say the days',
+    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta. When `lastTime` is stale, use the `loadLbs` in `reEntry` (none after a long break: use the starting prescription) and say the days',
   },
   'plan.warmup_ramp': {
     job: 'planSuggest',
