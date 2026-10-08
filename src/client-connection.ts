@@ -58,6 +58,7 @@ import { registerAccountabilityTools } from './tools/accountability-tools.js';
 import { registerGoalTools } from './tools/goal-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
+import { applyMcpAudit } from './actions/mcp-audit.js';
 import { applyLeaseGuard } from './lease-guard.js';
 import { surrenderDevice } from './tools/device-surrender.js';
 import { log } from './logger.js';
@@ -223,6 +224,8 @@ function registerRealTools(
   // every registration above. Wrapping earlier would gate a placeholder's
   // `STARTING` response instead of the real work.
   applyLeaseGuard(placeholders, state, self);
+  // Outermost, so a lease refusal is recorded too (VW-892).
+  applyMcpAudit(placeholders, state, self);
 }
 
 // Server-level onboarding text handed to every connecting client (VW-126).
