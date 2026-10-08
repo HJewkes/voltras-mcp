@@ -14,6 +14,7 @@
 //
 // Confidentiality: fitness metadata only — no protocol data (NF-07).
 
+import { localDate, localMidnightIso } from '../../analytics/training-days.js';
 import {
   doseWeights,
   targetMuscles,
@@ -21,6 +22,7 @@ import {
 } from '../../exercises/muscle-attribution.js';
 import type { TitanMuscleGroup } from '../../exercises/muscle-map.js';
 import { attributionOfExercise } from '../../exercises/seed-attribution.js';
+import { addDays, mondayOf } from '../../plan/block-calendar.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import type { StoredSet } from '../../store/types.js';
 
@@ -31,19 +33,17 @@ export type MuscleCatalogLookup = (
   | { name?: string; muscleGroups: readonly string[]; secondaryMuscleGroups?: readonly string[] }
   | undefined;
 
-/** Monday 00:00:00.000 UTC of the ISO week containing `now`. */
+/**
+ * The instant the LOCAL calendar week (Monday to Sunday) containing `now` starts: local Monday
+ * midnight, in the process timezone, so a Sunday-evening set west of UTC stays in Sunday's week.
+ */
 export function startOfCalendarWeekIso(now: Date): string {
-  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const isoDay = midnight.getUTCDay() === 0 ? 7 : midnight.getUTCDay(); // 1=Mon..7=Sun
-  midnight.setUTCDate(midnight.getUTCDate() - (isoDay - 1));
-  return midnight.toISOString();
+  return localMidnightIso(mondayOf(now.toISOString()));
 }
 
-/** `weekStartIso` plus 7 days — the exclusive upper bound of the calendar week. */
+/** Local midnight seven days after `weekStartIso`: the exclusive upper bound, across DST too. */
 export function endOfCalendarWeekIso(weekStartIso: string): string {
-  const end = new Date(weekStartIso);
-  end.setUTCDate(end.getUTCDate() + 7);
-  return end.toISOString();
+  return localMidnightIso(addDays(localDate(weekStartIso), 7));
 }
 
 /**

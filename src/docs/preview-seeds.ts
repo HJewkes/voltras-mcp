@@ -36,8 +36,8 @@ import {
   type GoalInfoLevel,
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
-import { localDate, readTrainingDays } from '../analytics/training-days.js';
-import { addDays } from '../plan/block-calendar.js';
+import { readTrainingDays } from '../analytics/training-days.js';
+import { mondayOf } from '../plan/block-calendar.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 import { HISTORY_SEED_EXERCISES } from '../exercises/history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
@@ -689,13 +689,6 @@ async function seedDatedBlock(store: GoalPreviewStore, now: Date): Promise<void>
     changedBy: 'user',
     declaredAt: seededAt(now, GOAL_PREVIEW_BLOCK_WEEK),
   });
-}
-
-/** The Monday of the local calendar week an instant falls in. */
-function mondayOf(iso: string): string {
-  const date = localDate(iso);
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  return addDays(date, -((weekday + 6) % 7));
 }
 
 /** The load of the target's own start week: where its band is anchored (VW-449). */

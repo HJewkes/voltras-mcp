@@ -182,7 +182,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 44;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -480,7 +480,9 @@ const UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL = `
  * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
  * migrated from v36 already carries the v36 trigger, which would otherwise survive and
  * leave `device_id` the one column an out-of-band UPDATE could rewrite. The v42 step does the
- * same to hold `reason`, `summary_json` and `session_id` fixed.
+ * same to hold `reason`, `summary_json` and `session_id` fixed, and the v43 step to hold the
+ * hidden `rowid` fixed: an `UPDATE OR REPLACE` that moves a row onto another row's rowid
+ * deletes that row without firing `ui_actions_no_delete` (VW-903).
  */
 const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
@@ -488,6 +490,7 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
     WHEN NOT (
       OLD.result_status = 'pending'
       AND NEW.result_status IN ('ok','error')
+      AND NEW.rowid = OLD.rowid
       AND NEW.action_id = OLD.action_id
       AND NEW.action_name = OLD.action_name
       AND NEW.actor = OLD.actor
@@ -505,6 +508,45 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
 const UI_ACTION_SESSION_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ui_actions_session
     ON ui_actions(session_id, created_at DESC);`;
+
+/**
+ * The insert half of the audit trail's no-delete guarantee (VW-903). `REPLACE INTO` and
+ * `INSERT OR REPLACE` remove a conflicting row without firing `ui_actions_no_delete`, because
+ * SQLite runs no DELETE trigger for a REPLACE unless `recursive_triggers` is on, and a pragma on
+ * this process's connection would not cover any other connection. A BEFORE INSERT trigger fires
+ * before the conflict is resolved, so it refuses any insert whose id is already taken, however
+ * it resolves conflicts. That includes `ON CONFLICT DO NOTHING`, so `claimUiAction` reads first.
+ *
+ * The table has a second unique key, the hidden `rowid`, and an insert that names one can
+ * REPLACE the row holding it, so the trigger checks that too. In a BEFORE INSERT trigger an
+ * auto-assigned rowid reads as -1, which is why -1 is skipped; the AFTER INSERT trigger keeps
+ * every rowid at 1 or above, so no row can sit at -1 for a named one to replace.
+ *
+ * Owned by the v43 step, not `SCHEMA_SQL`: an older binary claims with `DO NOTHING`, and the
+ * version bump is what keeps one from opening a store whose trigger would refuse its replays.
+ */
+const UI_ACTIONS_NO_REPLACE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_no_replace
+    BEFORE INSERT ON ui_actions
+    WHEN EXISTS (
+      SELECT 1 FROM ui_actions
+       WHERE action_id = NEW.action_id OR (NEW.rowid <> -1 AND rowid = NEW.rowid)
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;
+  CREATE TRIGGER IF NOT EXISTS ui_actions_positive_rowid
+    AFTER INSERT ON ui_actions
+    WHEN NEW.rowid < 1
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;`;
+
+/**
+ * The activity feed's keyset order (VW-910). `listActivity` sorts on `created_at DESC, action_id
+ * DESC` and pages from a cursor over the same pair; with only `idx_ui_actions_created` the
+ * tiebreak forced a temp B-tree over every matching row, about 0.4 s a page at 1.5M rows. Owned
+ * by the v44 step so the index exists on a migrated and a fresh store alike.
+ */
+const UI_ACTIONS_ACTIVITY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_activity
+    ON ui_actions(created_at DESC, action_id DESC);`;
 
 const uiActionsTableSql = (name: string): string => `
   CREATE TABLE IF NOT EXISTS ${name} (
@@ -2316,6 +2358,45 @@ function migrateV41ToV42(db: DatabaseSync): void {
     db.exec(UI_ACTION_SESSION_INDEX_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
     db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v42 -> v43: refuse a REPLACE on the audit trail (VW-903). Triggers only, no rows touched;
+ * see `UI_ACTIONS_NO_REPLACE_TRIGGER_SQL`. Complete-once is dropped and recreated to pin the
+ * rowid. Runs on a fresh store too, which is where a fresh store gets them.
+ *
+ * The step stamps 43 inside its own transaction: a v42 binary's replay would throw on these
+ * triggers, so a file that has them must never read as 42, even after a kill mid-open.
+ */
+function migrateV42ToV43(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('PRAGMA user_version = 43');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v43 -> v44: index the activity keyset (VW-910). An index only, no rows or triggers touched, so
+ * `ui_actions_no_replace` and the rowid pin carry over. The stamp sits inside the transaction: a
+ * kill mid-step leaves the file at 43 with no index, and the next open builds it again.
+ */
+function migrateV43ToV44(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_ACTIVITY_INDEX_SQL);
+    db.exec('PRAGMA user_version = 44');
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -5398,18 +5479,32 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Insert the row, or report the existing one. `INSERT ... ON CONFLICT DO
-   * NOTHING` then re-read: the primary key decides the race, not this process,
-   * so two servers over one file would arbitrate correctly too.
+   * Insert the row, or report the existing one. Read first: the no-replace
+   * trigger refuses an insert on a taken id however it resolves conflicts, so
+   * `ON CONFLICT DO NOTHING` would throw rather than skip (VW-903). The
+   * database still decides a race between two servers over one file: the
+   * loser's insert throws, and it reports the row the winner wrote.
    */
   async claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome> {
-    const inserted = this.db
+    const existing = this.readUiAction(input.actionId);
+    if (existing !== undefined) return Promise.resolve({ kind: 'taken', existing });
+    try {
+      this.insertPendingUiAction(input);
+    } catch (err) {
+      const winner = this.readUiAction(input.actionId);
+      if (winner === undefined) throw err;
+      return Promise.resolve({ kind: 'taken', existing: winner });
+    }
+    return Promise.resolve({ kind: 'claimed' });
+  }
+
+  private insertPendingUiAction(input: ClaimUiActionInput): void {
+    this.db
       .prepare(
         `INSERT INTO ui_actions (
            action_id, action_name, actor, surface, device_id, flow_id, flow_step,
            reason, summary_json, session_id, input_hash, result_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-         ON CONFLICT(action_id) DO NOTHING`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       )
       .run(
         input.actionId,
@@ -5425,15 +5520,6 @@ export class SqliteSessionStore implements SessionStore {
         input.inputHash,
         input.createdAt,
       );
-    if (inserted.changes > 0) return Promise.resolve({ kind: 'claimed' });
-    const existing = this.readUiAction(input.actionId);
-    if (existing === undefined) {
-      // The row lost the insert race and then vanished. `ui_actions` refuses
-      // deletes, so this cannot happen against this schema; it is reported
-      // rather than silently retried because a retry could double-run.
-      throw new Error(`ui_actions: claim lost on ${input.actionId} but no row exists`);
-    }
-    return Promise.resolve({ kind: 'taken', existing });
   }
 
   async completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction> {
@@ -5515,8 +5601,10 @@ export class SqliteSessionStore implements SessionStore {
       bindings.push(filter.until);
     }
     if (filter?.after !== undefined) {
-      clauses.push('(created_at < ? OR (created_at = ? AND action_id < ?))');
-      bindings.push(filter.after.createdAt, filter.after.createdAt, filter.after.actionId);
+      // A row-value compare lets the planner seek into `idx_ui_actions_activity`; the OR form
+      // scanned from the newest row down to the cursor (VW-910).
+      clauses.push('(created_at, action_id) < (?, ?)');
+      bindings.push(filter.after.createdAt, filter.after.actionId);
     }
     const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
     bindings.push(filter?.limit ?? 50);
@@ -6746,6 +6834,12 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 41) {
     migrateV41ToV42(db);
+  }
+  if (current <= 42) {
+    migrateV42ToV43(db);
+  }
+  if (current <= 43) {
+    migrateV43ToV44(db);
   }
 }
 

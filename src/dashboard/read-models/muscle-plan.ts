@@ -74,7 +74,7 @@ export interface MusclePlanFrequency {
 }
 
 export interface MusclePlanView {
-  /** Monday 00:00:00 UTC of the calendar week `now` falls in — the boundary `doneSetsThisWeek` is scoped to. */
+  /** Local Monday midnight of the calendar week `now` falls in — the boundary `doneSetsThisWeek` is scoped to. */
   weekStart: string;
   /** Mesocycle week index of the active training week, when the coach set one (VW-326). */
   weekIndex?: number;

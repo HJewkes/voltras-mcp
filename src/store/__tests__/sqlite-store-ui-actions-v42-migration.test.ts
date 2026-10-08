@@ -16,7 +16,7 @@ import { verifyStore } from '../portable/verify.js';
 import type { SqliteSessionStore } from '../sqlite-store.js';
 import { openSqliteTestStore } from './open-test-store.js';
 
-const CURRENT_VERSION = 42;
+const CURRENT_VERSION = 44;
 const PRIOR_VERSION = 41;
 
 /** `ui_actions` as it stood at v41: no `mcp`, no reason, summary or session. */
@@ -224,6 +224,23 @@ describe('the ui_actions v42 migration, from a v41 store with rows', () => {
       ).toThrow(/never deleted/);
     }
     expect(oldRows(path)).toHaveLength(4);
+  });
+
+  it('refuses a REPLACE over an old row once the ladder reaches v43 (VW-903)', async () => {
+    const path = v41Store();
+    await openSqliteTestStore({ path: path }).close();
+    const before = oldRows(path);
+
+    expect(() =>
+      withRawDb(path, (db) =>
+        db.exec(
+          `REPLACE INTO ui_actions (action_id, action_name, actor, surface, input_hash,
+             result_status, created_at)
+           VALUES ('act-ok', 'forged', 'coach', 'phone', 'h', 'ok', '${LATER}')`,
+        ),
+      ),
+    ).toThrow(/never replaced/);
+    expect(oldRows(path)).toEqual(before);
   });
 
   it.each(['reason', 'summary_json', 'session_id'])(
