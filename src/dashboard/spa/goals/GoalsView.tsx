@@ -36,6 +36,7 @@ import {
   EmptyState,
   GoalCard,
   GoalPriorityIndex,
+  Link,
   SessionsGoalCard,
   Surface,
   Typography,
@@ -46,6 +47,7 @@ import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
 import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
+import { routeHash } from '../routing.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
 import { calibrationLine } from './calibration-copy.js';
 import {
@@ -62,7 +64,7 @@ import {
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
-import { unreviewedLine } from './review-copy.js';
+import { REVIEW_DAYS_LINK, unreviewedLine } from './review-copy.js';
 import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
 export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
@@ -92,12 +94,30 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   );
 }
 
-/** The one line saying how many days the counts below leave out (VW-514); nothing at zero. */
+const DAYS_HASH = routeHash({ name: 'days' });
+
+/**
+ * The one line saying how many days the counts below leave out (VW-514), and the way to
+ * mark them (VW-847); nothing at zero. The approved words stay as they are; the link follows.
+ */
 function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JSX.Element | null {
   const color = useOnSurfaceColor('secondary');
   const line = unreviewedLine(props.unreviewedDays);
   if (line === null) return null;
-  return <Text style={{ color, fontSize: 14 }}>{line}</Text>;
+  return (
+    <Text style={{ color, fontSize: 14 }}>
+      {line}{' '}
+      <Link
+        href={DAYS_HASH}
+        color="primary"
+        onPress={() => {
+          window.location.hash = DAYS_HASH;
+        }}
+      >
+        {REVIEW_DAYS_LINK}
+      </Link>
+    </Text>
+  );
 }
 
 /** The lead priority's lift as the full goal card (plan §4, wall; VW-385). */

@@ -54,6 +54,7 @@ import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
 import { GoalsRoute } from './goals/GoalsRoute';
 import { BodyPage } from './body/BodyPage';
+import { DaysPage } from './days/DaysPage';
 import type { PrescriptionView } from './adapter';
 
 // Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
@@ -168,6 +169,8 @@ function RoutePage(): React.JSX.Element | null {
       return <SessionSummaryPage sessionId={route.sessionId} />;
     case 'body':
       return <BodyPage muscle={route.muscle} />;
+    case 'days':
+      return <DaysPage />;
     // Both render their own chrome in `App`.
     case 'goals':
     case 'live':
