@@ -16,6 +16,11 @@ const MARKS_LAST_TIME =
   'Marks targets copied from the lifter’s last session of the exercise so they never read as ' +
   'the coach’s prescription; the date shows how old they are.';
 
+// The rule-1 sources of the re-entry rule: fifteen days or more off is a break worth naming.
+const BREAK_AGE_SOURCE =
+  'Hwang 2017, https://pubmed.ncbi.nlm.nih.gov/28328712/; ' +
+  'Ogasawara 2011, https://pubmed.ncbi.nlm.nih.gov/21771261/';
+
 function engineeringDefault(id: string, text: string, reason: string): Fragment {
   return { id, text, sourceKind: 'engineering-default', sourceRef: reason };
 }
@@ -70,6 +75,12 @@ export const LIVE_FRAGMENTS = {
     'Last time · {{date}}',
     MARKS_LAST_TIME,
   ),
+  derivedTargetsStale: {
+    id: 'live.derived-targets.caption-stale',
+    text: 'Last time · {{date}} · {{days}} days ago, before a break',
+    sourceKind: 'paper',
+    sourceRef: BREAK_AGE_SOURCE,
+  },
   derivedSetCount: engineeringDefault(
     'live.derived-targets.set-count',
     '{{line}} (last time)',

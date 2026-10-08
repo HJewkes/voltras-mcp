@@ -140,8 +140,11 @@ export interface PrescriptionView {
    * that predate it still type.
    */
   source?: 'prescribed' | 'derived';
-  /** Only on a derived view: when the session it was derived from started. */
-  derivedFrom?: { startedAt: string };
+  /**
+   * Only on a derived view: when the session it was derived from started, and (VW-908) how
+   * many local days ago and whether that is a break. The age is absent from older payloads.
+   */
+  derivedFrom?: { startedAt: string; daysAgo?: number; stale?: boolean };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;

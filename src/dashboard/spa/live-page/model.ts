@@ -221,6 +221,8 @@ export interface SessionModel {
   prescriptionSource?: 'prescribed' | 'derived' | null;
   /** When "last time" started, an ISO instant. Absent or null unless the targets are derived. */
   derivedFromAt?: string | null;
+  /** Days since "last time" when that is a break of 15+ days (VW-908). Absent or null otherwise. */
+  derivedStaleDays?: number | null;
   /**
    * Prescribed reps per set. The lab fixture hardcoded `8` in the header; the store has
    * this for real as the active set's configured rep target, so the port reads it.

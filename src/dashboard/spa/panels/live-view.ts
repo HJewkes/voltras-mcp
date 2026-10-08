@@ -274,14 +274,18 @@ function mapRestBasis(rest: Snapshot['rest']): RestBasisModel | null {
 /** Where the prescription came from (VW-643). A view from before `source` existed is the plan's. */
 function mapPrescriptionSource(
   prescription: PrescriptionView | null,
-): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt'> {
-  if (prescription === null) return { prescriptionSource: null, derivedFromAt: null };
+): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt' | 'derivedStaleDays'> {
+  if (prescription === null) {
+    return { prescriptionSource: null, derivedFromAt: null, derivedStaleDays: null };
+  }
   if (prescription.source !== 'derived') {
-    return { prescriptionSource: 'prescribed', derivedFromAt: null };
+    return { prescriptionSource: 'prescribed', derivedFromAt: null, derivedStaleDays: null };
   }
   return {
     prescriptionSource: 'derived',
     derivedFromAt: prescription.derivedFrom?.startedAt ?? null,
+    derivedStaleDays:
+      prescription.derivedFrom?.stale === true ? (prescription.derivedFrom.daysAgo ?? null) : null,
   };
 }
 

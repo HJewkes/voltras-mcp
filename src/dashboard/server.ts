@@ -2036,7 +2036,12 @@ async function fetchDerivedPrescription(
   const targets = deriveExerciseTargets(sets);
   if (targets === null) return null;
   return buildDerivedPrescriptionView(
-    { activeExerciseId: exerciseId, targets, derivedFromStartedAt: last.startedAt },
+    {
+      activeExerciseId: exerciseId,
+      targets,
+      derivedFromStartedAt: last.startedAt,
+      today: localDate(session.startedAt),
+    },
     state.exercises,
   );
 }
