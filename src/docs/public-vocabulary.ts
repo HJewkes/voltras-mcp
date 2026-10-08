@@ -543,6 +543,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'loadFactor',
   'sourceKind',
   'sourceRef',
+  // VW-907: `plan.suggest_progression`'s age of the basis session, and the load after a break.
+  'lastTime',
+  'daysAgo',
+  'stale',
+  'loadLbs',
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
