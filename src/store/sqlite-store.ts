@@ -85,6 +85,7 @@ import {
   UI_ACTION_SURFACES,
   type AdvisoryAnswer,
   type AdvisoryAnswerRetire,
+  type ListActivityFilter,
   type ClaimUiActionInput,
   type ClaimUiActionOutcome,
   type CompleteUiActionInput,
@@ -181,7 +182,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-export const SCHEMA_VERSION = 41;
+export const SCHEMA_VERSION = 42;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -447,14 +448,16 @@ const UI_ACTION_DEVICE_INDEX_SQL = `
     ON ui_actions(device_id, created_at DESC);`;
 
 /**
- * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * The v39 shape of the trigger, frozen: the v39 step runs it against a table that has no
+ * `reason`, `summary_json` or `session_id` yet, and the v42 step replaces it. The one legal
+ * update: `pending` -> `ok` or `error`, with every column that records WHO
  * submitted and WHAT they submitted held fixed.
  *
  * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
  * migrated from v36 already carries the v36 trigger, which would otherwise survive and
  * leave `device_id` the one column an out-of-band UPDATE could rewrite.
  */
-const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+const UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
     BEFORE UPDATE ON ui_actions
     WHEN NOT (
@@ -470,8 +473,41 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
     )
     BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
 
-const UI_ACTIONS_DDL = `
-  CREATE TABLE IF NOT EXISTS ui_actions (
+/**
+ * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * submitted and WHAT they submitted held fixed.
+ *
+ * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
+ * migrated from v36 already carries the v36 trigger, which would otherwise survive and
+ * leave `device_id` the one column an out-of-band UPDATE could rewrite. The v42 step does the
+ * same to hold `reason`, `summary_json` and `session_id` fixed.
+ */
+const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.device_id IS OLD.device_id
+      AND NEW.reason IS OLD.reason
+      AND NEW.summary_json IS OLD.summary_json
+      AND NEW.session_id IS OLD.session_id
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
+
+/** Owned by the v42 step, not `SCHEMA_SQL`: it names `session_id`, absent from a v41 table. */
+const UI_ACTION_SESSION_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_session
+    ON ui_actions(session_id, created_at DESC);`;
+
+const uiActionsTableSql = (name: string): string => `
+  CREATE TABLE IF NOT EXISTS ${name} (
     action_id TEXT PRIMARY KEY,
     action_name TEXT NOT NULL,
     actor TEXT NOT NULL CHECK (actor IN (${sqlList(UI_ACTION_ACTORS)})),
@@ -479,13 +515,18 @@ const UI_ACTIONS_DDL = `
     device_id TEXT,
     flow_id TEXT,
     flow_step TEXT,
+    reason TEXT,
+    summary_json TEXT,
+    session_id TEXT,
     input_hash TEXT NOT NULL,
     result_status TEXT NOT NULL CHECK (result_status IN (${sqlList(UI_ACTION_STATUSES)})),
     result_code TEXT,
     result_json TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT
-  );
+  );`;
+
+const UI_ACTIONS_DDL = `${uiActionsTableSql('ui_actions')}
   CREATE INDEX IF NOT EXISTS idx_ui_actions_created
     ON ui_actions(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ui_actions_flow
@@ -2199,7 +2240,7 @@ function migrateV38ToV39(db: DatabaseSync): void {
     addColumnIfMissing(db, 'ui_actions', 'device_id', 'TEXT');
     db.exec(UI_ACTION_DEVICE_INDEX_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
-    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -2248,6 +2289,67 @@ function migrateV40ToV41(db: DatabaseSync): void {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+/**
+ * v41 -> v42: the audit table learns the agent (VW-849 S1). `surface` gains `mcp`, and three
+ * nullable columns arrive: `reason`, `summary_json`, `session_id`.
+ *
+ * A REBUILD, because SQLite cannot alter a CHECK. Inside one transaction: create
+ * `ui_actions_v42`, copy every row column for column (the new columns NULL), assert the
+ * copied count equals the source count, drop the old table, rename, then recreate the
+ * indexes and both triggers. `DROP TABLE` fires no DELETE trigger, so the audit trail's
+ * delete refusal survives the swap and is recreated, not relied on.
+ *
+ * NO BACK-FILL: a row written before this step never recorded a reason, summary or session,
+ * and NULL says exactly that (same stance as v39).
+ *
+ * GUARDED BY SHAPE. The rebuild runs only when the stored table lacks `mcp` or `reason`, so a
+ * fresh store (whose `SCHEMA_SQL` already holds the new DDL) and a second open skip it. The
+ * index and triggers are recreated either way, which is idempotent. A failure rolls back and
+ * leaves the v41 shape.
+ */
+function migrateV41ToV42(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    if (uiActionsNeedsRebuild(db)) rebuildUiActions(db);
+    db.exec(UI_ACTION_SESSION_INDEX_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ui_actions'`)
+    .get() as { sql: string } | undefined;
+  if (row === undefined) return false;
+  return !row.sql.includes("'mcp'") || !row.sql.includes('reason');
+}
+
+const UI_ACTIONS_V41_COLUMNS =
+  'action_id, action_name, actor, surface, device_id, flow_id, flow_step, input_hash, ' +
+  'result_status, result_code, result_json, created_at, completed_at';
+
+function rebuildUiActions(db: DatabaseSync): void {
+  db.exec(uiActionsTableSql('ui_actions_v42'));
+  db.exec(
+    `INSERT INTO ui_actions_v42 (${UI_ACTIONS_V41_COLUMNS})
+       SELECT ${UI_ACTIONS_V41_COLUMNS} FROM ui_actions`,
+  );
+  const count = (table: string): number =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+  if (count('ui_actions_v42') !== count('ui_actions')) {
+    throw new Error('ui_actions v42 rebuild: copied row count differs from the source');
+  }
+  db.exec('DROP TABLE ui_actions');
+  db.exec('ALTER TABLE ui_actions_v42 RENAME TO ui_actions');
+  db.exec(UI_ACTIONS_DDL);
+  db.exec(UI_ACTION_DEVICE_INDEX_SQL);
 }
 
 function assertNoDuplicateAssignments(db: DatabaseSync): void {
@@ -2365,6 +2467,9 @@ interface UiActionRow {
   device_id: string | null;
   flow_id: string | null;
   flow_step: string | null;
+  reason: string | null;
+  summary_json: string | null;
+  session_id: string | null;
   input_hash: string;
   result_status: string;
   result_code: string | null;
@@ -2382,6 +2487,9 @@ function rowToUiAction(row: UiActionRow): StoredUiAction {
     ...(row.device_id === null ? {} : { deviceId: row.device_id }),
     ...(row.flow_id === null ? {} : { flowId: row.flow_id }),
     ...(row.flow_step === null ? {} : { flowStep: row.flow_step }),
+    ...(row.reason === null ? {} : { reason: row.reason }),
+    ...(row.summary_json === null ? {} : { summaryJson: row.summary_json }),
+    ...(row.session_id === null ? {} : { sessionId: row.session_id }),
     inputHash: row.input_hash,
     resultStatus: row.result_status as UiActionStatus,
     ...(row.result_code === null ? {} : { resultCode: row.result_code }),
@@ -5299,8 +5407,8 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(
         `INSERT INTO ui_actions (
            action_id, action_name, actor, surface, device_id, flow_id, flow_step,
-           input_hash, result_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+           reason, summary_json, session_id, input_hash, result_status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT(action_id) DO NOTHING`,
       )
       .run(
@@ -5311,6 +5419,9 @@ export class SqliteSessionStore implements SessionStore {
         input.deviceId ?? null,
         input.flowId ?? null,
         input.flowStep ?? null,
+        input.reason ?? null,
+        input.summaryJson ?? null,
+        input.sessionId ?? null,
         input.inputHash,
         input.createdAt,
       );
@@ -5377,6 +5488,40 @@ export class SqliteSessionStore implements SessionStore {
     bindings.push(filter?.limit ?? 100);
     const rows = this.db
       .prepare(`SELECT * FROM ui_actions ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...bindings) as unknown as UiActionRow[];
+    return Promise.resolve(rows.map(rowToUiAction));
+  }
+
+  listActivity(filter?: ListActivityFilter): Promise<StoredUiAction[]> {
+    const clauses: string[] = [];
+    const bindings: (string | number)[] = [];
+    const equals: [string, string | undefined][] = [
+      ['session_id', filter?.sessionId],
+      ['flow_id', filter?.flowId],
+      ['actor', filter?.actor],
+      ['result_status', filter?.status],
+    ];
+    for (const [column, value] of equals) {
+      if (value === undefined) continue;
+      clauses.push(`${column} = ?`);
+      bindings.push(value);
+    }
+    if (filter?.since !== undefined) {
+      clauses.push('created_at >= ?');
+      bindings.push(filter.since);
+    }
+    if (filter?.until !== undefined) {
+      clauses.push('created_at <= ?');
+      bindings.push(filter.until);
+    }
+    if (filter?.after !== undefined) {
+      clauses.push('(created_at < ? OR (created_at = ? AND action_id < ?))');
+      bindings.push(filter.after.createdAt, filter.after.createdAt, filter.after.actionId);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    bindings.push(filter?.limit ?? 50);
+    const rows = this.db
+      .prepare(`SELECT * FROM ui_actions ${where} ORDER BY created_at DESC, action_id DESC LIMIT ?`)
       .all(...bindings) as unknown as UiActionRow[];
     return Promise.resolve(rows.map(rowToUiAction));
   }
@@ -6598,6 +6743,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 40) {
     migrateV40ToV41(db);
+  }
+  if (current <= 41) {
+    migrateV41ToV42(db);
   }
 }
 

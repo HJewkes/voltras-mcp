@@ -153,6 +153,9 @@ export interface AuditedWrite {
   deviceId?: string | undefined;
   flowId?: string | undefined;
   flowStep?: string | undefined;
+  reason?: string | undefined;
+  summaryJson?: string | undefined;
+  sessionId?: string | undefined;
   inputHash: string;
   tier?: ActionTier | undefined;
   /** Runs only after the id is claimed, so it can never run twice for one id. */
@@ -184,6 +187,9 @@ async function claimRunComplete(
     ...(write.deviceId === undefined ? {} : { deviceId: write.deviceId }),
     ...(write.flowId === undefined ? {} : { flowId: write.flowId }),
     ...(write.flowStep === undefined ? {} : { flowStep: write.flowStep }),
+    ...(write.reason === undefined ? {} : { reason: write.reason }),
+    ...(write.summaryJson === undefined ? {} : { summaryJson: write.summaryJson }),
+    ...(write.sessionId === undefined ? {} : { sessionId: write.sessionId }),
     inputHash: write.inputHash,
     createdAt: deps.now().toISOString(),
   });
