@@ -387,7 +387,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.next_workout': {
     job: 'planRead',
     when: '"What do I do today?"',
-    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes. Every shape carries `reEntry`: `phase` and `daysSinceLastTrainingDay`; in a break (`in_gap`) or the window after one (`returning`) also `band` (short, medium, long), `windowEndsOn` and the `rule` with its `source`. State the days and the band in one sentence; it reads only and changes no prescription',
+    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes. Every shape carries `reEntry`: `phase` and `daysSinceLastTrainingDay`; in a break or the window after one it adds `band` (short, medium, long), `windowEndsOn` and the `rule` with its `source`. State the days and the band in one sentence; it reads only and changes no prescription',
   },
   'plan.block.planning_brief': {
     job: 'planRead',
