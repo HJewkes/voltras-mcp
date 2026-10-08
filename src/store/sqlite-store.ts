@@ -182,7 +182,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 43;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -505,6 +505,23 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
 const UI_ACTION_SESSION_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ui_actions_session
     ON ui_actions(session_id, created_at DESC);`;
+
+/**
+ * The insert half of the audit trail's no-delete guarantee (VW-903). `REPLACE INTO` and
+ * `INSERT OR REPLACE` remove a conflicting row without firing `ui_actions_no_delete`, because
+ * SQLite runs no DELETE trigger for a REPLACE unless `recursive_triggers` is on, and a pragma on
+ * this process's connection would not cover any other connection. A BEFORE INSERT trigger fires
+ * before the conflict is resolved, so it refuses any insert whose id is already taken, however
+ * it resolves conflicts. That includes `ON CONFLICT DO NOTHING`, so `claimUiAction` reads first.
+ *
+ * Owned by the v43 step, not `SCHEMA_SQL`: an older binary claims with `DO NOTHING`, and the
+ * version bump is what keeps one from opening a store whose trigger would refuse its replays.
+ */
+const UI_ACTIONS_NO_REPLACE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_no_replace
+    BEFORE INSERT ON ui_actions
+    WHEN EXISTS (SELECT 1 FROM ui_actions WHERE action_id = NEW.action_id)
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;`;
 
 const uiActionsTableSql = (name: string): string => `
   CREATE TABLE IF NOT EXISTS ${name} (
@@ -2321,6 +2338,15 @@ function migrateV41ToV42(db: DatabaseSync): void {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+/**
+ * v42 -> v43: refuse a REPLACE on the audit trail (VW-903). One trigger, no rows touched;
+ * see `UI_ACTIONS_NO_REPLACE_TRIGGER_SQL`. Runs on a fresh store too, which is where a fresh
+ * store gets it.
+ */
+function migrateV42ToV43(db: DatabaseSync): void {
+  db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
 }
 
 function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
@@ -5398,18 +5424,32 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Insert the row, or report the existing one. `INSERT ... ON CONFLICT DO
-   * NOTHING` then re-read: the primary key decides the race, not this process,
-   * so two servers over one file would arbitrate correctly too.
+   * Insert the row, or report the existing one. Read first: the no-replace
+   * trigger refuses an insert on a taken id however it resolves conflicts, so
+   * `ON CONFLICT DO NOTHING` would throw rather than skip (VW-903). The
+   * database still decides a race between two servers over one file: the
+   * loser's insert throws, and it reports the row the winner wrote.
    */
   async claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome> {
-    const inserted = this.db
+    const existing = this.readUiAction(input.actionId);
+    if (existing !== undefined) return Promise.resolve({ kind: 'taken', existing });
+    try {
+      this.insertPendingUiAction(input);
+    } catch (err) {
+      const winner = this.readUiAction(input.actionId);
+      if (winner === undefined) throw err;
+      return Promise.resolve({ kind: 'taken', existing: winner });
+    }
+    return Promise.resolve({ kind: 'claimed' });
+  }
+
+  private insertPendingUiAction(input: ClaimUiActionInput): void {
+    this.db
       .prepare(
         `INSERT INTO ui_actions (
            action_id, action_name, actor, surface, device_id, flow_id, flow_step,
            reason, summary_json, session_id, input_hash, result_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-         ON CONFLICT(action_id) DO NOTHING`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       )
       .run(
         input.actionId,
@@ -5425,15 +5465,6 @@ export class SqliteSessionStore implements SessionStore {
         input.inputHash,
         input.createdAt,
       );
-    if (inserted.changes > 0) return Promise.resolve({ kind: 'claimed' });
-    const existing = this.readUiAction(input.actionId);
-    if (existing === undefined) {
-      // The row lost the insert race and then vanished. `ui_actions` refuses
-      // deletes, so this cannot happen against this schema; it is reported
-      // rather than silently retried because a retry could double-run.
-      throw new Error(`ui_actions: claim lost on ${input.actionId} but no row exists`);
-    }
-    return Promise.resolve({ kind: 'taken', existing });
   }
 
   async completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction> {
@@ -6746,6 +6777,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 41) {
     migrateV41ToV42(db);
+  }
+  if (current <= 42) {
+    migrateV42ToV43(db);
   }
 }
 
