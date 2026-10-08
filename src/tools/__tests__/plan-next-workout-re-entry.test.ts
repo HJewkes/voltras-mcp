@@ -65,18 +65,24 @@ describe('plan.next_workout reEntry', () => {
   it('reads 26 days, a short break and a cited source after a 26-day gap', async () => {
     await trainOn('s-old', '2026-09-07T12:00:00.000Z');
 
-    const { reEntry } = (await nextWorkout()) as {
-      reEntry: { rule: { sourceKind: string; sourceRef: string } } & Record<string, unknown>;
-    };
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
 
-    expect(reEntry).toMatchObject({
-      lastTrainingDay: '2026-09-07',
-      daysSinceLastTrainingDay: 26,
+    expect(reEntry).toEqual({
       phase: 'in_gap',
+      daysSinceLastTrainingDay: 26,
       band: 'short',
+      windowEndsOn: '2026-10-09',
+      rule: { loadFactor: 0.8, weeks: 1, source: 'Nuckols 2022' },
     });
-    expect(reEntry.rule.sourceKind).toBe('paper');
-    expect(reEntry.rule.sourceRef).toContain('strongerbyscience.com/detraining');
+  });
+
+  it('keeps the compact form while the lifter is training normally', async () => {
+    await trainOn('s-mid', '2026-09-20T12:00:00.000Z');
+    await trainOn('s-recent', '2026-10-01T12:00:00.000Z');
+
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
+
+    expect(reEntry).toEqual({ phase: 'training', daysSinceLastTrainingDay: 2 });
   });
 
   it('carries reEntry on the unplanned shape', async () => {
