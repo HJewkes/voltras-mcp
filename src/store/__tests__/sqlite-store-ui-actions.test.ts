@@ -312,3 +312,87 @@ describe('reading the trail', () => {
     expect(await store.getUiAction('nope')).toBeUndefined();
   });
 });
+
+describe('listActivity', () => {
+  async function seed(): Promise<void> {
+    const rows: [string, string, string, string | undefined][] = [
+      ['a-1', '2026-10-01T10:00:00.000Z', 'user', 'sess-1'],
+      ['a-2', '2026-10-01T10:00:01.000Z', 'coach', 'sess-1'],
+      ['a-3', '2026-10-01T10:00:01.000Z', 'coach', 'sess-2'],
+      ['a-4', '2026-10-01T10:00:02.000Z', 'user', undefined],
+      ['a-5', '2026-10-01T10:00:03.000Z', 'coach', 'sess-1'],
+    ];
+    for (const [actionId, createdAt, actor, sessionId] of rows) {
+      await store.claimUiAction({
+        actionId,
+        actionName: 'session.checkin',
+        actor: actor as 'user' | 'coach',
+        surface: actor === 'coach' ? 'mcp' : 'wall',
+        ...(sessionId === undefined ? {} : { sessionId }),
+        inputHash: 'h',
+        createdAt,
+      });
+    }
+  }
+
+  const ids = (rows: { actionId: string }[]): string[] => rows.map((row) => row.actionId);
+
+  it('walks newest first by (createdAt, actionId) with no row repeated or skipped', async () => {
+    await seed();
+
+    const first = await store.listActivity({ limit: 2 });
+    const last = first[first.length - 1];
+    const second = await store.listActivity({
+      limit: 2,
+      after: { createdAt: last?.createdAt ?? '', actionId: last?.actionId ?? '' },
+    });
+    const tail = second[second.length - 1];
+    const third = await store.listActivity({
+      limit: 2,
+      after: { createdAt: tail?.createdAt ?? '', actionId: tail?.actionId ?? '' },
+    });
+
+    expect([ids(first), ids(second), ids(third)]).toEqual([
+      ['a-5', 'a-4'],
+      ['a-3', 'a-2'],
+      ['a-1'],
+    ]);
+  });
+
+  it('narrows by session, actor and time window', async () => {
+    await seed();
+
+    expect(ids(await store.listActivity({ sessionId: 'sess-1' }))).toEqual(['a-5', 'a-2', 'a-1']);
+    expect(ids(await store.listActivity({ actor: 'user' }))).toEqual(['a-4', 'a-1']);
+    expect(
+      ids(
+        await store.listActivity({
+          since: '2026-10-01T10:00:01.000Z',
+          until: '2026-10-01T10:00:02.000Z',
+        }),
+      ),
+    ).toEqual(['a-4', 'a-3', 'a-2']);
+  });
+
+  it('carries the reason, summary and session on a claimed row', async () => {
+    await store.claimUiAction({
+      actionId: 'a-r',
+      actionName: 'device.connect',
+      actor: 'coach',
+      surface: 'mcp',
+      reason: 'start of session',
+      summaryJson: '{"ok":true}',
+      sessionId: 'sess-9',
+      inputHash: 'h',
+      createdAt: AT,
+    });
+
+    const [row] = await store.listActivity({ sessionId: 'sess-9' });
+
+    expect(row).toMatchObject({
+      reason: 'start of session',
+      summaryJson: '{"ok":true}',
+      sessionId: 'sess-9',
+    });
+  });
+});
