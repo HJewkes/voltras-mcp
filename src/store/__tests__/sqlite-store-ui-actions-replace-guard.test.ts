@@ -21,6 +21,7 @@ import { openSqliteTestStore } from './open-test-store.js';
 
 const CURRENT_VERSION = 43;
 const PRIOR_VERSION = 42;
+const LATEST_VERSION = 44;
 
 const AT = '2026-10-01T09:00:00.000Z';
 const DONE_AT = '2026-10-01T09:00:01.000Z';
@@ -332,13 +333,13 @@ describe('the v43 step, from a store created at v42', () => {
     );
   });
 
-  it('opens at 43 with every row intact and then refuses a REPLACE', async () => {
+  it('opens at the latest version with every row intact and then refuses a REPLACE', async () => {
     await v42Store(path);
     const before = rows(path);
 
     await openSqliteTestStore({ path }).close();
 
-    expect(userVersion(path)).toBe(CURRENT_VERSION);
+    expect(userVersion(path)).toBe(LATEST_VERSION);
     expect(rows(path)).toEqual(before);
     expect(() => replaceRow(path, 'REPLACE', 'act-ok')).toThrow(REFUSED);
     expect(() => replaceRow(path, 'INSERT OR REPLACE', 'act-pending')).toThrow(REFUSED);
