@@ -68,6 +68,14 @@ describe('the allowlist', () => {
     expect(actionEntry('constructor')).toBeUndefined();
   });
 
+  it('holds session.mark_kind at W2 and no longer defers it', () => {
+    expect(actionEntry('session.mark_kind')).toMatchObject({
+      tool: 'session.mark_kind',
+      tier: 'W2',
+    });
+    expect(DEFERRED_ACTIONS['session.mark_kind']).toBeUndefined();
+  });
+
   it('keeps the deferred names out of the allowlist and says why', () => {
     for (const [name, reason] of Object.entries(DEFERRED_ACTIONS)) {
       expect(ACTION_ALLOWLIST[name]).toBeUndefined();

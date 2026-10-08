@@ -95,6 +95,10 @@ async function seedSession(): Promise<void> {
   await state.store.putSession({ id: 'sess-1', startedAt: TODAY, kind: 'training' });
 }
 
+async function seedUnmarkedSession(): Promise<void> {
+  await state.store.putSession({ id: 'sess-unmarked', startedAt: TODAY, endedAt: TODAY });
+}
+
 interface ActionCase {
   seed?: () => Promise<void>;
   /** Read after `seed`, so an input can name a row the seed wrote. */
@@ -107,6 +111,10 @@ const ACTION_CASES: Record<string, ActionCase> = {
   'session.checkin': {
     seed: seedSession,
     input: () => ({ sessionId: 'sess-1', answers: [{ code: 'next', value: 'medium' }] }),
+  },
+  'session.mark_kind': {
+    seed: seedUnmarkedSession,
+    input: () => ({ kind: 'training', day: '2026-09-16' }),
   },
   'goal.accept_target': {
     seed: seedProposedTarget,
