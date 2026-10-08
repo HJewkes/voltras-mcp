@@ -181,6 +181,32 @@ do not resubmit". **Nothing sweeps pending rows at boot**: rewriting one to
 `error` would assert an outcome nobody knows. `listUiActions({ status:
 'pending' })` is the read for a later surface to show them.
 
+### The MCP door (VW-892)
+
+Every write-classified MCP tool call leaves one row, actor `coach`, surface `mcp`,
+`deviceId` the connection's client id. `TOOL_ACCESS` is the only list: the
+lease-exempt stop tools and the `mock.*` tools are recorded, read tools are not.
+`actions/mcp-audit.ts` wraps the tool after the lease guard, so it is the outermost
+layer and a lease refusal is recorded with its code (`LEASE_HELD`, and so on). A
+call that fails or is refused is recorded as `error` with the tool's own code.
+
+This door does **not** use `executeAudited`. A device handler awaits BLE and
+`timer.wait` awaits for minutes, and a transaction held across that would make
+every other store call throw. So the row is claimed `pending` before the handler
+runs and completed after, as two separate statements with no transaction between
+them. A crash mid-call leaves a truthful `pending` row, never a write with no row.
+There is no replay here: each call mints its own id.
+
+A store failure at either end is logged and never blocks the call. For
+`device.unload` and `device.exit_guided_load` that is a safety rule, and
+`mcp-audit.test.ts` pins it. The voice stop phrase bypasses tools by design and
+stays unrecorded.
+
+A row holds the summary from `actions/command-summary.ts` (device tools are
+name-only), the live session id, the outcome and the code. It never holds the
+arguments, `result_json` is always null, and `input_hash` is one constant for
+every MCP row, so nothing derived from what the caller sent is stored.
+
 ### The six plan routes
 
 They keep their URLs AND their response bodies — the plan payload, not the
