@@ -34,6 +34,7 @@
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
+import { closeIdleSessionsAtBoot } from './idle-session-close.js';
 import { UserFacingError } from '../errors.js';
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
@@ -458,6 +459,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
     setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
     await refitStaleRirVelocityModels(store);
+    await closeIdleSessionsAtBoot(store);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
