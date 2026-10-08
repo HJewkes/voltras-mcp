@@ -81,7 +81,9 @@ export const ACTION_ALLOWLIST: Readonly<Record<string, ActionEntry>> = {
   'goal.weekly_review': {
     tool: 'goal.weekly_review',
     tier: 'W2',
-    why: 'Keyed by weekOf, so an answer replaces rather than duplicates.',
+    why:
+      'Keyed by weekOf. One answer per proposal: a second is refused with ' +
+      'ADVISORY_ALREADY_ANSWERED, so the screen shows the standing answer instead.',
   },
   'plan.week.skip': {
     tool: 'plan.week.skip',
