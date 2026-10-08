@@ -140,7 +140,7 @@ export interface MuscleWeekMuscleView {
 }
 
 export interface MuscleWeekView {
-  /** Monday 00:00:00.000 UTC of the calendar week `now` falls in. */
+  /** Local Monday midnight of the calendar week `now` falls in, as an instant. */
   weekStart: string;
   muscleMapVersion: string;
   /** Always this literal: the landmarks are looked up, never discovered (VW-146). */
