@@ -53,6 +53,7 @@ import { DashboardChrome } from './panels/DashboardChrome';
 import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
 import { GoalsRoute } from './goals/GoalsRoute';
+import { CheckinPage } from './checkin/CheckinPage';
 import { BodyPage } from './body/BodyPage';
 import type { PrescriptionView } from './adapter';
 
@@ -168,6 +169,8 @@ function RoutePage(): React.JSX.Element | null {
       return <SessionSummaryPage sessionId={route.sessionId} />;
     case 'body':
       return <BodyPage muscle={route.muscle} />;
+    case 'checkin':
+      return <CheckinPage />;
     // Both render their own chrome in `App`.
     case 'goals':
     case 'live':

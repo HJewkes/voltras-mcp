@@ -26,6 +26,7 @@ import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import {
   DashboardShell,
+  ScaleIcon,
   TargetIcon,
   workoutNavItems,
   type SessionState,
@@ -40,13 +41,14 @@ import { PinnedLiveStripSlot } from './PinnedLiveStripSlot';
 
 /**
  * Nav key ⇄ route. The nav rail renders exactly these, in this order: what is
- * happening, what happened, the plan, the goals that plan serves, then the body.
+ * happening, what happened, the plan, the goals that plan serves, the weekly check-in, then the body.
  */
 export const NAV_ROUTES: Record<string, Route> = {
   live: { name: 'live' },
   review: { name: 'summary', sessionId: 'latest' },
   program: { name: 'plan' },
   goals: { name: 'goals' },
+  checkin: { name: 'checkin' },
   body: { name: 'body' },
 };
 
@@ -56,9 +58,15 @@ const GOALS_NAV_ITEM: SideNavItem = {
   icon: <TargetIcon size={20} color="currentColor" />,
 };
 
-/** titan's categories plus Goals, keyed and ordered by {@link NAV_ROUTES}. */
+const CHECKIN_NAV_ITEM: SideNavItem = {
+  key: 'checkin',
+  label: 'Check-in',
+  icon: <ScaleIcon size={20} color="currentColor" />,
+};
+
+/** titan's categories plus Goals and Check-in, keyed and ordered by {@link NAV_ROUTES}. */
 const NAV_ITEMS = Object.keys(NAV_ROUTES).flatMap((key) =>
-  [...workoutNavItems, GOALS_NAV_ITEM].filter((item) => item.key === key),
+  [...workoutNavItems, GOALS_NAV_ITEM, CHECKIN_NAV_ITEM].filter((item) => item.key === key),
 );
 
 /** The nav key a route highlights. Inverse of {@link NAV_ROUTES}. */
@@ -74,6 +82,8 @@ export function navKeyForRoute(route: Route): string {
       return 'body';
     case 'goals':
       return 'goals';
+    case 'checkin':
+      return 'checkin';
   }
 }
 
