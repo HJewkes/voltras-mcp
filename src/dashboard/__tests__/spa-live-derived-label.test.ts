@@ -79,6 +79,11 @@ function renderRest(model: DashboardModel): string {
   return renderToStaticMarkup(createElement(RestView, { model: resting }));
 }
 
+const STALE: PrescriptionView = {
+  ...DERIVED,
+  derivedFrom: { startedAt: LAST_TIME_STARTED_AT, daysAgo: 26, stale: true },
+};
+
 describe('live page label for derived targets (VW-643)', () => {
   it('marks last time’s targets with the local date beside the lockup', () => {
     const model = modelFor(DERIVED);
@@ -124,5 +129,27 @@ describe('live page label for derived targets (VW-643)', () => {
     expect(header).toContain('data-testid="exercise-header"');
     expect(header).not.toContain('Last time');
     expect(renderRest(model)).not.toContain('(last time)');
+  });
+});
+
+describe('live page label for a stale last time (VW-908)', () => {
+  it('names the age and the break in the caption of a 26-day-old view', () => {
+    const model = modelFor(STALE);
+
+    expect(model.session.derivedStaleDays).toBe(26);
+    expect(renderHeader(model)).toContain('Last time · 2026-09-24 · 26 days ago, before a break');
+  });
+
+  it('keeps the plain caption for a 3-day-old view', () => {
+    const fresh = {
+      ...DERIVED,
+      derivedFrom: { startedAt: LAST_TIME_STARTED_AT, daysAgo: 3, stale: false },
+    };
+    const model = modelFor(fresh);
+
+    expect(model.session.derivedStaleDays).toBeNull();
+    const html = renderHeader(model);
+    expect(html).toContain('Last time · 2026-09-24');
+    expect(html).not.toContain('before a break');
   });
 });

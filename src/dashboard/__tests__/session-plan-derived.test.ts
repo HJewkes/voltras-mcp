@@ -184,7 +184,7 @@ describe('/api/session-plan derived fallback (VW-642)', () => {
 
     expect(plan).toMatchObject({
       source: 'derived',
-      derivedFrom: { startedAt: LAST_START },
+      derivedFrom: { startedAt: LAST_START, daysAgo: 7, stale: false },
       sets: 3,
       repsLow: 8,
       repsHigh: 10,
@@ -194,6 +194,15 @@ describe('/api/session-plan derived fallback (VW-642)', () => {
     for (const key of ['rpe', 'restSec', 'goalKind', 'velocityLossPct', 'tempo', 'title']) {
       expect(plan).not.toHaveProperty(key);
     }
+  });
+
+  it('marks last time stale when the live session starts 26 days after it', async () => {
+    await seed(store, 'sess-last', LAST_START, WORKING);
+    const lateStart = '2026-06-03T10:00:00.000Z';
+
+    const plan = await fetchPlan(stateFor(store, [liveSession(LIVE_ID, lateStart)]));
+
+    expect(plan?.derivedFrom).toEqual({ startedAt: LAST_START, daysAgo: 26, stale: true });
   });
 
   it("never feeds a guest's history to the owner, nor the owner's to a guest", async () => {

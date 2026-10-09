@@ -84,13 +84,14 @@ describe('buildDerivedPrescriptionView', () => {
         activeExerciseId: 'bench',
         targets: { sets: 3, repsLow: 8, repsHigh: 10, weightLbs: 135 },
         derivedFromStartedAt: '2026-05-08T10:00:00.000Z',
+        today: '2026-05-11',
       },
       { getById: () => ({ name: 'Bench Press' }) },
     );
 
     expect(view).toEqual({
       source: 'derived',
-      derivedFrom: { startedAt: '2026-05-08T10:00:00.000Z' },
+      derivedFrom: { startedAt: '2026-05-08T10:00:00.000Z', daysAgo: 3, stale: false },
       sets: 3,
       repsLow: 8,
       repsHigh: 10,
@@ -108,5 +109,27 @@ describe('buildDerivedPrescriptionView', () => {
         },
       ],
     });
+  });
+});
+
+describe('buildDerivedPrescriptionView age (VW-908)', () => {
+  const build = (today: string) =>
+    buildDerivedPrescriptionView(
+      {
+        activeExerciseId: 'bench',
+        targets: { sets: 3, repsLow: 8 },
+        derivedFromStartedAt: '2026-05-08T10:00:00.000Z',
+        today,
+      },
+      undefined,
+    );
+
+  it('marks a view 26 days old stale with its day count', () => {
+    expect(build('2026-06-03').derivedFrom).toMatchObject({ daysAgo: 26, stale: true });
+  });
+
+  it('keeps the 14th day fresh and the 15th stale', () => {
+    expect(build('2026-05-22').derivedFrom).toMatchObject({ daysAgo: 14, stale: false });
+    expect(build('2026-05-23').derivedFrom).toMatchObject({ daysAgo: 15, stale: true });
   });
 });

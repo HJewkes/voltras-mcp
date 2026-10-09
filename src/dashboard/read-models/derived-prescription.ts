@@ -8,6 +8,8 @@
 //
 // Confidentiality: fitness units only, no protocol data (NF-07).
 
+import { classifyBreak, daysBetween } from '../../analytics/re-entry.js';
+import { localDate } from '../../analytics/training-days.js';
 import type { SetPurpose, StoredSide } from '../../store/types.js';
 import type { ExerciseCatalogLookup, PrescriptionView } from './session-plan.js';
 
@@ -60,6 +62,14 @@ export interface DerivedPrescriptionRows {
   activeExerciseId: string;
   targets: DerivedTargets;
   derivedFromStartedAt: string;
+  /** The lifter's local calendar date now, 'YYYY-MM-DD': the day "last time" is aged against. */
+  today: string;
+}
+
+/** Whole local training days since `startedAt`, and whether that is a break (VW-851 rule 1). */
+function ageOfLastTime(startedAt: string, today: string): { daysAgo: number; stale: boolean } {
+  const daysAgo = daysBetween(localDate(startedAt), today);
+  return { daysAgo, stale: classifyBreak(daysAgo) !== 'none' };
 }
 
 /** A labelled `derived` prescription with a one-row rail, so the page finds the rep target. */
@@ -70,7 +80,10 @@ export function buildDerivedPrescriptionView(
   const { activeExerciseId, targets } = rows;
   return {
     source: 'derived',
-    derivedFrom: { startedAt: rows.derivedFromStartedAt },
+    derivedFrom: {
+      startedAt: rows.derivedFromStartedAt,
+      ...ageOfLastTime(rows.derivedFromStartedAt, rows.today),
+    },
     ...targets,
     exercises: [
       {

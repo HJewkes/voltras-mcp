@@ -392,6 +392,11 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
     "sourceRef": "Marks targets copied from the lifter’s last session of the exercise so they never read as the coach’s prescription; the date shows how old they are.",
     "text": "Last time · {{date}}",
   },
+  "live.derived-targets.caption-stale": {
+    "sourceKind": "paper",
+    "sourceRef": "Hwang 2017, https://pubmed.ncbi.nlm.nih.gov/28328712/; Ogasawara 2011, https://pubmed.ncbi.nlm.nih.gov/21771261/",
+    "text": "Last time · {{date}} · {{days}} days ago, before a break",
+  },
   "live.derived-targets.set-count": {
     "sourceKind": "engineering-default",
     "sourceRef": "Marks targets copied from the lifter’s last session of the exercise so they never read as the coach’s prescription; the date shows how old they are.",
