@@ -442,5 +442,110 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
     "sourceRef": "Marks a rest derived from the training goal so it never reads as the coach’s number; the rest lengths carry their own citations.",
     "text": "Default rest for {{intent}}",
   },
+  "summary.absent.no-bar-speed.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "No bar-speed data",
+  },
+  "summary.absent.no-bar-speed.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "No working set recorded bar speed, so there is nothing to judge.",
+  },
+  "summary.absent.no-verdict.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "No verdict",
+  },
+  "summary.absent.no-verdict.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "These sets did not carry enough data for a verdict.",
+  },
+  "summary.absent.not-scored.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "Not scored",
+  },
+  "summary.absent.not-scored.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why a column is empty, so a missing verdict never reads as a good or a bad one.",
+    "text": "No working sets here. The verdict reads working sets only.",
+  },
+  "summary.disagreement.missed-reps.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The verdict reads bar speed, range and tempo while the recommendation reads reps against the plan, so the page names it when the two point opposite ways.",
+    "text": "Moved well · missed reps",
+  },
+  "summary.disagreement.missed-reps.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The verdict reads bar speed, range and tempo while the recommendation reads reps against the plan, so the page names it when the two point opposite ways.",
+    "text": "Moved well, but missed reps.",
+  },
+  "summary.disagreement.plan-adds.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The verdict reads bar speed, range and tempo while the recommendation reads reps against the plan, so the page names it when the two point opposite ways.",
+    "text": "Struggled · plan adds",
+  },
+  "summary.disagreement.plan-adds.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "A load step is only ever earned by topping out the rep band, so a slow bar beside one still had the reps.",
+    "text": "Struggled, but hit the reps, so the plan adds load.",
+  },
+  "summary.disagreement.plan-backs-off.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The verdict reads bar speed, range and tempo while the recommendation reads reps against the plan, so the page names it when the two point opposite ways.",
+    "text": "Moved well · plan backs off",
+  },
+  "summary.disagreement.plan-backs-off.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Most working sets were not short of the band, so the back-off came from another rule and the page does not blame the reps.",
+    "text": "Moved well, but the plan backs off for a reason other than missed reps.",
+  },
+  "summary.kicker.how-it-moved.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Heads the verdict column, which reads bar speed, range and tempo rather than reps.",
+    "text": "HOW IT MOVED",
+  },
+  "summary.kicker.next-time.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Heads the recommendation column and says what it scores, which is reps against the plan.",
+    "text": "NEXT TIME · REPS VS PLAN",
+  },
+  "summary.kicker.verdict-set.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Names the one set the verdict read, the working set with the most velocity loss.",
+    "text": "WORST SET #{{set}} · VL{{lossPct}}%",
+  },
+  "summary.rir.calibrating.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Shows that reps in reserve exist as a reading but are not shown yet.",
+    "text": "RIR · Calibrating",
+  },
+  "summary.rir.calibrating.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says why no reps-in-reserve figure shows yet, so its absence never reads as a missing measurement.",
+    "text": "Held back until fitted to your own sets.",
+  },
+  "summary.totals.unloaded.many.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says the volume total leaves out sets with no load rather than counting them as zero.",
+    "text": "excl. {{count}} unloaded sets",
+  },
+  "summary.totals.unloaded.one.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says the volume total leaves out sets with no load rather than counting them as zero.",
+    "text": "excl. {{count}} unloaded set",
+  },
+  "summary.usual-range.label": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Shows a range, never a point, because reps to a velocity-loss stop vary by several reps between sessions at the same load.",
+    "text": "Your usual here · {{low}}–{{high}} reps",
+  },
+  "summary.usual-range.tip": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Says the range counts reps to a velocity-loss stop, not reps to failure, and passes the server’s own basis through.",
+    "text": "Reps your past sets at this load reached before the velocity-loss stop. {{basis}}",
+  },
 }
 `;

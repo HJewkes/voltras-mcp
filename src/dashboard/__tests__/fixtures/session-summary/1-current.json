@@ -1,0 +1,71 @@
+{
+  "session": {
+    "id": "session-current",
+    "startedAt": "2026-10-15T16:45:59.000Z",
+    "endedAt": "2026-10-15T16:46:59.000Z",
+    "exerciseId": "cable-chest-fly",
+    "exerciseName": "Cable Chest Fly"
+  },
+  "exercises": [
+    {
+      "exerciseId": "cable-chest-fly",
+      "name": "Cable Chest Fly",
+      "setCount": 2,
+      "workingSetCount": 2,
+      "totalReps": 10,
+      "volumeLbs": 1400,
+      "topWeightLbs": 140,
+      "bestRepVelocity": 0.5,
+      "maxVelocityLossPct": 12,
+      "verdict": {
+        "state": "good",
+        "tone": "ok",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 2,
+      "sets": [
+        {
+          "id": "set-1",
+          "endedAt": "2026-10-15T16:46:19.000Z",
+          "loadLabel": "140 lb",
+          "expectedRepRange": null,
+          "index": 1,
+          "startedAt": "2026-10-15T16:45:59.000Z",
+          "weightLbs": 140,
+          "repCount": 5,
+          "setPurpose": "working",
+          "velocityLossPct": 12,
+          "bestRepVelocity": 0.5
+        },
+        {
+          "id": "set-2",
+          "endedAt": "2026-10-15T16:46:49.000Z",
+          "loadLabel": "140 lb",
+          "expectedRepRange": null,
+          "index": 2,
+          "startedAt": "2026-10-15T16:46:29.000Z",
+          "weightLbs": 140,
+          "repCount": 5,
+          "setPurpose": "working",
+          "velocityLossPct": 12,
+          "bestRepVelocity": 0.5
+        }
+      ],
+      "progression": {
+        "delta": -5,
+        "reasoning": "2/2 sets missed 12 reps (target 12-15 reps); back off 5 lb.",
+        "basedOnSessionId": "session-current",
+        "targetSets": 2,
+        "targetRepsLow": 12,
+        "targetRepsHigh": 15,
+        "targetWeightLbs": 140
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    }
+  ]
+}

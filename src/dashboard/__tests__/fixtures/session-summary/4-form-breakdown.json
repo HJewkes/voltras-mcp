@@ -1,0 +1,175 @@
+{
+  "session": {
+    "id": "session-form-breakdown",
+    "startedAt": "2026-10-12T07:00:00.000Z",
+    "endedAt": "2026-10-12T07:20:00.000Z",
+    "exerciseId": "cable-lat-pulldown",
+    "exerciseName": "Cable Lat Pulldown"
+  },
+  "exercises": [
+    {
+      "exerciseId": "cable-lat-pulldown",
+      "name": "Cable Lat Pulldown",
+      "setCount": 4,
+      "workingSetCount": 3,
+      "totalReps": 46,
+      "volumeLbs": 3740,
+      "topWeightLbs": 90,
+      "bestRepVelocity": 0.8,
+      "maxVelocityLossPct": 22,
+      "verdict": {
+        "state": "form-breakdown",
+        "tone": "alarm",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "alarm",
+          "tempo": "warn"
+        }
+      },
+      "verdictSetIndex": 4,
+      "sets": [
+        {
+          "id": "set-1",
+          "index": 1,
+          "startedAt": "2026-10-12T07:00:00.000Z",
+          "endedAt": "2026-10-12T07:00:50.000Z",
+          "weightLbs": 50,
+          "loadLabel": "50 lb",
+          "repCount": 10,
+          "setPurpose": "warmup",
+          "velocityLossPct": 5,
+          "bestRepVelocity": 0.8,
+          "expectedRepRange": null
+        },
+        {
+          "id": "set-2",
+          "index": 2,
+          "startedAt": "2026-10-12T07:03:00.000Z",
+          "endedAt": "2026-10-12T07:03:50.000Z",
+          "weightLbs": 90,
+          "loadLabel": "90 lb",
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": 15,
+          "bestRepVelocity": 0.66,
+          "expectedRepRange": {
+            "expectedLow": 10,
+            "expectedHigh": 14,
+            "median": 12,
+            "n": 6,
+            "basis": "From 6 of your past sets at 85-95 lb that stopped at 20% velocity loss."
+          }
+        },
+        {
+          "id": "set-3",
+          "index": 3,
+          "startedAt": "2026-10-12T07:06:00.000Z",
+          "endedAt": "2026-10-12T07:06:50.000Z",
+          "weightLbs": 90,
+          "loadLabel": "90 lb",
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": 19,
+          "bestRepVelocity": 0.64,
+          "expectedRepRange": {
+            "expectedLow": 10,
+            "expectedHigh": 14,
+            "median": 12,
+            "n": 6,
+            "basis": "From 6 of your past sets at 85-95 lb that stopped at 20% velocity loss."
+          }
+        },
+        {
+          "id": "set-4",
+          "index": 4,
+          "startedAt": "2026-10-12T07:09:00.000Z",
+          "endedAt": "2026-10-12T07:09:50.000Z",
+          "weightLbs": 90,
+          "loadLabel": "90 lb",
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": 22,
+          "bestRepVelocity": 0.61,
+          "expectedRepRange": {
+            "expectedLow": 10,
+            "expectedHigh": 14,
+            "median": 12,
+            "n": 6,
+            "basis": "From 6 of your past sets at 85-95 lb that stopped at 20% velocity loss."
+          }
+        }
+      ],
+      "progression": {
+        "delta": 5,
+        "reasoning": "3/3 sets hit 12+ reps (target 10-12 reps); add 5 lb.",
+        "basedOnSessionId": "session-form-breakdown",
+        "targetSets": 3,
+        "targetRepsLow": 10,
+        "targetRepsHigh": 12,
+        "targetWeightLbs": 90
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    },
+    {
+      "exerciseId": "band-pull-apart",
+      "name": "Band Pull-Apart",
+      "setCount": 2,
+      "workingSetCount": 2,
+      "totalReps": 28,
+      "volumeLbs": null,
+      "topWeightLbs": null,
+      "bestRepVelocity": 0.92,
+      "maxVelocityLossPct": 8,
+      "verdict": {
+        "state": "good",
+        "tone": "ok",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 6,
+      "sets": [
+        {
+          "id": "set-5",
+          "index": 5,
+          "startedAt": "2026-10-12T07:13:00.000Z",
+          "endedAt": "2026-10-12T07:13:50.000Z",
+          "weightLbs": null,
+          "loadLabel": "band",
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 6,
+          "bestRepVelocity": 0.92,
+          "expectedRepRange": null
+        },
+        {
+          "id": "set-6",
+          "index": 6,
+          "startedAt": "2026-10-12T07:15:00.000Z",
+          "endedAt": "2026-10-12T07:15:50.000Z",
+          "weightLbs": null,
+          "loadLabel": "band",
+          "repCount": 13,
+          "setPurpose": "working",
+          "velocityLossPct": 8,
+          "bestRepVelocity": 0.9,
+          "expectedRepRange": null
+        }
+      ],
+      "progression": {
+        "delta": 0,
+        "reasoning": "1/2 sets landed in band (target 12-15 reps); maintain load.",
+        "basedOnSessionId": "session-form-breakdown",
+        "targetSets": 2,
+        "targetRepsLow": 12,
+        "targetRepsHigh": 15,
+        "targetWeightLbs": null
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    }
+  ]
+}
