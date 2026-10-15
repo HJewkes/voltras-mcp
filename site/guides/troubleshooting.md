@@ -130,3 +130,37 @@ For contributors: after any schema change, rebase onto `main` and rerun the roun
 (`npx vitest run src/store/__tests__/portable-round-trip.test.ts`). Their guard is
 table-level. A new table fails loudly, but a new column on an existing table does not, so
 extend the fixture by hand for one.
+
+## Make a private anonymised fixture
+
+`anonymize` turns an export into a fixture shaped like your own training, for running the
+server or the dashboard against realistic history on your own machine. Load the result with
+`import` into a new store file.
+
+```bash
+npm run store -- export ~/.voltras/vmcp.sqlite ~/.voltras/fixtures/export
+npm run store -- anonymize ~/.voltras/fixtures/export [out-dir] [--seed N] [--scale]
+npm run store -- import ~/.voltras/fixtures/export-anonymized ~/.voltras/fixtures/anon.sqlite
+rm -rf ~/.voltras/fixtures/export
+```
+
+What it changes:
+
+- Free text is removed: notes, the display name, commitment wording, self-report text,
+  limitation notes, setup labels, profile answers and similar fields.
+- Program, block, week and workout names become `Program 1`, `Block 1`, `Week 1`, `Workout A`
+  and so on. Exercises outside the built-in catalog become `Custom exercise N`.
+- Device ids, external ids and lifter labels become salted-hash stand-ins.
+- Rep records keep their per-phase summaries and derived metrics, without the raw samples.
+- Device events, idle reps, coaching-cue state, the action log and the accountability send
+  history are left out.
+- Every date moves back by the same whole number of weeks, so weekdays and local times of day
+  stay the same. `--scale` multiplies every load by one factor between 0.9 and 1.1.
+- `--seed N` makes a rerun write the same files.
+
+Every table and column must have a rule. If a later version adds one without a rule, the run
+stops before it writes anything. The output goes to `~/.voltras/fixtures/` unless you name a
+directory. It refuses any directory inside a git work tree.
+
+**The output is still your personal training data.** It holds your real sessions, loads and
+body measurements. Never commit it, attach it to an issue, or share it.
