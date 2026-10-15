@@ -44,7 +44,6 @@ Dashboard screens that are built but not yet usable end to end have their own pa
   been checked across every movement type; turning it on for an unvalidated movement can drop a
   valid rep, so it defaults off (`src/config.ts:284-288`). The older `VMCP_REP_CORRECTIONS`
   switch moves it and its companion correction together when set.
-
 - **`VMCP_CUE_DELIVERY=on`.** Speaks the automatic cues through the newer cue-delivery layer
   instead of the original rule. Off by default ([How coaching works](/concepts/how-coaching-works#automatic-spoken-cues),
   `src/config.ts`).
@@ -56,7 +55,6 @@ Dashboard screens that are built but not yet usable end to end have their own pa
 The dashboard server answers these reads, but no page draws them, so you only see them by
 calling the route ([Dashboard API](/reference/dashboard-api)):
 
-- **`/api/muscle-recovery`**: when you last trained each muscle.
 - **`/api/session-review`**: the past days still waiting for a training or test mark. A
   client and a model for a day-review page exist, but no route opens one
   (`src/dashboard/spa/days/days-client.ts`, `src/dashboard/spa/routing.ts`).

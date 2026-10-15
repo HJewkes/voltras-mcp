@@ -125,7 +125,7 @@ because lifters rate the same measured speed differently
 
 Today no tool records a per-set self-reported RIR. The reader exists, but nothing writes the value
 it reads (VW-499). The one place that writes an anchor row is the failure harvest, and it stores no
-self-report (`src/store/sqlite-store.ts:6363-6407`, `src/store/sqlite-store.ts:6424-6436`). So in
+self-report (`src/store/sqlite-store.ts:6363-6410`, `src/store/sqlite-store.ts:6424-6442`). So in
 practice every curve rests on failure anchors.
 
 ## When the server will state a number

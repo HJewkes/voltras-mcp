@@ -44,8 +44,9 @@ how much you actually trained each muscle this week, and whether that is a lot o
 `/api/muscle-strength` (VW-330) answers the third — which muscles are actually getting
 stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
 `/api/muscle-recovery` (VW-332) answers the fourth: when you last trained each muscle, and
-how that session went against the one before it. The body-map page (VW-323) reads the first
-three; `/api/muscle-recovery` is not surfaced on any page yet. `/api/goals` and
+how that session went against the one before it. The body-map page (VW-323) reads all four:
+the muscle side sheet's "Last trained" line comes from `/api/muscle-recovery`
+(`src/dashboard/spa/body/body-client.ts`, `src/dashboard/spa/body/body-sheet-model.ts`). `/api/goals` and
 `/api/goal-progress` (VW-352) are the equivalent plumbing for the `#/goals` page: what the
 coach is tracking, and how each target is reading this week; see
 [their own section below](#goal-coach-api-goals-api-goal-progress).
@@ -314,7 +315,7 @@ same `SessionStore` methods the `plan.*` MCP tools call, not a reimplementation
 (`src/dashboard/README.md`). That surface also includes `DELETE /api/plan/exercises/:id`,
 which unplans one exercise and closes the gap it leaves in the template's order
 (`src/dashboard/server.ts:93`, `SessionStore.deletePlannedExercise`,
-`src/store/sqlite-store.ts:4405`, VW-121) — a plain delete of the planned row, not of any
+`src/store/sqlite-store.ts:4900`, VW-121) — a plain delete of the planned row, not of any
 session that was actually trained against it: the assignment linking a past session to that
 plan entry falls back to unlinked rather than disappearing. So: the live view is read-only;
 the plan builder and the check-in page are not.

@@ -35,7 +35,7 @@ machine. The short answer: it all stays on your machine unless you turn somethin
 
 Every session, set and rep goes into one database file: `~/.voltras/vmcp.sqlite` unless you set
 `VMCP_DB_PATH` to move it (`src/config.ts:5`). The database is SQLite, run by Node's own built-in
-module, so there is no database server and no account (`src/store/sqlite-store.ts:23`).
+module, so there is no database server and no account (`src/store/sqlite-store.ts:24`).
 
 The same folder can hold a few other files. The device slot assignments sit there
 (`src/config.ts:6`). A TrueCoach login token, cache and outbox appear there only if you use those
