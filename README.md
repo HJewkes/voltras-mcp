@@ -90,5 +90,5 @@ Beyond Power shared some device details informally to help the community SDK and
 they stay private. No protocol bytes, raw frame payloads or device command codes belong in
 this repo's code, logs, schemas, docs or commits; the everyday tools pass Claude only typed
 values such as weights, speeds and counts. Two diagnostic tools for hardware debugging are
-the exception: `device.send_raw` takes and returns raw bytes, and `debug.recent_events` can
-return them. An ESLint rule enforces part of this.
+the exception: `device.send_raw` takes and returns raw bytes and is registered only with
+`VMCP_DEBUG_TOOLS=on`, and `debug.recent_events` can return them. An ESLint rule enforces part of this.
