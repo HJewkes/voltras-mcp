@@ -108,7 +108,7 @@ No timer at all. "Tell me when you're ready." Set the weight and verify while yo
 - **1 h cap** on both timers.
 - **Don't time a set with a timer.** Sets close on the device signal, `set.end`, or inactivity, never on elapsed time, and you cannot force-stop anyway.
 - **A pre-armed set with no inactivity window dies at about 90 s.** Arm late, or ask for the window.
-- **Don't speak over a rest you are listening through.** `system.speak` and the automatic cues now share one queue, so lines no longer collide, but every line still mutes the mic while it plays (`08`). Keep "rest is up" short.
+- **Don't speak over a rest you are listening through.** `system.speak` and the automatic cues now share one queue, so lines no longer collide, but every line still ducks the mic while it plays: only safety phrases get through, so a question or a spoken weight change is lost (`08`). Keep "rest is up" short.
 - **Don't override `restBasis` silently.** If you give an explicit duration, that was your choice; say why.
 
 ## Cross-refs
