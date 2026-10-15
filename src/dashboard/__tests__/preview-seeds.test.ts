@@ -219,6 +219,40 @@ describe('dashboard:preview pages', () => {
   });
 });
 
+// VW-921: the CLI prints the lead's rollup status, read off the page's own payload with every
+// companion and whole-body goal seeded beside it. The whole-body goals are declared most
+// recently, so they list first: reading the first row printed their status under every name.
+describe('dashboard:preview lead status as the command prints it (VW-921)', () => {
+  const clocks = [
+    ['a Monday just after midnight UTC', '2026-09-14T00:00:30.000Z'],
+    ['a Thursday midday UTC', '2026-10-15T12:00:00.000Z'],
+  ] as const;
+
+  for (const [label, at] of clocks) {
+    for (const state of GOAL_PREVIEW_STATES) {
+      it(`prints ${state.expectedStatus} for --state ${state.name} on ${label}`, async () => {
+        vi.setSystemTime(new Date(at));
+        const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+        scratchDirs.push(dir);
+        const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+        try {
+          const now = new Date();
+          const report = await seedGoalPreview(store, state, now, {
+            companions: true,
+            wholeBody: true,
+          });
+          const rows = await fetchGoalPriorityRows(store, now);
+          const lead = rows.find((row) => row.priority.id === report.priorityId);
+
+          expect(lead?.rollup?.status).toBe(state.expectedStatus);
+        } finally {
+          store.close();
+        }
+      }, 30_000);
+    }
+  }
+});
+
 describe('dashboard:preview companion lifts (VW-467)', () => {
   it('seeds two accepted lifts beside the lead, which still lists first', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));

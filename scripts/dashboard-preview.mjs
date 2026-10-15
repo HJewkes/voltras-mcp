@@ -107,6 +107,7 @@ async function seedGoals(dbDir, stateName, unreviewedDays) {
   const { goalPreviewState, seedGoalPreview } = await import(SEEDS);
   const state = goalPreviewState(stateName);
   const store = SqliteSessionStore.open(scenarioDbPath(dbDir, 'goals'));
+  let priorityId;
   try {
     const report = await seedGoalPreview(store, state, new Date(), {
       companions: true,
@@ -120,10 +121,11 @@ async function seedGoals(dbDir, stateName, unreviewedDays) {
         `unreviewed days: ${report.unreviewedDays}`,
     );
     log(`  ${state.summary}`);
+    priorityId = report.priorityId;
   } finally {
     store.close();
   }
-  return { name: 'goals', driver: null, args: [] };
+  return { scenario: { name: 'goals', driver: null, args: [] }, priorityId };
 }
 
 /** Every other page reuses the capture scenario that already drives it. */
@@ -134,10 +136,14 @@ async function captureScenarioFor(page) {
   return found;
 }
 
-/** What the goal read model actually landed on, read back off the running server. */
-async function reportGoalStatus(port) {
+/**
+ * What the goal read model actually landed on, read back off the running server.
+ * The lead is looked up by id: the whole-body goals are declared more recently, so they
+ * list first and `priorities[0]` would print their status under every state's name (VW-921).
+ */
+async function reportGoalStatus(port, priorityId) {
   const { priorities } = await getJson(port, '/api/goals');
-  const rollup = priorities[0]?.rollup;
+  const rollup = priorities.find((entry) => entry.priority.id === priorityId)?.rollup;
   if (rollup === undefined || rollup === null) {
     log('WARNING: the seeded priority has no rollup — the page will read as empty');
     return;
@@ -160,17 +166,24 @@ async function main() {
   const dbDir = makeScratchDir();
   const cleanUp = () => fs.rmSync(dbDir, { recursive: true, force: true });
   let scene = null;
+  let leadPriorityId = null;
   try {
-    const scenario =
-      page.captureScenario === null
-        ? await seedGoals(dbDir, args.state, args.unreviewed)
-        : await captureScenarioFor(page);
+    let scenario;
+    if (page.captureScenario === null) {
+      ({ scenario, priorityId: leadPriorityId } = await seedGoals(
+        dbDir,
+        args.state,
+        args.unreviewed,
+      ));
+    } else {
+      scenario = await captureScenarioFor(page);
+    }
     scene = await startScenario(scenario, dbDir, {
       log,
       clientName: 'dashboard-preview',
       echo: scenario.driver !== null,
     });
-    if (page.captureScenario === null) await reportGoalStatus(scene.port);
+    if (page.captureScenario === null) await reportGoalStatus(scene.port, leadPriorityId);
   } catch (err) {
     scene?.stop();
     cleanUp();
