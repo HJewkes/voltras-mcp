@@ -24,7 +24,8 @@ import { z } from 'zod';
 import { McpChannelPublisher, noopChannelPublisher } from './state/channel-publisher.js';
 import { publishCoachLine } from './state/event-bridge.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
-import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from './tool-registry.js';
+import { CORE_TOOL_NAMES, DEBUG_GATED_TOOL_NAMES, MOCK_TOOL_NAMES } from './tool-registry.js';
+import type { DebugToolsMode } from './config.js';
 import { isDeviceEngaged, type ServerState } from './state/server-state.js';
 
 import { registerDeviceTools } from './tools/device-tools.js';
@@ -158,11 +159,21 @@ function startingResult(): ToolResult {
  * Register a `STARTING`-returning placeholder for every tool name (R6/EC-16),
  * so a tool call arriving during the bootstrap window returns a structured
  * error rather than a missing-tool error.
+ *
+ * The debug-gated tools get no placeholder unless `VMCP_DEBUG_TOOLS=on`
+ * (VW-935). Skipping them here, rather than dropping them at activation the
+ * way the mock tools are, keeps them out of `tools/list` during the bootstrap
+ * window too, and with no placeholder their modules install nothing.
  */
-function registerStartingPlaceholders(server: McpServer): Map<string, RegisteredTool> {
+function registerStartingPlaceholders(
+  server: McpServer,
+  debugTools: DebugToolsMode,
+): Map<string, RegisteredTool> {
   const placeholders = new Map<string, RegisteredTool>();
   const callback = (): ToolResult => startingResult();
+  const gated = new Set<string>(debugTools === 'on' ? [] : DEBUG_GATED_TOOL_NAMES);
   for (const name of [...CORE_TOOL_NAMES, ...MOCK_TOOL_NAMES]) {
+    if (gated.has(name)) continue;
     placeholders.set(name, server.tool(name, PLACEHOLDER_SCHEMA, callback));
   }
   return placeholders;
@@ -273,6 +284,11 @@ const SERVER_INSTRUCTIONS = [
     'the system decide that", never as a coaching answer to relay verbatim.',
 ].join('\n');
 
+export interface ClientConnectionOptions {
+  /** `VMCP_DEBUG_TOOLS`; read before bootstrap, so it is passed in here. */
+  readonly debugTools?: DebugToolsMode;
+}
+
 /**
  * Build a client connection: an `McpServer` with placeholder tools and
  * resources registered, ready for `server.connect(transport)`.
@@ -285,7 +301,10 @@ const SERVER_INSTRUCTIONS = [
  * bilateral flows that allocate `'left'`/`'right'` after bootstrap surface in
  * the resource list automatically.
  */
-export function createClientConnection(clientId: ClientId = mintClientId()): ClientConnection {
+export function createClientConnection(
+  clientId: ClientId = mintClientId(),
+  options: ClientConnectionOptions = {},
+): ClientConnection {
   const server = new McpServer(
     { name: 'voltras-mcp', version: '0.1.0' },
     {
@@ -303,7 +322,7 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
     },
   );
   const channels = new McpChannelPublisher(server);
-  const placeholders = registerStartingPlaceholders(server);
+  const placeholders = registerStartingPlaceholders(server, options.debugTools ?? 'off');
 
   const stateBox: { value?: ServerState } = {};
   const lazyState = {

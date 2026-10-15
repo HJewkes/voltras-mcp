@@ -15,6 +15,7 @@
 //   - VMCP_CUE_DELIVERY                — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
+//   - VMCP_DEBUG_TOOLS                 — 'on' or anything else (off), default off.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
 //   - VMCP_TRUECOACH_SUBMIT_ON_END     — 'on' | 'off', default 'off'.
@@ -174,6 +175,18 @@ export type AutoArmMode = 'off' | 'on';
 export type EffortCueMode = 'off' | 'on';
 
 /**
+ * Whether the two raw-device tools are registered at all (VW-935):
+ * `device.send_raw`, which writes caller-supplied bytes to the motor, and
+ * `debug.recent_frames`, which hands raw telemetry to the model and so to the
+ * transcript.
+ *   - `'off'` (DEFAULT) — neither tool is in `tools/list`. Any value other than
+ *     `on` lands here rather than stopping startup: an operator typo must
+ *     never turn the raw write path on.
+ *   - `'on'` — both registered, for bench work.
+ */
+export type DebugToolsMode = 'off' | 'on';
+
+/**
  * Whether `session.end` drops the session's rendered coach results into the
  * local outbox directory (`src/integrations/truecoach/outbox.ts`).
  *   - `'off'` (DEFAULT) — nothing is written. `report.session_results` still
@@ -237,6 +250,7 @@ export interface Config {
   readonly cueDelivery: CueDeliveryMode;
   readonly autoArm: AutoArmMode;
   readonly effortCue: EffortCueMode;
+  readonly debugTools: DebugToolsMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
   readonly trueCoachOutboxDir: string;
   readonly trueCoachSubmitOnEnd: TrueCoachSubmitOnEndMode;
@@ -333,6 +347,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cueDelivery,
     autoArm,
     effortCue,
+    debugTools: env.VMCP_DEBUG_TOOLS === 'on' ? 'on' : 'off',
     trueCoachOutbox,
     trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
     trueCoachSubmitOnEnd,

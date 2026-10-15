@@ -131,6 +131,7 @@ import {
 // every existing call site imports it from this module.
 export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
+import { isDebugGatedTool } from '../tool-registry.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
@@ -476,6 +477,8 @@ function install<S extends z.ZodObject>(
 ): void {
   const reg = placeholders.get(name);
   if (reg === undefined) {
+    // A debug-gated tool has no placeholder by design when VMCP_DEBUG_TOOLS is off.
+    if (isDebugGatedTool(name)) return;
     // Logged at warn so the regression is surfaced in tests + production.
     // We intentionally do not throw — a missing placeholder for one tool
     // should not block registration of the rest. `no-console` permits
