@@ -11,6 +11,8 @@ sources:
   - scripts/dashboard-plan-drive.mjs
   - scripts/dashboard-preview.mjs
   - src/docs/preview-seeds.ts
+  - src/docs/personas/index.ts
+  - scripts/seed-persona.mjs
   - justfile
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/server.ts
@@ -123,6 +125,14 @@ If `dist/` or `dist/spa/` is missing, the command stops and names the build step
 `body` and `plan` reuse the scenarios that produce this site's screenshots, so the page you
 browse matches the published images. `goals` has a seed of its own
 (`src/docs/preview-seeds.ts`). Open it from **goals** in the dashboard's navigation rail.
+
+`npm run dashboard:preview -- persona <name>` fills every page at once. It seeds one synthetic
+lifter, then opens the dashboard home (`#/`), and the rail reaches the rest. `steady` has twelve
+weeks of an upper/lower split, weigh-ins, check-ins and three goals on track. `first-timer` has
+one session and a goal still calibrating. `fresh` is a new install with no rows at all
+(`src/docs/personas/index.ts`). An unknown name stops the command and lists the names it knows.
+To keep a persona's store, `node scripts/seed-persona.mjs <name> <db-path>` writes it to a new
+file. It refuses an existing file and any path under `.voltras`.
 
 `--state` applies to `goals` only. It takes one of `calibrating`, `recalibration_offered`,
 `recalibration_declined`, `on_track`, `fast_climb`, `behind`, `stalled`, `ahead`,
