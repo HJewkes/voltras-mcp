@@ -2,41 +2,23 @@
 // (share-readiness plan, deliverable B). Each persona is pure data; seed one
 // with `seedPersona(store, persona, now, makeRng(seed))`. All of it is invented.
 
-import type { LifterParams } from './fatigue.js';
-import type { Persona, PersonaLift } from './types.js';
+import { CATALOG_PERSONAS } from './catalog.js';
+import {
+  BICEP_CURL,
+  CHEST_PRESS,
+  LAT_PULLDOWN,
+  lift,
+  ROMANIAN_DEADLIFT,
+  ROW,
+  SHOULDER_PRESS,
+  SQUAT,
+  TRICEP_EXTENSION,
+} from './lifts.js';
+import type { Persona } from './types.js';
 
 export { makeRng, type Rng } from './rng.js';
 export { seedPersona, type PersonaSeedReport, type PersonaStore } from './write.js';
 export type * from './types.js';
-
-/** A lifter working near an eight-rep max: rep 8 lands close to the failure velocity. */
-function nearEightRepMax(v0: number, vFail: number): LifterParams {
-  return {
-    v0,
-    vFail,
-    n0: 9,
-    tauSec: 90,
-    fatigueCost: 0.3,
-    repsPenalty: 0.3,
-    velocityPenalty: 0.15,
-    cv: 0.03,
-  };
-}
-
-function lift(exerciseId: string, name: string, startLoadLbs: number): PersonaLift {
-  const lower = /squat|deadlift|pull-through|kickback/.test(exerciseId);
-  return {
-    exerciseId,
-    name,
-    startLoadLbs,
-    lifter: lower ? nearEightRepMax(0.65, 0.28) : nearEightRepMax(0.6, 0.22),
-  };
-}
-
-const CHEST_PRESS = lift('cable-chest-press', 'Cable Chest Press', 60);
-const ROW = lift('cable-row', 'Cable Row', 70);
-// A lower-body lift ramps in bigger steps, so it climbs faster to stay inside its band.
-const SQUAT: PersonaLift = { ...lift('cable-squat', 'Cable Squat', 80), weeklyGain: 0.015 };
 
 const fresh: Persona = {
   id: 'fresh',
@@ -75,29 +57,17 @@ const steady: Persona = {
       {
         name: 'Upper A',
         dayOffset: 0,
-        lifts: [
-          CHEST_PRESS,
-          ROW,
-          lift('cable-overhead-tricep-extension', 'Cable Overhead Tricep Extension', 30),
-        ],
+        lifts: [CHEST_PRESS, ROW, TRICEP_EXTENSION],
       },
       {
         name: 'Lower A',
         dayOffset: 1,
-        lifts: [
-          SQUAT,
-          lift('cable-romanian-deadlift', 'Cable Romanian Deadlift', 90),
-          lift('cable-hip-abduction', 'Cable Hip Abduction', 25),
-        ],
+        lifts: [SQUAT, ROMANIAN_DEADLIFT, lift('cable-hip-abduction', 'Cable Hip Abduction', 25)],
       },
       {
         name: 'Upper B',
         dayOffset: 3,
-        lifts: [
-          lift('cable-shoulder-press', 'Cable Shoulder Press', 40),
-          lift('cable-lat-pulldown', 'Cable Lat Pulldown', 70),
-          lift('cable-bicep-curl', 'Cable Bicep Curl', 30),
-        ],
+        lifts: [SHOULDER_PRESS, LAT_PULLDOWN, BICEP_CURL],
       },
       {
         name: 'Lower B',
@@ -128,7 +98,7 @@ const steady: Persona = {
   ],
 };
 
-export const PERSONAS: readonly Persona[] = [fresh, firstTimer, steady];
+export const PERSONAS: readonly Persona[] = [fresh, firstTimer, steady, ...CATALOG_PERSONAS];
 
 export function personaById(id: string): Persona {
   const found = PERSONAS.find((persona) => persona.id === id);

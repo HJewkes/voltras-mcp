@@ -12,15 +12,22 @@ import { setCatalog } from '@voltras/workout-analytics';
 import { HISTORY_SEED_EXERCISES } from '../../exercises/history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import { WEEKLY_CHECKIN_CODES, WEEKLY_CHECKIN_KIND } from '../../schemas/profile.js';
-import { LOCAL_USER_ID, type SessionStore, type StoredSet } from '../../store/types.js';
+import { LOCAL_USER_ID, type SessionStore } from '../../store/types.js';
 import type { GoalDerivationState } from '../../tools/goal-derivation.js';
-import { localAt, localDay, localMonday, weekLoadLbs, weekMonday, weekSlot } from './calendar.js';
-import { afterRest, performSet } from './fatigue.js';
+import {
+  isBreakWeek,
+  localAt,
+  localDay,
+  localMonday,
+  weekMonday,
+  weekSlot,
+  workoutStart,
+} from './calendar.js';
 import { seedGoals } from './goals.js';
 import { seedPlan, templateId } from './plan.js';
-import { derivedVbt, rep } from './rep.js';
 import { gaussian, pick, type Rng } from './rng.js';
-import type { Persona, PersonaLift, PersonaTraining, PersonaWorkout } from './types.js';
+import { sessionSets, type SessionSlot } from './sets.js';
+import type { Persona, PersonaExtrasReport, PersonaTraining } from './types.js';
 
 /** The store slice a persona writes through. Every write is a public store method. */
 export type PersonaStore = Pick<
@@ -36,6 +43,8 @@ export type PersonaStore = Pick<
   | 'putPlannedExercise'
   | 'appendBlockSchedule'
   | 'putBodyMetric'
+  | 'declareDietPhase'
+  | 'putAdvisoryDecision'
   | 'putSelfReport'
   | 'putPriority'
   | 'putGoalTarget'
@@ -70,7 +79,16 @@ export async function seedPersona(
     report.goals = await seedGoals(store, persona, training, now);
   }
   Object.assign(report, await seedBody(store, persona, now, rng));
+  if (persona.seedExtras !== undefined) {
+    addExtras(report, await persona.seedExtras(store, now, rng));
+  }
   return report;
+}
+
+function addExtras(report: PersonaSeedReport, extras: PersonaExtrasReport): void {
+  report.sessions += extras.sessions;
+  report.sets += extras.sets;
+  report.goals += extras.goals;
 }
 
 /** The session-0 intake, every checklist field answered. */
@@ -87,7 +105,7 @@ async function seedProfile(store: PersonaStore, persona: Persona, now: Date): Pr
     currentBaseline: 'Some gym experience',
     effortTolerance: 'moderate',
     target: 'Train consistently',
-    declaredTier: 'intermediate',
+    declaredTier: persona.declaredTier ?? 'intermediate',
     declaredAt: answeredAt,
     yearsTraining: 2,
     lastBreakMonths: 0,
@@ -111,18 +129,13 @@ async function seedTraining(
   let sessions = 0;
   let sets = 0;
   for (let week = 0; week < training.weeks; week++) {
+    if (isBreakWeek(training, week)) continue;
     for (const [index, workout] of training.workouts.entries()) {
       sets += await seedSession(store, persona, { week, index, workout }, now, rng);
       sessions++;
     }
   }
   return { sessions, sets };
-}
-
-interface SessionSlot {
-  readonly week: number;
-  readonly index: number;
-  readonly workout: PersonaWorkout;
 }
 
 /** One session and its sets; returns how many sets it wrote. */
@@ -134,11 +147,7 @@ async function seedSession(
   rng: Rng,
 ): Promise<number> {
   const training = persona.training as PersonaTraining;
-  const startedAt = localAt(
-    weekMonday(training, now, slot.week),
-    slot.workout.dayOffset,
-    training.startHour,
-  );
+  const startedAt = workoutStart(training, slot.workout, now, slot.week);
   const id = `${persona.id}-session-${slot.week + 1}-${slot.index + 1}`;
   const sets = sessionSets(training, slot, id, startedAt, rng);
   const kind = persona.kind === undefined ? 'training' : persona.kind;
@@ -160,70 +169,6 @@ async function seedSession(
     });
   }
   return sets.length;
-}
-
-/** Every set of one session, lift by lift, each lift starting fresh. */
-function sessionSets(
-  training: PersonaTraining,
-  slot: SessionSlot,
-  sessionId: string,
-  startedAt: Date,
-  rng: Rng,
-): StoredSet[] {
-  const deload = weekSlot(training, slot.week)?.deload === true;
-  const perLift = deload ? Math.max(1, training.setsPerLift - 1) : training.setsPerLift;
-  const sets: StoredSet[] = [];
-  let clockMs = startedAt.getTime();
-  for (const lift of slot.workout.lifts) {
-    const loadLbs = weekLoadLbs(training, lift, slot.week);
-    let fatigue = 0;
-    for (let n = 0; n < perLift; n++) {
-      const done = performSet(lift.lifter, fatigue, { targetReps: training.targetReps }, rng);
-      const set = setRow(
-        { sessionId, lift, loadLbs, startMs: clockMs, order: sets.length },
-        done.velocities,
-      );
-      if (n > 0) set.restBeforeSec = training.restSec;
-      sets.push(set);
-      clockMs = Date.parse(set.endedAt) + training.restSec * 1000;
-      fatigue = afterRest(lift.lifter, done.fatigueAfter, training.restSec);
-    }
-  }
-  return sets;
-}
-
-interface SetPlacement {
-  readonly sessionId: string;
-  readonly lift: PersonaLift;
-  readonly loadLbs: number;
-  readonly startMs: number;
-  /** 0-based position in the session. */
-  readonly order: number;
-}
-
-const REP_MS = 3_000;
-
-function setRow(at: SetPlacement, velocities: readonly number[]): StoredSet {
-  const id = `${at.sessionId}-set-${at.order + 1}`;
-  return {
-    id,
-    sessionId: at.sessionId,
-    userId: LOCAL_USER_ID,
-    startedAt: new Date(at.startMs).toISOString(),
-    endedAt: new Date(at.startMs + velocities.length * REP_MS).toISOString(),
-    partial: false,
-    exerciseId: at.lift.exerciseId,
-    slot: 'primary',
-    setPurpose: 'working',
-    setIndexInSession: at.order + 1,
-    weightLbs: at.loadLbs,
-    trainingMode: 'Weight Training',
-    source: 'local',
-    reps: velocities.map((velocity, index) => {
-      const mps = Number(velocity.toFixed(3));
-      return { ...rep(id, index, mps), derived: derivedVbt(index + 1, mps, at.loadLbs) };
-    }),
-  };
 }
 
 /** The anchors and baselines the tools refresh after every set, refreshed once per lift. */

@@ -29,6 +29,7 @@ const TRANSCRIPT_EXPORT_TEST_FILE = 'src/__tests__/integration/agent-transcript-
 const LOCAL_TIME_TEST_FILES = [
   'src/accountability/__tests__/commitment-week-local-time.test.ts',
   'src/dashboard/__tests__/banner-clears-via-skip.test.ts',
+  'src/docs/__tests__/personas-night-owl-tz.test.ts',
   'src/dashboard/__tests__/muscle-set-scope-local-time.test.ts',
   'src/plan/__tests__/block-calendar-local-time.test.ts',
   'src/plan/__tests__/calendar-dates-local-time.test.ts',
@@ -47,6 +48,7 @@ const STORE_SUITE_TEST_FILES = [
   'src/dashboard/__tests__/preview-seeds.test.ts',
   'src/dashboard/__tests__/plateau-on-ramp.test.ts',
   'src/docs/__tests__/personas-core.test.ts',
+  'src/docs/__tests__/personas-catalog.test.ts',
 ];
 const STORE_SUITE_TIMEOUT_MS = 15_000;
 const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
