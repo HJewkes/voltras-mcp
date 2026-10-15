@@ -136,6 +136,33 @@ function buildDetailedReps(
   return [...set.reps];
 }
 
+/**
+ * Settled reps, then a rep still in its concentric after `liftSamples` samples: its
+ * velocity and position climb from zero and no eccentric sample has arrived, the shape
+ * each 2 s poll delivers while the lifter is mid-rep (VW-922).
+ */
+function repsWithPartialLift(settled: RepSpec[], liftSamples: number): Rep[] {
+  let set = createSet();
+  let seq = 0;
+  let t = 1000;
+  for (const spec of settled) {
+    for (const sample of repSamples(spec, seq, t)) set = addSampleToSet(set, sample);
+    seq += 4;
+    t += (spec.concMs ?? 500) + 1500;
+  }
+  for (let i = 1; i <= liftSamples; i++) {
+    set = addSampleToSet(set, {
+      sequence: seq++,
+      timestamp: t + i * 100,
+      phase: MovementPhase.CONCENTRIC,
+      position: mmToM(i * 10),
+      velocity: mmsToMps(i * 50),
+      force: 100,
+    });
+  }
+  return [...set.reps];
+}
+
 function snapshotWithActive(reps: Rep[]): Snapshot {
   return {
     session: { sessionId: 's1', exerciseName: 'Cable Row' },
@@ -340,6 +367,25 @@ describe('mapStoreToFatigueModel', () => {
       tone: 'alarm',
       dimensions: { velocityLoss: 'ok', rom: 'alarm', tempo: 'ok' },
     });
+  });
+
+  it('keeps its settled verdict on every poll while the next rep climbs through its concentric (VW-922)', () => {
+    const steady: RepSpec[] = [
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 100 },
+    ];
+    const settled = mapStoreToFatigueModel(
+      sources({ snapshot: snapshotWithActive(buildReps(steady)) }),
+    )!.verdict;
+    expect(settled!.state).not.toBe('form-breakdown');
+
+    for (let polls = 1; polls <= 5; polls++) {
+      const reps = repsWithPartialLift(steady, polls);
+      expect(reps).toHaveLength(4);
+      const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }))!;
+      expect(model.verdict).toEqual(settled);
+    }
   });
 
   it('still yields a null verdict for a cold-start set (< 2 reps)', () => {
@@ -588,6 +634,11 @@ describe('mapStoreToDivergingHeroModel', () => {
     );
     expect(hero.left!.repVelocitiesMps).toEqual([0.6, 0.5]);
     expect(hero.liveRepIndex).toBe(1);
+    // The side's loss % judges the same settled reps the bars draw (VW-922).
+    const settledOnly = mapStoreToDivergingHeroModel(
+      sources({ snapshot: dualSnapshot([meanRep(600, 1), meanRep(500, 2)], [meanRep(550, 1)]) }),
+    );
+    expect(hero.left!.velocityLossPct).toBe(settledOnly.left!.velocityLossPct);
     // The live trace still draws the rep as it streams.
     expect(hero.left!.velocityCurves).toHaveLength(3);
   });
@@ -816,6 +867,28 @@ describe('mapStoreToFatigueModel (dual Voltra)', () => {
     )!;
     // The shared card reads the failing side, not the comfortable one.
     expect(shared.verdict).toEqual(collapsingOnly.verdict);
+  });
+
+  it('never lets one limb’s rep still in its concentric win the fold as limiting (VW-922)', () => {
+    const steady: RepSpec[] = [
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 100 },
+    ];
+    const settled = mapStoreToFatigueModel(
+      sources({
+        snapshot: dual([limb('left', buildReps(steady)), limb('right', buildReps(steady))]),
+      }),
+    )!.verdict;
+    const midRep = mapStoreToFatigueModel(
+      sources({
+        snapshot: dual([
+          limb('left', repsWithPartialLift(steady, 2)),
+          limb('right', buildReps(steady)),
+        ]),
+      }),
+    )!;
+    expect(midRep.verdict).toEqual(settled);
   });
 
   it('keeps rep numbers only one limb reached (no fabricated counterpart)', () => {

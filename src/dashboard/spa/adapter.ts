@@ -479,8 +479,11 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   // across the room (VW-58). Unrounded: titan bands each bar on the exact loss and
   // formats the number itself, so a bar and the aura agree at a band edge (titan 0.21.1).
   // Settled reps only: a bar lands once, at its final value.
+  // The loss % (and the aura and stop strip it feeds) reads the same settled reps: a
+  // partial rep's climbing mean reads as a collapse until its concentric ends.
+  const settled = [...settledReps(reps)];
   const velocitiesMps: number[] = [];
-  for (const rep of settledReps(reps)) {
+  for (const rep of settled) {
     velocitiesMps.push(repMeanVelocityMps(rep) ?? 0);
   }
 
@@ -491,8 +494,8 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     reps: reps.length,
     repTarget,
     repsLabel: fmtRepsLabel(reps.length, repTarget),
-    velocityLoss: fmtVelocityLoss(reps),
-    velocityLossPct: computeVelocityLossPct(reps),
+    velocityLoss: fmtVelocityLoss(settled),
+    velocityLossPct: computeVelocityLossPct(settled),
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     velocitiesMps,
     autoCreatedBy: set.autoCreatedBy ?? null,

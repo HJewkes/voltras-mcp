@@ -422,6 +422,12 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   const reps: readonly Rep[] = isDual
     ? foldLimitingReps(limbs)
     : (limbs[0]?.reps ?? active?.reps ?? []);
+  // The verdict judges settled reps only: a rep mid-concentric has a mean that climbs
+  // from zero, so it read as a collapse on every poll until its eccentric began. Each
+  // limb drops its own partial before the fold, or a partial would win as limiting.
+  const verdictReps = isDual
+    ? foldLimitingReps(limbs.map((limb) => ({ ...limb, reps: settledReps(limb.reps) })))
+    : settledReps(reps);
   const workingStandard = workingRomMetres(reps);
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
   // tuple's index 2 — is the reference the per-rep tempo-deviation tint compares to.
@@ -438,7 +444,7 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     // The multi-dimension verdict from WA (velocity/ROM/tempo with strict precedence).
     // `null` for a cold-start set (< 2 reps) — mirrors `getSetFatigueVerdict`'s own gate
     // — which the card renders as a neutral "warming up".
-    verdict: reps.length < 2 ? null : getSetFatigueVerdict({ reps: reps as Rep[] }),
+    verdict: verdictReps.length < 2 ? null : getSetFatigueVerdict({ reps: verdictReps as Rep[] }),
     romProgression: romProgression(reps),
     // Bottom of the prescribed rep band — the same source the rail/header call
     // `targetReps` (`live-view.ts`). Left `undefined` (not 0, not the rep count) when
@@ -473,15 +479,17 @@ function buildHeroSide(
 ): DivergingHeroSide | null {
   if (entry === undefined) return null;
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
+  const settled = settledReps(reps);
   const velocities: number[] = [];
   // Settled reps only, like the single hero: a bar lands once, at its final value.
-  for (const rep of settledReps(reps)) {
+  for (const rep of settled) {
     // Unrounded, like the single hero: titan bands each wing's bars on the exact loss.
     const mps = repMeanVelocityMps(rep);
     if (mps !== null) velocities.push(mps);
   }
   const best = velocities.length > 0 ? Math.max(...velocities) : null;
-  const velocityLossPct = reps.length < 2 ? null : getSetVelocityLossPct({ reps: reps as Rep[] });
+  const velocityLossPct =
+    settled.length < 2 ? null : getSetVelocityLossPct({ reps: settled as Rep[] });
   return {
     repVelocitiesMps: velocities,
     // This slot's OWN curves — never the shared card's folded stream (see the field note).
