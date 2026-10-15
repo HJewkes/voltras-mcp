@@ -3,6 +3,7 @@
 //   npm run store -- export <store-file> <out-dir>
 //   npm run store -- import <in-dir> <new-store-file>
 //   npm run store -- verify <store-file> <dir-or-second-store>
+//   npm run store -- anonymize <export-dir> [out-dir] [--seed N] [--scale]
 //
 // Engine-neutral on purpose: it reads and writes SQLite today, and the files it
 // writes are the half of any later move to another engine that has to be proven
@@ -10,7 +11,10 @@
 //
 // The source of an `export` is opened READ-ONLY. `import` refuses to write over
 // an existing file. Rehearse on a COPY; see site/guides/troubleshooting.md.
+// `anonymize` writes a private fixture, by default under ~/.voltras/fixtures/,
+// and refuses any directory inside a git work tree (VW-941).
 
+import { anonymizeExport, defaultFixtureDir } from '../../src/store/portable/anonymize.js';
 import { exportStore } from '../../src/store/portable/export.js';
 import { importStore } from '../../src/store/portable/import.js';
 import { verifyStore } from '../../src/store/portable/verify.js';
@@ -20,10 +24,12 @@ const USAGE = [
   '  npm run store -- export <store-file> <out-dir>',
   '  npm run store -- import <in-dir> <new-store-file>',
   '  npm run store -- verify <store-file> <dir-or-second-store>',
+  '  npm run store -- anonymize <export-dir> [out-dir] [--seed N] [--scale]',
 ].join('\n');
 
 async function main(argv: readonly string[]): Promise<number> {
   const [command, first, second] = argv;
+  if (command === 'anonymize') return runAnonymize(argv.slice(1));
   if (command === undefined || first === undefined || second === undefined) {
     console.error(USAGE);
     return 2;
@@ -48,6 +54,29 @@ async function runImport(inDir: string, storePath: string): Promise<number> {
   console.error(
     `import: schema ${manifest.schemaVersion}, ${manifest.totals.tables} tables, ${manifest.totals.rows} rows -> ${storePath}`,
   );
+  return 0;
+}
+
+function runAnonymize(args: readonly string[]): number {
+  const seedAt = args.indexOf('--seed');
+  const seed = seedAt === -1 ? undefined : args[seedAt + 1];
+  const positional = args.filter(
+    (a, i) => !a.startsWith('--') && (seedAt === -1 || i !== seedAt + 1),
+  );
+  const [inDir, outArg] = positional;
+  const unknownFlag = args.some((a) => a.startsWith('--') && a !== '--seed' && a !== '--scale');
+  const badSeed = seedAt !== -1 && (seed === undefined || seed.startsWith('--'));
+  if (inDir === undefined || positional.length > 2 || unknownFlag || badSeed) {
+    console.error(USAGE);
+    return 2;
+  }
+  const outDir = outArg ?? defaultFixtureDir(inDir);
+  const scale = args.includes('--scale');
+  const manifest = anonymizeExport(inDir, outDir, seed === undefined ? { scale } : { seed, scale });
+  console.error(
+    `anonymize: schema ${manifest.schemaVersion}, ${manifest.totals.tables} tables, ${manifest.totals.rows} rows -> ${outDir}`,
+  );
+  console.error('anonymize: the output is personal training data; never commit or share it');
   return 0;
 }
 

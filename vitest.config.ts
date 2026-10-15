@@ -32,6 +32,7 @@ const LOCAL_TIME_TEST_FILES = [
   'src/dashboard/__tests__/muscle-set-scope-local-time.test.ts',
   'src/plan/__tests__/block-calendar-local-time.test.ts',
   'src/plan/__tests__/calendar-dates-local-time.test.ts',
+  'src/store/portable/__tests__/anonymize.test.ts',
   'src/tools/__tests__/goal-targets-on-blocks.test.ts',
   'src/tools/__tests__/metrics-tools-weekly-local-week.test.ts',
   'src/tools/__tests__/plan-progression-re-entry-local-time.test.ts',
