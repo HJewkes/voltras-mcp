@@ -138,10 +138,14 @@ function buildDetailedReps(
 
 /**
  * Settled reps, then a rep still in its concentric after `liftSamples` samples: its
- * velocity and position climb from zero and no eccentric sample has arrived, the shape
- * each 2 s poll delivers while the lifter is mid-rep (VW-922).
+ * position climbs from zero and no eccentric sample has arrived, the shape each 2 s
+ * poll delivers while the lifter is mid-rep (VW-922). `liftMms` is sample i's speed.
  */
-function repsWithPartialLift(settled: RepSpec[], liftSamples: number): Rep[] {
+function repsWithPartialLift(
+  settled: RepSpec[],
+  liftSamples: number,
+  liftMms: (i: number) => number = (i) => i * 50,
+): Rep[] {
   let set = createSet();
   let seq = 0;
   let t = 1000;
@@ -156,7 +160,7 @@ function repsWithPartialLift(settled: RepSpec[], liftSamples: number): Rep[] {
       timestamp: t + i * 100,
       phase: MovementPhase.CONCENTRIC,
       position: mmToM(i * 10),
-      velocity: mmsToMps(i * 50),
+      velocity: mmsToMps(liftMms(i)),
       force: 100,
     });
   }
@@ -378,13 +382,20 @@ describe('mapStoreToFatigueModel', () => {
     const settled = mapStoreToFatigueModel(
       sources({ snapshot: snapshotWithActive(buildReps(steady)) }),
     )!.verdict;
-    expect(settled!.state).not.toBe('form-breakdown');
+    expect(settled!.state).toBe('good');
 
-    for (let polls = 1; polls <= 5; polls++) {
-      const reps = repsWithPartialLift(steady, polls);
-      expect(reps).toHaveLength(4);
-      const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }))!;
-      expect(model.verdict).toEqual(settled);
+    // On pace but short of the working ROM: the shape that read "Form breaking down".
+    const onPace = () => 500;
+    // Still accelerating off the bottom: the shape that read as a velocity collapse.
+    const accelerating = (i: number) => i * 50;
+    for (const liftMms of [onPace, accelerating]) {
+      for (let polls = 1; polls <= 5; polls++) {
+        const reps = repsWithPartialLift(steady, polls, liftMms);
+        expect(reps).toHaveLength(4);
+        const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }))!;
+        expect(model.verdict!.state).not.toBe('form-breakdown');
+        expect(model.verdict).toEqual(settled);
+      }
     }
   });
 
