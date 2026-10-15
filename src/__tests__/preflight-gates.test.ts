@@ -24,7 +24,7 @@ import { SCHEMA_VERSION } from '../store/sqlite-store.js';
 const HEALTHY = {
   whisperCliPresent: true,
   whisperModelPresent: true,
-  nodeVersion: 'v22.5.0',
+  nodeVersion: 'v22.13.0',
   buildSchemaVersion: 41,
   storeSchemaVersion: 41,
   storePath: '/home/lifter/.voltras/vmcp.sqlite',
@@ -42,9 +42,10 @@ function gate(id, overrides = {}) {
 describe('isNodeTooOld', () => {
   it.each([
     ['v22.4.9', true],
+    ['v22.11.0', true],
+    ['v22.12.0', true],
     ['v21.99.0', true],
-    ['v22.5.0', false],
-    ['v22.11.0', false],
+    ['v22.13.0', false],
     ['v25.1.0', false],
   ])('%s -> %s', (version, expected) => {
     expect(isNodeTooOld(version)).toBe(expected);
@@ -147,8 +148,14 @@ describe('evaluateGates', () => {
     expect(gate('whisper', { whisperModelPresent: false }).level).toBe('warn');
   });
 
-  it('fails on a Node older than node:sqlite requires', () => {
-    expect(gate('node', { nodeVersion: 'v22.4.0' }).level).toBe('fail');
+  it('fails on Node 22.12, naming the version to install', () => {
+    const found = gate('node', { nodeVersion: 'v22.12.0' });
+    expect(found.level).toBe('fail');
+    expect(found.message).toContain('Install Node 22.13 or later');
+  });
+
+  it('passes on Node 22.13, the first release with node:sqlite unflagged', () => {
+    expect(gate('node', { nodeVersion: 'v22.13.0' }).level).toBe('ok');
   });
 
   it('warns that VOLTRA_PT_DEV=1 registers no push channel', () => {
