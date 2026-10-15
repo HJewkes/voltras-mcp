@@ -727,8 +727,24 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
-    setStates: deriveActiveSetStates(model),
+    setStates: withoutRangeLabels(deriveActiveSetStates(model)),
   };
+}
+
+/**
+ * The rail row's strip carries no rep-range label: titan's `SetStrip` draws it absolutely
+ * above the bar without reserving space, so in the compact rail row it lands on the
+ * prescription line above. The page header keeps the label. Drop this once VW-927 (the
+ * titan `SetStrip` fix) ships and the rail pins it.
+ */
+function withoutRangeLabels(
+  setStates: SessionRailExercise['setStates'],
+): SessionRailExercise['setStates'] {
+  return setStates.map((set) => {
+    if (set.status !== 'active') return set;
+    const { repsLow: _repsLow, repsHigh: _repsHigh, ...rest } = set;
+    return rest;
+  });
 }
 
 /**

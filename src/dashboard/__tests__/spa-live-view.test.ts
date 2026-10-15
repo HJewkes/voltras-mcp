@@ -865,6 +865,17 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
     }
   });
 
+  // Catches: buildActiveRow reusing the header's strip unchanged, so titan's absolutely
+  // positioned range label overlaps the rail row's prescription line (VW-926).
+  it('keeps the range label off the rail row but on the header strip', () => {
+    const model = withPlannedReps(8, 10, '8–10');
+    const [railRow] = deriveRailExercises(model);
+    expect(railRow.setStates[0]).toMatchObject({ status: 'active', planned: 8 });
+    expect(railRow.setStates[0]).not.toHaveProperty('repsLow');
+    expect(railRow.setStates[0]).not.toHaveProperty('repsHigh');
+    expect(deriveActiveSetStates(model)[0]).toMatchObject({ repsLow: 8, repsHigh: 10 });
+  });
+
   it('treats a high bound at or below the floor as no range', () => {
     const states = deriveActiveSetStates(withPlannedReps(8, 8, '8'));
     expect(states[1]).not.toHaveProperty('repsHigh');
