@@ -10,6 +10,7 @@
  * nothing else on the wall reads per-muscle volume.
  */
 import React, { useEffect, useState } from 'react';
+import { useStore } from 'zustand';
 import { Caption, Spinner, Surface } from '@titan-design/react-ui';
 
 import {
@@ -24,6 +25,7 @@ import type { BodyPageData } from './body-model.js';
 import { ErrorNote, PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
+import { dashboardStore } from '../store';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -42,6 +44,7 @@ export function BodyPage(props: { muscle?: string }): React.JSX.Element {
   const [data, setData] = useState<BodyPageData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { stack, drill } = useBodyDrill(props.muscle, data);
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,5 +85,5 @@ export function BodyPage(props: { muscle?: string }): React.JSX.Element {
       </Surface>
     );
   }
-  return <BodyView data={data} stack={stack} drill={drill} />;
+  return <BodyView data={data} stack={stack} drill={drill} displayUnit={displayUnit} />;
 }

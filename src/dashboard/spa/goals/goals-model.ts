@@ -9,7 +9,8 @@ import type {
   GoalCardMilestone,
   GoalCardTrend,
   GoalLiftActual,
-  GoalMilestoneTarget,
+  GoalLoadTarget,
+  GoalMilestoneReading,
   GoalMuscleLift,
   GoalNextTarget,
   GoalWeekEntry,
@@ -28,6 +29,7 @@ import type { GoalMesoTarget } from '../../read-models/goal-milestone.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 import type { StoredPriority } from '../../../store/types.js';
 import { mapCatalogMuscle } from '../../../exercises/muscle-map.js';
+import { formatMass, type MassUnit } from '../live-page/mass.js';
 import { calibrationCopy } from './calibration-copy.js';
 
 /** The two fetched payloads this page renders from. */
@@ -103,16 +105,21 @@ function cardActuals(view: GoalProgressView): GoalLiftActual[] {
  * own verdict and week cells (VW-400). The summary is told the state, so it
  * never re-derives a verdict the read model already ruled on.
  */
-export function cardMilestone(view: GoalProgressView): GoalCardMilestone {
+export function cardMilestone(view: GoalProgressView, unit: MassUnit = 'lbs'): GoalCardMilestone {
   const meso = view.mesoMilestone;
+  const target = milestoneTarget(meso.target);
+  // titan prints every reading with the target's unit, so all three convert together.
+  const inKg = unit === 'kg' && target.unit === 'lb';
+  const shown = (reading: GoalMilestoneReading): GoalMilestoneReading =>
+    inKg ? readingInKg(reading) : reading;
   return {
-    target: milestoneTarget(meso.target),
+    target: inKg ? { ...target, load: wholeKg(target.load), unit: 'kg' } : target,
     weekCount: meso.weekCount,
     currentWeek: meso.currentWeek,
     state: meso.state,
     status: view.status,
-    weeks: weekEntries(view),
-    ...(meso.latest === undefined ? {} : { latest: meso.latest }),
+    weeks: weekEntries(view, shown),
+    ...(meso.latest === undefined ? {} : { latest: shown(meso.latest) }),
     ...(meso.direction === 'hold' ? {} : { direction: meso.direction }),
   };
 }
@@ -121,15 +128,27 @@ export function cardMilestone(view: GoalProgressView): GoalCardMilestone {
  * Only a load-shaped target reaches here: `liftRows` drops a lift target whose
  * anchor was never recorded, and goal derivation refuses to store one.
  */
-function milestoneTarget(target: GoalMesoTarget): GoalMilestoneTarget {
+function milestoneTarget(target: GoalMesoTarget): GoalLoadTarget {
   if ('reps' in target) return target;
   throw new Error(`goal target ${target.metric} has no set to print on a lift card`);
 }
 
-function weekEntries(view: GoalProgressView): GoalWeekEntry[] {
+function weekEntries(
+  view: GoalProgressView,
+  shown: (reading: GoalMilestoneReading) => GoalMilestoneReading,
+): GoalWeekEntry[] {
   return view.weekOutcomes.map(({ outcome, reading }) =>
-    reading === undefined ? { outcome } : { outcome, reading },
+    reading === undefined ? { outcome } : { outcome, reading: shown(reading) },
   );
+}
+
+/** A lift card's set reads in whole kg, as the Live and Check-in pages show a load (VW-934). */
+function wholeKg(valueLbs: number): number {
+  return formatMass(valueLbs, 'kg').value;
+}
+
+function readingInKg(reading: GoalMilestoneReading): GoalMilestoneReading {
+  return 'load' in reading ? { ...reading, load: wholeKg(reading.load) } : reading;
 }
 
 /** The next week's waypoint as the chart's hollow marker; its label becomes the marker's tip. */
@@ -194,10 +213,10 @@ export interface GoalMuscleCardRow {
  * least one contributing lift. A priority missing any of the three has nothing
  * the card is about: the figure needs a slug and the rows need lifts.
  */
-export function muscleCardRows(data: GoalsPageData): GoalMuscleCardRow[] {
+export function muscleCardRows(data: GoalsPageData, unit: MassUnit = 'lbs'): GoalMuscleCardRow[] {
   return muscleRollupRows(data).flatMap((row) => {
     const muscle = muscleGroupOf(row.priority.ref);
-    const lifts = liftsUnder(data, row.priority);
+    const lifts = liftsUnder(data, row.priority).map((lift) => liftInUnit(lift, unit));
     const first = lifts[0];
     if (row.rollup === null || muscle === null || first === undefined) return [];
     return [
@@ -224,6 +243,12 @@ function liftsUnder(data: GoalsPageData, priority: StoredPriority): GoalMuscleLi
       unit: view.nextMilestone.unit,
       goalWeek: view.nextMilestone.goalWeek,
     }));
+}
+
+function liftInUnit(lift: GoalMuscleLift, unit: MassUnit): GoalMuscleLift {
+  return unit === 'kg' && lift.unit === 'lb'
+    ? { ...lift, load: wholeKg(lift.load), unit: 'kg' }
+    : lift;
 }
 
 /**

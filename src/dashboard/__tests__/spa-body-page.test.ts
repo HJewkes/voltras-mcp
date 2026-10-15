@@ -561,3 +561,24 @@ describe('the body drill idle heal', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe('the body page in the wall’s kg display unit (VW-934)', () => {
+  it('reads a PR and its gain over the prior best in whole kg', () => {
+    const row = prRows(STRENGTH)[0]!;
+
+    expect(prValueText(row, 'kg')).toBe('83 kg (+3)'); // 182.5 lb, 7.5 lb over 175
+  });
+
+  it('lists Recent PRs in kg with no pound reading on the page', () => {
+    const rendered = text(pageData(), { displayUnit: 'kg' });
+
+    expect(rendered).toContain('Chest Press');
+    expect(rendered).toContain('83 kg (+3)');
+    expect(rendered).not.toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(text(pageData(), { displayUnit: 'lbs' })).toContain('182.5 lb (+7.5)');
+    expect(markup(pageData(), { displayUnit: 'lbs' })).toBe(markup(pageData()));
+  });
+});
