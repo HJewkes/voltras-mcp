@@ -88,7 +88,7 @@ a unique index behind it, so a second run updates in place and never duplicates.
 `dryRun: true` to see the mapped tree before writing. The step-by-step version for a coach
 is [Import a TrueCoach week](/coaches/import-a-truecoach-week).
 
-### Terms of service — read this before using it
+### Terms of service: read this before using it
 
 TrueCoach (an Xplor Technologies brand) **publishes no public developer API**. The
 endpoint this uses is undocumented and reverse-engineered. Xplor's terms of use, section
