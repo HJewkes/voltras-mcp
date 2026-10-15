@@ -9,7 +9,7 @@
 // first. It prints counts and hashes and never a stored value.
 //
 // The source of an `export` is opened READ-ONLY. `import` refuses to write over
-// an existing file. Rehearse on a COPY; see README.md.
+// an existing file. Rehearse on a COPY; see site/guides/troubleshooting.md.
 
 import { exportStore } from '../../src/store/portable/export.js';
 import { importStore } from '../../src/store/portable/import.js';

@@ -72,7 +72,8 @@ npm test && npm run lint && npm run typecheck && npm run build
 ```
 
 CI gates on lint, typecheck, test and build. Repo conventions live in `CLAUDE.md`; the
-dashboard's architecture is in `src/dashboard/README.md`.
+dashboard's architecture is in `src/dashboard/README.md`. Before reading the device tools,
+see [docs/vocabulary.md](docs/vocabulary.md): "load" means at least three different things.
 
 ## Confidentiality
 

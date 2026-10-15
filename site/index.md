@@ -100,7 +100,7 @@ tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   `site/concepts/fatigue-and-pacing.md`). The effort number (RPE or reps in reserve) is
   withheld until a lift has a trusted fitted profile (`site/coming-soon/effort-readout.md`).
 - **Plans on screen.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
-  workout templates and planned exercises (`README.md`). The plan builder at `/app#/plan`
+  workout templates and planned exercises ([plan reference](/reference/plan)). The plan builder at `/app#/plan`
   re-reads the plan every 2 seconds, so a lift added over MCP appears without a reload
   (`src/dashboard/spa/planner/planner-client.ts:25`).
 - **Reports for your coach.** [`report.session_results`](/reference/report) and
@@ -133,7 +133,7 @@ tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
 ## What it is, and what it is not
 
 - **A stdio MCP server.** It talks to Claude Code over standard input and output, and each
-  Claude Code session runs its own server process (`README.md`, `CLAUDE.md`).
+  Claude Code session runs its own server process ([launch options](/start/launch-options#running-more-than-one-instance), `CLAUDE.md`).
 - **Not on npm.** You clone the repository and build it. `npx voltras-mcp` does not work
   (`README.md`, "Quickstart").
 - **Local.** Your training records live in one SQLite file on your machine,

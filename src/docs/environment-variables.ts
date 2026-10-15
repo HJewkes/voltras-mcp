@@ -302,7 +302,7 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     accepts: ON_OFF,
     onInvalid: 'stops startup',
     purpose:
-      'With the outbox on, each written entry also starts one unattended submit to TrueCoach. Read the README section on TrueCoach write-back first.',
+      'With the outbox on, each written entry also starts one unattended submit to TrueCoach. Read the [TrueCoach write-back guide](/guides/truecoach#write-back-unattended-gated) first.',
     source: CONFIG,
   },
 ];

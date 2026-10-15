@@ -624,7 +624,7 @@ Consequences:
   one rep late. Rep N is the exception — it arrives at set close, not one rep late.
 
 If you want cues that don't depend on the model reacting to these events at all, see
-`VMCP_CUES` in the [main README](../README.md#environment-variables). Both cue switches are
+`VMCP_CUES` in the [environment variable reference](https://hjewkes.github.io/voltras-mcp/reference/environment-variables). Both cue switches are
 runtime-togglable via `system.set_cues` and reported by `server.health`.
 
 ## `lease_lost`
