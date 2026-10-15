@@ -122,11 +122,11 @@ export type CuesMode = 'off' | 'on';
  * Whether `target_hit` / `slowdown` cues are allowed to fire (VMCP-05.01).
  * Both categories can land mid-set, while the lifter is still under load —
  * unlike `set_intro`/`set_complete`, which only fire at set boundaries. Every
- * cue mutes the mic for its `say` duration (~2s), and that mute discards
- * frames outright rather than buffering them, so the ungated voice "stop"
- * fast-path is unavailable for that window. Gating mid-set cues off by
- * default keeps that blind spot out of the riskiest part of a set — under
- * load, mid-rep — without losing the safe-boundary cues.
+ * cue ducks the mic for its `say` duration (~2s). Since VMCP-05.20 the
+ * ungated voice "stop" fast-path stays live through that window, but the wake
+ * phrase and weight commands do not, and a stop worded like the cue is
+ * dropped as echo. Mid-set cues stay off by default until that exemption has
+ * been verified on hardware, without losing the safe-boundary cues.
  *   - `'off'` (DEFAULT) — only `set_intro`/`set_complete` cues speak, when
  *     `VMCP_CUES='on'`. No cue plays while more reps are still expected.
  *   - `'on'` — all four categories speak. Opt in only when a spotter or
