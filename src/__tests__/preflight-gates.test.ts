@@ -42,10 +42,10 @@ function gate(id, overrides = {}) {
 describe('isNodeTooOld', () => {
   it.each([
     ['v22.4.9', true],
+    ['v22.11.0', true],
     ['v22.12.0', true],
     ['v21.99.0', true],
     ['v22.13.0', false],
-    ['v22.11.0', false],
     ['v25.1.0', false],
   ])('%s -> %s', (version, expected) => {
     expect(isNodeTooOld(version)).toBe(expected);
