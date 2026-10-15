@@ -1,0 +1,159 @@
+{
+  "session": {
+    "id": "session-edges",
+    "startedAt": "2026-10-14T18:10:00.000Z",
+    "endedAt": null,
+    "exerciseId": null,
+    "exerciseName": null
+  },
+  "exercises": [
+    {
+      "exerciseId": null,
+      "name": "Unattributed",
+      "setCount": 2,
+      "workingSetCount": 2,
+      "totalReps": 19,
+      "volumeLbs": 1140,
+      "topWeightLbs": 60,
+      "bestRepVelocity": 0.64,
+      "maxVelocityLossPct": 11,
+      "verdict": {
+        "state": "good",
+        "tone": "ok",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 1,
+      "sets": [
+        {
+          "id": "set-1",
+          "endedAt": "2026-10-14T18:10:45.000Z",
+          "loadLabel": "60 lb",
+          "expectedRepRange": null,
+          "index": 1,
+          "startedAt": "2026-10-14T18:10:00.000Z",
+          "weightLbs": 60,
+          "repCount": 10,
+          "setPurpose": "working",
+          "velocityLossPct": 11,
+          "bestRepVelocity": 0.64
+        },
+        {
+          "id": "set-2",
+          "endedAt": "2026-10-14T18:13:15.000Z",
+          "loadLabel": "60 lb",
+          "expectedRepRange": null,
+          "index": 2,
+          "startedAt": "2026-10-14T18:12:30.000Z",
+          "weightLbs": 60,
+          "repCount": 9,
+          "setPurpose": "working",
+          "velocityLossPct": null,
+          "bestRepVelocity": null
+        }
+      ],
+      "progression": null,
+      "progressionNote": "These sets named no exercise, so there is no plan row to score them against.",
+      "loadDrift": null
+    },
+    {
+      "exerciseId": "cable-biceps-curl",
+      "name": "Cable Biceps Curl",
+      "setCount": 2,
+      "workingSetCount": 2,
+      "totalReps": 24,
+      "volumeLbs": 480,
+      "topWeightLbs": 40,
+      "bestRepVelocity": null,
+      "maxVelocityLossPct": null,
+      "verdict": null,
+      "verdictSetIndex": null,
+      "sets": [
+        {
+          "id": "set-3",
+          "endedAt": "2026-10-14T18:16:45.000Z",
+          "loadLabel": "40 lb",
+          "expectedRepRange": null,
+          "index": 3,
+          "startedAt": "2026-10-14T18:16:00.000Z",
+          "weightLbs": 40,
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": null,
+          "bestRepVelocity": null
+        },
+        {
+          "id": "set-4",
+          "endedAt": "2026-10-14T18:19:15.000Z",
+          "loadLabel": "band",
+          "expectedRepRange": null,
+          "index": 4,
+          "startedAt": "2026-10-14T18:18:30.000Z",
+          "weightLbs": null,
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": null,
+          "bestRepVelocity": null
+        }
+      ],
+      "progression": {
+        "delta": 0,
+        "reasoning": "1/1 sets hit 12 reps (target 10-12 reps); hold 40 lb.",
+        "basedOnSessionId": "session-edges",
+        "targetSets": 2,
+        "targetRepsLow": 10,
+        "targetRepsHigh": 12,
+        "targetWeightLbs": 40
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    },
+    {
+      "exerciseId": "cable-lateral-raise",
+      "name": "Cable Lateral Raise",
+      "setCount": 2,
+      "workingSetCount": 0,
+      "totalReps": 20,
+      "volumeLbs": 300,
+      "topWeightLbs": 15,
+      "bestRepVelocity": 0.9,
+      "maxVelocityLossPct": null,
+      "verdict": null,
+      "verdictSetIndex": null,
+      "sets": [
+        {
+          "id": "set-5",
+          "endedAt": "2026-10-14T18:22:45.000Z",
+          "loadLabel": "15 lb",
+          "expectedRepRange": null,
+          "index": 5,
+          "startedAt": "2026-10-14T18:22:00.000Z",
+          "weightLbs": 15,
+          "repCount": 10,
+          "setPurpose": "technique",
+          "velocityLossPct": 3,
+          "bestRepVelocity": 0.9
+        },
+        {
+          "id": "set-6",
+          "endedAt": "2026-10-14T18:24:45.000Z",
+          "loadLabel": "15 lb",
+          "expectedRepRange": null,
+          "index": 6,
+          "startedAt": "2026-10-14T18:24:00.000Z",
+          "weightLbs": 15,
+          "repCount": 10,
+          "setPurpose": "technique",
+          "velocityLossPct": 4,
+          "bestRepVelocity": 0.88
+        }
+      ],
+      "progression": null,
+      "progressionNote": "Technique sets only; progression reads working sets.",
+      "loadDrift": null
+    }
+  ]
+}
