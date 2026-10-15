@@ -29,11 +29,11 @@ The [dashboard pages](/reference/dashboard-pages) reference says which route eac
 ## Read routes
 
 voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1` only, no
-network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
+network exposure beyond the machine it runs on (`src/dashboard/server.ts`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
 `/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
 `/api/muscle-recovery`, `/api/goals`, `/api/goal-progress`, `/api/session-review`,
-`/api/session-summary/:sessionId` — are all reads. That's the live-view surface (`README.md`). `/api/muscle-plan` (VW-331) rolls up the active training week into
+`/api/session-summary/:sessionId` — are all reads. That's the live-view surface (`src/dashboard/server.ts`). `/api/muscle-plan` (VW-331) rolls up the active training week into
 planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
 planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
 how much you actually trained each muscle this week, and whether that is a lot or a little.

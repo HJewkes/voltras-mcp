@@ -40,7 +40,7 @@ hold when the athlete is ready (`src/tools/isometric-tools.ts:120-161`).
 
 [`isometric.measure_max`](/reference/isometric) and [`isometric.measure_imbalance`](/reference/isometric)
 loop that same single-hold primitive with the protocol's rests, and both **block** until
-they finish (`README.md:467`). `measure_max` runs N trials of M-second holds on one slot
+they finish (`src/tools/isometric-tools.ts:1327-1328`). `measure_max` runs N trials of M-second holds on one slot
 with rest between trials; `measure_imbalance` runs that same protocol on two slots in turn,
 with an additional rest between sides, and computes the asymmetry between them
 (`src/tools/isometric-tools.ts:163-330`). The defaults, all from the input schema:

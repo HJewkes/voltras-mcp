@@ -18,6 +18,7 @@ sources:
   - src/store/mrv-guard.ts
   - src/dashboard/spa/body/BodyView.tsx
   - src/analytics/rir-velocity.ts
+  - src/analytics/comparability.ts
   - site/guides/isometric.md
 lastVerified: 2026-09-30
 sourced: 2026-09-30
@@ -124,3 +125,34 @@ The strictest trust rules in the server apply to reps in reserve. A fitted effor
 trusted only when its error is 1.5 reps or less (`src/analytics/rir-velocity.ts:62-80`).
 [Velocity and effort](/concepts/velocity-and-effort) explains that rule and where the dashboard
 withholds effort numbers today.
+
+## Like-vs-like comparisons
+
+Every "you got stronger" claim is the inference _same work, different result_, and it is
+only sound while the work really was the same. One predicate answers that question about
+two stored sets (`src/analytics/comparability.ts`): same exercise, same lifter, same set
+purpose, same training mode, same device settings, same side, same load, plus a
+training-phase and a physical-setup clause.
+
+Three readings use it to choose what to compare against, and report the choice in a
+`comparability` block: [`metrics.compute`](/reference/metrics) with `session.readiness`
+(which baseline set) and `session.strength` (whether the pooled sets match the heaviest
+one), and [`progression.get_for_exercise`](/reference/progression) (which earlier session
+is a valid basis).
+
+Two rules keep it honest:
+
+- **Exact load, no invented tolerance.** The source the server follows names no load
+  tolerance for this comparison, so loads must match exactly. A percentage nobody measured
+  would sit at the centre of every progress claim.
+- **It never answers with silence.** Strict matching leaves an irregular lifter with few
+  valid pairs, so a block with no match still names the nearest candidate and the reasons
+  it failed (`noValidComparison` and `nearest`), and the reading still returns its numbers.
+  Relay those reasons rather than the headline alone.
+
+This checks the context of two sets. Whether they were _executed_ the same way (tempo and
+range-of-motion drift) is the drift guard's separate question, readable through
+[`driftguard.check`](/reference/driftguard). The drift guard reads reps; this predicate
+never does. A pair can pass one and fail the other. The two never share a field name:
+`quality.rom` reports the drift guard's verdict at `baseline.driftGuard`, and
+`comparability` always means this predicate's report.

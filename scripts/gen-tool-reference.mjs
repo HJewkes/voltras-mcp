@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Generate the published capability reference from the tool registry.
 //
-// The README's tool table is hand-maintained, which is fine for a file people
-// edit and wrong for a published page: it reflows on every row edit (so any two
-// PRs touching it conflict) and a drifted page is worse than no page. So this
-// boots the server over stdio against the MOCK adapter and asks it — descriptions
-// taken from `tools/list` cannot drift from what a client actually sees.
+// The README no longer carries a tool table. A hand-maintained one was fine for a
+// file people edit and wrong for a published page: it reflowed on every row edit
+// (so any two PRs touching it conflicted) and a drifted page is worse than no
+// page. So this boots the server over stdio against the MOCK adapter and asks
+// it — descriptions taken from `tools/list` cannot drift from what a client
+// actually sees.
 //
 // The same boot also renders the coach skill's tool inventory (VW-503), so the
 // skill that ships beside the server cannot name a tool the server does not

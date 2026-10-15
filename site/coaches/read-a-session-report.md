@@ -29,7 +29,7 @@ from a session you've already run and ended.
 ## Reading a report
 
 [`report.session_results`](/reference/report) turns one ended session into the freeform
-"Result" text a coach reads, one string per exercise (`README.md`):
+"Result" text a coach reads, one string per exercise ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)):
 
 ```
 170 lb x 12
@@ -40,7 +40,7 @@ missed: 1 of 3 sets below 8 reps
 
 A bilateral effort renders as `L 30 lb x 13` / `R 30 lb x 12`. The `missed:` line only
 appears when the session had a plan attached (`plan.complete_workout` /
-`plan.attach_to_session`) and a working set fell below its `targetRepsLow` (`README.md`).
+`plan.attach_to_session`) and a working set fell below its `targetRepsLow` ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)).
 
 Which sets count follows the same rule [`plan.suggest_progression`](/reference/plan) uses:
 sets flagged as a warm-up, probe or technique set are excluded, then the sets at the top load
@@ -56,12 +56,12 @@ setting instead of showing a missing number: `damper 6 x 10`, `band x 10`, `iso 
 max force is never in the label — the device doesn't echo it back in any observed frame, so
 there's nothing to report. `describeLoad` in `src/state/set-capture.ts` is the one place
 this decision is made, and the dashboard's session summary and set list render the same
-string (`README.md`, PR #271).
+string (PR #271).
 
 ## What the tool does and doesn't do
 
 `report.session_results` reads the store and makes **no network call**. It never writes to
-TrueCoach, and nothing in this server does (`README.md`).
+TrueCoach, and nothing in this server does ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)).
 
 ## The outbox is a file drop, not a pipe
 
@@ -75,7 +75,7 @@ Set `VMCP_TRUECOACH_OUTBOX=on` and every `session.end` also writes the same payl
 `VMCP_TRUECOACH_OUTBOX_DIR` moves the root; `pending/` is created on demand, mode `0700`.
 The server never reads the directory back, uploads it or schedules anything; only the
 write-back submitter below reads it. It exists so a session's results survive the
-conversation that produced them, ready to paste (`README.md`, "The outbox"). A session with no working sets writes nothing, and a write failure is logged
+conversation that produced them, ready to paste ([TrueCoach guide](/guides/truecoach#the-outbox)). A session with no working sets writes nothing, and a write failure is logged
 and swallowed; the file is a by-product of `session.end`, never a precondition for it.
 
 The example above is a synthetic result for an invented exercise, not a real session — this
@@ -86,7 +86,7 @@ page never shows real athlete data, a real session id, or a real TrueCoach accou
 Posting a report's text into TrueCoach isn't something this server does. `tools/truecoach-submit/`
 is a **standalone package**: its own `package.json`, its own lockfile, not part of the
 server bundle, not installed by the root `npm ci`, not run by CI (`tools/truecoach-submit/package.json`,
-`README.md`, "TrueCoach write-back").
+[TrueCoach guide](/guides/truecoach#write-back-unattended-gated)).
 It reads the outbox and drives a local Playwright browser to fill in that day's TrueCoach
 workout.
 
@@ -111,7 +111,7 @@ launchd job the lifter installs by hand, and `VMCP_TRUECOACH_SUBMIT_ON_END=on` (
 `tools/truecoach-submit --submit --session <id>` itself, detached, once per session —
 turning "a person chooses to post this" into "ending a session posts it" with no further
 action from you. Read both gates above before setting either, since each one puts the
-account risk on autopilot (`README.md`, "Scheduling").
+account risk on autopilot ([TrueCoach guide](/guides/truecoach#scheduling)).
 
 Pulling a coach's assigned workouts the other direction — TrueCoach into the local plan
 tree — is a different, already-read-only tool: see

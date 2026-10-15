@@ -100,7 +100,8 @@
 //                          write route cannot be added unguarded. None of the
 //                          six needs the single-writer device lease: every one
 //                          is a sqlite plan write through `plan-api.ts` with
-//                          no device I/O. See `README.md` for the table.
+//                          no device I/O. The route table is in
+//                          site/reference/dashboard-api.md.
 //
 //   GET /api/bootstrap    — `{ token, version }`. The SPA's recovery path for
 //                          the write token when its page predates a restart.

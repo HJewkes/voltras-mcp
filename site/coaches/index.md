@@ -18,7 +18,7 @@ These pages are for a coach whose client trains on a Voltra with Claude as the i
 trainer. You never install anything and you never touch the device. What you get:
 
 1. A plain-text result for each session, in the same `170 lb x 12` style a TrueCoach
-   result box uses ([`report.session_results`](/reference/report), `README.md`).
+   result box uses ([`report.session_results`](/reference/report), [TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)).
 2. A weekly rollup: training days, adherence to the plan, flagged sets, and progression
    suggestions labelled "not applied" ([`report.weekly`](/reference/report),
    `src/tools/report-tools.ts`).
@@ -28,8 +28,8 @@ trainer. You never install anything and you never touch the device. What you get
    reaches you only when the lifter sends it or turns on the tool in item 5
    ([Consent and the data loop](/coaches/consent-and-data-loop)).
 5. An optional, gated tool that posts results into TrueCoach for the lifter. It carries
-   account risk for you. Nothing in the tool makes the lifter tell you first; the README
-   asks them to, before the first real submit (`README.md`).
+   account risk for you. Nothing in the tool makes the lifter tell you first; the TrueCoach
+   guide asks them to, before the first real submit ([TrueCoach guide](/guides/truecoach#write-back-unattended-gated)).
 
 ## Pages
 
