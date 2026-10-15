@@ -33,7 +33,7 @@ npm run build && npm run build:dashboard
 ```
 
 `npm run build` alone gives you a working server whose `/app` page shows only a "SPA not
-built" placeholder (`src/dashboard/server.ts:2022-2025`). The plugin
+built" placeholder (`src/dashboard/server.ts:2171-2174`). The plugin
 launcher runs `npm run build:dashboard` for you when the built dashboard is missing or older
 than its source (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:80-87`).
 
@@ -67,9 +67,9 @@ answer the question:
 - `dashboardDisabledReason` is `"disabled"` when `VMCP_DASHBOARD_PORT` set to `off` or `0`
   turned the dashboard off, and `null` otherwise (`src/server.ts:59`, `src/server.ts:181`).
 
-The default port is `7723` (`src/dashboard/server.ts:263`). When another process already
+The default port is `7723` (`src/dashboard/server.ts:264`). When another process already
 holds it, for example a second Claude Code session, the dashboard binds a port the operating
-system picks instead of failing (`src/server.ts:149-158`, `src/dashboard/server.ts:437`). So read `dashboardUrl` rather than
+system picks instead of failing (`src/server.ts:149-158`, `src/dashboard/server.ts:438`). So read `dashboardUrl` rather than
 typing `7723`. The server also writes the address it bound to stderr, as an `info` log
 line (`src/server.ts:158`).
 
@@ -77,7 +77,7 @@ line (`src/server.ts:158`).
 
 Open `dashboardUrl` in a browser on the same machine. The dashboard binds `127.0.0.1` only,
 so another computer or a phone on your network cannot reach it
-(`src/dashboard/server.ts:265`).
+(`src/dashboard/server.ts:266`).
 
 You can open it at any point in a session. While a session is open, the server sends that
 session's finished sets with every update, so a page opened or reloaded mid-session shows
@@ -103,12 +103,12 @@ Read `dashboardDisabledReason`. If it is `"disabled"`, `VMCP_DASHBOARD_PORT` is 
 dashboard failed to start. Either the port was held and the fallback port the operating
 system picked failed too, or the bind failed for another reason, which gets no fallback. The
 server logs the reason to stderr and keeps running without a dashboard
-(`src/server.ts:159-171`, `src/dashboard/server.ts:437`).
+(`src/server.ts:159-171`, `src/dashboard/server.ts:438`).
 
 ### The page says "SPA not built"
 
 The server is built but the dashboard is not. Run `npm run build:dashboard` and reload the
-page (`src/dashboard/server.ts:2170-2173`).
+page (`src/dashboard/server.ts:2171-2174`).
 
 ### The page shows a different session
 

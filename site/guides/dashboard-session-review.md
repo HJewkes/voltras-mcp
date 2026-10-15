@@ -24,7 +24,7 @@ start with [Set it up and open it](/guides/dashboard-setup).
 
 The capture below comes from a scripted run on the mock adapter: two sets of Cable Chest
 Press, five reps each at 140 lb, against a plan that asks for 8 to 10 reps
-(`src/docs/capture-shots.ts:400-418`, `scripts/dashboard-plan-drive.mjs:115-123`).
+(`src/docs/capture-shots.ts:425-443`, `scripts/dashboard-plan-drive.mjs:115-123`).
 
 ## 1. Open the summary
 

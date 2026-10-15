@@ -47,7 +47,7 @@ the device or to the lifter's records. The server talks to Claude over standard 
 output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
 machine can reach it. Its live-view routes are reads. Its write routes, which edit plans or
 run a short allowlist of store-only actions such as logging bodyweight, are further gated by
-the per-boot write guard (`src/dashboard/server.ts:585-608`, `src/actions/allowlist.ts`,
+the per-boot write guard (`src/dashboard/server.ts:586-609`, `src/actions/allowlist.ts`,
 `src/dashboard/write-guard.ts:85-95`).
 
 ## Responsibilities
