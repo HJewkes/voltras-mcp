@@ -45,6 +45,7 @@ const STORE_SUITE_TEST_FILES = [
   'src/store/__tests__/**/*.test.ts',
   'src/dashboard/__tests__/preview-seeds.test.ts',
   'src/dashboard/__tests__/plateau-on-ramp.test.ts',
+  'src/docs/__tests__/personas-core.test.ts',
 ];
 const STORE_SUITE_TIMEOUT_MS = 15_000;
 const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];
