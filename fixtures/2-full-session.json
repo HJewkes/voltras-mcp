@@ -1,0 +1,357 @@
+{
+  "session": {
+    "id": "session-full",
+    "startedAt": "2026-10-13T06:01:00.000Z",
+    "endedAt": "2026-10-13T06:45:00.000Z",
+    "exerciseId": "face-pull",
+    "exerciseName": "Face Pull"
+  },
+  "exercises": [
+    {
+      "exerciseId": "cable-romanian-deadlift",
+      "name": "Cable Romanian Deadlift",
+      "setCount": 5,
+      "workingSetCount": 3,
+      "totalReps": 47,
+      "volumeLbs": 4980,
+      "topWeightLbs": 120,
+      "bestRepVelocity": 0.62,
+      "maxVelocityLossPct": 23,
+      "verdict": {
+        "state": "slowing",
+        "tone": "warn",
+        "dimensions": {
+          "velocityLoss": "warn",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 5,
+      "sets": [
+        {
+          "id": "set-1",
+          "endedAt": "2026-10-13T06:01:45.000Z",
+          "loadLabel": "60 lb",
+          "expectedRepRange": null,
+          "index": 1,
+          "startedAt": "2026-10-13T06:01:00.000Z",
+          "weightLbs": 60,
+          "repCount": 8,
+          "setPurpose": "warmup",
+          "velocityLossPct": 5,
+          "bestRepVelocity": 0.78
+        },
+        {
+          "id": "set-2",
+          "endedAt": "2026-10-13T06:03:45.000Z",
+          "loadLabel": "90 lb",
+          "expectedRepRange": null,
+          "index": 2,
+          "startedAt": "2026-10-13T06:03:00.000Z",
+          "weightLbs": 90,
+          "repCount": 6,
+          "setPurpose": "warmup",
+          "velocityLossPct": 6,
+          "bestRepVelocity": 0.7
+        },
+        {
+          "id": "set-3",
+          "endedAt": "2026-10-13T06:06:15.000Z",
+          "loadLabel": "120 lb",
+          "expectedRepRange": {
+            "expectedLow": 9,
+            "expectedHigh": 13,
+            "median": 11,
+            "n": 7,
+            "basis": "From 7 of your past sets at 115-125 lb that stopped at 20% velocity loss."
+          },
+          "index": 3,
+          "startedAt": "2026-10-13T06:05:30.000Z",
+          "weightLbs": 120,
+          "repCount": 12,
+          "setPurpose": "working",
+          "velocityLossPct": 14,
+          "bestRepVelocity": 0.62
+        },
+        {
+          "id": "set-4",
+          "endedAt": "2026-10-13T06:09:15.000Z",
+          "loadLabel": "120 lb",
+          "expectedRepRange": {
+            "expectedLow": 9,
+            "expectedHigh": 13,
+            "median": 11,
+            "n": 7,
+            "basis": "From 7 of your past sets at 115-125 lb that stopped at 20% velocity loss."
+          },
+          "index": 4,
+          "startedAt": "2026-10-13T06:08:30.000Z",
+          "weightLbs": 120,
+          "repCount": 11,
+          "setPurpose": "working",
+          "velocityLossPct": 18,
+          "bestRepVelocity": 0.6
+        },
+        {
+          "id": "set-5",
+          "endedAt": "2026-10-13T06:12:30.000Z",
+          "loadLabel": "120 lb",
+          "expectedRepRange": {
+            "expectedLow": 9,
+            "expectedHigh": 13,
+            "median": 11,
+            "n": 7,
+            "basis": "From 7 of your past sets at 115-125 lb that stopped at 20% velocity loss."
+          },
+          "index": 5,
+          "startedAt": "2026-10-13T06:11:45.000Z",
+          "weightLbs": 120,
+          "repCount": 10,
+          "setPurpose": "working",
+          "velocityLossPct": 23,
+          "bestRepVelocity": 0.58
+        }
+      ],
+      "progression": {
+        "delta": 0,
+        "reasoning": "3/3 sets landed in 10-12 reps (target 10-12 reps); hold 120 lb.",
+        "basedOnSessionId": "session-full",
+        "targetSets": 3,
+        "targetRepsLow": 10,
+        "targetRepsHigh": 12,
+        "targetWeightLbs": 120
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    },
+    {
+      "exerciseId": "seated-cable-row",
+      "name": "Seated Cable Row",
+      "setCount": 4,
+      "workingSetCount": 3,
+      "totalReps": 55,
+      "volumeLbs": 5100,
+      "topWeightLbs": 100,
+      "bestRepVelocity": 0.71,
+      "maxVelocityLossPct": 13,
+      "verdict": {
+        "state": "good",
+        "tone": "ok",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 9,
+      "sets": [
+        {
+          "id": "set-6",
+          "endedAt": "2026-10-13T06:15:45.000Z",
+          "loadLabel": "60 lb",
+          "expectedRepRange": null,
+          "index": 6,
+          "startedAt": "2026-10-13T06:15:00.000Z",
+          "weightLbs": 60,
+          "repCount": 10,
+          "setPurpose": "warmup",
+          "velocityLossPct": 4,
+          "bestRepVelocity": 0.84
+        },
+        {
+          "id": "set-7",
+          "endedAt": "2026-10-13T06:17:45.000Z",
+          "loadLabel": "100 lb",
+          "expectedRepRange": null,
+          "index": 7,
+          "startedAt": "2026-10-13T06:17:00.000Z",
+          "weightLbs": 100,
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 9,
+          "bestRepVelocity": 0.71
+        },
+        {
+          "id": "set-8",
+          "endedAt": "2026-10-13T06:20:15.000Z",
+          "loadLabel": "100 lb",
+          "expectedRepRange": null,
+          "index": 8,
+          "startedAt": "2026-10-13T06:19:30.000Z",
+          "weightLbs": 100,
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 11,
+          "bestRepVelocity": 0.7
+        },
+        {
+          "id": "set-9",
+          "endedAt": "2026-10-13T06:22:45.000Z",
+          "loadLabel": "100 lb",
+          "expectedRepRange": null,
+          "index": 9,
+          "startedAt": "2026-10-13T06:22:00.000Z",
+          "weightLbs": 100,
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 13,
+          "bestRepVelocity": 0.69
+        }
+      ],
+      "progression": {
+        "delta": 5,
+        "reasoning": "3/3 sets hit 15 reps (target 12-15 reps); add 5 lb.",
+        "basedOnSessionId": "session-full",
+        "targetSets": 3,
+        "targetRepsLow": 12,
+        "targetRepsHigh": 15,
+        "targetWeightLbs": 105
+      },
+      "progressionNote": null,
+      "loadDrift": {
+        "programmedPct": 70,
+        "impliedPct": 58,
+        "deltaPct": -12,
+        "reason": "At 100 lb your bar speed matches about 58% of your max, not the 70% the plan assumed."
+      }
+    },
+    {
+      "exerciseId": "standing-cable-chest-press",
+      "name": "Standing Cable Chest Press",
+      "setCount": 4,
+      "workingSetCount": 3,
+      "totalReps": 29,
+      "volumeLbs": 2080,
+      "topWeightLbs": 80,
+      "bestRepVelocity": 0.55,
+      "maxVelocityLossPct": 34,
+      "verdict": {
+        "state": "grinding",
+        "tone": "alarm",
+        "dimensions": {
+          "velocityLoss": "alarm",
+          "rom": "ok",
+          "tempo": "warn"
+        }
+      },
+      "verdictSetIndex": 13,
+      "sets": [
+        {
+          "id": "set-10",
+          "endedAt": "2026-10-13T06:26:45.000Z",
+          "loadLabel": "50 lb",
+          "expectedRepRange": null,
+          "index": 10,
+          "startedAt": "2026-10-13T06:26:00.000Z",
+          "weightLbs": 50,
+          "repCount": 8,
+          "setPurpose": "warmup",
+          "velocityLossPct": 6,
+          "bestRepVelocity": 0.66
+        },
+        {
+          "id": "set-11",
+          "endedAt": "2026-10-13T06:28:45.000Z",
+          "loadLabel": "80 lb",
+          "expectedRepRange": null,
+          "index": 11,
+          "startedAt": "2026-10-13T06:28:00.000Z",
+          "weightLbs": 80,
+          "repCount": 8,
+          "setPurpose": "working",
+          "velocityLossPct": 21,
+          "bestRepVelocity": 0.55
+        },
+        {
+          "id": "set-12",
+          "endedAt": "2026-10-13T06:31:30.000Z",
+          "loadLabel": "80 lb",
+          "expectedRepRange": null,
+          "index": 12,
+          "startedAt": "2026-10-13T06:30:45.000Z",
+          "weightLbs": 80,
+          "repCount": 7,
+          "setPurpose": "working",
+          "velocityLossPct": 27,
+          "bestRepVelocity": 0.52
+        },
+        {
+          "id": "set-13",
+          "endedAt": "2026-10-13T06:34:15.000Z",
+          "loadLabel": "80 lb",
+          "expectedRepRange": null,
+          "index": 13,
+          "startedAt": "2026-10-13T06:33:30.000Z",
+          "weightLbs": 80,
+          "repCount": 6,
+          "setPurpose": "working",
+          "velocityLossPct": 34,
+          "bestRepVelocity": 0.49
+        }
+      ],
+      "progression": {
+        "delta": -5,
+        "reasoning": "2/3 sets missed 8 reps (target 8-10 reps); back off 5 lb.",
+        "basedOnSessionId": "session-full",
+        "targetSets": 3,
+        "targetRepsLow": 8,
+        "targetRepsHigh": 10,
+        "targetWeightLbs": 75
+      },
+      "progressionNote": null,
+      "loadDrift": null
+    },
+    {
+      "exerciseId": "face-pull",
+      "name": "Face Pull",
+      "setCount": 2,
+      "workingSetCount": 2,
+      "totalReps": 30,
+      "volumeLbs": null,
+      "topWeightLbs": null,
+      "bestRepVelocity": 0.88,
+      "maxVelocityLossPct": 10,
+      "verdict": {
+        "state": "good",
+        "tone": "ok",
+        "dimensions": {
+          "velocityLoss": "ok",
+          "rom": "ok",
+          "tempo": "ok"
+        }
+      },
+      "verdictSetIndex": 15,
+      "sets": [
+        {
+          "id": "set-14",
+          "endedAt": "2026-10-13T06:38:45.000Z",
+          "loadLabel": "damper 6",
+          "expectedRepRange": null,
+          "index": 14,
+          "startedAt": "2026-10-13T06:38:00.000Z",
+          "weightLbs": null,
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 8,
+          "bestRepVelocity": 0.88
+        },
+        {
+          "id": "set-15",
+          "endedAt": "2026-10-13T06:41:15.000Z",
+          "loadLabel": "damper 6",
+          "expectedRepRange": null,
+          "index": 15,
+          "startedAt": "2026-10-13T06:40:30.000Z",
+          "weightLbs": null,
+          "repCount": 15,
+          "setPurpose": "working",
+          "velocityLossPct": 10,
+          "bestRepVelocity": 0.86
+        }
+      ],
+      "progression": null,
+      "progressionNote": "Not in your current program, so there is no load to progress.",
+      "loadDrift": null
+    }
+  ]
+}
