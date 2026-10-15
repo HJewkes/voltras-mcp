@@ -50,7 +50,7 @@ Each guide below is a set of steps toward one goal. For every tool a guide names
 Plans live in the [`plan.*`](/reference/plan) tools: programs, blocks, weeks, workout
 templates and the planned exercises in each template. The wall dashboard has a plan builder
 page at `/app#/plan` for browsing the exercise catalog and editing a workout by hand. See
-[the dashboard's screens](/guides/dashboard#the-five-screens) and the
+[the dashboard's screens](/guides/dashboard#the-screens) and the
 [plan builder tour](/guides/dashboard-plan-builder).
 
 ## Troubleshooting

@@ -39,9 +39,9 @@ A tempo target is four numbers in seconds: lowering, pause at the bottom, liftin
 top (`src/dashboard/tempo-defaults.ts:21-22`). The dashboard uses the tempo your coach set on the
 planned exercise, else the exercise's default, else none
 (`src/dashboard/tempo-defaults.ts:71-89`). When one applies, it sits in the header under the
-prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:291-310`).
+prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:321-340`).
 With none, the header shows no tempo rather than an invented one
-(`src/dashboard/spa/live-page/ExerciseHeader.tsx:145`).
+(`src/dashboard/spa/live-page/ExerciseHeader.tsx:172`).
 
 <CaptureCallouts
   shot="live-mid-set"
@@ -88,25 +88,25 @@ When a set closes, the live page switches to its rest stage.
 />
 
 The **rest ring** counts down the rest length for this exercise
-(`src/dashboard/spa/live-page/RestView.tsx:208-241`). In this capture that is the plan's own
+(`src/dashboard/spa/live-page/RestView.tsx:209-242`). In this capture that is the plan's own
 rest, 90 seconds for Cable Chest Press (`scripts/dashboard-plan-drive.mjs:115-123`). When the
 plan sets no rest, the ring counts down a default for the exercise's training intent and says
 "Default rest" under it, so a default never reads as your coach's number
-(`src/dashboard/spa/live-page/live-copy.ts:29-42`, `src/analytics/rest-defaults.ts:143-153`).
+(`src/coach-copy/dashboard.ts`, `src/analytics/rest-defaults.ts:145-155`).
 With no rest length at all, a clock counts up from the end of the set instead
-(`src/dashboard/spa/live-page/RestView.tsx:243-251`).
+(`src/dashboard/spa/live-page/RestView.tsx:244-252`).
 [Rest between sets](/concepts/fatigue-and-pacing#rest-between-sets) explains the defaults.
 
 The **pace footer** sits at the bottom of the rail. It shows **Left**, the planned sets still
 to do, **ETA**, the time the plan projects the session to end, and, once the first set starts,
 **Pace**: `on pace`, or how many minutes behind or ahead of the plan you are
-(`src/dashboard/spa/live-page/model.ts:894-918`). When you are behind or ahead and the plan has
+(`src/dashboard/spa/live-page/model.ts:910-934`). When you are behind or ahead and the plan has
 sets left to change, a sentence under the rail suggests sets to trim or add
 (`src/dashboard/spa/live-page/LivePage.tsx:290-292`,
 `src/dashboard/read-models/session-pace.ts:281-296`). The same estimate drives the clock and
 pace marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:276-284`). Without
 an attached plan there is no footer at all, rather than a guessed finish time
-(`src/dashboard/spa/live-page/LivePage.tsx:246-254`, `src/dashboard/spa/live-page/model.ts:895`).
+(`src/dashboard/spa/live-page/LivePage.tsx:246-254`, `src/dashboard/spa/live-page/model.ts:911`).
 The capture does not pin the ETA, because it is wall-clock time.
 
 ## 4. Left and right
@@ -144,7 +144,7 @@ With a workout template attached, the session reports where it stands against th
 dashboard snapshot and `session.get` both carry it as `sessionPace`: a `state` (`ahead`,
 `on_pace`, `behind`, or `idle` before your first working set), a signed `slipMinutes` (positive
 when behind), and, when there is something to change, a `suggestion` to trim or add sets
-(`src/tools/session-tools.ts:173-180`).
+(`src/tools/session-tools.ts:175-182`).
 
 **Time drives the state, and only time.** The plan gives every set a length: its work plus its
 rest. The state compares the clock since the session started with where the plan says you

@@ -17,7 +17,9 @@ sources:
   - src/server.ts
   - docs/dashboard-drivers.md
   - site/public/captures/manifest.json
-lastVerified: 2026-09-30
+  - src/actions/allowlist.ts
+  - src/dashboard/spa/checkin/CheckinPage.tsx
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -33,16 +35,18 @@ shows what the server records.
 ## What it is
 
 - **Local.** The dashboard binds `127.0.0.1` only, so you open it on the machine that runs the
-  server and no other machine can reach it (`src/dashboard/server.ts:245`).
+  server and no other machine can reach it (`src/dashboard/server.ts`).
 - **One per session.** Each Claude Code session runs its own server, and each server starts
   its own dashboard on its own port (`src/server.ts:148-157`).
-- **Mostly read-only.** The live page and the session summary only read. The plan builder is
-  the one page that writes, and each of its edits needs a same-origin request that carries a
-  per-boot write token (`src/dashboard/server.ts:96-99`, `src/dashboard/write-guard.ts:85-95`).
+- **Mostly read-only.** The live page and the session summary only read. The plan builder and
+  the check-in page write, and each write needs a same-origin request that carries a per-boot
+  write token (`src/dashboard/server.ts`, `src/dashboard/write-guard.ts`). The check-in page
+  writes only through a short allowlist of store-only tools, so no page drives the device
+  (`src/actions/allowlist.ts`).
 - **No effort reading yet.** The live page and the session summary show velocity loss and a
   fatigue verdict, but no measured RPE or reps in reserve. The live page does show an effort
   target under the prescription: the plan's RPE, or your tier's default target
-  (`src/dashboard/spa/live-page/model.ts:472-488`). The
+  (`src/dashboard/spa/live-page/model.ts:474-490`). The
   [effort readout](/coming-soon/effort-readout) is coming soon.
 
 No capture on this site comes from a real Voltra. Most captures come from the real MCP
@@ -52,18 +56,19 @@ the store before boot: a prior-week set and, for the whole-body cards, five week
 rows seeded into the store, because the per-muscle reads leave mock sets out
 (`src/docs/capture-shots.ts:165-176`).
 
-## The five screens
+## The screens
 
-The dashboard is one page with five hash routes. The nav rail on the left has five entries:
-**live**, **review**, **program**, **goals** and **body** (`src/dashboard/spa/panels/DashboardChrome.tsx`).
-An unknown route opens the live page (`src/dashboard/spa/routing.ts:48-60`).
+The dashboard is one page with six hash routes. The nav rail on the left has six entries:
+**live**, **review**, **plan**, **goals**, **check-in** and **body** (`src/dashboard/spa/panels/DashboardChrome.tsx`).
+An unknown route opens the live page (`src/dashboard/spa/routing.ts`).
 
 | Screen          | Status                                 | Route       | How to open it                                  | What you do there                                                                                   |
 | --------------- | -------------------------------------- | ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Live            | Available                              | `#/`        | The dashboard URL, or **live** in the rail      | Watch the current set: rep velocity against the loss lines, the fatigue card, and the prescription. |
-| Plan builder    | Available                              | `#/plan`    | **program** in the rail                         | Browse the exercise catalog, then build, change or reorder a workout.                               |
+| Plan builder    | Available                              | `#/plan`    | **plan** in the rail                            | Browse the exercise catalog, then build, change or reorder a workout.                               |
 | Session summary | Available                              | `#/summary` | **review** in the rail; `#/summary/<sessionId>` | Read one session back: totals, the fatigue verdict, each set, and a load recommendation.            |
 | Goals           | [Coming soon](/coming-soon/goals-page) | `#/goals`   | **goals** in the rail                           | Built but not usable yet. Its page says what is missing.                                            |
+| Check-in        | Available                              | `#/checkin` | **check-in** in the rail                        | Log your bodyweight, rate the week, and answer the weekly bodyweight review, one step at a time.    |
 | Body            | [Coming soon](/coming-soon/body-map)   | `#/body`    | **body** in the rail                            | Built but not usable yet. Its page says what is missing.                                            |
 
 The [dashboard pages](/reference/dashboard-pages) reference lists the data each screen reads.
@@ -107,13 +112,13 @@ turns the dashboard on, and how to find its address. In short: call
 
 You can open the page at any point in a session. While a session is open, the server sends
 its finished sets with every update, so a page opened or reloaded mid-session shows them
-(`src/dashboard/spa/adapter.ts:755-766`). When the session ends, the live page clears its
+(`src/dashboard/spa/adapter.ts:758-769`). When the session ends, the live page clears its
 set log; the session summary shows the finished session.
 
 ## How it stays current
 
 The live page polls `/api/snapshot` every 2 seconds as a reconciliation backstop
-(`POLL_INTERVAL_MS`, `src/dashboard/spa/main.tsx:63`), with `/api/stream` (SSE) layered
+(`POLL_INTERVAL_MS`, `src/dashboard/spa/main.tsx:64`), with `/api/stream` (SSE) layered
 alongside it as the primary path for live phase/rep/velocity data and instant structural
 pushes (`src/dashboard/spa/live-stream.ts`). The plan builder is on neither the poll nor the
 stream cadence above. It re-polls `/api/plan-tree` on its own 2-second interval

@@ -50,10 +50,10 @@ may not show up in a scan (`README.md`).
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
    a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
-   `src/state/event-bridge.ts:1489`). In a normal session a set ends on your own call or on
+   `src/state/event-bridge.ts:1514`). In a normal session a set ends on your own call or on
    the device's own signal. The server also closes it as partial after 90 seconds with no
    activity, and a `watch` block can raise that limit but not lower it
-   (`src/state/event-bridge.ts:260-284`). Other paths close a set too, such as
+   (`src/state/event-bridge.ts:262-286`). Other paths close a set too, such as
    `session.end` (step 7) and an exit from guided load
    (`src/state/guided-load-reap.ts:58`), so this list is not complete.
    Lift.
@@ -61,7 +61,7 @@ may not show up in a scan (`README.md`).
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
-     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1808-1812`).
+     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1833-1837`).
 5. **"Done."** → [`set.end`](/reference/set). This saves the set and its reps with their
    telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses

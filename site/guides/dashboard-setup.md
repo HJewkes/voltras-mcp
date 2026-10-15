@@ -63,36 +63,36 @@ answer the question:
 
 - `dashboardAvailable` is `true` when the dashboard is running.
 - `dashboardUrl` is the full address to open. It ends in `/app` and names the port this
-  session actually bound (`src/tools/server-tools.ts:252`).
+  session actually bound (`src/tools/server-tools.ts:253`).
 - `dashboardDisabledReason` is `"disabled"` when `VMCP_DASHBOARD_PORT` set to `off` or `0`
-  turned the dashboard off, and `null` otherwise (`src/server.ts:59`, `src/server.ts:180`).
+  turned the dashboard off, and `null` otherwise (`src/server.ts:59`, `src/server.ts:181`).
 
-The default port is `7723` (`src/dashboard/server.ts:243`). When another process already
+The default port is `7723` (`src/dashboard/server.ts:263`). When another process already
 holds it, for example a second Claude Code session, the dashboard binds a port the operating
-system picks instead of failing (`src/server.ts:148-157`, `src/dashboard/server.ts:413`). So read `dashboardUrl` rather than
+system picks instead of failing (`src/server.ts:149-158`, `src/dashboard/server.ts:437`). So read `dashboardUrl` rather than
 typing `7723`. The server also writes the address it bound to stderr, as an `info` log
-line (`src/server.ts:157`).
+line (`src/server.ts:158`).
 
 ## 4. Open it
 
 Open `dashboardUrl` in a browser on the same machine. The dashboard binds `127.0.0.1` only,
 so another computer or a phone on your network cannot reach it
-(`src/dashboard/server.ts:245`).
+(`src/dashboard/server.ts:265`).
 
 You can open it at any point in a session. While a session is open, the server sends that
 session's finished sets with every update, so a page opened or reloaded mid-session shows
-the sets already done (`src/state/live-state.ts:1340-1351`,
-`src/dashboard/spa/adapter.ts:755-766`). When the session ends, the live page clears its set
+the sets already done (`src/state/live-state.ts:1362-1373`,
+`src/dashboard/spa/adapter.ts:766-777`). When the session ends, the live page clears its set
 log; the **review** screen shows the finished session.
 
 Before a Voltra connects, the live page says so instead of showing empty panels:
 
 ![The wall dashboard before a Voltra is connected.](/captures/dashboard-cold.png)
 
-The nav rail on the left moves between the screens: **live**, **program** (the plan builder),
-**review** (the latest session summary) and **body**
-(`src/dashboard/spa/panels/DashboardChrome.tsx:34-39`). The
-[overview](/guides/dashboard#the-five-screens) says which screens are available.
+The nav rail on the left moves between the screens: **live**, **review** (the latest session
+summary), **plan** (the plan builder), **goals**, **check-in** (the weekly check-in) and
+**body** (`src/dashboard/spa/panels/DashboardChrome.tsx`). The
+[overview](/guides/dashboard#the-screens) says which screens are available.
 
 ## When it does not open
 
@@ -103,12 +103,12 @@ Read `dashboardDisabledReason`. If it is `"disabled"`, `VMCP_DASHBOARD_PORT` is 
 dashboard failed to start. Either the port was held and the fallback port the operating
 system picked failed too, or the bind failed for another reason, which gets no fallback. The
 server logs the reason to stderr and keeps running without a dashboard
-(`src/server.ts:158-170`, `src/dashboard/server.ts:413`).
+(`src/server.ts:159-171`, `src/dashboard/server.ts:437`).
 
 ### The page says "SPA not built"
 
 The server is built but the dashboard is not. Run `npm run build:dashboard` and reload the
-page (`src/dashboard/server.ts:2022-2025`).
+page (`src/dashboard/server.ts:2170-2173`).
 
 ### The page shows a different session
 

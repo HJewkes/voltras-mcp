@@ -24,12 +24,12 @@ start with [Set it up and open it](/guides/dashboard-setup).
 
 The capture below comes from a scripted run on the mock adapter: two sets of Cable Chest
 Press, five reps each at 140 lb, against a plan that asks for 8 to 10 reps
-(`src/docs/capture-shots.ts:368-386`, `scripts/dashboard-plan-drive.mjs:115-123`).
+(`src/docs/capture-shots.ts:400-418`, `scripts/dashboard-plan-drive.mjs:115-123`).
 
 ## 1. Open the summary
 
 Click **review** in the nav rail. It opens `#/summary`
-(`src/dashboard/spa/panels/DashboardChrome.tsx:34-39`).
+(`src/dashboard/spa/panels/DashboardChrome.tsx`).
 
 With no session named, the page shows the session that ended most recently, looking among the
 20 that started most recently. If none of those has ended, it shows the one that started most
@@ -94,10 +94,10 @@ estimated one-rep max across the session. With fewer, it says there is not enoug
 The "Next session" block gives a load change and the target load it lands on. The line under
 the tiles says why (`src/dashboard/spa/planner/SessionSummaryPage.tsx:297-337`). It comes from
 the same rule that [`plan.suggest_progression`](/reference/plan) runs
-(`src/tools/plan-tools.ts:1570-1576`, `src/dashboard/read-models/session-summary.ts:410`).
+(`src/tools/plan-tools.ts:1750-1756`, `src/dashboard/read-models/session-summary.ts:410`).
 The page runs that rule with a default intermediate tier and no diet phase. The tool reads
 your own tier and declared diet phase, so the two can disagree
-(`src/tools/plan-tools.ts:1028-1031`, `src/tools/plan-tools.ts:1516-1521`). By default the
+(`src/tools/plan-tools.ts:1127-1130`, `src/tools/plan-tools.ts:1620-1625`). By default the
 tool also reads the most recent session that trained the exercise, while the page reads the
 session on screen. When they do, ask
 Claude for the tool's answer.
@@ -115,6 +115,6 @@ Warm-up sets carry a "warm-up" tag (`src/dashboard/spa/planner/SessionSummaryPag
 ## 7. Open an older session
 
 `#/summary/<sessionId>` opens the summary for one session by its id
-(`src/dashboard/spa/routing.ts:53-57`). Ask Claude to call [`session.list`](/reference/session)
+(`src/dashboard/spa/routing.ts`). Ask Claude to call [`session.list`](/reference/session)
 for the ids of recent sessions, then type the address: for example `/app#/summary/` followed
 by the id.

@@ -94,7 +94,7 @@ explains the strict conditions it puts on your effort curve.
 ## Your experience tier
 
 Advice depends on how experienced you are. The server's **tier signal** places you as a
-**beginner**, **intermediate** or **advanced** lifter (`src/tools/tier-signal.ts:30`), and
+**beginner**, **intermediate** or **advanced** lifter (`src/tools/tier-signal.ts:38`), and
 [`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:265-271`).
 
 It answers two questions separately (`src/tools/tier-signal.ts:8-14`):

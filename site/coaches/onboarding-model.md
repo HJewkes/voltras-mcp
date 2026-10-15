@@ -47,7 +47,7 @@ the device or to the lifter's records. The server talks to Claude over standard 
 output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
 machine can reach it. Its live-view routes are reads. Its write routes, which edit plans or
 run a short allowlist of store-only actions such as logging bodyweight, are further gated by
-the per-boot write guard (`src/dashboard/server.ts:561-584`, `src/actions/allowlist.ts:41-101`,
+the per-boot write guard (`src/dashboard/server.ts:585-608`, `src/actions/allowlist.ts`,
 `src/dashboard/write-guard.ts:85-95`).
 
 ## Responsibilities
@@ -74,7 +74,7 @@ You:
 
 - Decide progression. Every progression line in the weekly report is labelled "suggestion
   for the coach, not applied", and nothing in the report changes a prescription
-  (`src/tools/report-tools.ts:656-667`).
+  (`src/tools/report-tools.ts:658-669`).
 
 ## The data loop
 

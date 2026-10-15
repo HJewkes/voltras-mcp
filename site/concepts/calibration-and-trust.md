@@ -33,15 +33,14 @@ worked out from those readings. This page explains which is which, and how far t
 
 The device streams readings while you move. The server groups them into reps as each lift-and-return
 cycle ends (`src/state/event-bridge.ts:24-27`). Each reading carries the cable's position, speed and
-force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:652-667`,
-`src/state/event-bridge.ts:824-827`). Per-rep
+force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:660-675`). Per-rep
 speed and range of motion are the closest thing to a measurement the server has.
 
 Almost everything else is derived. Velocity loss, the fatigue verdict, estimated 1RM (e1RM),
 readiness and reps in reserve are all calculations over recorded reps
-([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:278-321` for velocity loss,
-the fatigue verdict and RIR; `src/tools/metrics-tools.ts:514-515` for e1RM;
-`src/tools/metrics-tools.ts:407` for readiness). A derived number can be no
+([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:279-322` for velocity loss,
+the fatigue verdict and RIR; `src/tools/metrics-tools.ts:515-516` for e1RM;
+`src/tools/metrics-tools.ts:408` for readiness). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
@@ -66,7 +65,7 @@ side against right side, is a more reliable read than any single value. The
 ## Velocity units are tagged
 
 Each recorded set carries a tag that names the unit its velocities were stored in. Every new set is
-tagged as metres per second (`src/tools/set-tools.ts:1624`). Older sets keep their original scale on
+tagged as metres per second (`src/tools/set-tools.ts:1625`). Older sets keep their original scale on
 disk, and the server rescales them when it reads them (`src/store/velocity-units.ts:1-8`,
 `src/store/velocity-units.ts:48-51`). This keeps the evidence of which scale a row came from, and
 lets old and new sets be compared (VW-160).
@@ -75,7 +74,7 @@ lets old and new sets be compared (VW-160).
 
 The isometric tools report pull force in pounds. That reads like a settled physical measurement.
 Its plateau detection and inferred working weight have not been re-checked on hardware since the
-underlying force scale last changed (`src/tools/isometric-tools.ts:1463-1468`). The [isometric guide's calibration
+underlying force scale last changed (`src/tools/isometric-tools.ts:1464-1469`). The [isometric guide's calibration
 caveat](/guides/isometric#the-calibration-caveat) explains what that means for peak and plateau
 figures.
 
@@ -93,7 +92,7 @@ The landmarks the server uses are population defaults. They are copied from a sh
 library's default table, not learned from your training
 (`src/dashboard/read-models/muscle-week.ts:17-21`, `src/dashboard/read-models/muscle-week.ts:50-61`).
 Their basis is fixed as `population-default`, and the page prints that basis under the panel
-(`src/dashboard/read-models/muscle-week.ts:147`, `src/dashboard/spa/body/BodyView.tsx:257-260`).
+(`src/dashboard/read-models/muscle-week.ts:147`, `src/dashboard/spa/body/BodyView.tsx:309-312`).
 
 Your own landmarks may sit well away from the defaults. Finding them from your set history is
 tracked as VW-146. Until then, `history.weekly_volume` in [`metrics.compute`](/reference/metrics)

@@ -33,11 +33,11 @@ machine. The short answer: it all stays on your machine unless you turn somethin
 
 Every session, set and rep goes into one database file: `~/.voltras/vmcp.sqlite` unless you set
 `VMCP_DB_PATH` to move it (`src/config.ts:5`). The database is SQLite, run by Node's own built-in
-module, so there is no database server and no account (`src/store/sqlite-store.ts:22`).
+module, so there is no database server and no account (`src/store/sqlite-store.ts:23`).
 
 The same folder can hold a few other files. The device slot assignments sit there
 (`src/config.ts:6`). A TrueCoach login token, cache and outbox appear there only if you use those
-features (`src/config.ts:17-19`, `src/config.ts:242-243`). An opt-in debugging recorder,
+features (`src/config.ts:18-20`, `src/config.ts:259-260`). An opt-in debugging recorder,
 `VMCP_RECORD_SESSION=1`, writes device captures under `~/.voltras/captures`
 (`src/state/session-recorder.ts:1-20`).
 
@@ -48,16 +48,16 @@ their writes then fail.
 
 The server runs a small web dashboard next to itself. It listens on `127.0.0.1`, the address that
 only your own computer can reach, so a phone or another computer on your network cannot open it
-(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:245`). It sends no headers that
+(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:265`). It sends no headers that
 would let another website read its data (`src/dashboard/server.ts:14-17`).
 
 Most of its routes only read: the live view, your history, your plan, and your goals
 (`src/dashboard/server.ts:28-85`). A small set of routes can change things: six routes that edit
 your training plan, and an action route that runs only tools on a fixed list
-(`src/dashboard/server.ts:87-103`, `src/dashboard/server.ts:1182-1190`).
+(`src/dashboard/server.ts:87-103`, `src/dashboard/server.ts:1267-1275`).
 
 Every change request passes a guard before anything else happens
-(`src/dashboard/server.ts:561-577`). The guard requires all of these
+(`src/dashboard/server.ts:585-601`). The guard requires all of these
 (`src/dashboard/write-guard.ts:12-32`):
 
 - the request is addressed to your own machine by name;
@@ -88,7 +88,7 @@ Two TrueCoach features can send or fetch data, and both are opt-in:
   to. Apart from logging in, it only reads, and nothing runs on a timer
   (`src/integrations/truecoach/client.ts:3-8`).
 - **The TrueCoach write-back** is a separate tool that posts results into TrueCoach. It is off by
-  default and not installed with the server (`src/config.ts:19`,
+  default and not installed with the server (`src/config.ts:20`,
   [Consent and the data loop](/coaches/consent-and-data-loop#truecoach-write-back-experimental-and-gated)).
 
 [Consent and the data loop](/coaches/consent-and-data-loop) covers both features, TrueCoach's
@@ -113,7 +113,7 @@ No raw device messages, byte values or device command codes appear in a log line
 documentation page or a commit. The everyday tools pass Claude only plain values such as
 weights, speeds and counts.
 The exceptions are diagnostic tools for hardware debugging: `device.send_raw` takes and returns
-raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1410-1432`,
+raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1409-1431`,
 `src/state/debug-buffer.ts:44-62`). A lint rule checks the source
 code, and a separate guard checks the generated documentation pages for anything shaped like
 device detail (`CLAUDE.md`, "Confidentiality / Privacy"; `src/docs/protocol-guard.ts:1-5`).

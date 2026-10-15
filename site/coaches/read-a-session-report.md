@@ -47,7 +47,7 @@ sets flagged as a warm-up, probe or technique set are excluded, then the sets at
 are kept (`src/store/working-sets.ts:20-58`). A guest lifter's sets (`session.set_lifter`) and
 zero-rep sets never appear, and an exercise with no working set is omitted rather than
 reported empty. Mock-adapter sets are left out too, unless the server itself runs on the mock
-adapter (`src/tools/report-tools.ts:149-159`).
+adapter (`src/tools/report-tools.ts:151-161`).
 
 ## Load labels on non-weight modes
 
@@ -122,7 +122,7 @@ tree — is a different, already-read-only tool: see
 [`report.weekly`](/reference/report) rolls per-session results like the ones above up over
 a date range — training days, a rolling 28-day count of training days, adherence and its trend,
 schedule changes, progression suggestions, flags, a check-in section and goal lines
-(`src/tools/report-tools.ts:450-460`). See the
+(`src/tools/report-tools.ts:452-462`). See the
 [weekly report guide](/coaches/read-the-weekly-report) for what each part means and how to call it.
 
 ## What to read next

@@ -79,8 +79,8 @@ Closing a set with [`set.end`](/reference/set) moves the live page into its rest
 The countdown ring runs down the rest the plan set for this exercise. When the plan sets
 none, it runs a default for the exercise's training intent, captioned "Default rest", with
 the intent and any added seconds when there are some
-(`src/dashboard/spa/live-page/RestView.tsx:208-241`, `src/analytics/rest-defaults.ts:143-153`,
-`src/dashboard/spa/live-page/live-copy.ts:33-42`).
+(`src/dashboard/spa/live-page/RestView.tsx:209-242`, `src/analytics/rest-defaults.ts:145-155`,
+`src/coach-copy/dashboard.ts`).
 The [pacing and form tour](/guides/dashboard-pacing-and-form) covers the ring and the pace
 footer.
 
@@ -99,7 +99,7 @@ and re-run `npm run docs:captures` to change what it says
 ## Session complete
 
 [`session.end`](/reference/session) closes the session, force-ending any set still open, and
-writes its final row (`src/tools/session-tools.ts:679`). The summary page reads back the
+writes its final row (`src/tools/session-tools.ts`). The summary page reads back the
 totals, runs the same fatigue verdict the live page uses on one named set, and adds a load
 recommendation that only appears here. It states no RPE or RIR
 (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-209`).

@@ -96,7 +96,7 @@ tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   `session-summary` in `site/public/captures/manifest.json`).
 - **Fatigue you can see.** The live page draws two velocity-loss lines, at two thirds of the
   goal's stop threshold and at the threshold itself, and a fatigue card
-  (`src/state/velocity-loss-intent.ts:130-143`), and the session summary repeats the verdict (`site/public/captures/manifest.json`,
+  (`src/state/velocity-loss-intent.ts:146-159`), and the session summary repeats the verdict (`site/public/captures/manifest.json`,
   `site/concepts/fatigue-and-pacing.md`). The effort number (RPE or reps in reserve) is
   withheld until a lift has a trusted fitted profile (`site/coming-soon/effort-readout.md`).
 - **Plans on screen.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
@@ -141,7 +141,7 @@ tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   `127.0.0.1` only, so no other machine can open it (`src/dashboard/server.ts`). Its write
   routes edit plans or run a short allowlist of store-only actions, such as logging bodyweight
   or answering a weekly check-in; none of them drives the device
-  (`src/actions/allowlist.ts:41-101`). Each write needs a same-origin request carrying a
+  (`src/actions/allowlist.ts`). Each write needs a same-origin request carrying a
   per-boot token (`src/dashboard/write-guard.ts`). Tool results do go into your conversation with Claude,
   because that is how Claude reads them (`site/coaches/consent-and-data-loop.md`).
 - **Not a medical device.** It makes no health claims. When onboarding raises a cardiovascular

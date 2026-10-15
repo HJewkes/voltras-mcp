@@ -37,8 +37,8 @@ With no extra settings, voltras-mcp sends nothing to anyone:
 - The dashboard binds `127.0.0.1` only, so no other machine can open it. Its live-view
   routes are reads. Its write routes edit plans or run a short allowlist of store-only
   actions, such as logging bodyweight or answering a weekly check-in, each behind the write
-  guard (`src/dashboard/server.ts:245`, `src/dashboard/server.ts:561-584`,
-  `src/actions/allowlist.ts:41-101`, `src/dashboard/write-guard.ts:85-95`).
+  guard (`src/dashboard/server.ts:265`, `src/dashboard/server.ts:585-608`,
+  `src/actions/allowlist.ts`, `src/dashboard/write-guard.ts:85-95`).
 - `report.session_results` and `report.weekly` read the store and make no network call
   (`src/tools/report-tools.ts`).
 - The outbox file drop and the automated TrueCoach post are both off by default
@@ -62,7 +62,7 @@ control it.
 
 Some sets never appear in a report. A guest lifter's sets and zero-rep sets are left out, and
 an exercise with no working set is omitted. Mock-adapter sets are left out too, unless the
-server itself runs on the mock adapter (`src/tools/report-tools.ts:149-159`). A guest is whoever the lifter names with `session.set_lifter`
+server itself runs on the mock adapter (`src/tools/report-tools.ts:151-161`). A guest is whoever the lifter names with `session.set_lifter`
 before the guest's sets; the owner's baselines, progression and history then stay clean
 (`src/tools/session-tools.ts`).
 

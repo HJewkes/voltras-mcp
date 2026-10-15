@@ -20,7 +20,11 @@ sources:
   - src/dashboard/spa/live-page/ExerciseHeader.tsx
   - src/tool-registry.ts
   - src/tools/truecoach-tools.ts
-lastVerified: 2026-09-29
+  - src/dashboard/spa/checkin/CheckinPage.tsx
+  - src/dashboard/spa/checkin/CheckinSteps.tsx
+  - src/dashboard/spa/goals/review-copy.ts
+  - src/actions/allowlist.ts
+lastVerified: 2026-10-15
 ---
 
 # Dashboard pages
@@ -38,9 +42,10 @@ that says what does not work.
 | Status                                 | Route       | How to open it                                                                          | Read-model endpoints                                                              |
 | -------------------------------------- | ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Available                              | `#/`        | The dashboard URL itself, or **live** in the nav rail.                                  | `/api/snapshot` (polled), `/api/stream` (server-sent events), `/api/session-plan` |
-| Available                              | `#/plan`    | **program** in the nav rail.                                                            | `/api/plan-tree`, `/api/exercises`; edits go to `/api/plan/*`                     |
+| Available                              | `#/plan`    | **plan** in the nav rail.                                                               | `/api/plan-tree`, `/api/exercises`; edits go to `/api/plan/*`                     |
 | Available                              | `#/summary` | **review** in the nav rail, for the latest session; `#/summary/:sessionId` for another. | `/api/session-summary/:sessionId`                                                 |
 | [Coming soon](/coming-soon/goals-page) | `#/goals`   | **goals** in the nav rail.                                                              | `/api/goals`, `/api/goal-progress`                                                |
+| Available                              | `#/checkin` | **check-in** in the nav rail.                                                           | none; each step posts to `/api/actions/:name`                                     |
 | [Coming soon](/coming-soon/body-map)   | `#/body`    | **body** in the nav rail.                                                               | `/api/muscle-week`, `/api/muscle-strength`, `/api/muscle-plan`                    |
 
 ## What each page shows
@@ -61,8 +66,15 @@ velocity loss for one session. It does not show an effort estimate yet.
 
 **Goals (`#/goals`), coming soon.** Declared priorities with their committed and stretch
 bands, the weekly trajectory, and bodyweight and attendance cards. The `goal.*` tools that set
-goals are available; the page itself has only been exercised on seeded data so far, and the
-block week and the notice about unreviewed history are served but not shown.
+goals are available; the page itself has only been exercised on seeded data so far. When some
+past days are not yet marked as training or test, the page says its numbers leave them out.
+
+**Check-in (`#/checkin`).** The weekly check-in as four steps: your bodyweight with an
+optional note, three ratings for the week (hunger, diet plan adherence and sleep), the weekly
+bodyweight review, where you accept, decline or put off any proposal it makes, and a done
+screen. Each step
+writes through an allowlisted MCP tool (`profile.log_bodyweight`,
+`profile.log_weekly_checkin`, `goal.weekly_review`); nothing on the page calls Claude.
 
 **Body (`#/body`), coming soon.** Weekly sets per muscle against volume landmarks, a strength
 trend per muscle, and planned against done for the current week. It has only been shown on
@@ -81,6 +93,7 @@ one the table above gives for that route.
 | Live, two devices  | `#/`        | Available                              | Left and right velocity on one chart                                                                                                  | `device.connect` once with `slot` set to `left` and once to `right`; `slot.bind` remembers each device's side                                                                                                              |
 | Session summary    | `#/summary` | Available                              | A fatigue verdict per exercise, form lights, the worst velocity loss and a progression recommendation                                 | `session.start`, `set.start` and `set.end` for the sets; `plan.program.create` and `plan.exercise.create` for the recommendation, which needs the exercise prescribed in the current program                               |
 | Plan builder       | `#/plan`    | Available                              | The exercise catalog and the workout editor                                                                                           | `plan.program.create`, `plan.template.create`, `plan.exercise.create`, `truecoach.import_week`, and the page's own edits                                                                                                   |
+| Check-in           | `#/checkin` | Available                              | Your bodyweight, three ratings for the week and the weekly bodyweight review, one step at a time                                      | The page's own taps, through `profile.log_bodyweight`, `profile.log_weekly_checkin` and `goal.weekly_review`; the review reads a bodyweight goal set with `goal.accept_target`                                             |
 | Goals              | `#/goals`   | [Coming soon](/coming-soon/goals-page) | Priorities with committed and stretch bands, the weekly trajectory, and bodyweight and attendance cards                               | `goal.declare_priorities`, `goal.propose_targets`, `goal.accept_target`, `set.end`, `profile.log_bodyweight`, `profile.set_diet_phase`                                                                                     |
 | Body               | `#/body`    | [Coming soon](/coming-soon/body-map)   | Weekly sets per muscle, a strength trend per muscle, and planned against done this week                                               | `set.end` on a real device, `session.set_exercise` to name the lift, `plan.exercise.create` for the week's planned sets, `profile.set_diet_phase`                                                                          |
 
