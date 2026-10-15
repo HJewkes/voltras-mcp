@@ -53,7 +53,13 @@ import {
   type SetupSignature,
 } from '../../../analytics/setup-comparability.js';
 import { selectEligibleReps } from '../../../state/rep-eligibility.js';
-import { repMeanVelocityMps, roundMps, type Snapshot, type SnapshotDeviceEntry } from '../adapter';
+import {
+  repMeanVelocityMps,
+  roundMps,
+  settledReps,
+  type Snapshot,
+  type SnapshotDeviceEntry,
+} from '../adapter';
 import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';
 import {
@@ -468,7 +474,8 @@ function buildHeroSide(
   if (entry === undefined) return null;
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
   const velocities: number[] = [];
-  for (const rep of reps) {
+  // Settled reps only, like the single hero: a bar lands once, at its final value.
+  for (const rep of settledReps(reps)) {
     // Unrounded, like the single hero: titan bands each wing's bars on the exact loss.
     const mps = repMeanVelocityMps(rep);
     if (mps !== null) velocities.push(mps);
@@ -498,9 +505,9 @@ function slotEntry(snapshot: Snapshot, slotId: string): SnapshotDeviceEntry | un
   return snapshot.devices.find((d) => d.slotId === slotId);
 }
 
-/** The rep count of a slot's active set (0 when unbound / no active set). */
+/** The settled rep count of a slot's active set (0 when unbound / no active set). */
 function activeRepCount(entry: SnapshotDeviceEntry | undefined): number {
-  return entry?.sets?.active?.reps?.length ?? 0;
+  return settledReps(entry?.sets?.active?.reps ?? []).length;
 }
 
 /**
@@ -531,7 +538,7 @@ export function mapStoreToDivergingHeroModel(sources: LiveViewSources): Divergin
   const peaks = [left?.bestVelocityMps, right?.bestVelocityMps].filter(
     (v): v is number => typeof v === 'number',
   );
-  // 0-based index of the current (latest) rep across the bound limbs; null before any lands.
+  // 0-based index of the latest settled rep across the bound limbs; null before any lands.
   const maxReps = Math.max(activeRepCount(leftEntry), activeRepCount(rightEntry));
   return {
     left,

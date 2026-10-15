@@ -577,6 +577,21 @@ describe('mapStoreToDivergingHeroModel', () => {
     expect(hero.targetReps).toBeNull();
   });
 
+  it('leaves a rep still in its concentric off the bars until its value is final', () => {
+    // The left side's third rep has begun but has no eccentric samples yet: its mean is a
+    // partial that changes every poll, and a bar fed it re-grows on each change.
+    const midRep = { ...meanRep(250, 3), eccentric: { samples: [] } } as unknown as Rep;
+    const hero = mapStoreToDivergingHeroModel(
+      sources({
+        snapshot: dualSnapshot([meanRep(600, 1), meanRep(500, 2), midRep], [meanRep(550, 1)]),
+      }),
+    );
+    expect(hero.left!.repVelocitiesMps).toEqual([0.6, 0.5]);
+    expect(hero.liveRepIndex).toBe(1);
+    // The live trace still draws the rep as it streams.
+    expect(hero.left!.velocityCurves).toHaveLength(3);
+  });
+
   // --- Per-slot ghost-spark curves (VMCP-04.06) ------------------------------
 
   describe('per-slot velocity curves (DualGhostSpark wings)', () => {

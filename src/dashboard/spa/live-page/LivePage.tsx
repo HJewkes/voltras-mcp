@@ -159,7 +159,7 @@ function SingleFatigueStage({
           verdict: fatigue.verdict,
         })}
         // The hero's own source — per-rep MEAN concentric velocity, not on the fatigue
-        // model. `liveRepIndex` marks the rep in progress as the last one streamed.
+        // model. `liveRepIndex` marks the latest settled rep (`settledReps`).
         velocity={{
           velocities: live.repVelocities,
           targetReps: session.targetReps ?? undefined,
