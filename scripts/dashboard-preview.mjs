@@ -14,6 +14,7 @@
 //   npm run dashboard:preview -- goals --unreviewed 3
 //   npm run dashboard:preview -- body
 //   npm run dashboard:preview -- plan
+//   npm run dashboard:preview -- summary
 //
 // ── What it is NOT ─────────────────────────────────────────────────────────
 // `npm run dashboard:sim` (scripts/dashboard-sim.mjs) is the neighbouring
@@ -53,6 +54,7 @@ const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const SPA_INDEX = path.join(REPO_ROOT, 'dist/spa/index.html');
 const SEEDS = path.join(REPO_ROOT, 'dist/docs/preview-seeds.js');
 const SHOTS = path.join(REPO_ROOT, 'dist/docs/capture-shots.js');
+const SUMMARY_SEED = path.join(REPO_ROOT, 'dist/docs/summary-preview-seed.js');
 
 const log = (...args) => console.error('[preview]', ...args);
 
@@ -128,6 +130,26 @@ async function seedGoals(dbDir, stateName, unreviewedDays) {
   return { scenario: { name: 'goals', driver: null, args: [] }, priorityId };
 }
 
+/**
+ * The summary scenario: one ended four-exercise session, seeded and closed before
+ * the server opens the file, as the goals one is. The page's route already names
+ * the seeded session's id.
+ */
+async function seedSummary(dbDir) {
+  const { SqliteSessionStore } = await import(path.join(REPO_ROOT, 'dist/store/sqlite-store.js'));
+  const { seedSummaryPreview } = await import(SUMMARY_SEED);
+  const store = SqliteSessionStore.open(scenarioDbPath(dbDir, 'summary'));
+  try {
+    const report = await seedSummaryPreview(store, new Date());
+    log(
+      `seeded session ${report.sessionId}: ${report.sets} sets across ${report.exercises} exercises`,
+    );
+  } finally {
+    store.close();
+  }
+  return { name: 'summary', driver: null, args: [] };
+}
+
 /** Every other page reuses the capture scenario that already drives it. */
 async function captureScenarioFor(page) {
   const { CAPTURE_SCENARIOS } = await import(SHOTS);
@@ -169,7 +191,9 @@ async function main() {
   let leadPriorityId = null;
   try {
     let scenario;
-    if (page.captureScenario === null) {
+    if (page.name === 'summary') {
+      scenario = await seedSummary(dbDir);
+    } else if (page.captureScenario === null) {
       ({ scenario, priorityId: leadPriorityId } = await seedGoals(
         dbDir,
         args.state,
@@ -183,7 +207,7 @@ async function main() {
       clientName: 'dashboard-preview',
       echo: scenario.driver !== null,
     });
-    if (page.captureScenario === null) await reportGoalStatus(scene.port, leadPriorityId);
+    if (page.name === 'goals') await reportGoalStatus(scene.port, leadPriorityId);
   } catch (err) {
     scene?.stop();
     cleanUp();

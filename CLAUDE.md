@@ -10,7 +10,7 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run build` — emit `dist/` (the `voltras-mcp` bin)
 - `npm run format` / `npm run format:check` — Prettier (globs are `src/**` and `scripts/**` only; markdown is not format-gated)
 - `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
-- `npm run dashboard:preview -- <goals|body|plan>` — open one wall page on a seeded scratch store and hold it; `goals` takes `--state` and `--unreviewed <n>` (see `src/docs/preview-seeds.ts`)
+- `npm run dashboard:preview -- <goals|body|plan|summary>` — open one wall page on a seeded scratch store and hold it; `summary` opens the session-complete page on an ended four-exercise session; `goals` takes `--state` and `--unreviewed <n>` (see `src/docs/preview-seeds.ts`)
 
 **Tests run in UTC.** `vitest.config.ts` pins `process.env.TZ = 'UTC'`, which is what CI runs, so a fixture written as a UTC instant reads the same on any machine. Goal weeks, block calendars and `history.trend` buckets are LOCAL weeks, so a green run west of UTC proves nothing about local-time behaviour unless the file pins its own zone: set `process.env.TZ` before the first import, and restore it in `afterAll` (`src/plan/__tests__/block-calendar-local-time.test.ts`, `src/tools/__tests__/goal-targets-on-blocks.test.ts`). The docs site is built in CI (`npm run docs:build`) and is not part of the CI gate below: a rendered tool description containing an angle-bracket placeholder fails it (VitePress parses it as HTML).
 
