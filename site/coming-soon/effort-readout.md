@@ -49,9 +49,10 @@ The dashboard holds the number back on purpose. Reading an effort number straigh
 loss is a conversion this project does not allow, so the wall waits for a trusted curve fitted
 to you (`src/dashboard/spa/panels/fatigue-view.ts:428-429`).
 
-The analytics already compute an RIR and RPE for the reps, and the full rep records cross the
-dashboard snapshot (`src/dashboard/spa/panels/fatigue-view.ts:20-26`). The wall does not read
-them yet. It never shows a number here until a trusted curve exists.
+Each live and finished set in the dashboard snapshot already carries a resolved effort (RIR
+and RPE once a fitted profile exists), and the analytics compute it
+(`src/dashboard/read-models/snapshot.ts:31-38`). The wall does not read it yet. It never shows a
+number here until a trusted curve exists.
 
 No spoken cue says an RPE or RIR number either. The cue rules only speak at the start of a set,
 at a target hit, at a velocity-loss stop and at the end of a set
