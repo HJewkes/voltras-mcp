@@ -1,0 +1,110 @@
+/*
+ * Session-complete design tokens.
+ * Wall sizes are tuned for a 1440×900 screen read from 2–3 m; the phone block
+ * at the bottom rescales the type ramp for a hand-held 390 px screen.
+ * Tone colours are reserved for verdict state and never reused for data series.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Type: one family, tabular figures for every number. */
+  --font-sans: "Inter Variable", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-num: "Inter Variable", "Inter", "Segoe UI", system-ui, sans-serif;
+
+  --type-hero: 44px;      /* verdict word, next-time load */
+  --type-title: 26px;     /* exercise name */
+  --type-lead: 22px;      /* key numbers beside the hero */
+  --type-body: 18px;      /* sentences meant to be read at a step back */
+  --type-label: 15px;     /* chart labels, table cells, uppercase kickers */
+  --type-micro: 13px;     /* source notes for the close-up reader only */
+
+  --weight-regular: 450;
+  --weight-medium: 560;
+  --weight-bold: 720;
+
+  --tracking-kicker: 0.08em;
+
+  /* Spacing on a 4 px grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Chrome placeholders (given by the app, not designed here). */
+  --chrome-rail: 64px;
+  --chrome-topbar: 44px;
+  --chrome-phone-bar: 56px;
+
+  /* Surfaces and ink, dark theme. */
+  --bg: #0e1014;
+  --surface-1: #171a20;
+  --surface-2: #1f232b;
+  --surface-3: #2a2f39;
+  --line: #333946;
+  --line-strong: #4a5263;
+  --ink-1: #f1f3f6;       /* 15.4:1 on surface-1 */
+  --ink-2: #c0c6d0;       /* 10.5:1 */
+  --ink-3: #959dab;       /* 6.3:1, still AA for small text */
+
+  /* Data ink: neutral blue for measured values, so tone is never implied by a bar. */
+  --data-1: #6aa5f4;
+  --data-1-muted: #5d6e8a; /* warm-up / technique bars: present but not scored */
+  --data-threshold: #6b7385;
+
+  /* Tones: glyph, border and large text only. */
+  --tone-ok: #34c26a;
+  --tone-warn: #f4b63a;
+  --tone-alarm: #ff6d61;
+  --tone-ok-bg: #15301f;
+  --tone-warn-bg: #352a12;
+  --tone-alarm-bg: #3a1a18;
+  --tone-none: #8a92a1;     /* no verdict: neutral, not a fourth state */
+
+  /* Absent data: dashed outlines and a hatch, never a zero. */
+  --absent-line: #6c7488;
+  --absent-hatch: repeating-linear-gradient(135deg, transparent 0 5px, #3a4150 5px 7px);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef0f3;
+  --surface-1: #ffffff;
+  --surface-2: #f4f5f8;
+  --surface-3: #e4e7ec;
+  --line: #d3d7df;
+  --line-strong: #a9b0bd;
+  --ink-1: #10131a;
+  --ink-2: #3c4350;
+  --ink-3: #5c6472;
+  --data-1: #2a6fd0;
+  --data-1-muted: #8794a8;
+  --data-threshold: #8a92a1;
+  --tone-ok: #13873f;
+  --tone-warn: #9a6400;
+  --tone-alarm: #c5302a;
+  --tone-ok-bg: #e2f4e8;
+  --tone-warn-bg: #fbf0d9;
+  --tone-alarm-bg: #fbe3e1;
+  --tone-none: #6b7280;
+  --absent-line: #848b98;
+  --absent-hatch: repeating-linear-gradient(135deg, transparent 0 5px, #d6dae1 5px 7px);
+}
+
+@media (max-width: 720px) {
+  :root {
+    --type-hero: 34px;
+    --type-title: 22px;
+    --type-lead: 19px;
+    --type-body: 16px;
+    --type-label: 14px;
+    --type-micro: 12px;
+  }
+}
