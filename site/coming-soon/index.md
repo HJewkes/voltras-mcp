@@ -22,11 +22,11 @@ title.
 These pages carry the **Coming soon: not yet usable** status. The [status page](/status)
 defines it and the other two statuses.
 
-| Page                                          | Dashboard route      | What is missing                                                                           | Tracking                  |
-| --------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------- | ------------------------- |
-| [Body map](/coming-soon/body-map)             | `#/body`             | Only shown on seeded data so far; landmarks are population defaults; recovery has no page | VW-146 (internal tracker) |
-| [Goals page](/coming-soon/goals-page)         | `#/goals`            | Only exercised on seeded data so far; block week not shown                                | VW-514 (internal tracker) |
-| [Effort readout](/coming-soon/effort-readout) | `#/` and `#/summary` | RPE and RIR held back until a trusted curve fitted to you exists                          | VW-485 (internal tracker) |
+| Page                                          | Dashboard route      | What is missing                                                                                                | Tracking                          |
+| --------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| [Body map](/coming-soon/body-map)             | `#/body`             | Only shown on seeded data so far; landmarks are population defaults; recovery is the sheet's last-trained line | VW-918 (internal tracker)         |
+| [Goals page](/coming-soon/goals-page)         | `#/goals`            | Only exercised on seeded data so far; block-week header not drawn                                              | VW-655 (internal tracker)         |
+| [Effort readout](/coming-soon/effort-readout) | `#/` and `#/summary` | RPE and RIR held back until a trusted curve fitted to you exists                                               | VW-448, VW-499 (internal tracker) |
 
 The [Roadmap](/roadmap) is the wider list of things present in the code that do not yet do
 what their name suggests. The issue tracker is authoritative: when this section and the
