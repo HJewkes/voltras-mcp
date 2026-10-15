@@ -381,26 +381,26 @@
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.36,
-      "bytes": 617397,
+      "seconds": 33.32,
+      "bytes": 588032,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 229614,
-          "sha256": "588b7b312de4f36f51fd19af2cd800c5b4cf6c2b87fa881e4b944d87bf553fb2"
+          "bytes": 211955,
+          "sha256": "5c263da00c5c2ff52e5d21c61273eb1f86649ab66ca90a7c5b12b839a318702c"
         },
         {
-          "atSeconds": 16.68,
-          "bytes": 206127,
-          "sha256": "464520494eef38941909cb0d444017d9591b2a881a5b88caff6108552ab82b0e"
+          "atSeconds": 16.66,
+          "bytes": 238115,
+          "sha256": "25ffbbadca429addbf82d6fcca3c024e74b69ebb64eeb9c9630ff5950f2afed7"
         },
         {
-          "atSeconds": 28.36,
-          "bytes": 222841,
-          "sha256": "9d96f8b402a39f53d6fcfbfe4318e63ab3a836e1e712e0b66d624feca079e529"
+          "atSeconds": 28.32,
+          "bytes": 228622,
+          "sha256": "c7971aa1089498d5966a00ec7e3493275c7add60ad9779a5cd13e94441811ae0"
         }
       ],
-      "sha256": "8e6fae4ecfa3083d627ce647612b6dbf59379bd35164d792d61d2aac16a9f823"
+      "sha256": "b34af7f94106cfa072f05c916c7c2d14d9f53f43543a0ba2255186dd0c2d1d62"
     },
     {
       "name": "dual-divergence",
@@ -429,25 +429,25 @@
       "height": 800,
       "fps": 25,
       "seconds": 36.32,
-      "bytes": 580094,
+      "bytes": 512299,
       "frames": [
         {
           "atSeconds": 5.45,
-          "bytes": 178278,
-          "sha256": "8b897dd1aa0e7a0160d7a7f4ddc0c005888c3609ba4ea36338e99b7568d90ea1"
+          "bytes": 154581,
+          "sha256": "c13f4df5e1626ef2fc2d8b0ed4fac432567afe3b34a4b6c5e060048b3ccd70cd"
         },
         {
           "atSeconds": 18.16,
-          "bytes": 201105,
-          "sha256": "8e4c3d9682bdb6e5942a679dd42b5bfa5e597e44aa683e03e6d15461ce34fbf1"
+          "bytes": 194407,
+          "sha256": "f09845b550f5d136f725362389496306c0e7a3d089c453ee37e6ad866e325bd8"
         },
         {
           "atSeconds": 30.87,
-          "bytes": 139614,
-          "sha256": "3cb69ea2a3fc30c37bfce51ddab1fddefc0e1c3f6cb5dafbb95318a39ea496b7"
+          "bytes": 142423,
+          "sha256": "5264bd0cd6b78ff211fd4c1027dcfd11348e13be74643211910d5cc6f5e9ae60"
         }
       ],
-      "sha256": "4fde41e5957892e2ecb383a54a272e16628e1ab9b73c1166bbd28768bd281593"
+      "sha256": "b28f58f1b55d532518b40c26778818e33f89abdd972daab6447ca6918d1d3919"
     }
   ]
 }
