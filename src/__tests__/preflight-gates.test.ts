@@ -27,7 +27,7 @@ const HEALTHY = {
   nodeVersion: 'v22.5.0',
   buildSchemaVersion: 41,
   storeSchemaVersion: 41,
-  storePath: '/home/lifter/.voltras/vmcp.sqlite',
+  storePath: '/home/example/.voltras/vmcp.sqlite',
   env: { VMCP_CUES: 'on', VMCP_CUES_MIDSET: 'on' },
   portListeners: [],
   selfPid: 999,
@@ -122,7 +122,7 @@ describe('schema gate', () => {
   it('passes with a note when there is no store file yet', () => {
     const found = gate('schema', { storeSchemaVersion: null });
     expect(found.level).toBe('ok');
-    expect(found.message).toContain('/home/lifter/.voltras/vmcp.sqlite');
+    expect(found.message).toContain('/home/example/.voltras/vmcp.sqlite');
   });
 
   it('warns rather than passes when the build version cannot be read', () => {
