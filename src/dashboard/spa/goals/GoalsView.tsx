@@ -47,6 +47,7 @@ import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
+import type { MassUnit } from '../live-page/mass.js';
 import { calibrationLine } from './calibration-copy.js';
 import {
   cardChart,
@@ -65,8 +66,12 @@ import {
 import { unreviewedLine } from './review-copy.js';
 import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
-export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
-  const { data } = props;
+/** `displayUnit` is the wall's chosen unit; the read models stay in lb. */
+export function GoalsView(props: {
+  data: GoalsPageData;
+  displayUnit?: MassUnit;
+}): React.JSX.Element {
+  const { data, displayUnit = 'lbs' } = props;
   const narrow = useIsNarrowViewport();
   if (data.priorities.length === 0) {
     return (
@@ -84,9 +89,9 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
       <UnreviewedNote unreviewedDays={data.unreviewedDays} />
-      {primary !== null && <PrimaryGoalCard row={primary} />}
-      <PerLiftGrid rows={liftRows(data)} narrow={narrow} />
-      <MuscleGrid rows={muscleCardRows(data)} narrow={narrow} />
+      {primary !== null && <PrimaryGoalCard row={primary} unit={displayUnit} />}
+      <PerLiftGrid rows={liftRows(data)} narrow={narrow} unit={displayUnit} />
+      <MuscleGrid rows={muscleCardRows(data, displayUnit)} narrow={narrow} />
       <WholeBodySection data={data} narrow={narrow} />
     </Surface>
   );
@@ -101,7 +106,7 @@ function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JS
 }
 
 /** The lead priority's lift as the full goal card (plan §4, wall; VW-385). */
-function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
+function PrimaryGoalCard(props: { row: GoalTargetRow; unit: MassUnit }): React.JSX.Element {
   const { priority, view } = props.row;
   return (
     <WithCalibrationNote view={view} chartShowsNote>
@@ -112,7 +117,7 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
         status={view.status}
         basis={view.statusBasis}
         isPR={hasPR(view)}
-        milestone={cardMilestone(view)}
+        milestone={cardMilestone(view, props.unit)}
         goal={cardChart(view)}
       />
     </WithCalibrationNote>
@@ -188,7 +193,11 @@ function PageSection(props: { title: string; children: React.ReactNode }): React
 }
 
 /** One card per exercise-tracked target (`top_load_at_reps`). */
-function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.JSX.Element | null {
+function PerLiftGrid(props: {
+  rows: GoalTargetRow[];
+  narrow: boolean;
+  unit: MassUnit;
+}): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
     <PageSection title="Per-lift">
@@ -202,7 +211,7 @@ function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.J
               status={row.view.status}
               basis={row.view.statusBasis}
               isPR={hasPR(row.view)}
-              milestone={cardMilestone(row.view)}
+              milestone={cardMilestone(row.view, props.unit)}
               trend={cardTrend(row.view)}
             />
           </WithCalibrationNote>

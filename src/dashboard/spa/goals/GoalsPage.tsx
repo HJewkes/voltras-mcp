@@ -4,6 +4,7 @@
  * by `GoalsRoute`, so the page and the chrome's header slot read one fetch.
  */
 import React from 'react';
+import { useStore } from 'zustand';
 import { Caption, Spinner, Surface } from '@titan-design/react-ui';
 
 import { GoalsView } from './GoalsView.js';
@@ -11,8 +12,10 @@ import type { GoalsPollState } from './use-goals-poll.js';
 import { ErrorNote, PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
+import { dashboardStore } from '../store';
 
 export function GoalsPage({ poll }: { poll: GoalsPollState }): React.JSX.Element {
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
   if (poll.error !== null) {
     return (
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
@@ -31,5 +34,5 @@ export function GoalsPage({ poll }: { poll: GoalsPollState }): React.JSX.Element
       </Surface>
     );
   }
-  return <GoalsView data={poll.data} />;
+  return <GoalsView data={poll.data} displayUnit={displayUnit} />;
 }

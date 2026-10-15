@@ -553,3 +553,39 @@ describe('the goals page says when history is withheld (VW-514)', () => {
     expect(before).not.toContain('These numbers leave out');
   });
 });
+
+describe('the goals page in the wall’s kg display unit (VW-934)', () => {
+  function renderIn(displayUnit: 'lbs' | 'kg'): string {
+    return renderToStaticMarkup(createElement(GoalsView, { data: baseData().data, displayUnit }));
+  }
+
+  /** Rendered text with markup and React's text-joining comments removed. */
+  function visibleText(html: string): string {
+    return html.replace(/<[^>]*>/g, '');
+  }
+
+  it('prints the lift cards’ gap, target and best in whole kg', () => {
+    const curl = visibleText(cardMarkup(renderIn('kg'), 'CURL goal, Behind'));
+
+    expect(curl).toContain('2 kg'); // 4 lb short of goal
+    expect(curl).toContain('to goal');
+    expect(curl).toContain('8 x 23 kg'); // 50 lb committed
+    expect(curl).toContain('8 x 21 kg'); // 46 lb best
+  });
+
+  it('prints the muscle card’s lift rows in kg', () => {
+    const html = renderIn('kg');
+    const muscles = visibleText(html.slice(html.indexOf('Muscle priorities')));
+
+    expect(muscles).toContain('CURL8 x 81 kg'); // the shared band's 177.5 lb waypoint
+  });
+
+  it('leaves no pound reading anywhere on the page', () => {
+    expect(visibleText(renderIn('kg'))).not.toMatch(/\d\s*lbs?\b/);
+    expect(visibleText(renderIn('lbs'))).toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(renderIn('lbs')).toBe(render(baseData().data));
+  });
+});

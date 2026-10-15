@@ -35,6 +35,7 @@ import type {
   MuscleWeekMuscleView,
   MuscleWeekView,
 } from '../../read-models/index.js';
+import { formatMass, type MassUnit } from '../live-page/mass.js';
 
 /**
  * Everything the page renders, as fetched. `plan` is null with no active
@@ -235,13 +236,20 @@ export function prRows(strength: MuscleStrengthView): PrRow[] {
   return rows.sort((a, b) => (b.e1rm ?? 0) - (a.e1rm ?? 0));
 }
 
-/** `52 lb (+3)`, or `52 lb` with no prior to beat. Never a bare number — the unit carries. */
-export function prValueText(row: PrRow): string {
+/**
+ * `52 lb (+3)`, or `52 lb` with no prior to beat. Never a bare number — the unit carries.
+ * Kilograms read in whole kg, as the Live and Check-in pages show them (VW-934).
+ */
+export function prValueText(row: PrRow, unit: MassUnit = 'lbs'): string {
   if (row.e1rm === null) return '—';
-  const value = `${round1(row.e1rm)} lb`;
+  const value = `${massNumber(row.e1rm, unit)} ${unit === 'kg' ? 'kg' : 'lb'}`;
   if (row.priorBest === null) return value;
-  const delta = round1(row.e1rm - row.priorBest);
+  const delta = massNumber(row.e1rm - row.priorBest, unit);
   return `${value} (+${delta})`;
+}
+
+function massNumber(valueLbs: number, unit: MassUnit): number {
+  return unit === 'kg' ? formatMass(valueLbs, unit).value : round1(valueLbs);
 }
 
 function round1(value: number): number {
