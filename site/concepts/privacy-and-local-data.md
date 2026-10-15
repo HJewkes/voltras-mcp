@@ -20,7 +20,9 @@ sources:
   - site/coaches/consent-and-data-loop.md
   - README.md
   - CLAUDE.md
-lastVerified: 2026-09-30
+  - src/store/types.ts
+  - src/actions/execute.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -40,6 +42,14 @@ The same folder can hold a few other files. The device slot assignments sit ther
 features (`src/config.ts:18-20`, `src/config.ts:259-260`). An opt-in debugging recorder,
 `VMCP_RECORD_SESSION=1`, writes device captures under `~/.voltras/captures`
 (`src/state/session-recorder.ts:1-20`).
+
+The database also keeps a command trail: one row for each write, whether Claude made it
+through a tool or you made it with a tap on the dashboard. A row records the tool, when, in
+which session, whether it worked, and a short summary in fitness units such as a load or a rep
+count. It never records the arguments of a tool call. For a dashboard tap it also keeps the
+result, so a retried tap returns the first answer instead of writing twice
+(`src/store/types.ts`, `src/actions/execute.ts`). The dashboard reads the trail back at
+`/api/activity` ([Dashboard API](/reference/dashboard-api#command-trail-api-activity)).
 
 Keep one server process per database file. Two processes on the same file can both open it, and
 their writes then fail.

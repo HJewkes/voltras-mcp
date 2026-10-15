@@ -70,7 +70,7 @@ The rule has no memory: the same event always gives the same decision
 (`src/voice/cue-policy.ts:108-115`). Each kind of cue plays at most once per set
 (`src/voice/cue-emitter.ts:54-57`).
 
-Two switches control this, and both are off by default:
+Two switches control whether cues play, and both are off by default:
 
 - `VMCP_CUES` turns automatic cues on at all (`src/config.ts:13`, `src/config.ts:106-117`).
 - `VMCP_CUES_MIDSET` also allows the two mid-set cues. They are off by default because every cue
@@ -79,8 +79,14 @@ Two switches control this, and both are off by default:
   only through the cue-delivery layer, and only on a set whose risk reading at set start is green.
   Amber, red and unread sets stay silent mid-set (`src/voice/cue-delivery/risk-permit.ts`).
 
-[`system.set_cues`](/reference/system) changes either switch while the server runs, with no
-restart (`src/voice/cue-settings.ts:1-12`).
+A third switch, `VMCP_CUE_DELIVERY`, picks which layer speaks those automatic cues. Off, the
+default, is the rule above. On, the cue-delivery layer replaces it: at most two lines in each
+window before, during and after a set, fewer mid-set lines for a more experienced lifter, one
+technique focus repeated in the same words across sets, and a firmer tone as the set nears
+failure. `VMCP_CUES` and `VMCP_CUES_MIDSET` still gate it (`src/config.ts`).
+
+[`system.set_cues`](/reference/system) changes `VMCP_CUES` and `VMCP_CUES_MIDSET` while the
+server runs, with no restart (`src/voice/cue-settings.ts:1-12`).
 
 ## The effort cue
 

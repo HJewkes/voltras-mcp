@@ -13,7 +13,9 @@ sources:
   - docs/dashboard-drivers.md
   - src/state/auto-arm.ts
   - src/dashboard/spa/live-page/RestView.tsx
-lastVerified: 2026-09-30
+  - src/state/arm-defaults.ts
+  - src/state/idle-session-close.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -67,7 +69,10 @@ may not show up in a scan (`README.md`).
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
    [`timer.start`](/reference/timer), non-blocking, which fires an event when it elapses.
 7. **"That's the workout."** → [`session.end`](/reference/session). Any set still open is
-   closed as partial.
+   closed as partial. If you forget, a session with no rep for six hours is ended at the time
+   of its last rep, so it counts on the day you trained. That happens when the server next
+   starts, or on the next rep or session start in a server that kept running
+   (`src/state/idle-session-close.ts`).
 
 **Someone working in?** → `session.set_lifter {lifter: 'Jordan'}` before they lift, and
 `session.set_lifter {lifter: null}` when you take the rig back. Their sets are recorded
@@ -141,6 +146,14 @@ bug, and the reps that opened the set are counted in it. The wall dashboard mark
 compact "AUTO" badge on the live header while it's active. The rest recap shows the same
 label once it closes, unless the set has a warm-up, probe or technique label instead
 (`src/dashboard/spa/live-page/RestView.tsx`).
+
+A set auto-arm opens still gets a velocity-loss watch, so Claude hears about slowing reps even
+when nobody called `set.start`. When the session's plan has a row for the lift, the watch takes
+that row's loss target, else the default for its training goal: 20% for strength, 30% for
+hypertrophy, 10% for power. With no plan row it takes 30%, marked as an assumed default. Beside
+the AUTO badge the wall says which: "Plan · strength · stop 20%" or "Default · stop 30%
+(assumed)". A later `set.start` replaces the watch, and the line goes away
+(`src/state/arm-defaults.ts`, `src/state/velocity-loss-intent.ts`, `src/coach-copy/dashboard.ts`).
 
 ## Set purpose
 

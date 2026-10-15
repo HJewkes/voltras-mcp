@@ -14,7 +14,8 @@ sources:
   - justfile
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/server.ts
-lastVerified: 2026-09-30
+  - src/dashboard/spa/goals/review-copy.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -91,6 +92,7 @@ npm run dashboard:preview -- body                   # #/body
 npm run dashboard:preview -- plan                   # #/plan
 npm run dashboard:preview -- goals                  # #/goals
 npm run dashboard:preview -- goals --state behind   # …with a chosen goal state
+npm run dashboard:preview -- goals --unreviewed 3   # …with 3 days waiting to be marked
 ```
 
 A `body` run on 2026-09-27 printed this (trimmed: five lines are cut, the seed line and
@@ -123,11 +125,15 @@ browse matches the published images. `goals` has a seed of its own
 `hit_exact` or `beyond_goal`, and defaults to `on_track` (`src/docs/preview-seeds.ts`,
 `scripts/dashboard-preview.mjs`). The command prints the status the page actually reached.
 
+`--unreviewed <n>` also applies to `goals` only. It adds `n` past days of sessions that nobody
+has marked as training or test, so the page shows the line that says its numbers leave those
+days out (`scripts/dashboard-preview.mjs`, `src/dashboard/spa/goals/review-copy.ts`).
+
 ::: warning The printed status can differ from --state
-A `goals --state behind` run on 2026-09-27 printed this (trimmed to the two status lines):
+A `goals --state behind` run on 2026-10-15 printed this (trimmed to the two status lines):
 
 ```
-[preview] seeded --state behind: 15 sets across 5 session(s), top 100 lb, baseline CALIBRATED, whole body: bodyweight, sessions_28d
+[preview] seeded --state behind: 15 sets across 5 session(s), top 100 lb, baseline CALIBRATED, whole body: bodyweight, sessions_28d, unreviewed days: 0
 [preview] goal read model: status on_track
 ```
 

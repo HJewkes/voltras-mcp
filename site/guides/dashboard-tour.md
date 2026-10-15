@@ -14,14 +14,17 @@ sources:
   - src/dashboard/spa/live-page/live-copy.ts
   - src/analytics/rest-defaults.ts
   - src/tools/session-tools.ts
-lastVerified: 2026-09-30
+  - src/dashboard/read-models/derived-prescription.ts
+  - src/coach-copy/dashboard.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
 # Live workout tour
 
 This tour walks the live page of the wall dashboard through one planned workout: before a
-Voltra connects, mid-set, between sets, the session summary, and the two-device view. The
+Voltra connects, mid-set with and without a plan, between sets, the session summary, and the
+two-device view. The
 numbered legend under a capture names a string on that capture and says what it means.
 [`server.health`](/reference/server) reports whether a dashboard is running for the current
 session (`dashboardAvailable`/`dashboardUrl`); [set it up and open it](/guides/dashboard-setup)
@@ -60,6 +63,23 @@ The RPE slot is always a dash for now: the server sends no RPE until a trusted f
 effort profile reaches the wall (`src/dashboard/spa/panels/fatigue-view.ts:428-431`). The
 [effort readout](/coming-soon/effort-readout) page says what is missing. The
 [fatigue tour](/guides/dashboard-fatigue) follows this card from Good to a slowing set.
+
+## Mid-set, with no plan attached
+
+When no plan is attached for the lift you are doing, the live page fills the prescription
+from your last session of that lift: the working-set count per side, the rep range, and the
+heaviest working load (`src/dashboard/read-models/derived-prescription.ts`). It labels those
+numbers so they never read as a coach's plan. The header reads "Last time · " and that
+session's date beside the sets × reps @ load lockup, and the rest stage's "set n of m" line
+ends in "(last time)". A plan's targets show neither label (`src/coach-copy/dashboard.ts`,
+`src/dashboard/spa/live-page/live-copy.ts`). A guest's targets come only from the guest's own
+history.
+
+When that session is 15 or more days old, the caption also says how long ago it was, for
+example "Last time · 2026-09-24 · 26 days ago, before a break". The numbers are still last
+time's; the page does not adjust them for the break. For a load after a break, ask for
+[`plan.suggest_progression`](/reference/plan): after a short or medium break it steps down to
+a re-entry load, and after a longer one it holds.
 
 ## Between sets
 

@@ -10,7 +10,9 @@ sources:
   - src/config.ts
   - src/dashboard/spa/panels/exercise-hero-view.ts
   - docs/architecture/future-convergence-deep-dive.md
-lastVerified: 2026-09-30
+  - src/dashboard/spa/days/days-client.ts
+  - src/dashboard/read-models/banners.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -43,6 +45,24 @@ Dashboard screens that are built but not yet usable end to end have their own pa
   valid rep, so it defaults off (`src/config.ts:284-288`). The older `VMCP_REP_CORRECTIONS`
   switch moves it and its companion correction together when set.
 
+- **`VMCP_CUE_DELIVERY=on`.** Speaks the automatic cues through the newer cue-delivery layer
+  instead of the original rule. Off by default ([How coaching works](/concepts/how-coaching-works#automatic-spoken-cues),
+  `src/config.ts`).
+- **`VOLTRAS_EFFORT_CUE=on`.** Lets an effort rule pick the one ending cue for a set. Off until
+  it has been tested on the device (`src/config.ts`).
+
+## Served, but on no page yet
+
+The dashboard server answers these reads, but no page draws them, so you only see them by
+calling the route ([Dashboard API](/reference/dashboard-api)):
+
+- **`/api/muscle-recovery`**: when you last trained each muscle.
+- **`/api/session-review`**: the past days still waiting for a training or test mark. A
+  client and a model for a day-review page exist, but no route opens one
+  (`src/dashboard/spa/days/days-client.ts`, `src/dashboard/spa/routing.ts`).
+- **`/api/banners`**: the one banner the wall should show. Only the "planned week with nothing
+  recorded" banner has a producer (`src/dashboard/read-models/banners.ts`).
+
 ## Known to be uncalibrated or unverified
 
 - **Isometric hold force.** `isometric.measure_hold`, `measure_max`, and `measure_imbalance`
@@ -63,7 +83,8 @@ Dashboard screens that are built but not yet usable end to end have their own pa
 - **Weekly volume verdicts.** `history.weekly_volume` (see [the metrics reference](/reference/metrics))
   reports real weekly totals and a muscle-group breakdown, so a reader might expect it to also
   say whether that volume is on target. The verdict field is always empty: classifying it needs
-  per-athlete volume targets, and nothing in this repo supplies them yet
+  per-athlete volume targets, and this tool reads none. `goal.propose_targets` derives a
+  weekly-set dose for a muscle priority, but this tool does not read it
   (`src/tools/metrics-tools.ts:964-973`).
 - **Mean velocity on the exercise hero's set row.** The per-rep velocity bars read each rep's
   mean velocity, but the hero's set row still reads peak velocity, so it reads higher than the
