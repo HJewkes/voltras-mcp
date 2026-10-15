@@ -36,7 +36,7 @@
  * `design.ts`, shared with the builder page so the two operator routes are one
  * surface system rather than two — see `PanelCard.tsx` for the measurement.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import {
   Caption,
@@ -87,6 +87,7 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
   const summary = useStore(dashboardStore, (s) => s.sessionSummary);
   const error = useStore(dashboardStore, (s) => s.plannerError);
   const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
+  const [absent, setAbsent] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +95,7 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
       try {
         const loaded = await fetchSessionSummary(props.sessionId);
         if (!cancelled) {
+          setAbsent(loaded === null);
           dashboardStore.getState().applyPlanner({ sessionSummary: loaded, plannerError: null });
         }
       } catch (err) {
@@ -113,6 +115,17 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
     return (
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
         <ErrorNote message={error} />
+      </Surface>
+    );
+  }
+  if (absent) {
+    return (
+      <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
+        {props.sessionId === 'latest' ? (
+          <EmptyState title="No sessions yet" description="Finish a session to see it here." />
+        ) : (
+          <EmptyState title="Session not found" />
+        )}
       </Surface>
     );
   }

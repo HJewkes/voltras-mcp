@@ -19,7 +19,7 @@
 import type { DashboardCatalogEntry } from '../../read-models/catalog-entry';
 import type { PlanTreeView } from '../../read-models/plan-tree';
 import type { SessionSummaryView } from '../../read-models/session-summary-view';
-import { readJson, writeJson } from '../api-client';
+import { readJson, readJsonOrAbsent, writeJson } from '../api-client';
 
 /** Cadence of the plan-tree poll. Matches the live page's reconciliation poll. */
 export const PLANNER_POLL_INTERVAL_MS = 2000;
@@ -46,8 +46,11 @@ export async function fetchCatalog(
   return body.exercises;
 }
 
-export function fetchSessionSummary(sessionId: string): Promise<SessionSummaryView> {
-  return readJson<SessionSummaryView>(`/api/session-summary/${encodeURIComponent(sessionId)}`);
+/** `null` when there is no such session — for `'latest'`, no session at all (VW-931). */
+export function fetchSessionSummary(sessionId: string): Promise<SessionSummaryView | null> {
+  return readJsonOrAbsent<SessionSummaryView>(
+    `/api/session-summary/${encodeURIComponent(sessionId)}`,
+  );
 }
 
 export function createProgram(body: { name: string; workoutName?: string }): Promise<unknown> {
