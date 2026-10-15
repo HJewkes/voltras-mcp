@@ -127,7 +127,8 @@ browse matches the published images. `goals` has a seed of its own
 (`src/docs/preview-seeds.ts`). Open it from **goals** in the dashboard's navigation rail.
 
 `npm run dashboard:preview -- persona <name>` fills every page at once. It seeds one synthetic
-lifter, then opens the dashboard home (`#/`), and the rail reaches the rest. `steady` has twelve
+lifter, then opens the Review page on its latest session (`#/summary`), and the rail reaches the
+rest. `--route` opens another page instead, for example `--route '#/goals'`. `steady` has twelve
 weeks of an upper/lower split, weigh-ins, check-ins and three goals on track. `first-timer` has
 one session and a goal still calibrating. `fresh` is a new install with no rows at all
 (`src/docs/personas/index.ts`). An unknown name stops the command and lists the names it knows.

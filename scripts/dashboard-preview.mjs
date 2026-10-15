@@ -16,6 +16,7 @@
 //   npm run dashboard:preview -- plan
 //   npm run dashboard:preview -- summary
 //   npm run dashboard:preview -- persona steady
+//   npm run dashboard:preview -- persona steady --route '#/goals'
 //
 // ── What it is NOT ─────────────────────────────────────────────────────────
 // `npm run dashboard:sim` (scripts/dashboard-sim.mjs) is the neighbouring
@@ -39,7 +40,8 @@
 // test, which is what makes the page say its counts leave them out (VW-514).
 //
 // `persona <name>` seeds one synthetic lifter from `src/docs/personas/` and
-// opens `#/` on it (VW-942); the other pages are a click away in the rail.
+// opens `#/summary`, the latest session, on it (VW-942); `--route <hash>` opens
+// another page instead, and the rest are a click away in the rail.
 //
 // ── Isolation ──────────────────────────────────────────────────────────────
 // Each run gets its own scratch directory holding its own `VMCP_DB_PATH`,
@@ -62,15 +64,16 @@ const SUMMARY_SEED = path.join(REPO_ROOT, 'dist/docs/summary-preview-seed.js');
 const PERSONAS = path.join(REPO_ROOT, 'dist/docs/personas/index.js');
 const PERSONA_FILE = path.join(REPO_ROOT, 'dist/docs/personas/seed-file.js');
 const PERSONA_SOURCE = 'persona';
+const PERSONA_ROUTE = '#/summary';
 
 const log = (...args) => console.error('[preview]', ...args);
 
 /**
- * `<page> [--state <name>] [--unreviewed <n>]` or `persona <name>`, also accepting the
- * `--flag=value` forms.
+ * `<page> [--state <name>] [--unreviewed <n>]` or `persona <name> [--route <hash>]`, also
+ * accepting the `--flag=value` forms.
  */
 function parseArgs(argv, pages) {
-  const args = { page: null, persona: null, state: 'on_track', unreviewed: 0 };
+  const args = { page: null, persona: null, route: null, state: 'on_track', unreviewed: 0 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--state') args.state = argv[++i];
@@ -78,7 +81,9 @@ function parseArgs(argv, pages) {
     else if (arg === '--unreviewed') args.unreviewed = dayCount(argv[++i]);
     else if (arg.startsWith('--unreviewed=')) {
       args.unreviewed = dayCount(arg.slice('--unreviewed='.length));
-    } else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
+    } else if (arg === '--route') args.route = hashRoute(argv[++i]);
+    else if (arg.startsWith('--route=')) args.route = hashRoute(arg.slice('--route='.length));
+    else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
     else if (args.page === null) args.page = arg;
     else if (args.page === PERSONA_SOURCE && args.persona === null) args.persona = arg;
     else throw new Error(`unexpected second page: ${arg}`);
@@ -89,14 +94,24 @@ function parseArgs(argv, pages) {
   if (args.page === PERSONA_SOURCE && args.persona === null) {
     throw new Error('name a persona: persona <name>');
   }
+  if (args.route !== null && args.page !== PERSONA_SOURCE) {
+    throw new Error('--route applies to persona only');
+  }
   return args;
 }
 
-/** A persona is a page source of its own: its store, opened on the dashboard home. */
-async function personaPage(personaId) {
+function hashRoute(value) {
+  if (typeof value !== 'string' || !value.startsWith('#/')) {
+    throw new Error(`--route takes a dashboard hash such as '#/goals', not ${value}`);
+  }
+  return value;
+}
+
+/** A persona is a page source of its own: its store, opened on `route`. */
+async function personaPage(personaId, route) {
   const { personaById } = await import(PERSONAS);
   const persona = personaById(personaId);
-  return { name: PERSONA_SOURCE, route: '/app#/', persona, summary: persona.summary };
+  return { name: PERSONA_SOURCE, route: `/app${route}`, persona, summary: persona.summary };
 }
 
 async function seedPersonaStore(dbDir, persona) {
@@ -219,7 +234,9 @@ async function main() {
   const { PREVIEW_PAGES } = await import(SEEDS);
   const args = parseArgs(process.argv.slice(2), PREVIEW_PAGES);
   const page =
-    args.persona === null ? pageNamed(PREVIEW_PAGES, args.page) : await personaPage(args.persona);
+    args.persona === null
+      ? pageNamed(PREVIEW_PAGES, args.page)
+      : await personaPage(args.persona, args.route ?? PERSONA_ROUTE);
 
   const dbDir = makeScratchDir();
   const cleanUp = () => fs.rmSync(dbDir, { recursive: true, force: true });
