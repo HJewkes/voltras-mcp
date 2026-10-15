@@ -14,16 +14,16 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72471 |
-| live-workout responses | 21626 |
+| tools/list | 71644 |
+| live-workout responses | 21636 |
 | live-workout push events | 20483 |
-| live-workout total | 42109 |
-| sunday-sitting responses | 9323 |
+| live-workout total | 42119 |
+| sunday-sitting responses | 9333 |
 | sunday-sitting push events | 0 |
-| sunday-sitting total | 9323 |
-| weekly-review responses | 2768 |
+| sunday-sitting total | 9333 |
+| weekly-review responses | 2778 |
 | weekly-review push events | 0 |
-| weekly-review total | 2768 |
+| weekly-review total | 2778 |
 
 ## tools/list
 
@@ -40,7 +40,6 @@ grows more than 5% over this table, or when a row is new.
 | `debug.confirm_channel` | 922 | 308 |
 | `debug.push_test_channel` | 1146 | 408 |
 | `debug.recent_events` | 1383 | 457 |
-| `debug.recent_frames` | 826 | 283 |
 | `debug.recording_status` | 512 | 184 |
 | `device.configure_isokinetic` | 1833 | 661 |
 | `device.connect` | 1413 | 457 |
@@ -49,7 +48,6 @@ grows more than 5% over this table, or when a row is new.
 | `device.exit_guided_load` | 1530 | 472 |
 | `device.get_state` | 2017 | 599 |
 | `device.scan` | 683 | 249 |
-| `device.send_raw` | 1547 | 579 |
 | `device.set_assist_mode` | 834 | 306 |
 | `device.set_band_max_force` | 813 | 303 |
 | `device.set_chains` | 1144 | 388 |
@@ -128,7 +126,7 @@ grows more than 5% over this table, or when a row is new.
 | `report.weekly` | 2808 | 834 |
 | `rir_velocity.fit` | 1415 | 439 |
 | `rir_velocity.target` | 1250 | 411 |
-| `server.health` | 1907 | 549 |
+| `server.health` | 2040 | 584 |
 | `session.checkin` | 2563 | 896 |
 | `session.end` | 1402 | 539 |
 | `session.get` | 1135 | 359 |
@@ -173,7 +171,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.next_workout` | 1 | 250 | 109 | 109 |
 | `progression.get_for_exercise` | 1 | 2615 | 1080 | 1080 |
 | `report.session_results` | 1 | 215 | 105 | 105 |
-| `server.health` | 1 | 447 | 235 | 235 |
+| `server.health` | 1 | 466 | 245 | 245 |
 | `session.end` | 1 | 11 | 6 | 6 |
 | `session.start` | 1 | 52 | 27 | 27 |
 | `set.end` | 2 | 428 | 147 | 74 |
@@ -209,7 +207,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.get_training_background` | 1 | 16 | 8 | 8 |
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
-| `server.health` | 1 | 447 | 235 | 235 |
+| `server.health` | 1 | 466 | 245 | 245 |
 | `session.mark_kind` | 1 | 413 | 217 | 217 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
@@ -227,7 +225,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
 | `report.weekly` | 1 | 1707 | 458 | 458 |
-| `server.health` | 1 | 447 | 235 | 235 |
+| `server.health` | 1 | 466 | 245 | 245 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
 ## weekly-review: push events

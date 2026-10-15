@@ -25,6 +25,7 @@ describe('loadConfig', () => {
       cueDelivery: 'off',
       autoArm: 'on',
       effortCue: 'off',
+      debugTools: 'off',
       trueCoachOutbox: 'off',
       trueCoachOutboxDir: '/home/test/.voltras/truecoach-outbox',
       trueCoachSubmitOnEnd: 'off',
@@ -231,6 +232,14 @@ describe('loadConfig', () => {
   it('honors VOLTRAS_EFFORT_CUE="on", and refuses anything else by name', () => {
     expect(loadConfig({ VOLTRAS_EFFORT_CUE: 'on', HOME: '/home/test' }).effortCue).toBe('on');
     expect(() => loadConfig({ VOLTRAS_EFFORT_CUE: 'yes' })).toThrow(/VOLTRAS_EFFORT_CUE="yes"/);
+  });
+
+  it('turns the raw-device diagnostics on only for VMCP_DEBUG_TOOLS="on" (VW-935)', () => {
+    expect(loadConfig({}).debugTools).toBe('off');
+    expect(loadConfig({ VMCP_DEBUG_TOOLS: 'on' }).debugTools).toBe('on');
+    for (const value of ['ON', 'true', '1', 'yes', '']) {
+      expect(loadConfig({ VMCP_DEBUG_TOOLS: value }).debugTools).toBe('off');
+    }
   });
 
   it('defaults VMCP_CUE_DELIVERY to "off": the legacy cue tee speaks (VW-607)', () => {

@@ -95,8 +95,8 @@ describe('two connections over one shared state', () => {
     // registered at CONSTRUCTION time, so that assertion passes even if
     // activate() is a no-op. Assert on behaviour instead — before activation
     // every tool answers STARTING, after it none do.
-    const a = createClientConnection();
-    const b = createClientConnection();
+    const a = createClientConnection(undefined, { debugTools: 'on' });
+    const b = createClientConnection(undefined, { debugTools: 'on' });
 
     expect(unactivatedTools(a)).toEqual([...CORE_TOOL_NAMES, ...MOCK_TOOL_NAMES]);
 

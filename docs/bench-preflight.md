@@ -55,3 +55,11 @@ One line each, in this order. Only the first two exit non-zero.
 
 Inside a running session, `server.health` reports the same voice state as
 `voiceReady: { whisperCli, model }`, plus the live `cues` / `cuesMidSet` values.
+
+## Raw-device tools (VW-935)
+
+`device.send_raw` and `debug.recent_frames` are not registered by default. A hardware
+debugging session that needs them sets `VMCP_DEBUG_TOOLS=on` before the server starts, for
+example in `.launch.env`; any other value leaves them out of `tools/list`. `server.health`
+reports the setting as `debugTools`. Leave it off for coaching sessions: `device.send_raw`
+can move the motor, and `debug.recent_frames` puts raw telemetry into the transcript.

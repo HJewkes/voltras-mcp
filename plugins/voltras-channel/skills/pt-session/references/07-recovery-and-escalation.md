@@ -32,7 +32,7 @@ Step through it. The user's patience for "trust me, lift it" ends at Level 2.
 | `debug.recent_events {types?}`                                                          | The server's diagnostic ring buffer: rep and set boundaries, settings updates, connection changes, guided-load states. These are internal names, not channel event names. `setting_coerced` is not in it |
 | `debug.compare_rep_streams {slot}`                                                      | Analytics vs device rep count on the active set                                                                                                                                                          |
 | `debug.recording_status`                                                                | Whether the opt-in flight recorder is capturing                                                                                                                                                          |
-| `debug.recent_frames` / `device.send_raw {confirm: true}`                               | Low-level capture and write. Debug mode only, on the user's explicit request. **Never quote their content** in chat, notes, tasks or commits                                                             |
+| `debug.recent_frames` / `device.send_raw {confirm: true}`                               | Low-level capture and write. Debug mode only (`VMCP_DEBUG_TOOLS=on`; otherwise absent), on the user's explicit request. **Never quote their content** in chat, notes, tasks or commits                   |
 | `server.health`                                                                         | Adapter, lease holder, channel status, cues, voice readiness                                                                                                                                             |
 
 ## Failure modes
@@ -165,7 +165,7 @@ Signals: "let's debug," "what's going on," "are we getting cross-talk," a propos
 
 1. Drop the trainer voice. No `system.speak` cues.
 2. No new `session.start` / `set.start` loops.
-3. Diagnostic toolkit: `debug.recent_events {types}`, `debug.compare_rep_streams`, `debug.recording_status`, `device.get_state`, `server.health`. `debug.recent_frames` and `device.send_raw {confirm: true}` only on the user's request.
+3. Diagnostic toolkit: `debug.recent_events {types}`, `debug.compare_rep_streams`, `debug.recording_status`, `device.get_state`, `server.health`. `debug.recent_frames` and `device.send_raw {confirm: true}` only on the user's request, and only when `VMCP_DEBUG_TOOLS=on` registered them.
 4. Say it: "We're in debug mode now."
 5. `setting_coerced` is not in the ring buffer; watch for it inline.
 6. Capture findings so they outlive the session (an active-work task or note). **Describe behaviour in plain words. Never paste low-level capture content into a note, task, commit or chat.**

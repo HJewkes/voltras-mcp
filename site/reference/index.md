@@ -9,6 +9,7 @@ is the description a client actually sees.
 **128 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
 **130** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
+Those counts include `device.send_raw` and `debug.recent_frames`, which are registered only when `VMCP_DEBUG_TOOLS=on`.
 
 The status column uses the words defined on the [page status](/status) page. A tool
 whose status differs from its namespace is named in the same cell.
