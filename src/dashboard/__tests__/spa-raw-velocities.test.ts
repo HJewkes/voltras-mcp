@@ -3,7 +3,12 @@
 // band edge, and the rest recap's loss is the live aura's own exact loss.
 
 import { describe, expect, it } from 'vitest';
-import { getSetVelocityLossPct, type Phase, type Rep } from '@voltras/workout-analytics';
+import {
+  MovementPhase,
+  getSetVelocityLossPct,
+  type Phase,
+  type Rep,
+} from '@voltras/workout-analytics';
 
 import {
   initialAccumulatorState,
@@ -36,11 +41,14 @@ const EMPTY: Phase = {
 /** A strength set whose last rep sits 14% below the best: 13.3 when rounded to 0.52. */
 const VELOCITIES = [0.6, 0.58, 0.56, 0.54, 0.516];
 
+/** One lowering sample: a finished rep has begun its eccentric, so its mean is final. */
+const LOWERING = { sequence: 0, timestamp: 0, phase: MovementPhase.ECCENTRIC, position: 0 };
+
 function rep(repNumber: number, mps: number): Rep {
   return {
     repNumber,
     concentric: { ...EMPTY, peakVelocity: mps, _totalVelocity: mps, _movementSampleCount: 1 },
-    eccentric: { ...EMPTY },
+    eccentric: { ...EMPTY, samples: [{ ...LOWERING, velocity: mps / 2, force: 0 }] },
   };
 }
 

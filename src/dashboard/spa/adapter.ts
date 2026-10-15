@@ -65,6 +65,22 @@ export function repMeanVelocityMps(rep: Rep): number | null {
 }
 
 /**
+ * The reps whose mean velocity is final: an open set's reps minus the one still
+ * in its concentric. The server appends a rep at its first concentric sample, and
+ * until its eccentric starts its mean climbs from zero sample by sample — the
+ * same "no eccentric samples" rule as the server's `isTrailingRepIncomplete`.
+ * The velocity bars must not read it: each poll lands a different partial value,
+ * and the chart replays the live bar's entrance on every change, so one rep grew
+ * in two or three times. A rep with no sample arrays at all carries no evidence
+ * of being mid-rep and is kept.
+ */
+export function settledReps(reps: readonly Rep[]): readonly Rep[] {
+  const last = reps.at(-1);
+  const eccentric = last?.eccentric.samples;
+  return Array.isArray(eccentric) && eccentric.length === 0 ? reps.slice(0, -1) : reps;
+}
+
+/**
  * Peak CONCENTRIC force (lbs) for a rep. Null when the rep logged no concentric
  * force (empty phase → `peakForce` defaults to 0).
  *
@@ -462,8 +478,9 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   // beside them, so the visible bar-drop and the stated loss %/verdict agree
   // across the room (VW-58). Unrounded: titan bands each bar on the exact loss and
   // formats the number itself, so a bar and the aura agree at a band edge (titan 0.21.1).
+  // Settled reps only: a bar lands once, at its final value.
   const velocitiesMps: number[] = [];
-  for (const rep of reps) {
+  for (const rep of settledReps(reps)) {
     velocitiesMps.push(repMeanVelocityMps(rep) ?? 0);
   }
 
