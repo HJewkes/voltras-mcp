@@ -67,6 +67,8 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | Shot                | Scenario                                      | Shows                            |
 | ------------------- | --------------------------------------------- | -------------------------------- |
 | `dashboard-cold`    | bare `dist/bin.js`, nothing connected         | the empty wall view              |
+| `checkin`           | bare `dist/bin.js`, nothing connected         | the check-in page's first step   |
+| `checkin-phone`     | bare `dist/bin.js`, nothing connected         | the same step at phone width     |
 | `live-mid-set`      | `dashboard-plan-drive.mjs`                    | live page mid-set with a plan    |
 | `live-rest`         | `dashboard-plan-drive.mjs`                    | the rest stage between two sets  |
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
@@ -147,6 +149,8 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | Shot                | Server-real-time field                                                          | Byte-reproducible? |
 | ------------------- | ------------------------------------------------------------------------------- | ------------------ |
 | `dashboard-cold`    | none                                                                            | yes                |
+| `checkin`           | none                                                                            | yes                |
+| `checkin-phone`     | none                                                                            | yes                |
 | `plan-builder`      | none                                                                            | yes                |
 | `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)                    | yes                |
 | `body-week`         | none (its "Week of" date comes from a server clock pinned by `--clock`, VW-710) | yes                |

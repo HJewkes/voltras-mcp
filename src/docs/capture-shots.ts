@@ -346,6 +346,31 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     holdsPageOpen: false,
   },
   {
+    name: 'checkin',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption:
+      'The weekly check-in page on its first step, bodyweight, with the four steps above it.',
+    // The stepper needs no history: its first step is a form, so the empty store is enough.
+    waitFor: { kind: 'idle' },
+    expectText: ['Bodyweight', 'Check-in', 'Review', 'Done', 'Note (optional)', 'Next', 'Skip'],
+    // The unit is filled in from the wall's display-unit setting, lbs when none is stored.
+    expectValues: ['Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
+    name: 'checkin-phone',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption: 'The weekly check-in page at phone width, one step at a time.',
+    waitFor: { kind: 'idle' },
+    viewport: PHONE_VIEWPORT,
+    // At phone width the stepper collapses to a step count.
+    expectText: ['Bodyweight', 'Note (optional)', 'Next', 'Skip'],
+    expectValues: ['Step 1 of 4', 'Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
     name: 'live-mid-set',
     scenario: 'planned',
     route: '/app',
