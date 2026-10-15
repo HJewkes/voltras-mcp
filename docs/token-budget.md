@@ -14,7 +14,7 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72471 |
+| tools/list | 72683 |
 | live-workout responses | 21626 |
 | live-workout push events | 20483 |
 | live-workout total | 42109 |
@@ -151,10 +151,10 @@ grows more than 5% over this table, or when a row is new.
 | `system.lease_acquire` | 1211 | 393 |
 | `system.lease_release` | 372 | 147 |
 | `system.lease_status` | 602 | 207 |
-| `system.listen_start` | 2136 | 674 |
-| `system.listen_stop` | 717 | 237 |
-| `system.set_cues` | 1290 | 413 |
-| `system.speak` | 1887 | 616 |
+| `system.listen_start` | 2317 | 722 |
+| `system.listen_stop` | 975 | 305 |
+| `system.set_cues` | 1378 | 436 |
+| `system.speak` | 2163 | 689 |
 | `timer.cancel` | 570 | 208 |
 | `timer.start` | 1898 | 582 |
 | `timer.wait` | 1435 | 458 |

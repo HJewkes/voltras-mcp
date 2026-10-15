@@ -109,6 +109,19 @@ function feedSegment(h: Harness, speech = 8, silence = 16): void {
   h.audio.emit('data', Buffer.alloc((speech + silence) * FRAME_BYTES));
 }
 
+// Byte fills that survive into the emitted utterance, so a test can tell which
+// segment a whisper call was given. Silence is left zeroed: it becomes the next
+// segment's pre-roll and would otherwise smear the mark across utterances.
+const LIFTER_MARK = 0xcd;
+const CUE_MARK = 0xab;
+
+function feedMarkedSegment(h: Harness, mark: number, speech = 8, silence = 16): void {
+  for (let i = 0; i < speech; i += 1) h.probs.push(0.9);
+  for (let i = 0; i < silence; i += 1) h.probs.push(0);
+  h.audio.emit('data', Buffer.alloc(speech * FRAME_BYTES, mark));
+  h.audio.emit('data', Buffer.alloc(silence * FRAME_BYTES));
+}
+
 describe('VoiceListener — lifecycle', () => {
   it('starts into listening and stop() is idempotent', async () => {
     const h = buildHarness();
@@ -435,33 +448,186 @@ describe('VoiceListener — mic readiness', () => {
   });
 });
 
-describe('VoiceListener — ducking', () => {
-  it('does not run VAD or whisper while muted', async () => {
+// VMCP-05.20. Muting used to discard mic frames outright, so a cue made the
+// listener deaf for its whole duration — the bench watched a lifter say "stop"
+// mid-cue twice and the cable stayed loaded both times
+// (RESULTS-2026-08-11-VMCP-05.01-deaf-window). Ducking is now safety-only, not
+// a discard.
+describe('VoiceListener — ducking (safety exemption)', () => {
+  const CUE = 'That rep was 15 percent slower. Reset.';
+
+  it('runs VAD and whisper on frames captured while muted', async () => {
     const h = buildHarness();
     await h.listener.start(resolveStartArgs({}));
-    h.listener.mute();
+    const handle = h.listener.mute(CUE);
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.process).toHaveBeenCalled();
+    expect(h.whisper).toHaveBeenCalledTimes(1);
+    h.listener.unmute(handle);
+  });
+
+  it('fires a safety phrase spoken during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute(CUE);
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    expect(h.safety[0].matchedPhrase).toBe('stop');
+    h.listener.unmute(handle);
+  });
+
+  it('still fires a safety phrase when the cue text was not threaded through', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute();
+    h.whisperTranscripts.push('cut the weight');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    h.listener.unmute(handle);
+  });
+
+  it('ignores the wake phrase during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute(CUE);
     h.whisperTranscripts.push('hey coach do a set');
     feedSegment(h);
     await settle();
-    expect(h.process).not.toHaveBeenCalled();
-    expect(h.whisper).not.toHaveBeenCalled();
     expect(h.voiceInput).toHaveLength(0);
-    h.listener.unmute();
+    expect(h.safety).toHaveLength(0);
+    h.listener.unmute(handle);
+  });
+
+  it('ignores a weight command during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute(CUE);
+    h.whisperTranscripts.push('set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(h.commands).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    h.listener.unmute(handle);
+  });
+
+  it('drops the cue text fed back as a muted-window transcript', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute(CUE);
+    h.whisperTranscripts.push(CUE);
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.commands).toHaveLength(0);
+    h.listener.unmute(handle);
+  });
+
+  // The echo filter, not the safety tier, is what has to win here — otherwise
+  // the machine unloads the cable on its own voice. Documented residual risk:
+  // a lifter's real "stop" over this cue is dropped along with the echo.
+  it('drops a cue whose own text contains a safety word', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute("Don't stop now.");
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    h.listener.unmute(handle);
+  });
+
+  it('applies the echo filter only inside the muted window', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const handle = h.listener.mute(CUE);
+    h.listener.unmute(handle);
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
   });
 
   it('resumes after unmute (refcounted)', async () => {
     const h = buildHarness();
     await h.listener.start(resolveStartArgs({}));
-    h.listener.mute();
-    h.listener.mute();
-    h.listener.unmute();
+    const first = h.listener.mute();
+    const second = h.listener.mute();
+    h.listener.unmute(first);
     expect(h.listener.isMuted).toBe(true); // still one outstanding
-    h.listener.unmute();
+    h.listener.unmute(second);
     expect(h.listener.isMuted).toBe(false);
     h.whisperTranscripts.push('hey coach go');
     feedSegment(h);
     await settle();
     expect(h.voiceInput).toHaveLength(1);
+  });
+});
+
+// VW-176. A non-urgent cue does not interrupt a model `system.speak`, so two
+// mutes overlap routinely. Releasing them FIFO dropped the text of whichever
+// utterance was still playing, leaving the echo filter with the wrong words and
+// the safety tier free to fire on the machine's own voice.
+describe('VoiceListener — overlapping speech (handle pairing)', () => {
+  const LONG = 'Keep the elbow tucked and do not stop short at the top of the rep';
+  const SHORT = 'Two reps left.';
+
+  it('keeps the longer text active when the shorter overlapping cue ends first', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const long = h.listener.mute(LONG);
+    const short = h.listener.mute(SHORT);
+    h.listener.unmute(short);
+
+    h.whisperTranscripts.push('stop short at the top');
+    feedSegment(h);
+    await settle();
+
+    expect(h.safety).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.listener.isMuted).toBe(true);
+    h.listener.unmute(long);
+  });
+
+  it('still drops an echo of the second text after the first is released', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const long = h.listener.mute(LONG);
+    const short = h.listener.mute(SHORT);
+    h.listener.unmute(long);
+
+    h.whisperTranscripts.push('two reps left');
+    feedSegment(h);
+    await settle();
+
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.safety).toHaveLength(0);
+    h.listener.unmute(short);
+  });
+
+  it('treats a repeated unmute of the same handle as a no-op', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    const long = h.listener.mute(LONG);
+    const short = h.listener.mute(SHORT);
+    h.listener.unmute(short);
+    h.listener.unmute(short);
+    expect(h.listener.isMuted).toBe(true); // depth never went negative
+
+    // The surviving entry is still LONG's, so its echo is still filtered.
+    h.whisperTranscripts.push('stop short at the top');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(0);
+
+    h.listener.unmute(long);
+    expect(h.listener.isMuted).toBe(false);
   });
 });
 
@@ -473,5 +639,44 @@ describe('VoiceListener — transcription queue', () => {
     for (let s = 0; s < 7; s += 1) feedSegment(h);
     await settle();
     expect(h.errors.some((e) => e.code === 'QUEUE_OVERFLOW')).toBe(true);
+  });
+
+  // Muted frames are transcribed now, so cue audio takes queue slots that used
+  // to belong to the lifter alone. At the cap the echo is the one to sacrifice.
+  it('drops a queued muted utterance before an older unmuted one', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+
+    const seen: Buffer[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.setWhisper(async (audio) => {
+      seen.push(audio);
+      if (seen.length === 1) await gate; // first call blocks the drain
+      return { transcript: '' };
+    });
+
+    feedSegment(h); // in flight, holding the drain open
+    await settle();
+
+    // Settle between feeds: frames are VAD-processed asynchronously, so the mute
+    // window has to still be open when the cue segment's frames are drained.
+    feedMarkedSegment(h, LIFTER_MARK); // queued first, unmuted
+    await settle();
+    const handle = h.listener.mute('two reps left');
+    feedMarkedSegment(h, CUE_MARK);
+    await settle();
+    h.listener.unmute(handle);
+    for (let s = 0; s < 4; s += 1) feedSegment(h); // pushes the queue past the cap
+    await settle();
+
+    release();
+    await settle();
+
+    expect(h.errors.some((e) => e.code === 'QUEUE_OVERFLOW')).toBe(true);
+    expect(seen.some((audio) => audio.includes(CUE_MARK))).toBe(false);
+    expect(seen.some((audio) => audio.includes(LIFTER_MARK))).toBe(true);
   });
 });

@@ -94,6 +94,15 @@ function findSafetyPhrase(text: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The safety matcher `routeTranscript` uses, over raw (uncleaned) text and with
+ * no word-count gate. Exported so anything we speak aloud — cue templates, the
+ * unload ack — can be checked against this matcher instead of a copy of it.
+ */
+export function findSafetyPhraseIn(text: string): string | undefined {
+  return findSafetyPhrase(clean(text));
+}
+
 function matchWake(text: string, phrase: string): RouteResult | undefined {
   const match = phraseRegex(phrase).exec(text);
   if (!match) return undefined;

@@ -74,7 +74,7 @@ Two switches control whether cues play, and both are off by default:
 
 - `VMCP_CUES` turns automatic cues on at all (`src/config.ts:13`, `src/config.ts:106-117`).
 - `VMCP_CUES_MIDSET` also allows the two mid-set cues. They are off by default because every cue
-  mutes the microphone while it plays, which matters for the spoken stop described below
+  ducks the microphone while it plays, which narrows the spoken stop described below
   (`src/config.ts:14`, `src/config.ts:122-141`). Its third value, `risk`, lets mid-set lines speak
   only through the cue-delivery layer, and only on a set whose risk reading at set start is green.
   Amber, red and unread sets stay silent mid-set (`src/voice/cue-delivery/risk-permit.ts`).
@@ -152,15 +152,16 @@ the weight" unload every connected device, with no wait for Claude
 stop" is ignored, and so is a long sentence that merely contains the word
 (`src/voice/transcript-router.ts:33-49`).
 
-::: warning The microphone is deaf while anything is spoken
-Today, while any line plays, whether Claude's speech or an automatic cue, the microphone is
-muted and the sound it hears is thrown away. A spoken "stop" in that window is lost, with no event
-to say so (`src/voice/voice-listener.ts:17-19`, `src/voice/voice-listener.ts:505-512`,
-`plugins/voltras-channel/skills/pt-session/SKILL.md:176`). A single mute lasts at most eight
-seconds (`src/tools/tts-tools.ts:120-129`). The fix is tracked as VW-173 and is not on `main`
-yet.
+::: warning While anything is spoken, the microphone hears safety phrases only
+While any line plays, whether Claude's speech or an automatic cue, a spoken "stop" still
+unloads the weight, but the wake phrase and spoken weight changes are ignored until the line ends
+(`src/voice/voice-listener.ts:669-705`). Anything made of the words being spoken is thrown away
+as the machine hearing its own voice, so a "stop" shouted over a line that itself says "stop" is
+lost, with no event to say so (`src/voice/speech-echo.ts`). A phrase already in progress when a
+line starts is dropped too. A single line holds the microphone this way for at most eight seconds
+(`src/tools/tts-tools.ts:131-139`).
 :::
 
-That is why the mid-set cues are off by default (`src/config.ts:120-128`). It is also why the
+That is why the mid-set cues are still off by default (`src/config.ts:120-128`). It is also why the
 skill tells Claude to keep lines short and stay silent during a heavy set, and to have you keep a
 hand near the device's own stop (`plugins/voltras-channel/skills/pt-session/SKILL.md:176`).

@@ -14,15 +14,28 @@
 //   - whisper is slow + async, so closed segments go on a bounded queue drained
 //     by a separate `drainTranscriptions` loop (single in-flight, FIFO, cap 5).
 //
-// TTS-ducking: `mute()`/`unmute()` (refcounted) suspend processing while the
-// speaker is live so we never transcribe what the TTS read aloud. Entering the
-// muted state discards any in-progress utterance. The mic stream stays warm.
+// TTS-ducking: `mute()`/`unmute()` (refcounted) duck the mic while the speaker
+// is live so we never act on what the TTS read aloud. Entering the muted state
+// discards any in-progress utterance. The mic stream stays warm. Each mute()
+// returns a `MuteHandle` that its unmute() must pass back: two utterances can
+// overlap (a non-urgent cue does not interrupt a model `system.speak`), and
+// releasing the wrong one leaves the still-playing text out of the echo filter
+// (VW-176).
+//
+// Safety exemption (VMCP-05.20): ducking is NOT a discard. Muted frames still
+// run VAD + whisper and the transcript is routed SAFETY-ONLY — the command and
+// wake tiers are dropped for the length of the cue. Before routing, the
+// transcript is checked against the text being spoken (`isSpeechEcho`) so our
+// own cue audio can never trigger anything. The old behaviour dropped muted mic
+// frames outright, which swallowed a lifter's mid-cue "stop" twice on the bench
+// (RESULTS-2026-08-11-VMCP-05.01-deaf-window).
 
 import { createRequire } from 'node:module';
 import type { Readable } from 'node:stream';
 
 import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
+import { isSpeechEcho } from './speech-echo.js';
 import { SpeechSegmenter } from './speech-segmenter.js';
 import { routeTranscript } from './transcript-router.js';
 import type { WeightCommand } from './weight-command.js';
@@ -264,9 +277,32 @@ function pcmDurationMs(pcmByteLength: number): number {
 /** Max queued utterances awaiting whisper before we drop the oldest. */
 const TRANSCRIPTION_QUEUE_CAP = 5;
 
+/**
+ * Where an utterance was captured relative to TTS playback. Carried with the
+ * audio because whisper finishes long after the cue does — by transcription
+ * time the mute may already be lifted, and the safety-only gate + echo filter
+ * both have to reflect the moment the words were spoken, not the moment they
+ * were decoded.
+ */
+interface CaptureOrigin {
+  /** Any frame in this utterance arrived while a cue was playing. */
+  muted: boolean;
+  /** Everything TTS was saying across those frames, for the echo filter. */
+  spokenTexts: string[];
+}
+
+/**
+ * Opaque token pairing one `mute()` with its `unmute()`. Identity is what
+ * matters; `id` exists so log lines can name the entry being released.
+ */
+export interface MuteHandle {
+  readonly id: number;
+}
+
 interface PendingUtterance {
   audio: Buffer;
   closedAt: number;
+  origin: CaptureOrigin;
 }
 
 /**
@@ -281,7 +317,11 @@ export class VoiceListener {
   private audio: AudioSource | null = null;
   private vad: Vad | null = null;
   private segmenter: SpeechSegmenter | null = null;
-  private _muteDepth = 0;
+  /** One entry per outstanding mute(), holding the text that mute is speaking. */
+  private activeSpeech = new Map<MuteHandle, string | undefined>();
+  private nextMuteId = 1;
+  /** Capture origin accumulating for the utterance the segmenter is building. */
+  private origin: CaptureOrigin = { muted: false, spokenTexts: [] };
 
   /** Raw mic bytes not yet aligned into a full 512-sample frame. */
   private frameAccum: Buffer = Buffer.alloc(0);
@@ -331,25 +371,44 @@ export class VoiceListener {
 
   /** True when any TTS call is still in flight (refcount > 0). */
   get isMuted(): boolean {
-    return this._muteDepth > 0;
+    return this.muteDepth > 0;
+  }
+
+  /** Outstanding mutes. One per unreleased handle, so it is the old refcount. */
+  private get muteDepth(): number {
+    return this.activeSpeech.size;
   }
 
   /**
-   * Suspend processing before TTS playback. Refcounted — each mute() pairs with
-   * an unmute(); the mic stays ducked until all concurrent TTS calls finish.
-   * Entering the muted state discards any in-progress utterance so TTS audio is
-   * never transcribed.
+   * Duck the mic before TTS playback. Refcounted — each mute() pairs with an
+   * unmute(); the mic stays ducked until all concurrent TTS calls finish.
+   * Entering the muted state discards any in-progress utterance, so the words
+   * on either side of the cue boundary are never decoded as one sentence.
+   *
+   * Pass `spokenText` — what TTS is about to say. It is what lets the muted
+   * window stay open to safety phrases (VMCP-05.20): a transcript made mostly
+   * of these words is our own voice and is dropped. Omitting it is safe but
+   * blunt — the safety path stays open with no echo filter behind it.
+   *
+   * Hand the returned handle back to `unmute()`. Overlapping speech is ordinary
+   * (a non-urgent cue plays over a longer `system.speak`), and whichever ends
+   * first must release its OWN text, not the oldest (VW-176).
    */
-  mute(): void {
-    this._muteDepth += 1;
-    if (this._muteDepth === 1) this.segmenter?.flush();
-    log.debug('VoiceListener: muted (TTS ducking active)');
+  mute(spokenText?: string): MuteHandle {
+    const handle: MuteHandle = { id: this.nextMuteId++ };
+    this.activeSpeech.set(handle, spokenText);
+    if (this.muteDepth === 1) this.segmenter?.flush();
+    log.debug('VoiceListener: muted (TTS ducking active, safety phrases still routed)');
+    return handle;
   }
 
-  /** Resume processing after TTS playback ends. */
-  unmute(): void {
-    this._muteDepth = Math.max(0, this._muteDepth - 1);
-    log.debug('VoiceListener: unmuted (TTS ducking lifted)');
+  /**
+   * Release one mute. Unknown or already-released handles are a no-op, so a
+   * failsafe timer racing the child's exit cannot free someone else's entry.
+   */
+  unmute(handle: MuteHandle): void {
+    if (!this.activeSpeech.delete(handle)) return;
+    log.debug(`VoiceListener: unmuted #${handle.id} (${this.muteDepth} still speaking)`);
   }
 
   /**
@@ -453,6 +512,7 @@ export class VoiceListener {
     this.frameAccum = Buffer.alloc(0);
     this.pendingFrames = [];
     this.transcriptionQueue = [];
+    this.origin = { muted: false, spokenTexts: [] };
     this.startArgs = null;
   }
 
@@ -502,14 +562,17 @@ export class VoiceListener {
   /**
    * Process frames strictly in order (Silero VAD threads recurrent state, so
    * concurrent process() calls would corrupt it). Never blocks the audio
-   * callback — it only enqueues. Muted frames are discarded (TTS ducking).
+   * callback — it only enqueues. Muted frames are processed like any other and
+   * tagged, not discarded: dropping them here is what made the mic deaf to a
+   * safety phrase for the length of every cue (VMCP-05.20).
    */
   private async drainFrames(): Promise<void> {
     this.drainingFrames = true;
     try {
       while (this.pendingFrames.length > 0) {
         const frame = this.pendingFrames.shift()!;
-        if (this._muteDepth > 0 || this.vad === null || this.segmenter === null) continue;
+        if (this.vad === null || this.segmenter === null) continue;
+        if (this.muteDepth > 0) this.markMutedCapture();
         const prob = await this.runVad(frame);
         if (prob === null) continue;
         const utterance = this.segmenter.push(prob, frame);
@@ -518,6 +581,22 @@ export class VoiceListener {
     } finally {
       this.drainingFrames = false;
     }
+  }
+
+  /** Record that the utterance being built overlaps live TTS, and what it says. */
+  private markMutedCapture(): void {
+    this.origin.muted = true;
+    for (const text of this.activeSpeech.values()) {
+      if (text === undefined) continue;
+      if (!this.origin.spokenTexts.includes(text)) this.origin.spokenTexts.push(text);
+    }
+  }
+
+  /** Hand the accumulated origin to the closing utterance and start a fresh one. */
+  private takeOrigin(): CaptureOrigin {
+    const origin = this.origin;
+    this.origin = { muted: false, spokenTexts: [] };
+    return origin;
   }
 
   private async runVad(frame: Buffer): Promise<number | null> {
@@ -534,14 +613,27 @@ export class VoiceListener {
 
   private enqueueTranscription(audio: Buffer): void {
     if (this.transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
-      this.transcriptionQueue.shift();
-      this.emitError({
-        code: 'QUEUE_OVERFLOW',
-        message: 'Transcription queue full — oldest queued utterance dropped.',
-      });
+      this.dropOneQueued();
     }
-    this.transcriptionQueue.push({ audio, closedAt: this.deps.now!() });
+    this.transcriptionQueue.push({ audio, closedAt: this.deps.now!(), origin: this.takeOrigin() });
     if (!this.drainingTranscriptions) void this.drainTranscriptions();
+  }
+
+  /**
+   * Make room at the cap. Cue audio competes for these slots now that muted
+   * frames are transcribed, so the oldest muted-origin utterance goes first: it
+   * is most likely our own echo, while an unmuted one may be the lifter.
+   */
+  private dropOneQueued(): void {
+    const muted = this.transcriptionQueue.findIndex((item) => item.origin.muted);
+    const index = muted === -1 ? 0 : muted;
+    const dropped = this.transcriptionQueue.splice(index, 1)[0];
+    this.emitError({
+      code: 'QUEUE_OVERFLOW',
+      message: dropped.origin.muted
+        ? 'Transcription queue full — oldest cue-overlapped utterance dropped.'
+        : 'Transcription queue full — oldest queued utterance dropped.',
+    });
   }
 
   /** Drain queued utterances one at a time through whisper, then route. */
@@ -571,19 +663,27 @@ export class VoiceListener {
       return;
     }
     const latencyMs = this.deps.now!() - item.closedAt;
-    this.route(transcript, startArgs, { latencyMs, audioDurationMs });
+    this.route(transcript, startArgs, { latencyMs, audioDurationMs }, item.origin);
   }
 
   private route(
     raw: string,
     startArgs: StartArgs,
     timing: { latencyMs: number; audioDurationMs: number },
+    origin: CaptureOrigin,
   ): void {
     // Defence in depth: defaultWhisper already cleans its output, but an
     // injected WhisperFn (or a future whisper format change) must not put
     // markup in front of the router OR in the transcript we publish. Case is
     // preserved — only markup is removed.
     const transcript = stripWhisperMarkup(raw);
+    // The echo check runs FIRST and outranks every tier, safety included: a
+    // stop we hallucinate out of our own cue audio would unload the cable with
+    // nobody having asked (VMCP-05.20).
+    if (origin.muted && isSpeechEcho(transcript, origin.spokenTexts)) {
+      log.debug('VoiceListener: dropped self-echo captured during TTS playback');
+      return;
+    }
     const result = routeTranscript(transcript, { wakePhrases: startArgs.wakePhrases });
     if (result.tier === 'safety') {
       this.events.onSafetyPhrase?.({
@@ -594,6 +694,22 @@ export class VoiceListener {
       });
       return;
     }
+    // Safety-only while a cue plays. Barge-in on the command and wake tiers
+    // stays off: those are conveniences, and every one of them is reachable
+    // again a second later, so they are not worth the self-trigger exposure.
+    if (origin.muted) {
+      log.debug(`VoiceListener: ${result.tier} tier suppressed during TTS playback`);
+      return;
+    }
+    this.emitNonSafety(result, transcript, startArgs, timing);
+  }
+
+  private emitNonSafety(
+    result: ReturnType<typeof routeTranscript>,
+    transcript: string,
+    startArgs: StartArgs,
+    timing: { latencyMs: number; audioDurationMs: number },
+  ): void {
     // A command with no handler must still reach the model — the fast path is
     // an accelerator, never the only way a heard command gets acted on.
     if (result.tier === 'command' && this.events.onWeightCommand !== undefined) {
