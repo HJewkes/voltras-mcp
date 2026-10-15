@@ -19,8 +19,8 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 44604,
-      "sha256": "9d8199315d46ecfcdd006198a6e6463be6308775e450ec766ad78dbbc92cd877"
+      "bytes": 45925,
+      "sha256": "ff3e1f0adfc1a584117fdf56e0205aef690a056da165f2000f5bbc8ba88ba2f4"
     },
     {
       "name": "checkin",
@@ -43,8 +43,8 @@
       "assertedValues": ["Bodyweight (lbs)"],
       "width": 1440,
       "height": 900,
-      "bytes": 36884,
-      "sha256": "aa5934688618e740de8d9cd7b16355772312356b06afe75d884c7e47d0e7a912"
+      "bytes": 37609,
+      "sha256": "bfb70f84be8c1226b1fbfd05cba1738460f87ecc28387665392162b54f51fbbc"
     },
     {
       "name": "checkin-phone",
@@ -59,8 +59,8 @@
       "assertedValues": ["Step 1 of 4", "Bodyweight (lbs)"],
       "width": 390,
       "height": 844,
-      "bytes": 24942,
-      "sha256": "13fb9316246fdfeac4c25fe147eb5fd39e2f4f51c8d772dd8273c9c13212bf62"
+      "bytes": 25091,
+      "sha256": "42dab914fdcb5c5880fcc5d3aef53643fc4dbda6e7a3c1fd6d42206635329e7c"
     },
     {
       "name": "live-mid-set",
@@ -87,8 +87,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 826088,
-      "sha256": "981c54141493c6147672d6521272b9c426bd46a305412c81dcd9f7fd3f0ae213"
+      "bytes": 828771,
+      "sha256": "c096858defb5b61fe4d57d39cad9fce1edea5e31f223917c4ba0f8bda7391559"
     },
     {
       "name": "live-rest",
@@ -110,8 +110,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 119296,
-      "sha256": "aca387a3c3d5e187e8cf16b0cb424535aa9c9e64f281d66839702cbafbda4db9"
+      "bytes": 120492,
+      "sha256": "72141137def20f5936e8cb12ad44f15da1f4e6e2600499577818830f9592ef34"
     },
     {
       "name": "session-summary",
@@ -134,8 +134,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 66325,
-      "sha256": "80d984328b81969372d101b9c2722219d3a2a591b232980af632ddff13637de3"
+      "bytes": 68563,
+      "sha256": "740483859d912e71af311808e1a9d17165d374a63b323be109e908e9e15221fc"
     },
     {
       "name": "plan-builder",
@@ -157,8 +157,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 120884,
-      "sha256": "ce3a27183b751390a397c9fade1896d1bfc512b044314d72d449fbacf56e9f9f"
+      "bytes": 122021,
+      "sha256": "b357945078302ba6b59de193084e6e73278651cd3d366506cafa9111db31cf99"
     },
     {
       "name": "live-slowing",
@@ -178,8 +178,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 912638,
-      "sha256": "db791050ef7f248ae4cf9d73ee9a9a65e10594f275588473b2864d988d1ad4b5"
+      "bytes": 914409,
+      "sha256": "0fadf93390600b53148577a6d1a46abf2afac297708014d4c52ebcb1db04300a"
     },
     {
       "name": "live-dual-mid-set",
@@ -201,8 +201,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 289065,
-      "sha256": "6abc2dbfb866b3854c7b58d8237781485f309c0f5e5756f29388ab6a3a24f2f9"
+      "bytes": 293767,
+      "sha256": "6d36c19f15f569fcc8d2cf765930c5066b01f8838e05a713c01bafa7c07891d7"
     },
     {
       "name": "goals",
@@ -225,8 +225,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 90325,
-      "sha256": "4fcba0838e541043990e2fac82c83f48ccf4115bf95c1bb1077fce56c3d05e15"
+      "bytes": 91600,
+      "sha256": "b6e86c5ae185b34e517508293d50891410925bd7b746219c093f79ad5465db71"
     },
     {
       "name": "goals-phone",
@@ -249,8 +249,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 390,
       "height": 844,
-      "bytes": 53152,
-      "sha256": "04cb5789bf9bff68aeb0045324299375661f16e6b3b7e384e0e91eeecea719c0"
+      "bytes": 54331,
+      "sha256": "2cd693b9c10e8a3dddda6634f4c7ef2d6e481f34e0e641c4823075986625ea31"
     },
     {
       "name": "goals-whole-body",
@@ -266,8 +266,8 @@
       "assertedValues": ["196.2"],
       "width": 1440,
       "height": 900,
-      "bytes": 100023,
-      "sha256": "6b1e3c9eb7abcadc1e343fa1609d49340e0d58f3284ae5e3f75ba24f8813037d"
+      "bytes": 101266,
+      "sha256": "360d1d9f855e792b78da2c244487ff49faeb03da5d48a691fa9734e0ab0157d0"
     },
     {
       "name": "goals-whole-body-phone",
@@ -283,8 +283,8 @@
       "assertedValues": ["196.2"],
       "width": 390,
       "height": 844,
-      "bytes": 63421,
-      "sha256": "a0efeb6fa14c38921e8c36b614627f7d9e15eb0e86d6005089c0cc06f85d7040"
+      "bytes": 64433,
+      "sha256": "4f48ba1ae4365fac64c3751341fe534b4c64fd9b81ff1955a6631559561fd710"
     },
     {
       "name": "body-week",
@@ -307,8 +307,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 196309,
-      "sha256": "dac33813732f371a6a2299136096b29694cb6bc251821f939c3e3acffd86cd4c"
+      "bytes": 197430,
+      "sha256": "d3ff076e8b2770db828e6f48a1d4c300d7ebf82a52e31c5f1055ff2f93ec2864"
     },
     {
       "name": "body-drill",
@@ -336,8 +336,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 216535,
-      "sha256": "f2f70322c7b167dbed11f98e6680f8c4de0c6dfb8da3660ea9859a348473ded9"
+      "bytes": 217739,
+      "sha256": "683dd7173875e6a05a2591e72cb34cd62bbf21554441951f8586eeb78debe19b"
     }
   ],
   "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
