@@ -1,0 +1,120 @@
+/*
+ * Session-complete design tokens. Dark is the default theme; light is opt-in via
+ * [data-theme="light"]. Wall sizes are tuned for 3 m reading at 1440x900;
+ * the phone media query steps the display sizes down for in-hand reading.
+ */
+:root {
+  /* Type: family */
+  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num-features: "tnum" 1, "ss01" 1;
+
+  /* Type: scale. Display steps are the 3 m layer; body steps are arm's length. */
+  --text-xs: 0.8125rem;   /* 13px: axis ticks, footnotes */
+  --text-sm: 0.9375rem;   /* 15px: labels, table cells */
+  --text-md: 1.0625rem;   /* 17px: body, reasoning */
+  --text-lg: 1.375rem;    /* 22px: exercise names */
+  --text-xl: 1.75rem;     /* 28px: page title, set reps */
+  --display-md: 2.25rem;  /* 36px: next-time weight */
+  --display-lg: 2.75rem;  /* 44px: verdict word */
+
+  --weight-regular: 420;
+  --weight-medium: 540;
+  --weight-bold: 700;
+  --weight-heavy: 800;
+
+  --tracking-caps: 0.08em;
+  --leading-tight: 1.05;
+  --leading-body: 1.4;
+
+  /* Spacing: 4px base */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Chrome placeholders (given, out of scope) */
+  --chrome-rail-w: 64px;
+  --chrome-bar-h: 44px;
+  --chrome-phone-bar-h: 56px;
+
+  /* Colour by role: surfaces */
+  --surface-page: #0f1113;
+  --surface-raised: #181b1f;
+  --surface-sunken: #0b0c0e;
+  --surface-chrome: #14161a;
+  --border-subtle: #262a30;
+  --border-strong: #3a4049;
+
+  /* Colour by role: ink. Ratios measured on --surface-raised; all pass AA on every dark surface. */
+  --ink-primary: #f2f4f7;   /* 15.7:1 on raised */
+  --ink-secondary: #b9c0ca; /* 9.4:1 */
+  --ink-muted: #8a939f;     /* 5.6:1 */
+  --ink-inverse: #0f1113;
+
+  /* Data marks (neutral; tone is reserved for the verdict) */
+  --mark-working: #8ea4bf;
+  --mark-warmup: #6b7585; /* 3.7:1: dimmer than working, still >= 3:1 */
+  --mark-threshold: #59616d;
+  --mark-absent-a: #262a30;
+  --mark-absent-b: #1c1f24;
+
+  /* Tones: each ships with a glyph and a word, never colour alone.
+     *-ink is for text (>= 4.5:1 on raised); *-fill for marks and glyphs. */
+  --tone-ok-ink: #4fd18b;     /* 8.9:1 */
+  --tone-ok-fill: #2fae6b;
+  --tone-warn-ink: #f7b733;   /* 9.7:1 */
+  --tone-warn-fill: #e09a12;
+  --tone-alarm-ink: #ff7a70;  /* 6.8:1 */
+  --tone-alarm-fill: #e5483d;
+
+  /* Neutral notice (open session, absent data, withheld) */
+  --notice-ink: #9ec5ff;      /* 9.8:1 */
+  --notice-wash: #14202f;
+  --notice-border: #2c4566;
+}
+
+[data-theme="light"] {
+  --surface-page: #eef0f3;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e3e6ea;
+  --surface-chrome: #dde1e6;
+  --border-subtle: #d6dae0;
+  --border-strong: #aab2bd;
+  --ink-primary: #12151a;
+  --ink-secondary: #3d4652;
+  --ink-muted: #5c6673;
+  --ink-inverse: #ffffff;
+  --mark-working: #50698a;
+  --mark-warmup: #b8c0cb;
+  --mark-threshold: #9aa3ae;
+  --mark-absent-a: #e3e6ea;
+  --mark-absent-b: #f3f4f6;
+  --tone-ok-ink: #11733f;
+  --tone-ok-fill: #1f9d5a;
+  --tone-warn-ink: #8a5a00;
+  --tone-warn-fill: #d08a00;
+  --tone-alarm-ink: #b42318;
+  --tone-alarm-fill: #d92d20;
+  --notice-ink: #1d4f91;
+  --notice-wash: #e6effb;
+  --notice-border: #a8c3ea;
+}
+
+@media (max-width: 760px) {
+  :root {
+    --text-lg: 1.25rem;
+    --text-xl: 1.5rem;
+    --display-md: 1.875rem;
+    --display-lg: 2.125rem;
+  }
+}
