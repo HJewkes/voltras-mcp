@@ -592,6 +592,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'blockBoundary.realignment',
   'history.fact',
   'recompReAsk.proposal',
+  // metrics.compute result fields whose only published source was the README's
+  // tool table, which the README trim removed.
+  'baseline.driftGuard',
+  'baseline.romVsBaselinePct',
+  'directionReason',
+  'plateau.phase',
+  'rSquared',
+  'percentChange',
+  'windowDays',
+  'slopeUnit',
 ];
 
 /**
@@ -644,6 +654,7 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'checkDriftGuard',
   'checkMrvGuard',
   'classifyWeeklyVolume',
+  'VolumeLandmarks',
   'detectPlateau',
   'e1RM',
   'evaluateE1RMPr',
