@@ -2,11 +2,12 @@
 diataxis: explanation
 audience: [lifter, coach]
 status: coming-soon
-statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data. The current block week and unreviewed-history notice are served but not yet shown.'
-tracking: VW-514 (internal tracker)
+statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data. The unreviewed-days note is shown; the current block week header is served but not yet drawn.'
+tracking: VW-655, VW-901, VW-360 (internal tracker)
 sources:
   - src/dashboard/spa/goals/GoalsPage.tsx
   - src/dashboard/spa/goals/GoalsRoute.tsx
+  - src/dashboard/spa/goals/GoalsView.tsx
   - src/dashboard/spa/goals/use-goals-poll.ts
   - src/dashboard/spa/goals/goals-client.ts
   - src/dashboard/spa/goals/calibration-copy.ts
@@ -18,7 +19,7 @@ sources:
   - scripts/dashboard-mock-drive.mjs
   - scripts/dashboard-preview.mjs
   - src/dashboard/__tests__/preview-seeds.test.ts
-lastVerified: 2026-09-30
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -27,6 +28,9 @@ sourced: 2026-09-30
 The goals page is the `#/goals` page of the wall dashboard. It shows the priorities you
 declared with your coach, the committed and stretch bands for each target, a week-by-week
 trajectory chart, and whole-body cards for bodyweight and training days.
+
+The page is in the dashboard's side rail as "Goals"
+(`src/dashboard/spa/panels/DashboardChrome.tsx:55-58`).
 
 The goal tools themselves work today. `goal.declare_priorities`, `goal.propose_targets` and
 `goal.accept_target` set goals, and `profile.log_bodyweight` logs a weigh-in. This page is only
@@ -56,14 +60,18 @@ set straight into the store so there is something to beat
 (`scripts/dashboard-mock-drive.mjs:241-280`, `src/docs/capture-shots.ts:146-163`). The other
 goal states you can preview are all seeded into a scratch store
 (`src/docs/preview-seeds.ts:8-18`). Nobody has yet checked the page after declaring and
-accepting a real goal.
+accepting a real goal; that check waits on your first declared priority (VW-360).
 
-**Two things are served but not shown.** The dashboard sends the current block week and a
-count of history you have not reviewed yet (`src/dashboard/server.ts:1053-1059`). The page
-keeps the block week but does not draw it yet, and drops the review count
-(`src/dashboard/spa/goals/use-goals-poll.ts:27-31`, `src/dashboard/spa/goals/GoalsRoute.tsx:1-7`).
-So the page cannot yet tell you which block week you are in, or that some sessions are left
-out of its counts until you review them. That work is VW-514.
+**The unreviewed-days count is shown.** When some days are left out of the counts until you
+review them, a line at the top of the page says how many
+(`src/dashboard/spa/goals/GoalsView.tsx:86`, `src/dashboard/spa/goals/GoalsView.tsx:96-98`).
+A page that lets you review those days so they count is VW-901.
+
+**The block week is served but not drawn.** The dashboard sends the current block week
+(`src/dashboard/server.ts:1053-1059`), and the page chrome has a slot for a header, but the
+goals route passes none (`src/dashboard/spa/goals/GoalsRoute.tsx:14-20`). So the page cannot
+yet tell you which block week you are in as a header. Each goal card already shows its own
+week cells. The header is VW-655.
 
 ## What the screenshots show <Badge type="warning" text="Coming soon" />
 

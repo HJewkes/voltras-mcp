@@ -2,8 +2,8 @@
 diataxis: explanation
 audience: [lifter, coach]
 status: coming-soon
-statusNote: 'Body map: weekly sets per muscle against population volume landmarks, per-muscle strength trend and planned-vs-done. It is built, but so far it has only been shown on seeded data. Landmarks are population defaults, not yours.'
-tracking: VW-146 (internal tracker)
+statusNote: 'Body map: weekly sets per muscle against population volume landmarks, per-muscle strength trend and planned-vs-done. Tapping a muscle opens a side sheet with its last-trained line. It is built, but so far it has only been shown on seeded data. Landmarks are population defaults, not yours.'
+tracking: VW-918 (internal tracker)
 sources:
   - src/dashboard/spa/body/BodyPage.tsx
   - src/dashboard/spa/body/body-client.ts
@@ -19,7 +19,7 @@ sources:
   - src/docs/capture-shots.ts
   - src/docs/preview-seeds.ts
   - scripts/dashboard-preview.mjs
-lastVerified: 2026-09-30
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -32,8 +32,8 @@ page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/Dashbo
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for four things every 2 seconds, all at once, and shows three of
-them (`src/dashboard/spa/body/BodyPage.tsx:27-37`). The fourth, recovery, is covered
-[below](#recovery-computed-not-on-any-page).
+them (`src/dashboard/spa/body/BodyPage.tsx:27-37`). The fourth, recovery, appears only in the muscle side sheet, described
+[below](#recovery-the-last-trained-line).
 
 - **This week.** Working sets per muscle, set against volume landmarks, from
   `/api/muscle-week` (`src/dashboard/spa/body/BodyView.tsx:246`).
@@ -108,15 +108,25 @@ learned from your training (`src/dashboard/read-models/muscle-week.ts:17-21`,
 (`src/dashboard/spa/body/BodyView.tsx:257`). Read a muscle's colour as "how this week compares
 to a typical lifter," not as "how this week compares to what you can recover from."
 
-Landmarks fitted to you are coming. That work is VW-146.
+Landmarks fitted to you do not exist yet. That is a known limitation (VW-146), not something
+this page is waiting on.
 
-## Recovery: computed, not on any page <Badge type="warning" text="Coming soon" />
+## Recovery: the last-trained line <Badge type="warning" text="Coming soon" />
 
-Per-muscle recovery (when you last trained each muscle, and how that session went against the
-one before) is computed by the dashboard at `/api/muscle-recovery`
-(`src/dashboard/server.ts:666-669`). No page shows it yet. The body page loads it and builds
-a per-muscle side sheet from it, but nothing on the page opens that sheet yet
-(`src/dashboard/spa/body/BodyPage.tsx:29-37`, `src/dashboard/spa/body/body-sheet-model.ts:1-11`). It also never says how long a muscle needs
+Tapping a muscle opens a side sheet over the figures
+(`src/dashboard/spa/body/BodyView.tsx:164-168`, `src/dashboard/spa/body/BodyView.tsx:216-227`).
+Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
+(`src/dashboard/server.ts:666-669`, `src/dashboard/spa/body/body-sheet-model.ts:107`). The line
+states what happened, when you last trained the muscle and how that session went against the
+one before, and never a recovery verdict or a countdown
+(`src/dashboard/spa/body/body-sheet-model.ts:66-68`). It does not say how long a muscle needs
 before you can train it again, because no per-muscle number for that exists to cite
 (`src/dashboard/read-models/muscle-recovery.ts:9-20`). The
 [dashboard API reference](/reference/dashboard-api) describes what it returns.
+
+## What is still open <Badge type="warning" text="Coming soon" />
+
+Two gates remain before this page leaves coming soon:
+
+- One check of the page after a real session on a real Voltra.
+- VW-918: the per-day grouping and the week label still use UTC days, not your local days.
