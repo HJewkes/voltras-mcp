@@ -29,7 +29,6 @@ covers three ways to do that: the mock adapter, the scripted dashboard drivers, 
 
 Set `VOLTRA_ADAPTER=mock` to replace Bluetooth with an in-process device. The mock device
 streams synthetic telemetry through the same pipeline a real unit uses.
-([README.md § Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
 ```bash
 claude mcp add voltras -e VOLTRA_ADAPTER=mock -- node "$PWD/dist/bin.js"
@@ -65,7 +64,6 @@ Open `http://127.0.0.1:<port>/app` before or during the run. The two real-pipeli
 ship the open session's finished sets in the snapshot, so a page opened late rebuilds its set
 log. `dashboard:sim` does not: it builds the log only from live transitions, so open it
 before the first set.
-([README.md § Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
 Useful options, from each script's header comment:
 

@@ -74,7 +74,7 @@ may not show up in a scan (`README.md`).
 in full but count toward nothing of yours — not your baselines, failure anchors,
 progression, or session history. If a set already ran under the wrong name,
 `set.update {setId, lifter}` moves it and re-derives your baseline for that exercise
-(`README.md`). On the wall dashboard, their name shows next to the exercise name for as
+(`src/tools/session-tools.ts`). On the wall dashboard, their name shows next to the exercise name for as
 long as they're set as the lifter — the header is yours by default, so a name only
 appears while someone else is actually on the cable, and it goes back to showing nothing
 extra the moment you clear it.

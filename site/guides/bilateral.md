@@ -26,7 +26,7 @@ sourced: 2026-09-30
 
 A bilateral rig is two Voltras, one per side, tracked as independent
 [slots](/reference/slot): `left` and `right`, instead of the single `primary` slot a
-one-device session uses (`README.md:210-212`). Everything downstream — telemetry, sets,
+one-device session uses (`src/tools/device-tools.ts:155-159`). Everything downstream — telemetry, sets,
 push events, the dashboard — keys off which slot a rep came from, so the two sides never
 get mixed into one stream.
 
@@ -37,7 +37,7 @@ session is the same `session.*`/`set.*` lifecycle running twice, once per slot.
 
 [`device.connect`](/reference/device) binds a device to a slot the same way it does for
 one unit — call it twice, once with `slot: 'left'` and once with `slot: 'right'`
-(`README.md:210-212`).
+(`src/tools/device-tools.ts:155-159`).
 
 Two Voltras look identical on the table, so [`slot.identify`](/reference/slot) exists to
 answer "which one is which": it briefly switches the named slot's device into Damper mode
@@ -124,7 +124,7 @@ to the single stage, because an ordinary one-device session running on `primary`
 otherwise draw an empty second column
 (`src/dashboard/spa/live-page/stage-variant.ts:10-20`). `?variant=live-dual` (or
 `?variant=live`) on the dashboard URL pins one or the other for testing
-(`README.md:302-303`). See the ["Two Voltras, one dashboard"](/guides/dashboard-tour#two-voltras-one-dashboard)
+(`src/dashboard/spa/panels/LivePagePanel.tsx:5-12`). See the ["Two Voltras, one dashboard"](/guides/dashboard-tour#two-voltras-one-dashboard)
 capture in the walkthrough for what the diverging stage actually looks like mid-set.
 
 Here it is moving. The right side starts late and finishes short, so the gap between the

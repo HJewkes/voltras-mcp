@@ -42,7 +42,7 @@ features (`src/config.ts:17-19`, `src/config.ts:242-243`). An opt-in debugging r
 (`src/state/session-recorder.ts:1-20`).
 
 Keep one server process per database file. Two processes on the same file can both open it, and
-their writes then fail ([README](https://github.com/HJewkes/voltras-mcp#running-more-than-one-instance)).
+their writes then fail.
 
 ## The dashboard only answers your own machine
 
@@ -97,14 +97,11 @@ terms of service, and how to switch each one off.
 ## Backing up
 
 `npm run store` exports the whole database to plain text files, rebuilds a database from them,
-and checks that the two match. It is your backup and your way out
-([README](https://github.com/HJewkes/voltras-mcp#backing-up-the-training-store)). Stop every
-server process before you copy the live file, so the copy is not taken mid-write
-([README](https://github.com/HJewkes/voltras-mcp#rehearsing-on-a-copy)).
+and checks that the two match. It is your backup and your way out. Stop every
+server process before you copy the live file, so the copy is not taken mid-write.
 
 An export holds your whole training record in plain text. Keep it somewhere as private as the
-database itself, and delete a practice copy when you are done
-([README](https://github.com/HJewkes/voltras-mcp#rehearsing-on-a-copy)).
+database itself, and delete a practice copy when you are done.
 
 ## The promise about device internals
 
@@ -114,7 +111,7 @@ request.
 
 No raw device messages, byte values or device command codes appear in a log line, a
 documentation page or a commit. The everyday tools pass Claude only plain values such as
-weights, speeds and counts ([README](https://github.com/HJewkes/voltras-mcp#confidentiality)).
+weights, speeds and counts.
 The exceptions are diagnostic tools for hardware debugging: `device.send_raw` takes and returns
 raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1410-1432`,
 `src/state/debug-buffer.ts:44-62`). A lint rule checks the source

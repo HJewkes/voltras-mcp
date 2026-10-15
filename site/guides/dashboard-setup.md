@@ -33,7 +33,7 @@ npm run build && npm run build:dashboard
 ```
 
 `npm run build` alone gives you a working server whose `/app` page shows only a "SPA not
-built" placeholder (`README.md:69-73`, `src/dashboard/server.ts:2022-2025`). The plugin
+built" placeholder (`src/dashboard/server.ts:2022-2025`). The plugin
 launcher runs `npm run build:dashboard` for you when the built dashboard is missing or older
 than its source (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:80-87`).
 

@@ -26,7 +26,7 @@ idiom (`src/tools/report-tools.ts`, [Read a session report](/coaches/read-a-sess
 
 **[Lifter]** Read [Consent and the data loop](/coaches/consent-and-data-loop), so you know
 what you would be sending. If you ever plan to post results into TrueCoach automatically,
-tell your coach before the first real submit (`README.md`, GATE 1).
+tell your coach before the first real submit ([TrueCoach guide](/guides/truecoach#write-back-unattended-gated), gate 1).
 
 ## 2. Install and run a first session
 
@@ -53,8 +53,7 @@ Without TrueCoach, the lifter builds the plan with Claude instead; see
 
 **[Lifter]** Run the session with the planned workout attached, as in
 [Running a planned session](/guides/planned-session). The attached plan is what lets the
-report show a `missed:` line for a working set below the rep target (`README.md`, "Coach
-results and the outbox"). End the session when you finish: a report needs an ended session
+report show a `missed:` line for a working set below the rep target ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)). End the session when you finish: a report needs an ended session
 (`src/tools/report-tools.ts`).
 
 ## 5. Send the first report
@@ -66,7 +65,7 @@ step 1.
 To keep a copy of every session without asking, set `VMCP_TRUECOACH_OUTBOX=on`. Each
 `session.end` then writes the same text to
 `~/.voltras/truecoach-outbox/pending/<sessionId>.json`, ready to paste. Nothing uploads that
-file (`README.md`, "The outbox").
+file ([TrueCoach guide](/guides/truecoach#the-outbox)).
 
 ## 6. Read it
 
