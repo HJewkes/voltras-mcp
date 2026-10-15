@@ -203,10 +203,10 @@ describe('dashboard:preview pages', () => {
     }
   });
 
-  it('names goals as the one page that seeds its own store', () => {
+  it('names goals and summary as the pages that seed their own store', () => {
     const seeded = PREVIEW_PAGES.filter((page) => page.captureScenario === null);
 
-    expect(seeded.map((page) => page.name)).toEqual(['goals']);
+    expect(seeded.map((page) => page.name)).toEqual(['goals', 'summary']);
   });
 
   it('reuses a capture scenario that still exists for every other page', () => {

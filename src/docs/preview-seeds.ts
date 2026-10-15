@@ -64,9 +64,10 @@ import {
 } from '../tools/goal-recalibration.js';
 import type { CaptureScenarioName } from './capture-shots.js';
 import { rep } from './personas/rep.js';
+import { SUMMARY_PREVIEW_SESSION_ID } from './summary-preview-seed.js';
 
 /** The pages `npm run dashboard:preview -- <page>` can open. */
-export type PreviewPageName = 'goals' | 'body' | 'plan';
+export type PreviewPageName = 'goals' | 'body' | 'plan' | 'summary';
 
 export interface PreviewPage {
   readonly name: PreviewPageName;
@@ -74,7 +75,8 @@ export interface PreviewPage {
   readonly route: string;
   /**
    * The capture scenario whose driver and args this page reuses, or `null` for
-   * `#/goals`, which seeds the store itself (see this file's header).
+   * `#/goals` and `#/summary`, which seed the store themselves (see this file's
+   * header and `summary-preview-seed.ts`).
    */
   readonly captureScenario: CaptureScenarioName | null;
   readonly summary: string;
@@ -98,6 +100,12 @@ export const PREVIEW_PAGES: readonly PreviewPage[] = [
     route: '/app#/plan',
     captureScenario: 'planned',
     summary: 'The plan builder over a seeded workout template and the exercise catalog.',
+  },
+  {
+    name: 'summary',
+    route: `/app#/summary/${SUMMARY_PREVIEW_SESSION_ID}`,
+    captureScenario: null,
+    summary: 'The session-complete page over an ended four-exercise session.',
   },
 ];
 
