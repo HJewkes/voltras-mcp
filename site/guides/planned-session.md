@@ -86,7 +86,7 @@ estimate: it assumes the working load is about a 5RM and derives the lighter run
 occurrence of an exercise, based on the most recently completed session for it. When the
 sets topped out a rep band whose top is 15 or more, it holds the load and adds a rep
 instead. A set that lost 25% or more of its velocity within the set holds the load and adds
-no rep (`src/tools/plan-tools.ts:1844-1853`). It's a suggestion, not a
+no rep (`src/tools/plan-tools.ts`). It's a suggestion, not a
 write to the plan — nothing about the planned exercise changes because you asked for one
 (`src/tools/plan-tools.ts`). The same advisory posture applies to
 [`profile.get_starting_prescription`](/reference/profile): it reads the athlete's tier

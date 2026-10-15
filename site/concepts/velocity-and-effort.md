@@ -46,9 +46,9 @@ per second. The fitted effort curve described below reads this number and no oth
 
 **Velocity loss** is how much slower your reps have become within one set. It is a percentage.
 The per-set summary in [`metrics.compute`](/reference/metrics) reports it on mean velocity
-(`src/tools/metrics-tools.ts:2466`, `src/tools/metrics-tools.ts:2300-2301`). Some internal readings compare peak speeds instead. Those
+(`src/tools/metrics-tools.ts:2500`, `src/tools/metrics-tools.ts:2334-2335`). Some internal readings compare peak speeds instead. Those
 give a different percentage for the same set, and both are correct for their own question
-(`src/tools/metrics-tools.ts:2300-2304`).
+(`src/tools/metrics-tools.ts:2334-2338`).
 
 ## Why slowing down tracks effort
 
@@ -74,7 +74,7 @@ described under [Where the curve comes from](#where-the-curve-comes-from).
 It is tempting to convert velocity loss straight into RIR with one formula for everyone. The
 server does not trust that. Its own tool description cites a 2023 study that found agreement
 between velocity loss and RIR "unacceptable at every load tested" for a general model
-(`src/tools/metrics-tools.ts:2479-2484`).
+(`src/tools/metrics-tools.ts:2513-2518`).
 
 What works better is a curve fitted to one lifter on one exercise. A 2024 study found individual
 curves predicted a later session within under two reps of error across 70% to 90% of 1RM. General
@@ -125,7 +125,7 @@ because lifters rate the same measured speed differently
 
 Today no tool records a per-set self-reported RIR. The reader exists, but nothing writes the value
 it reads (VW-499). The one place that writes an anchor row is the failure harvest, and it stores no
-self-report (`src/store/sqlite-store.ts:6087-6131`, `src/store/sqlite-store.ts:6148-6160`). So in
+self-report (`src/store/sqlite-store.ts:6363-6410`, `src/store/sqlite-store.ts:6424-6442`). So in
 practice every curve rests on failure anchors.
 
 ## When the server will state a number
@@ -135,14 +135,14 @@ handles effort in three layers, and each layer behaves differently.
 
 **The analytics compute an estimate.** The per-set RIR reading in
 [`metrics.compute`](/reference/metrics) returns a per-rep RIR for any recorded set with reps
-(`src/tools/metrics-tools.ts:316-321`). It always answers, and it says which curve answered. With
+(`src/tools/metrics-tools.ts:317-322`). It always answers, and it says which curve answered. With
 no fitted curve it uses a general formula, grades its model confidence low, and carries a caveat
 that the reading is not a proximity-to-failure claim (`src/tools/rir-velocity-tools.ts:216-240`,
-`src/tools/metrics-tools.ts:2479-2492`). Read that as a rough direction, not a rep count.
+`src/tools/metrics-tools.ts:2513-2526`). Read that as a rough direction, not a rep count.
 
 [`report.weekly`](/reference/report) includes a final-rep RIR line only when the RIR feature's
 baseline gate allows it. The line names its basis, for example "general model, not a
-proximity-to-failure read" (`src/tools/report-tools.ts:556-606`).
+proximity-to-failure read" (`src/tools/report-tools.ts:558-608`).
 
 **The velocity target waits for a fitted curve.** [`rir_velocity.target`](/reference/rir_velocity)
 turns an RIR prescription into your own velocity target. With no fitted curve it returns no
@@ -159,8 +159,8 @@ until then.
 
 The optional effort cue asks for more. It uses a curve only if it also has a failure anchor,
 predicted a held-out set within 1.5 reps, was fitted in the last 42 days, and came from
-constant-load sets (`src/analytics/rir-velocity.ts:108-124`, `src/state/effort-context.ts:229-241`).
-That cue is off by default (`src/config.ts:299`).
+constant-load sets (`src/analytics/rir-velocity.ts:108-124`, `src/state/effort-context.ts:253-265`).
+That cue is off by default (`src/config.ts:317`).
 
 ## What the dashboard shows today
 
@@ -168,7 +168,7 @@ The live fatigue card shows velocity loss against your set's stop threshold
 (`src/dashboard/spa/panels/fatigue-view.ts:477`, `src/dashboard/spa/live-page/fatigue-state.ts:1-10`).
 It also shows a verdict word: good, slowing, grinding or form breakdown. That verdict comes from
 velocity loss, range of motion and tempo, not from an RIR estimate
-(`src/dashboard/spa/panels/fatigue-view.ts:432-435`, `src/tools/metrics-tools.ts:2471-2477`).
+(`src/dashboard/spa/panels/fatigue-view.ts:432-435`, `src/tools/metrics-tools.ts:2505-2511`).
 
 It shows no RPE or RIR number yet. The card has a place for an RPE number, but the dashboard
 passes it no value, so it shows a dash. The RPE and RIR values are withheld until a trusted fitted profile reaches the wall (VW-485)

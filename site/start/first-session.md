@@ -13,7 +13,9 @@ sources:
   - docs/dashboard-drivers.md
   - src/state/auto-arm.ts
   - src/dashboard/spa/live-page/RestView.tsx
-lastVerified: 2026-09-30
+  - src/state/arm-defaults.ts
+  - src/state/idle-session-close.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -50,10 +52,10 @@ may not show up in a scan (`README.md`).
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
    a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
-   `src/state/event-bridge.ts:1489`). In a normal session a set ends on your own call or on
+   `src/state/event-bridge.ts:1514`). In a normal session a set ends on your own call or on
    the device's own signal. The server also closes it as partial after 90 seconds with no
    activity, and a `watch` block can raise that limit but not lower it
-   (`src/state/event-bridge.ts:260-284`). Other paths close a set too, such as
+   (`src/state/event-bridge.ts:262-286`). Other paths close a set too, such as
    `session.end` (step 7) and an exit from guided load
    (`src/state/guided-load-reap.ts:58`), so this list is not complete.
    Lift.
@@ -61,13 +63,16 @@ may not show up in a scan (`README.md`).
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
-     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1808-1812`).
+     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1833-1837`).
 5. **"Done."** → [`set.end`](/reference/set). This saves the set and its reps with their
    telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
    [`timer.start`](/reference/timer), non-blocking, which fires an event when it elapses.
 7. **"That's the workout."** → [`session.end`](/reference/session). Any set still open is
-   closed as partial.
+   closed as partial. If you forget, a session with no rep for six hours is ended at the time
+   of its last rep, so it counts on the day you trained. That happens when the server next
+   starts, or on the next rep or session start in a server that kept running
+   (`src/state/idle-session-close.ts`).
 
 **Someone working in?** → `session.set_lifter {lifter: 'Jordan'}` before they lift, and
 `session.set_lifter {lifter: null}` when you take the rig back. Their sets are recorded
@@ -141,6 +146,14 @@ bug, and the reps that opened the set are counted in it. The wall dashboard mark
 compact "AUTO" badge on the live header while it's active. The rest recap shows the same
 label once it closes, unless the set has a warm-up, probe or technique label instead
 (`src/dashboard/spa/live-page/RestView.tsx`).
+
+A set auto-arm opens still gets a velocity-loss watch, so Claude hears about slowing reps even
+when nobody called `set.start`. When the session's plan has a row for the lift, the watch takes
+that row's loss target, else the default for its training goal: 20% for strength, 30% for
+hypertrophy, 10% for power. With no plan row it takes 30%, marked as an assumed default. Beside
+the AUTO badge the wall says which: "Plan · strength · stop 20%" or "Default · stop 30%
+(assumed)". A later `set.start` replaces the watch, and the line goes away
+(`src/state/arm-defaults.ts`, `src/state/velocity-loss-intent.ts`, `src/coach-copy/dashboard.ts`).
 
 ## Set purpose
 

@@ -16,7 +16,11 @@ sources:
   - src/dashboard/muscle-strength-api.ts
   - src/analytics/side-comparison.ts
   - scripts/dashboard-mock-drive.mjs
-lastVerified: 2026-10-07
+  - src/actions/allowlist.ts
+  - src/actions/execute.ts
+  - src/dashboard/read-models/banners.ts
+  - src/dashboard/read-models/muscle-set-scope.ts
+lastVerified: 2026-10-15
 ---
 
 # Dashboard API
@@ -40,8 +44,9 @@ how much you actually trained each muscle this week, and whether that is a lot o
 `/api/muscle-strength` (VW-330) answers the third — which muscles are actually getting
 stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
 `/api/muscle-recovery` (VW-332) answers the fourth: when you last trained each muscle, and
-how that session went against the one before it. The body-map page (VW-323) reads the first
-three; `/api/muscle-recovery` is not surfaced on any page yet. `/api/goals` and
+how that session went against the one before it. The body-map page (VW-323) reads all four:
+the muscle side sheet's "Last trained" line comes from `/api/muscle-recovery`
+(`src/dashboard/spa/body/body-client.ts`, `src/dashboard/spa/body/body-sheet-model.ts`). `/api/goals` and
 `/api/goal-progress` (VW-352) are the equivalent plumbing for the `#/goals` page: what the
 coach is tracking, and how each target is reading this week; see
 [their own section below](#goal-coach-api-goals-api-goal-progress).
@@ -67,8 +72,9 @@ coach is tracking, and how each target is reading this week; see
 
 All 15 titan muscle groups are always present, with zeros for the ones you didn't train, so
 a figure can paint every muscle rather than guessing at gaps. `?weekStart=` picks a week by
-any ISO instant inside it; the default is the current week, which starts Monday 00:00 UTC —
-the same boundary `history.weekly_volume` uses.
+any ISO instant inside it; the default is the current week, which starts at local midnight on
+Monday — the same local-week boundary `history.weekly_volume` uses
+(`src/dashboard/read-models/muscle-set-scope.ts`).
 
 A set counts toward its exercise's **primary** muscle group only. Secondary groups
 contribute nothing, at any weight: a chest press is chest volume, not chest volume plus a
@@ -267,6 +273,39 @@ route above (`src/dashboard/session-review-api.ts`).
 - **Paging:** `limit` defaults to 60, and any larger value is cut to 200. A `limit` that is not
   a positive whole number answers 400 `invalid_input`.
 
+## Other read routes
+
+- **`GET /api/health`** answers `{ ok, version, uptimeMs }`.
+- **`GET /api/bootstrap`** answers `{ token, version }`: the write token, for a page that was
+  open across a server restart. It is same-origin only, and a cross-origin page cannot read
+  the reply because the sidecar sends no CORS headers.
+- **`GET /api/banners`** answers `{ banner }`: the one highest-priority banner the wall should
+  show, or `null`. Each banner has a `kind`, a `tone`, a `title`, a `subtitle` and a
+  `destination` hash route. Only one kind has a producer today: a planned week that has fully
+  passed with no training recorded in it. No page shows the banner yet
+  (`src/dashboard/read-models/banners.ts`).
+
+## Action route (`POST /api/actions/:name`)
+
+The [check-in page](/reference/dashboard-pages) writes through one route that runs an MCP
+tool from a short allowlist (`src/actions/allowlist.ts`). Every allowlisted tool writes only
+to the store: logging bodyweight, the weekly check-in and a session check-in, accepting a goal
+target, answering the weekly review or a recomposition advisory, skipping a plan week, marking
+which days count as training, and setting the diet phase. No device tool is on the list. An
+unknown name answers 403 `action_not_allowed`, so a caller cannot probe for names.
+
+The body is `{ actionId, input }`, plus optional `surface` (`wall` or `phone`), `deviceId`,
+`flowId` and `flowStep`. `input` is the tool's own input. The action is always recorded as a
+person's tap, so a body that claims another actor answers 400. `actionId` makes a retry safe
+(`src/actions/execute.ts`):
+
+- A new `actionId` runs the tool and records the result in the command trail.
+- The same `actionId` with the same input returns the stored result with `replayed: true` and
+  runs nothing.
+- The same `actionId` with different input answers 409 `action_id_reused` and runs nothing.
+
+A tool that reports an error has its writes rolled back, and the error is still recorded.
+
 ## Plan builder write routes
 
 The plan builder page writes through a small REST
@@ -276,14 +315,14 @@ same `SessionStore` methods the `plan.*` MCP tools call, not a reimplementation
 (`src/dashboard/README.md`). That surface also includes `DELETE /api/plan/exercises/:id`,
 which unplans one exercise and closes the gap it leaves in the template's order
 (`src/dashboard/server.ts:93`, `SessionStore.deletePlannedExercise`,
-`src/store/sqlite-store.ts:4303`, VW-121) — a plain delete of the planned row, not of any
+`src/store/sqlite-store.ts:4900`, VW-121) — a plain delete of the planned row, not of any
 session that was actually trained against it: the assignment linking a past session to that
 plan entry falls back to unlinked rather than disappearing. So: the live view is read-only;
-the plan builder is not.
+the plan builder and the check-in page are not.
 
-Every write route passes the same guard before it runs: a loopback `Host`, a matching
-`Origin`, a JSON content type and the per-boot write token (`src/dashboard/server.ts:96-99`,
-`src/dashboard/write-guard.ts:85-95`).
+Every write route, the action route included, passes the same guard before it runs: a
+loopback `Host`, a matching `Origin`, a JSON content type and the per-boot write token
+(`src/dashboard/server.ts`, `src/dashboard/write-guard.ts`).
 
 ## Seeing a PR star on the goals page
 
