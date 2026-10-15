@@ -72,17 +72,13 @@ which is worse than an absent one:
 - `coach_line` — a spoken line is addressed to the person, not to a device. Even a cue
   triggered by one slot's set is heard by the whole room.
 
-Two more events carry slot information, but not under the `slot` key, so a consumer
-filtering on `slot` silently drops them even though each one knows exactly which
-device(s) it concerns:
+Three events also carry `slot_id`, and all three carry `slot` too. Filter on `slot`;
+`slot_id` repeats it:
 
-- `bilateral_divergence` — `slot_id` and `partner_slot_id` name the two slots being
-  compared.
-- `weight_implied_mismatch` — `slot_id` names the one slot involved.
-
-This is a known inconsistency, not addressed by this change — it is tracked as a
-follow-up to reconcile `slot_id` / `partner_slot_id` with the `slot` key everything else
-filters on.
+- `bilateral_divergence` — `slot` and `slot_id` name the side whose close fired the
+  event; `partner_slot_id` names the other side.
+- `weight_implied_mismatch` — `slot` and `slot_id` name the one slot involved.
+- `setting_coerced` — `slot` and `slot_id` name the slot whose setting was coerced.
 
 ## Events
 
@@ -108,7 +104,8 @@ filters on.
 | `coach_line`                     | A coaching line was spoken aloud, by `system.speak` or by a deterministic cue. See [the coach line](#the-coach-line).                                                                           | —                      |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
-exhaustive. The authoritative list is the set of publish sites under `src/state/`.
+exhaustive. The authoritative inventory is `src/tools/__tests__/channel-publish-sites.test.ts`,
+which names every channel publish site under `src/` and why it does or does not carry `slot`.
 
 ## The `device_set_summary` block on `set_ended`
 
@@ -239,7 +236,10 @@ payload sets those two itself.
 
 All three `isometric.*` tools emit these, because `measure_max` and `measure_imbalance`
 run the same single hold N times; `trial` counts the holds within a side, so a
-three-trial run emits twelve events. The events are text on the channel — voicing them
+three-trial `measure_max` emits twelve events before warm-up pulls. Each warm-up pull is one
+more hold and emits its own four, so a default `measure_max` (two warm-up pulls, three
+trials) emits twenty. `measure_imbalance` runs two sides with no warm-up, so three trials
+per side emit twenty-four. The events are text on the channel — voicing them
 is a cue-surface decision, not something the server does.
 
 ## The isometric result
@@ -487,8 +487,8 @@ has already gone out, `idle_rep_reclaimed` follows:
 
 ```jsonc
 {
-  "summary": "1 idle rep already reported as idle now belongs to set 3f2a1b04 (auto-armed). Session total idle: 0.",
-  "idle_rep_reclaimed": { "count": 1, "set_id": "3f2a1b04-…", "slot": "primary" },
+  "summary": "1 idle rep already reported as idle now belongs to set 00000042 (auto-armed). Session total idle: 0.",
+  "idle_rep_reclaimed": { "count": 1, "set_id": "00000042-…", "slot": "primary" },
   "idle_rep_count": 0,
 }
 ```
@@ -637,7 +637,7 @@ Consequences:
   one rep late. Rep N is the exception — it arrives at set close, not one rep late.
 
 If you want cues that don't depend on the model reacting to these events at all, see
-`VMCP_CUES` in the [main README](../README.md#environment-variables). Both cue switches are
+`VMCP_CUES` in the [environment variable reference](https://hjewkes.github.io/voltras-mcp/reference/environment-variables). Both cue switches are
 runtime-togglable via `system.set_cues` and reported by `server.health`.
 
 ## `lease_lost`

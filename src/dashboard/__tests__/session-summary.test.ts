@@ -191,6 +191,10 @@ function makeStore(
     getWorkoutTemplate: async () => TEMPLATE,
     getPlannedExercisesForTemplate: async () => plannedRows,
     getPlannedExercise: async (id) => plannedRows.find((p) => p.id === id),
+    patchPlannedExercise: async (id, apply) => {
+      const live = plannedRows.find((p) => p.id === id);
+      return live === undefined ? undefined : apply(live);
+    },
     getAssignmentsForTemplate: async () => [],
     getAssignmentsForSession: async () => [],
     getLiveBlockSchedule: async () => undefined,

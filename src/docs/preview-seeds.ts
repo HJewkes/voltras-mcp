@@ -27,7 +27,7 @@
 // Confidentiality: exercise ids, loads, rep counts and velocities only —
 // derived fitness metadata, no protocol data of any kind (NF-07).
 
-import { EMPTY_PHASE } from '@voltras/workout-analytics';
+import { EMPTY_PHASE, setCatalog } from '@voltras/workout-analytics';
 
 import {
   GOAL_BAND_CONSTANTS,
@@ -36,20 +36,25 @@ import {
   type GoalInfoLevel,
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
-import { localDate } from '../analytics/training-days.js';
-import { addDays } from '../plan/block-calendar.js';
+import { readTrainingDays } from '../analytics/training-days.js';
+import { mondayOf } from '../plan/block-calendar.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
+import { HISTORY_SEED_EXERCISES } from '../exercises/history-seed-catalog.js';
+import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
 import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
 import {
   LOCAL_USER_ID,
   type SessionStore,
   type StoredGoalTarget,
+  type StoredPriorityLevel,
   type StoredRep,
   type StoredSet,
 } from '../store/types.js';
 import {
+  deriveTargetInFrame,
   readDerivationContext,
+  type DerivedTarget,
   type GoalDerivationContext,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
@@ -100,6 +105,36 @@ export const GOAL_PREVIEW_EXERCISE = {
   id: 'cable-chest-press',
   name: 'Cable Chest Press',
 } as const;
+
+/**
+ * One seeded lift: its exercise, the ids it writes under, and the history behind it.
+ * The lead writes under `goal` so its rows keep the ids the page and tests know.
+ */
+interface SeededLift {
+  readonly key: string;
+  readonly exercise: { readonly id: string; readonly name: string };
+  readonly level: StoredPriorityLevel;
+  /** Declared this many days ago. Companions predate the lead, which then lists first. */
+  readonly declaredDaysAgo: number;
+  readonly history: GoalPreviewHistory;
+}
+
+/**
+ * Two more accepted lifts beside the lead, so `#/goals` shows its Per-lift section
+ * (the lead is never listed there, VW-467). One has a long name, so a phone-width
+ * page shows the card title wrapping. Their history is the steady climb `on_track`
+ * uses, the same whichever state the lead is in.
+ */
+export const GOAL_PREVIEW_COMPANIONS: readonly {
+  readonly exercise: { readonly id: string; readonly name: string };
+  readonly weeklyLoadsLbs: readonly number[];
+}[] = [
+  { exercise: { id: 'cable-row', name: 'Cable Row' }, weeklyLoadsLbs: [100, 102, 104, 106, 108] },
+  {
+    exercise: { id: 'cable-overhead-tricep-extension', name: 'Cable Overhead Tricep Extension' },
+    weeklyLoadsLbs: [40, 41, 42, 43, 44],
+  },
+];
 
 /** The rep anchor the target is measured at — `top_load_at_reps`' own question. */
 export const GOAL_PREVIEW_ANCHOR_REPS = 8;
@@ -162,6 +197,12 @@ export interface GoalPreviewState {
   readonly recalibrationAnswer?: 'declined';
 }
 
+/** The parts of a state that shape one lift's recorded history and its accepted target. */
+type GoalPreviewHistory = Pick<
+  GoalPreviewState,
+  'weeklyLoadsLbs' | 'heavySingleLbs' | 'targetStartWeeksAgo' | 'acceptedCold'
+>;
+
 export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'calibrating',
@@ -175,7 +216,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_offered',
     expectedStatus: 'on_track',
     summary:
-      'A starting ramp accepted cold (committed 121, where the ramp ends), and five weeks of ' +
+      'A starting ramp accepted cold (committed 116.5, where the ramp ends), and five weeks of ' +
       'history since, inside the band: calibrated, so a target based on the lifts is on offer.',
     weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
@@ -193,15 +234,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'on_track',
     expectedStatus: 'on_track',
-    summary: 'Top loads climbing 2 lb a week from 100, inside the band anchored at 100.',
-    weeklyLoadsLbs: [100, 102, 104, 106, 108],
+    summary: 'Top loads climbing 1.5 lb a week from 100, inside the band anchored at 100.',
+    weeklyLoadsLbs: [100, 101.5, 103, 104.5, 106],
     targetStartWeeksAgo: 4,
   },
   {
     name: 'fast_climb',
     expectedStatus: 'beyond_goal',
     summary:
-      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 110.5 goal by ' +
+      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 108.25 goal by ' +
       'week 4, and a met goal outranks pace, so it reads beyond_goal rather than ahead.',
     weeklyLoadsLbs: [100, 104, 108, 113, 118],
     targetStartWeeksAgo: 4,
@@ -234,7 +275,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 102, 104, 106, 110.5],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108.25],
     targetStartWeeksAgo: 4,
   },
   {
@@ -269,6 +310,8 @@ export type GoalPreviewStore = Pick<
   | 'reharvestExercise'
   | 'recalcBaseline'
   | 'putAdvisoryDecision'
+  | 'declareDietPhase'
+  | 'putBodyMetric'
 > &
   GoalDerivationState['store'];
 
@@ -282,32 +325,109 @@ export interface GoalPreviewSeedReport {
   sets: number;
   latestLoadLbs: number;
   baselineState: string;
+  /** The whole-body goals seeded beside the lifts, by metric. */
+  wholeBody: WholeBodyMetric[];
+  /** Past days holding a session nobody has marked training or test. */
+  unreviewedDays: number;
 }
 
 /**
  * Write one previewable goal state into `store`, which must be the ONLY holder
- * of its file — the server opens it afterwards, never alongside.
+ * of its file — the server opens it afterwards, never alongside. With
+ * `companions`, the {@link GOAL_PREVIEW_COMPANIONS} are seeded beside the lead;
+ * with `wholeBody`, a cut with its weigh-ins and the two whole-body goals;
+ * with `unreviewedDays`, that many past days each holding one unmarked session.
  */
 export async function seedGoalPreview(
   store: GoalPreviewStore,
   state: GoalPreviewState,
   now: Date,
+  options: { companions?: boolean; wholeBody?: boolean; unreviewedDays?: number } = {},
 ): Promise<GoalPreviewSeedReport> {
-  const written = await seedSessions(store, state, now);
-  const key = { userId: LOCAL_USER_ID, exerciseId: GOAL_PREVIEW_EXERCISE.id };
+  // The tools derive with the catalog the server loads at boot; this seed runs before any
+  // server exists, so it loads the same one, or every lift would ramp as the unknown class.
+  setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
+  const lead: SeededLift = {
+    key: 'goal',
+    exercise: GOAL_PREVIEW_EXERCISE,
+    level: 'specialize',
+    declaredDaysAgo: 28,
+    history: state,
+  };
+  const seeded = await seedLift(store, lead, now);
+  await seedDatedBlock(store, now);
+  if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, seeded.target, now);
+  if (options.companions === true) {
+    for (const [index, companion] of GOAL_PREVIEW_COMPANIONS.entries()) {
+      await seedLift(store, companionLift(companion, index), now);
+    }
+  }
+  const wholeBody = options.wholeBody === true ? await seedWholeBody(store, now) : [];
+  const unreviewedDays = await seedUnreviewedDays(store, now, options.unreviewedDays ?? 0);
+  return {
+    priorityId: seeded.priorityId,
+    targetId: seeded.target.id,
+    ...seeded.written,
+    baselineState: seeded.baselineState,
+    wholeBody,
+    unreviewedDays,
+  };
+}
+
+/**
+ * One session with no kind on each of the `days` days before `now` (VW-514). Every
+ * lifter-facing read excludes them, so the goals themselves read exactly as without.
+ */
+async function seedUnreviewedDays(
+  store: GoalPreviewStore,
+  now: Date,
+  days: number,
+): Promise<number> {
+  for (let back = 1; back <= days; back++) {
+    const at = new Date(now.getTime() - back * DAY_MS).toISOString();
+    await store.putSession({
+      id: `preview-unreviewed-session-${back}`,
+      startedAt: at,
+      endedAt: at,
+      exerciseId: GOAL_PREVIEW_EXERCISE.id,
+      exerciseName: GOAL_PREVIEW_EXERCISE.name,
+    });
+  }
+  return days;
+}
+
+function companionLift(
+  companion: (typeof GOAL_PREVIEW_COMPANIONS)[number],
+  index: number,
+): SeededLift {
+  return {
+    key: `companion-${index + 1}`,
+    exercise: companion.exercise,
+    level: 'maintain',
+    declaredDaysAgo: 35,
+    history: { weeklyLoadsLbs: companion.weeklyLoadsLbs, targetStartWeeksAgo: 4 },
+  };
+}
+
+/** One lift's sessions, baseline, priority and accepted target, derived as the tools derive them. */
+async function seedLift(
+  store: GoalPreviewStore,
+  lift: SeededLift,
+  now: Date,
+): Promise<{
+  priorityId: string;
+  target: StoredGoalTarget;
+  written: { sessions: number; sets: number; latestLoadLbs: number };
+  baselineState: string;
+}> {
+  const written = await seedSessions(store, lift, now);
+  const key = { userId: LOCAL_USER_ID, exerciseId: lift.exercise.id };
   await store.reharvestExercise(key);
   const baseline = await store.recalcBaseline(key);
-  const priority = await store.putPriority(priorityRow(now));
+  const priority = await store.putPriority(priorityRow(now, lift));
   const context = await readDerivationContext({ store }, priority);
-  const target = await store.putGoalTarget(targetRow(state, now, context));
-  await seedDatedBlock(store, now);
-  if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, target, now);
-  return {
-    priorityId: priority.id,
-    targetId: target.id,
-    ...written,
-    baselineState: baseline.state,
-  };
+  const target = await store.putGoalTarget(targetRow(lift, now, context));
+  return { priorityId: priority.id, target, written, baselineState: baseline.state };
 }
 
 /** The lifter's "no" to the recalibration offer, as `goal.retire` on the offer row records it. */
@@ -348,34 +468,35 @@ export function seededAt(now: Date, weeksBack: number): string {
 /** One session per weekly load, oldest first, seven days apart so each lands in its own week. */
 async function seedSessions(
   store: GoalPreviewStore,
-  state: GoalPreviewState,
+  lift: SeededLift,
   now: Date,
 ): Promise<{ sessions: number; sets: number; latestLoadLbs: number }> {
-  const weeks = state.weeklyLoadsLbs.length;
+  const { history } = lift;
+  const weeks = history.weeklyLoadsLbs.length;
   let sets = 0;
-  for (const [index, load] of state.weeklyLoadsLbs.entries()) {
+  for (const [index, load] of history.weeklyLoadsLbs.entries()) {
     const at = seededAt(now, weeks - 1 - index);
-    const sessionId = `preview-goal-session-${index + 1}`;
+    const sessionId = `preview-${lift.key}-session-${index + 1}`;
     await store.putSession({
       id: sessionId,
       startedAt: at,
       endedAt: at,
-      exerciseId: GOAL_PREVIEW_EXERCISE.id,
-      exerciseName: GOAL_PREVIEW_EXERCISE.name,
+      exerciseId: lift.exercise.id,
+      exerciseName: lift.exercise.name,
       // VW-489: these stand in for the lifter's own training, so the wall shows
       // them. An unmarked seed would render an empty page.
       kind: 'training',
     });
     const newest = index === weeks - 1;
-    const planned = sessionSets(state, load, newest);
+    const planned = sessionSets(history, load, newest);
     const spacingMs = setSpacingMs(at, now, planned.length);
     for (const [order, set] of planned.entries()) {
       const setAt = new Date(Date.parse(at) + order * spacingMs).toISOString();
-      await store.putSet(workingSet(sessionId, setAt, sets++, set.weightLbs, set.reps));
+      await store.putSet(workingSet(lift, sessionId, setAt, sets++, set));
     }
   }
-  const latest = state.weeklyLoadsLbs[weeks - 1] ?? 0;
-  return { sessions: weeks, sets, latestLoadLbs: state.heavySingleLbs ?? latest };
+  const latest = history.weeklyLoadsLbs[weeks - 1] ?? 0;
+  return { sessions: weeks, sets, latestLoadLbs: history.heavySingleLbs ?? latest };
 }
 
 /** Five minutes between sets, squeezed when the session is so recent that five would run past `now`. */
@@ -385,7 +506,7 @@ function setSpacingMs(sessionAt: string, now: Date, setCount: number): number {
 
 /** One session's working sets: the week's load at the anchor, plus the newest week's heavy set. */
 function sessionSets(
-  state: GoalPreviewState,
+  state: GoalPreviewHistory,
   load: number,
   newest: boolean,
 ): { weightLbs: number; reps: number }[] {
@@ -408,13 +529,13 @@ function sessionSets(
  * gives.
  */
 function workingSet(
+  lift: SeededLift,
   sessionId: string,
   at: string,
   index: number,
-  weightLbs: number,
-  reps: number,
+  { weightLbs, reps }: { weightLbs: number; reps: number },
 ): StoredSet {
-  const id = `preview-goal-set-${index + 1}`;
+  const id = `preview-${lift.key}-set-${index + 1}`;
   return {
     id,
     sessionId,
@@ -422,11 +543,11 @@ function workingSet(
     startedAt: at,
     endedAt: at,
     partial: false,
-    exerciseId: GOAL_PREVIEW_EXERCISE.id,
+    exerciseId: lift.exercise.id,
     slot: 'primary',
     setPurpose: 'working',
     weightLbs,
-    trainingMode: 'weight',
+    trainingMode: 'Weight Training',
     source: 'local',
     reps: grindingReps(id, reps),
   };
@@ -472,15 +593,15 @@ function rep(setId: string, index: number, velocityMps: number): StoredRep {
   };
 }
 
-function priorityRow(now: Date): Parameters<GoalPreviewStore['putPriority']>[0] {
+function priorityRow(now: Date, lift: SeededLift): Parameters<GoalPreviewStore['putPriority']>[0] {
   return {
-    id: 'preview-goal-priority',
+    id: `preview-${lift.key}-priority`,
     userId: LOCAL_USER_ID,
     horizonWeeks: GOAL_PREVIEW_HORIZON_WEEKS,
     kind: 'lift',
-    ref: GOAL_PREVIEW_EXERCISE.id,
-    level: 'specialize',
-    declaredAt: new Date(now.getTime() - 28 * DAY_MS).toISOString(),
+    ref: lift.exercise.id,
+    level: lift.level,
+    declaredAt: new Date(now.getTime() - lift.declaredDaysAgo * DAY_MS).toISOString(),
     mesosHeld: 1,
   };
 }
@@ -493,18 +614,24 @@ function priorityRow(now: Date): Parameters<GoalPreviewStore['putPriority']>[0] 
  * hand-written, so the goal line and the band agree at acceptance.
  */
 function targetRow(
-  state: GoalPreviewState,
+  lift: SeededLift,
   now: Date,
   context: GoalDerivationContext,
 ): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
-  const startMeasuredAt = seededAt(now, state.targetStartWeeksAgo);
-  const startValue = startLoadOf(state);
-  const band = acceptedBandOf(context, startValue, state.acceptedCold === true ? 'cold' : 'ramp');
+  const { history } = lift;
+  const startMeasuredAt = seededAt(now, history.targetStartWeeksAgo);
+  const startValue = startLoadOf(history);
+  const band = acceptedBandOf(
+    context,
+    startValue,
+    history.acceptedCold === true ? 'cold' : 'ramp',
+    lift.exercise.id,
+  );
   return {
-    id: 'preview-goal-target',
-    priorityId: 'preview-goal-priority',
+    id: `preview-${lift.key}-target`,
+    priorityId: `preview-${lift.key}-priority`,
     metric: 'top_load_at_reps',
-    exerciseId: GOAL_PREVIEW_EXERCISE.id,
+    exerciseId: lift.exercise.id,
     anchorReps: GOAL_PREVIEW_ANCHOR_REPS,
     startValue,
     startMeasuredAt,
@@ -564,15 +691,8 @@ async function seedDatedBlock(store: GoalPreviewStore, now: Date): Promise<void>
   });
 }
 
-/** The Monday of the local calendar week an instant falls in. */
-function mondayOf(iso: string): string {
-  const date = localDate(iso);
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  return addDays(date, -((weekday + 6) % 7));
-}
-
 /** The load of the target's own start week: where its band is anchored (VW-449). */
-export function startLoadOf(state: GoalPreviewState): number {
+export function startLoadOf(state: GoalPreviewHistory): number {
   const loads = state.weeklyLoadsLbs;
   return loads[Math.max(0, loads.length - 1 - state.targetStartWeeksAgo)] ?? 0;
 }
@@ -581,12 +701,14 @@ export function startLoadOf(state: GoalPreviewState): number {
  * The band the target was accepted with: `deriveGoalBand` over the seed's own
  * start and block, at the level it was accepted at. A cold acceptance is one
  * made before calibration, so the evidence handed in is a calibrating lift's;
- * a ramp acceptance is one made with the gates open and no fitted slope.
+ * a ramp acceptance is one made with the gates open and no fitted slope. The
+ * ramp's step is the lift's own exercise class (VW-482).
  */
 export function acceptedBandOf(
   context: GoalDerivationContext,
   startValue: number,
   infoLevel: Exclude<GoalInfoLevel, 'own'>,
+  exerciseId: string,
 ): GoalBand {
   const cold = infoLevel === 'cold';
   return deriveGoalBand({
@@ -595,7 +717,7 @@ export function acceptedBandOf(
     horizonWeeks: context.horizonWeeks,
     weeks: context.weeks,
     tier: context.tier,
-    rampClass: rampClassForExerciseId(GOAL_PREVIEW_EXERCISE.id),
+    rampClass: rampClassForExerciseId(exerciseId),
     infoLevel,
     dietState: context.dietState,
     layoff: context.layoff,
@@ -603,4 +725,124 @@ export function acceptedBandOf(
     baselineState: cold ? 'COLD' : 'CALIBRATED',
     completedMesoCount: context.completedMesoCount,
   });
+}
+
+export type WholeBodyMetric = 'bodyweight' | 'sessions_28d';
+
+/**
+ * The whole-body goals (VW-455): a fat-loss phase declared five weeks ago, a
+ * weigh-in every other day since, losing {@link GOAL_PREVIEW_WEIGHT.lossPctPerWeek}
+ * a week, and a bodyweight goal and a 28-day session commitment taken on
+ * {@link GOAL_PREVIEW_WEIGHT.goalsDaysAgo} days ago, so both cards read mid-block.
+ */
+export const GOAL_PREVIEW_WEIGHT = {
+  phaseDaysAgo: 34,
+  goalsDaysAgo: 16,
+  startLbs: 202,
+  lossPctPerWeek: 0.6,
+} as const;
+
+async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeBodyMetric[]> {
+  await seedPreviewCut(store, now);
+  const seeded: WholeBodyMetric[] = [];
+  for (const metric of ['bodyweight', 'sessions_28d'] as const) {
+    if (await seedWholeBodyGoal(store, metric, now)) seeded.push(metric);
+  }
+  return seeded;
+}
+
+/**
+ * The fat-loss phase and its weigh-ins, without any goal. The goals capture
+ * (`scripts/dashboard-mock-drive.mjs`) writes these, then takes the goals on
+ * through the tools.
+ */
+export async function seedPreviewCut(
+  store: Pick<SessionStore, 'declareDietPhase' | 'putBodyMetric'>,
+  now: Date,
+): Promise<void> {
+  const daysAgo = (days: number): string => new Date(now.getTime() - days * DAY_MS).toISOString();
+  const { phaseDaysAgo } = GOAL_PREVIEW_WEIGHT;
+  await store.declareDietPhase({
+    userId: LOCAL_USER_ID,
+    phase: 'fat-loss',
+    startedAt: daysAgo(phaseDaysAgo),
+    declaredAt: daysAgo(phaseDaysAgo),
+  });
+  for (let day = phaseDaysAgo; day >= 0; day -= 2) {
+    await store.putBodyMetric({
+      userId: LOCAL_USER_ID,
+      measuredAt: daysAgo(day),
+      bodyweightLbs: previewWeightLbs(day),
+    });
+  }
+}
+
+/** The seeded weigh-in `daysAgo` days back, one decimal like a bathroom scale. */
+export function previewWeightLbs(daysAgo: number): number {
+  const { phaseDaysAgo, startLbs, lossPctPerWeek } = GOAL_PREVIEW_WEIGHT;
+  const weeks = (phaseDaysAgo - daysAgo) / 7;
+  return Math.round(startLbs * (1 - lossPctPerWeek / 100) ** weeks * 10) / 10;
+}
+
+/**
+ * One whole-body priority and its accepted target, framed where the lifter took
+ * it on: the weigh-in that day, or the training days in the window then. A
+ * state with no training days in that window gets no session goal.
+ */
+async function seedWholeBodyGoal(
+  store: GoalPreviewStore,
+  metric: WholeBodyMetric,
+  now: Date,
+): Promise<boolean> {
+  const { goalsDaysAgo } = GOAL_PREVIEW_WEIGHT;
+  const takenOn = new Date(now.getTime() - goalsDaysAgo * DAY_MS).toISOString();
+  const ref = metric === 'bodyweight' ? 'bodyweight' : 'sessions';
+  const startValue =
+    metric === 'bodyweight'
+      ? previewWeightLbs(goalsDaysAgo)
+      : (await readTrainingDays(store, takenOn)).length;
+  if (startValue === 0) return false;
+  const priority = await store.putPriority({
+    id: `preview-${ref}-priority`,
+    userId: LOCAL_USER_ID,
+    horizonWeeks: GOAL_PREVIEW_HORIZON_WEEKS,
+    kind: 'muscle',
+    ref,
+    level: 'maintain',
+    declaredAt: takenOn,
+    mesosHeld: 1,
+  });
+  const context = await readDerivationContext({ store }, priority);
+  const frame = { metric, startValue, startMeasuredAt: takenOn } as StoredGoalTarget;
+  const derived = await deriveTargetInFrame({ store }, context, frame);
+  if (!('band' in derived)) throw new Error(`preview ${metric} goal: ${derived.reason}`);
+  await store.putGoalTarget(wholeBodyTargetRow(priority.id, derived, context));
+  return true;
+}
+
+function wholeBodyTargetRow(
+  priorityId: string,
+  derived: DerivedTarget,
+  context: GoalDerivationContext,
+): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
+  return {
+    id: priorityId.replace(/-priority$/, '-target'),
+    priorityId,
+    metric: derived.metric,
+    startValue: derived.startValue,
+    startMeasuredAt: derived.startMeasuredAt,
+    bandLowPctPerWeek: derived.band.bandLowPctPerWeek,
+    bandHighPctPerWeek: derived.band.bandHighPctPerWeek,
+    committedValue: derived.band.committedValue,
+    stretchValue: derived.band.stretchValue,
+    basis: derived.band.basis,
+    infoLevel: derived.band.infoLevel,
+    tierUsed: context.tier,
+    tierProvisional: context.tierProvisional,
+    dietPhaseAtDerivation: context.dietState.phase,
+    acceptedBy: 'user',
+    acknowledgedStretch: false,
+    derivedAt: derived.startMeasuredAt,
+    endsAt: blockEndsAt(derived.startMeasuredAt, GOAL_PREVIEW_HORIZON_WEEKS),
+  };
 }

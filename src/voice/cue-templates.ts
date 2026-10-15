@@ -4,10 +4,18 @@
 // test and safe to import from any layer. A later PR wires the CueSelector into
 // the live set pipeline, so the public interface here is pinned.
 
+import { CUE_FRAGMENTS } from '../coach-copy/cues.js';
+import type { Fragment } from '../coach-copy/fragments.js';
+
 export type CueCategory = 'set_intro' | 'target_hit' | 'slowdown' | 'set_complete';
 
-// Static, hand-authored catalog. Spoken coaching cues — natural and concise
-// (<= ~12 words each). Slot names per category follow the fixed contract:
+function texts(fragments: readonly Fragment[]): readonly string[] {
+  return fragments.map((fragment) => fragment.text);
+}
+
+// Static, hand-authored catalog, sourced in `src/coach-copy/cues.ts`. Spoken
+// coaching cues — natural and concise (<= ~12 words each). Slot names per
+// category follow the fixed contract:
 //   set_intro:    weight (optional), ordinal (optional)
 //   target_hit:   target, actual
 //   slowdown:     pct, rep
@@ -15,43 +23,10 @@ export type CueCategory = 'set_intro' | 'target_hit' | 'slowdown' | 'set_complet
 // set_intro intentionally mixes both-slot, ordinal-only, and no-slot phrasings
 // so a set that has no weight still has playable options.
 export const CUE_CATALOG: Record<CueCategory, readonly string[]> = {
-  set_intro: [
-    'Set ${ordinal}, ${weight} pounds — let’s go.',
-    'Set ${ordinal} at ${weight} pounds. Send it.',
-    '${weight} pounds this set. Own it.',
-    'Rack’s loaded to ${weight}. Go.',
-    'Set ${ordinal} — bring the intensity.',
-    'This is set ${ordinal}. Lock in.',
-    'Next set — let’s go.',
-    'Fresh set. Make it count.',
-  ],
-  target_hit: [
-    'That’s your ${target} — bonus reps now.',
-    'Target ${target} hit at ${actual}. Keep going.',
-    '${actual} reps — you cleared ${target}.',
-    'Goal reached: ${target}. Everything now is extra.',
-    'You hit ${target}. Free reps from here.',
-    '${target} down. Push for more.',
-    'Past ${target} now — ${actual} and climbing.',
-  ],
-  slowdown: [
-    'Velocity down ${pct} percent. Stay tight.',
-    'That rep was ${pct} percent slower. Reset.',
-    'Down ${pct} percent — make each rep count.',
-    'Rep ${rep} slowed — control it.',
-    'Losing speed on rep ${rep}. Brace.',
-    'Speed’s dropping — one clean rep left.',
-    'Bar speed fading. Finish strong.',
-  ],
-  set_complete: [
-    'Nice — ${reps} reps, done.',
-    '${reps} reps in ${seconds} seconds. Solid.',
-    'Done in ${seconds} seconds. ${reps} strong reps.',
-    'Set done — ${reps} reps, ${loss} percent drop.',
-    '${reps} reps, ${loss} percent velocity loss. Logged.',
-    'That’s ${reps}. Rest up.',
-    'Set complete — ${reps} reps banked.',
-  ],
+  set_intro: texts(CUE_FRAGMENTS.setIntro),
+  target_hit: texts(CUE_FRAGMENTS.targetHit),
+  slowdown: texts(CUE_FRAGMENTS.slowdown),
+  set_complete: texts(CUE_FRAGMENTS.setComplete),
 };
 
 // Single source of truth for the `${name}` slot syntax. templateSlots and the

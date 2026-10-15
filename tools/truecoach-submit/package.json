@@ -2,7 +2,7 @@
   "name": "@voltras/truecoach-submit",
   "version": "0.1.0",
   "private": true,
-  "description": "Unattended Playwright submitter that posts one voltras-mcp session's results into that day's TrueCoach workout. Standalone: not part of the voltras-mcp server bundle and not run by CI.",
+  "description": "Unattended Playwright submitter that posts one voltras-mcp session's results into that day's TrueCoach workout. Standalone: not part of the voltras-mcp server bundle; its fixture tests run in CI.",
   "type": "module",
   "bin": {
     "truecoach-submit": "./src/cli.js"

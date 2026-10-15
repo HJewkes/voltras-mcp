@@ -2,7 +2,7 @@
 // (VMCP-06.03 / RP backlog B31).
 //
 // Pure and store-free by construction: the caller reads the tier once, resolves
-// each exercise's primary muscle group, and hands this function a flat list.
+// each exercise's target muscles, and hands this function a flat list.
 // That is what makes the ceilings testable without a database and what keeps
 // the plan write path unable to fail because of a lint.
 //
@@ -35,6 +35,7 @@
 // `PlanWarning` to let them omit what does not apply.
 
 import type { Tier, TierConfidence } from '../tools/tier-signal.js';
+import { hasRestWord, isOffOnly } from './rest-label.js';
 
 export type PlanWarningCode =
   | 'sets_per_exercise_over_tier_ceiling'
@@ -42,7 +43,11 @@ export type PlanWarningCode =
   | 'hard_sets_per_muscle_per_week_over_tier_ceiling'
   | 'meso_length_grew_mid_block'
   | 'priority_muscle_changed_mid_block'
-  | 'same_muscle_high_volume_consecutive_days';
+  | 'same_muscle_high_volume_consecutive_days'
+  | 'week_without_off_day'
+  | 'muscle_frequency_below_band'
+  | 'muscle_frequency_above_band'
+  | 'specialized_muscle_single_exercise';
 
 export interface PlanWarning {
   code: PlanWarningCode;
@@ -51,14 +56,16 @@ export interface PlanWarning {
   muscleGroup?: string;
   observed?: number;
   ceiling?: number;
+  /** The low end of a band, on a warning that sits below one (VW-623). */
+  floor?: number;
   tier?: Tier;
 }
 
 export interface LintPlanExercise {
   exerciseId: string;
   targetSets: number;
-  /** PRIMARY muscle group only (`muscleGroups[0]`); absent skips the per-muscle lint. */
-  muscleGroup?: string;
+  /** Landmark target slugs (B47); a set counts toward each. Empty skips the per-muscle lint. */
+  muscleGroups: readonly string[];
   /** Which session within the plan. Absent means "the one session being linted". */
   dayIndex?: number;
 }
@@ -113,7 +120,7 @@ const HARD_SETS_PER_MUSCLE_PER_WEEK_FLOOR: Record<Tier, number> = {
   advanced: 0,
 };
 
-const PROVISIONAL_SUFFIX =
+export const PROVISIONAL_SUFFIX =
   ' (tier is provisional; set `profile.set_training_background` to confirm)';
 
 const REAL_FIX = 'Technique and effort before more sets';
@@ -175,7 +182,7 @@ function lintSetsPerMuscle(exercises: LintPlanExercise[], tier: Tier): PlanWarni
     .filter((bucket) => bucket.sets > ceiling)
     .map((bucket) => ({
       code: 'sets_per_muscle_per_session_over_tier_ceiling' as const,
-      message: setsPerMuscleMessage(bucket.muscleGroup, bucket.sets, tier, ceiling),
+      message: setsPerMuscleMessage(muscleLabel(bucket.muscleGroup), bucket.sets, tier, ceiling),
       muscleGroup: bucket.muscleGroup,
       observed: bucket.sets,
       ceiling,
@@ -184,20 +191,26 @@ function lintSetsPerMuscle(exercises: LintPlanExercise[], tier: Tier): PlanWarni
 }
 
 /**
- * Hard sets per (session, primary muscle group). Exercises with no resolved
- * muscle group are skipped rather than pooled under a placeholder — a bucket
- * of "unknown" would produce a warning naming no muscle anyone can act on.
+ * Hard sets per (session, target muscle). Exercises with no resolved target
+ * are skipped rather than pooled under a placeholder — a bucket of "unknown"
+ * would produce a warning naming no muscle anyone can act on.
  */
 function setsByMuscleAndDay(exercises: LintPlanExercise[]): Map<string, MuscleDayBucket> {
   const totals = new Map<string, MuscleDayBucket>();
   for (const e of exercises) {
-    if (e.muscleGroup === undefined) continue;
-    const key = `${e.dayIndex ?? 0} ${e.muscleGroup}`;
-    const bucket = totals.get(key) ?? { muscleGroup: e.muscleGroup, sets: 0 };
-    bucket.sets += e.targetSets;
-    totals.set(key, bucket);
+    for (const muscleGroup of e.muscleGroups) {
+      const key = `${e.dayIndex ?? 0} ${muscleGroup}`;
+      const bucket = totals.get(key) ?? { muscleGroup, sets: 0 };
+      bucket.sets += e.targetSets;
+      totals.set(key, bucket);
+    }
   }
   return totals;
+}
+
+/** A slug as warning copy reads it: `front_delts` becomes `front delts`. */
+function muscleLabel(slug: string): string {
+  return slug.replaceAll('_', ' ');
 }
 
 function setsPerMuscleMessage(
@@ -223,12 +236,13 @@ function setsPerMuscleMessage(
   );
 }
 
-/** Sums `targetSets` by muscle group across a flat list, ignoring `dayIndex`. */
+/** Sums `targetSets` into each target muscle across a flat list, ignoring `dayIndex`. */
 function totalsByMuscle(exercises: LintPlanExercise[]): Map<string, number> {
   const totals = new Map<string, number>();
   for (const e of exercises) {
-    if (e.muscleGroup === undefined) continue;
-    totals.set(e.muscleGroup, (totals.get(e.muscleGroup) ?? 0) + e.targetSets);
+    for (const muscleGroup of e.muscleGroups) {
+      totals.set(muscleGroup, (totals.get(muscleGroup) ?? 0) + e.targetSets);
+    }
   }
   return totals;
 }
@@ -253,7 +267,7 @@ export function lintWeeklyVolume(input: LintWeeklyVolumeInput): PlanWarning[] {
     .filter(([, sets]) => sets > ceiling)
     .map(([muscleGroup, sets]) => ({
       code: 'hard_sets_per_muscle_per_week_over_tier_ceiling' as const,
-      message: weeklyVolumeMessage(muscleGroup, sets, input.tier, ceiling),
+      message: weeklyVolumeMessage(muscleLabel(muscleGroup), sets, input.tier, ceiling),
       muscleGroup,
       observed: sets,
       ceiling,
@@ -318,43 +332,40 @@ export interface LintPriorityMuscleInput {
 }
 
 /**
- * The muscle group with the most planned sets in week 1 vs. a later week of
- * the same block. Silent when either week has no resolvable muscle data, or
- * when the top spot is tied — a tie is not a determinable priority to compare.
+ * The top muscles (those tied at the most planned sets) in week 1 vs. a later
+ * week of the same block. Silent when either week has no resolvable muscle
+ * data, or when the two top sets share a muscle — a shared muscle is not a
+ * determinable shift. A multi-target lift ties its targets, so ties are compared.
  */
 export function lintPriorityMuscleChangedMidBlock(input: LintPriorityMuscleInput): PlanWarning[] {
-  const week1Top = topMuscle(input.week1Exercises);
-  const laterTop = topMuscle(input.laterWeekExercises);
-  if (week1Top === null || laterTop === null || week1Top === laterTop) return [];
+  const week1Tops = topMuscles(input.week1Exercises);
+  const laterTops = topMuscles(input.laterWeekExercises);
+  if (week1Tops.length === 0 || laterTops.length === 0) return [];
+  if (week1Tops.some((slug) => laterTops.includes(slug))) return [];
   return [
     {
       code: 'priority_muscle_changed_mid_block',
       message:
-        `Week 1 of this block prioritized ${week1Top} (the most planned sets), but week ` +
-        `${input.laterWeekOrderIndex + 1} prioritizes ${laterTop} instead. A block's priority ` +
-        'muscle is normally set once for the whole mesocycle — if this shift is intentional, ' +
+        `Week 1 of this block prioritized ${muscleList(week1Tops)} (the most planned sets), but ` +
+        `week ${input.laterWeekOrderIndex + 1} prioritizes ${muscleList(laterTops)} instead. ` +
+        "A block's priority muscle is normally set once for the whole mesocycle — if this " +
+        'shift is intentional, ' +
         'it usually means this is really the start of a new block rather than a change inside ' +
         'this one.',
-      muscleGroup: laterTop,
+      muscleGroup: laterTops[0],
     },
   ];
 }
 
-/** `null` when there is nothing to compare, or the top spot is tied. */
-function topMuscle(exercises: LintPlanExercise[]): string | null {
-  let best: string | null = null;
-  let bestSets = -1;
-  let tied = false;
-  for (const [muscleGroup, sets] of totalsByMuscle(exercises)) {
-    if (sets > bestSets) {
-      best = muscleGroup;
-      bestSets = sets;
-      tied = false;
-    } else if (sets === bestSets) {
-      tied = true;
-    }
-  }
-  return tied ? null : best;
+function muscleList(slugs: string[]): string {
+  return slugs.map(muscleLabel).join(' and ');
+}
+
+/** Every slug tied at the most planned sets; empty when there is no muscle data. */
+function topMuscles(exercises: LintPlanExercise[]): string[] {
+  const totals = totalsByMuscle(exercises);
+  const best = Math.max(...totals.values());
+  return [...totals].filter(([, sets]) => sets === best).map(([slug]) => slug);
 }
 
 export interface LintConsecutiveDayTemplate {
@@ -417,7 +428,7 @@ function consecutiveDayWarnings(
     warnings.push({
       code: 'same_muscle_high_volume_consecutive_days',
       message:
-        `${muscleGroup} is over the ${tier} per-session ceiling of ${ceiling} sets on both ` +
+        `${muscleLabel(muscleGroup)} is over the ${tier} per-session ceiling of ${ceiling} sets on both ` +
         `${dayA} (${aSets}) and the very next day, ${dayB} (${bSets}). Back-to-back ` +
         'high-volume days for the same muscle cut into the recovery window that ceiling is ' +
         "built around. Consider resequencing, or lowering one day's volume toward the ceiling.",
@@ -428,4 +439,55 @@ function consecutiveDayWarnings(
     });
   }
   return warnings;
+}
+
+// --- VW-619: rung 1 of the fatigue-reduction ladder ---
+
+const DAYS_PER_WEEK = 7;
+
+export interface LintOffDayTemplate {
+  dayLabel?: string;
+  name?: string;
+}
+
+const WEEKDAY_PREFIX =
+  /^(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:s|nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?![a-z])/;
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+
+/** A rest or off template plans no training, so it is the day off rather than a day used. */
+export function isRestTemplate(template: LintOffDayTemplate): boolean {
+  return [template.name, template.dayLabel].some(
+    (text) => text !== undefined && (hasRestWord(text) || isOffOnly(text)),
+  );
+}
+
+/** The training day a label names: "Mon AM" and "Monday PM" are both Monday. */
+export function trainingDayKey(template: LintOffDayTemplate, index: number): string {
+  const label = template.dayLabel?.trim().toLowerCase() ?? '';
+  if (label === '') return `unlabelled ${index}`;
+  return ISO_DATE_PREFIX.exec(label)?.[0] ?? WEEKDAY_PREFIX.exec(label)?.[1]?.slice(0, 3) ?? label;
+}
+
+/**
+ * A week whose training templates fill all seven days leaves no day off, the first rung of
+ * the fatigue-reduction ladder (rp-s2-fatigue-reduction-ladder). Templates on one weekday or
+ * date are one training day, a rest template is not training, and an unlabelled template
+ * counts as a day of its own.
+ */
+export function lintWeekWithoutOffDay(templates: readonly LintOffDayTemplate[]): PlanWarning[] {
+  const days = new Set(
+    templates.flatMap((t, i) => (isRestTemplate(t) ? [] : [trainingDayKey(t, i)])),
+  );
+  if (days.size < DAYS_PER_WEEK) return [];
+  return [
+    {
+      code: 'week_without_off_day',
+      message:
+        `This week plans ${days.size} training days, so it has no day off. A day off is the ` +
+        'first and cheapest rung of fatigue management: it clears the fatigue one hard day ' +
+        'leaves behind before any deload is needed. Consider making one of these days a rest day.',
+      observed: days.size,
+      ceiling: DAYS_PER_WEEK - 1,
+    },
+  ];
 }

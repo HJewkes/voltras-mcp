@@ -27,6 +27,8 @@
 // enforces "at least one"; this file enforces "if both, id wins" by clearing
 // `exerciseName` whenever `exerciseId` is present before persisting.
 
+import { endStaleLiveSession } from '../state/idle-session-close.js';
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -78,7 +80,7 @@ import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
  * Error type used by tool handlers to signal a known, mapped error code.
  * `wrapHandler` -> `mapSdkError` will preserve the `code` field on the wire.
  */
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -173,8 +175,12 @@ const SESSION_GET_DESCRIPTION =
   'to inspect in full. A session with a workout template attached also carries `sessionPace`: ' +
   'the plan-derived `plannedMinutes` / `elapsedMinutes` / `plannedSetsRemaining` / ' +
   '`projectedEndAt` estimate, costing every planned set at its rep target and tempo plus its ' +
-  'rest (the goal default when the coach set none). It is an estimate from the plan, never a ' +
-  'measurement, and it is absent entirely for a session with no plan attached.';
+  'rest (the goal default when the coach set none), plus `state` (ahead, on_pace, behind, or ' +
+  'idle before the first working set), a signed `slipMinutes` (positive is behind) and, when ' +
+  'there is one, a `suggestion` to trim or add sets. Time alone drives the state. For a ' +
+  'finished session the clock is its end time, so the state is the final verdict. It is an ' +
+  'estimate from the plan, never a measurement, and it is absent entirely for a session with ' +
+  'no plan attached.';
 
 const SESSION_MARK_KIND_DESCRIPTION =
   'Say whether recorded work was real training or a bench test, for one session ' +
@@ -334,6 +340,8 @@ async function startSession(
   input: z.infer<typeof SessionStartInput>,
 ): Promise<{ sessionId: string }> {
   const slot = getSlot(state, input.slot);
+  // VW-856: a session with no rep for the idle window is ended at its last rep, not refused.
+  await endStaleLiveSession(state, input.slot ?? PRIMARY_SLOT, new Date());
   if (slot.live.session !== undefined) {
     throw new ToolError('SESSION_ALREADY_ACTIVE', 'A session is already active.');
   }
@@ -914,6 +922,16 @@ async function getSession(
   };
 }
 
+/** True when a slot running this session has a set open, the same read the dashboard snapshot uses. */
+function hasStreamingSet(state: ServerState, sessionId: string): boolean {
+  for (const slot of state.slots.values()) {
+    if (slot.live.session?.sessionId === sessionId && slot.live.snapshotSet() !== undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The session's pace against its attached plan (VW-290), or null when no
  * workout template is attached — there is then no plan to estimate a length,
@@ -944,10 +962,13 @@ async function resolveSessionPace(
       planned,
       // Warm-up / probe / technique rungs are real and stored but do not advance
       // the plan (VW-260), and neither does a 0-rep set the watchdog force-closed.
-      completedWorkingSets: sets.filter(
-        (set) =>
-          set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
-      ).length,
+      completedWorkingSets: sets
+        .filter(
+          (set) =>
+            set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
+        )
+        .map((set) => ({ exerciseId: set.exerciseId, endedAtMs: Date.parse(set.endedAt) })),
+      liveSetActive: session.endedAt === undefined && hasStreamingSet(state, session.id),
     },
     state.exercises,
   );

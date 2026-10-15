@@ -13,18 +13,14 @@ import {
   PlaceholderStrip,
   Surface,
   getSemanticColors,
+  panelBodySplit,
+  panelLayout,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
 import { type DashboardModel } from './model';
 import { formatMass } from './mass';
 import { LATEST_SESSION, routeHash } from '../routing';
-import {
-  FATIGUE_CARD_WIDTH,
-  PANEL_COLUMN_GAP,
-  PANEL_PAD,
-  heroPlotHeight,
-  panelBodyHeight,
-} from './panel-geometry';
+import { panelBodyHeight } from './panel-geometry';
 
 /*
  * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via className / tokens.
@@ -41,8 +37,9 @@ import {
  *
  * STRUCTURALLY DERIVED FROM THE LIVE PANEL. The stage this precedes is titan's
  * `LiveFatiguePanel` (see `SingleFatigueStage`): an aura frame around a padded two-column
- * row — flexible velocity hero on the left, fixed 318-wide fatigue card on the right. The
- * idle stage reproduces that skeleton from the SAME constants (`panel-geometry.ts`), down to
+ * row — flexible velocity hero on the left, fatigue card on the right (stacked on a narrow
+ * stage). The idle stage reproduces that skeleton from the SAME geometry (titan's `panelLayout`
+ * and `panelBodySplit`, plus `panel-geometry.ts`), down to
  * measuring the stage height the way `SingleFatigueStage` does, so the first set of a session
  * POPULATES the panel rather than replacing a centred blob with one. What the idle skeleton
  * holds are labels and placeholder rules, never numbers: a gap must read as a gap.
@@ -113,18 +110,18 @@ function CardSectionGhost({
 
 /**
  * The idle right-hand column: the fatigue card's frame and section rhythm with no verdict,
- * no ROM and no rep shapes in it. Matches `LiveFatigueCard`'s own box (318 wide, 14 radius,
+ * no ROM and no rep shapes in it. Matches `LiveFatigueCard`'s own box (titan's card width, 14 radius,
  * 18 padding, hairline edge, `base` plane one step above the stage) so the real card lands
  * in the same rectangle, and lays its sections out in the same order: the exertion group at
  * the top, then ROM, then the rep-shape spark, the lower two sharing the leftover height.
  */
-function IdleFatigueCard({ height }: { height: number }): ReactElement {
+function IdleFatigueCard({ width, height }: { width: number; height: number }): ReactElement {
   return (
     <Surface
       level="base"
       testID="idle-fatigue-card"
       style={{
-        width: FATIGUE_CARD_WIDTH,
+        width,
         height,
         borderRadius: 14,
         padding: 18,
@@ -188,9 +185,9 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
 
   // Measured exactly as `SingleFatigueStage` measures it, so the panel that replaces this
   // stage gets the same `bodyHeight` and the geometry does not jump on the first rep.
-  const [stageHeight, setStageHeight] = useState(0);
-  const bodyHeight = panelBodyHeight(stageHeight);
-  const heroHeight = heroPlotHeight(bodyHeight);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const layout = panelLayout(stageSize.width);
+  const { heroHeight, cardHeight } = panelBodySplit(panelBodyHeight(stageSize.height), layout);
 
   const axisColor = useOnSurfaceColor('tertiary');
 
@@ -201,7 +198,7 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
   return (
     <View
       style={{ flex: 1 }}
-      onLayout={(e: LayoutChangeEvent) => setStageHeight(e.nativeEvent.layout.height)}
+      onLayout={(e: LayoutChangeEvent) => setStageSize(e.nativeEvent.layout)}
     >
       {/* `productive` = no flood: the same quiet ground the panel sits on before a verdict
           exists. Radius/border zeroed to match `SingleFatigueStage`'s full-bleed panel. */}
@@ -213,9 +210,9 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
         <View style={{ flex: 1 }}>
           <View
             style={{
-              padding: PANEL_PAD,
-              flexDirection: 'row',
-              gap: PANEL_COLUMN_GAP,
+              padding: layout.padding,
+              flexDirection: layout.stacked ? 'column' : 'row',
+              gap: layout.gap,
               alignItems: 'stretch',
             }}
           >
@@ -260,7 +257,7 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
               </View>
             </View>
             {/* SECONDARY — the fatigue card's outline. */}
-            <IdleFatigueCard height={bodyHeight} />
+            <IdleFatigueCard width={layout.cardWidth} height={cardHeight} />
           </View>
         </View>
       </LiveAuraFrame>

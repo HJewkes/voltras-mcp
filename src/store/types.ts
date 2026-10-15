@@ -868,6 +868,33 @@ export interface PutAdvisoryDecisionInput extends Omit<StoredAdvisoryDecision, '
   id?: string;
 }
 
+/** An answer to an open advisory. `inputs`, when given, replaces the stored inputs. */
+export interface AdvisoryAnswer {
+  userResponse: StoredAdvisoryResponse;
+  respondedAt: string;
+  inputs?: Record<string, unknown>;
+}
+
+/** The goal target an answer retires, at its `respondedAt`, only if the answer is recorded. */
+export interface AdvisoryAnswerRetire {
+  goalTargetId: string;
+  outcome: StoredGoalTargetOutcome;
+}
+
+/** What a {@link SessionStore.putAdvisoryDerived} callback decides against the live rows. */
+export interface AdvisoryDerivation<T> {
+  decision?: PutAdvisoryDecisionInput;
+  goalTarget?: StoredGoalTarget;
+  result: T;
+}
+
+/** What {@link SessionStore.putAdvisoryDerived} wrote, beside the callback's result. */
+export interface AdvisoryDerived<T> {
+  result: T;
+  decision?: StoredAdvisoryDecision;
+  goalTarget?: StoredGoalTarget;
+}
+
 /** Filter for {@link SessionStore.listAdvisoryDecisions}; every field narrows. */
 export interface ListAdvisoryDecisionsFilter {
   code?: string;
@@ -881,13 +908,13 @@ export interface ListAdvisoryDecisionsFilter {
 // a repeated action id safe: the primary key refuses the second claim, so the
 // handler cannot run twice even when two submits race.
 //
-// The two steps are two statements, not one transaction. Several store methods
-// open their own transactions (`declareDietPhase` among them) and there is no
-// SAVEPOINT nesting, so an outer transaction around a handler is not available.
-// The cost is a crash window: a row left `pending` means the handler's write
-// may or may not have landed, and a replay says `indeterminate` rather than
-// guessing. Nothing sweeps those rows — a pending row is the truthful record of
-// a run that died, and rewriting it to `error` would assert something unknown.
+// The claim, the handler and the completion run in one caller-owned transaction
+// (VW-659, see `executeAudited`), so a committed row is always `ok` or `error`.
+// `pending` survives for rows written before that change, when the two steps
+// were separate statements and a crash between them left the row claimed: a
+// replay of one says `indeterminate` rather than guessing. Nothing sweeps those
+// rows — a pending row is the truthful record of a run that died, and rewriting
+// it to `error` would assert something unknown.
 
 /**
  * Who submitted an action. Extends the `block_schedules.changed_by` vocabulary
@@ -905,9 +932,10 @@ export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];
 
 /**
  * Where an action was submitted from. A KIND of surface, never a particular one: two walls
- * both say `wall`, and `deviceId` is what tells them apart (VW-521).
+ * both say `wall`, and `deviceId` is what tells them apart (VW-521). `mcp` is an agent's tool
+ * call (VW-849).
  */
-export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram'] as const;
+export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram', 'mcp'] as const;
 export type UiActionSurface = (typeof UI_ACTION_SURFACES)[number];
 
 /**
@@ -932,6 +960,12 @@ export interface StoredUiAction {
   deviceId?: string;
   flowId?: string;
   flowStep?: string;
+  /** Why the action was taken, when the caller said. Absent on every row written before v42. */
+  reason?: string;
+  /** An allowlisted summary of the input. Never the argument blob. Absent before v42. */
+  summaryJson?: string;
+  /** The session open at call entry. No foreign key: a missing session never refuses a row. */
+  sessionId?: string;
   /** sha256 over the canonical JSON of the input, hashed AFTER the tool's parse. */
   inputHash: string;
   resultStatus: UiActionStatus;
@@ -952,8 +986,29 @@ export interface ClaimUiActionInput {
   deviceId?: string;
   flowId?: string;
   flowStep?: string;
+  /** Fixed at the claim: the complete-once trigger holds these three against later edits. */
+  reason?: string;
+  summaryJson?: string;
+  sessionId?: string;
   inputHash: string;
   createdAt: string;
+}
+
+/**
+ * Filter for {@link SessionStore.listActivity}. Newest first, keyset-paged on
+ * `(createdAt, actionId)`: `after` is the last row of the previous page.
+ */
+export interface ListActivityFilter {
+  sessionId?: string;
+  flowId?: string;
+  actor?: UiActionActor;
+  status?: UiActionStatus;
+  /** Inclusive lower bound on `createdAt`. */
+  since?: string;
+  /** Inclusive upper bound on `createdAt`. */
+  until?: string;
+  after?: { createdAt: string; actionId: string };
+  limit?: number;
 }
 
 /** Arguments to {@link SessionStore.completeUiAction}. */
@@ -1089,6 +1144,31 @@ export interface StoredGoalTarget {
   newChapterAt?: string;
 }
 
+// --- Atomic goal target writes (VW-589) ---
+
+/** The columns {@link SessionStore.acceptGoalTarget} writes; an absent optional keeps the row's. */
+export interface GoalTargetAcceptance {
+  committedValue: number;
+  stretchValue: number;
+  acceptedBy: StoredGoalTargetAcceptedBy;
+  acknowledgedStretch: boolean;
+  anchorLoad?: number;
+  blockId?: string;
+  endsAt?: string;
+}
+
+/** The open advisory an acceptance answers, claimed in the acceptance's own transaction. */
+export interface GoalTargetOfferClaim {
+  decisionId: string;
+  answer: AdvisoryAnswer;
+  retire?: AdvisoryAnswerRetire;
+}
+
+/** `offer_answered`: another call answered the claimed offer first, and nothing was written. */
+export type GoalTargetAcceptOutcome =
+  | { kind: 'accepted'; target: StoredGoalTarget }
+  | { kind: 'offer_answered' };
+
 /** Why a `block_schedules` row was written (VW-473). */
 export const BLOCK_SCHEDULE_KINDS = [
   'planned',
@@ -1149,6 +1229,21 @@ export interface DerivedBlockSchedules<T> {
   block?: StoredTrainingBlock;
   rows: readonly AppendBlockScheduleInput[];
   result: T;
+}
+
+/** The block an import lands in, found by name, and the fields a new one is created with. */
+export interface ImportWeeksInput {
+  programId: string;
+  blockName: string;
+  blockDefaults: { notes?: string };
+  span: (existingNames: readonly string[]) => readonly string[];
+}
+
+/** The import block as written, each label's week id, and the dating row appended, if any. */
+export interface ImportWeeksResult {
+  block: StoredTrainingBlock;
+  weekIds: Map<string, string>;
+  schedule: StoredBlockSchedule | null;
 }
 
 /**
@@ -1295,6 +1390,13 @@ export interface SessionReviewRow {
   lastWorkingSetEndedAt?: string;
   /** Whether a planned exercise or workout template was attached to this session. */
   planned: boolean;
+}
+
+/** What one `setSessionKindWhere` call found and wrote, read under its own write lock. */
+export interface SessionKindWrite {
+  rows: { sessionId: string; priorKind?: SessionKind; written: boolean }[];
+  /** Set rows re-marked, across the written sessions only. */
+  setsChanged: number;
 }
 
 /**
@@ -1908,6 +2010,9 @@ export interface SessionStore extends ExerciseSetupStore {
    * re-inserting, and that delete cascades — every `session.end` re-put would
    * wipe the session's `program_assignment` links (the data-loss regression
    * fixed in #79). Update the row in place instead.
+   *
+   * On an existing row the re-put keeps the stored `lifter` and `preSessionCarbs`
+   * (VW-584): {@link patchSession} is the one path that changes them after start.
    */
   putSession(s: StoredSession): Promise<void>;
 
@@ -1926,6 +2031,9 @@ export interface SessionStore extends ExerciseSetupStore {
    * re-put on retry paths (force-end on disconnect followed by an explicit
    * re-end), and a delete-then-insert would take the set's `reps` with it on
    * any schema where that edge is declared. Upsert in place.
+   *
+   * A re-put never changes an existing row's `lifter` ({@link patchSetLifter} owns it), and
+   * one that carries no bilateral group keeps the group already stamped (VW-583).
    */
   putSet(s: StoredSet): Promise<void>;
 
@@ -1947,8 +2055,33 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined>;
 
+  /**
+   * Stamp one stored set's bilateral group and return it as it now stands, or `undefined` when
+   * no row matches. Writes the two group columns and nothing else, so the stamp can never roll
+   * back reps or a label another writer persisted (VW-583).
+   */
+  patchSetBilateralGroup(
+    setId: string,
+    groupId: string,
+    source: 'live' | 'inferred',
+  ): Promise<StoredSet | undefined>;
+
   /** Filtered/paginated session listing. */
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
+
+  /**
+   * Every session with no `ended_at`, whoever the lifter and whatever the kind (VW-856).
+   * `listSessions` narrows to the owner's training by default; the idle-close rule has to see
+   * the guest's and the unreviewed ones too.
+   */
+  listOpenSessions(): Promise<StoredSession[]>;
+
+  /**
+   * The instant of the session's last rep (VW-856): the newest idle rep, or the end of the
+   * newest set that holds a rep. `undefined` when it has neither. A MAX over the whole
+   * session, which `listIdleReps` (oldest 100 first) cannot give.
+   */
+  getLastRepAt(sessionId: string): Promise<string | undefined>;
 
   /**
    * Number of sessions matching `filter`. Same predicates as `listSessions`
@@ -1998,6 +2131,19 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number>;
 
+  /**
+   * Mark the named owner sessions `kind` in one transaction, judging each against its LIVE
+   * kind (VW-586): an unmarked row is always written, a row of the other kind only when
+   * `mayReclassify`, and a row already of `kind` never. Every named row that exists comes
+   * back with the kind it held before the write and whether this call wrote it, so a
+   * caller's counts describe the rows it actually changed.
+   */
+  setSessionKindWhere(
+    sessionIds: readonly string[],
+    kind: SessionKind,
+    opts: { mayReclassify: boolean },
+  ): Promise<SessionKindWrite>;
+
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
 
@@ -2033,12 +2179,18 @@ export interface SessionStore extends ExerciseSetupStore {
    * "I only need the session id of the last one" — `resolveBasisSession`
    * used to pull a user's ENTIRE set history for an exercise, reps
    * included, just to read `.at(-1)?.sessionId`.
+   *
+   * `excludeSessionIds` and `startedBefore` (VW-642) keep the current work out
+   * of "last time": once an open session logs a set it would otherwise be its
+   * own most recent session. `startedBefore` is exclusive, on the set's start.
    */
   getMostRecentSessionIdForExercise(filter: {
     userId: string;
     exerciseId: string;
     lifter?: string;
     kind?: SessionKindFilter;
+    excludeSessionIds?: readonly string[];
+    startedBefore?: string;
   }): Promise<string | null>;
 
   // --- Self-reports (VMCP-06.12 / B41) ---
@@ -2186,6 +2338,31 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** Upsert a week within a block. */
   putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
+  /**
+   * Upsert a block, append its dating row when one is given, and insert every week of its scaffold,
+   * in one transaction. Throws a `WEEKS_EXIST` error, writing nothing, when the block already has
+   * any week, so a retried create cannot double the weeks or leave the block edited without them.
+   */
+  scaffoldTrainingWeeks(
+    block: StoredTrainingBlock,
+    weeks: readonly StoredTrainingWeek[],
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null>;
+  /**
+   * Find or create a program's block by name and give it one week per label, in one
+   * transaction (VW-586). `span` receives the names of the weeks the block already holds and
+   * returns every label it should hold, in order; weeks are matched by name and re-ordered in
+   * place, and `weeks_count` only ever rises. `schedule` sees the block and the labels and
+   * returns the dating row to append, or null; a throw from it writes nothing at all.
+   */
+  ensureImportWeeks(
+    input: ImportWeeksInput,
+    schedule: (
+      world: readonly ScheduledBlock[],
+      block: StoredTrainingBlock,
+      labels: readonly string[],
+    ) => AppendBlockScheduleInput | null,
+  ): Promise<ImportWeeksResult>;
   /** Look up a week by id; `undefined` when no row matches. */
   getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   /** Return every week in a block, ordered by `orderIndex` ascending. */
@@ -2204,6 +2381,15 @@ export interface SessionStore extends ExerciseSetupStore {
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+  /**
+   * Read a planned exercise, run the synchronous `apply` over it and write what it returns, all
+   * under one write lock, so two patches to one row each see the other's result. A throw from
+   * `apply` rolls back and reaches the caller unchanged. `undefined` when no row matches.
+   */
+  patchPlannedExercise(
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined>;
 
   /** Fetch a planning row by its authoring key, or `undefined` when nothing carries it. */
   getWorkoutTemplateByExternalId(externalId: string): Promise<StoredWorkoutTemplate | undefined>;
@@ -2420,6 +2606,31 @@ export interface SessionStore extends ExerciseSetupStore {
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]>;
 
+  /**
+   * Record `answer` only if the advisory is still unanswered, and then retire
+   * `retire`'s target in the same transaction. `undefined` means another answer
+   * got there first (or no such row): nothing was written, the target included.
+   */
+  answerAdvisoryIfOpen(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): Promise<StoredAdvisoryDecision | undefined>;
+
+  /**
+   * Read the user's live decisions under `code`, derive what to write from them and write it,
+   * in ONE transaction (VW-588): the goal target first, then the decision, so a dedupe or an
+   * answer checked against the live rows holds at the write. `derive` is synchronous. With
+   * `whileTargetLive`, nothing is derived or written once that target or its priority is
+   * retired, and the call returns `undefined`.
+   */
+  putAdvisoryDerived<T>(
+    userId: string,
+    code: string,
+    derive: (live: readonly StoredAdvisoryDecision[]) => AdvisoryDerivation<T>,
+    options?: { whileTargetLive?: string },
+  ): Promise<AdvisoryDerived<T> | undefined>;
+
   // --- UI action audit (VW-502) ---
 
   /**
@@ -2454,6 +2665,12 @@ export interface SessionStore extends ExerciseSetupStore {
     status?: UiActionStatus;
     limit?: number;
   }): Promise<StoredUiAction[]>;
+
+  /**
+   * The activity feed's read: newest first by `(createdAt, actionId)`, filtered, and paged
+   * by `after` (the last row of the previous page). Default limit 50.
+   */
+  listActivity(filter?: ListActivityFilter): Promise<StoredUiAction[]>;
 
   // --- Priorities and goal targets (VW-349) ---
 
@@ -2491,9 +2708,13 @@ export interface SessionStore extends ExerciseSetupStore {
    *
    * Idempotent: an already-retired priority keeps its original `retiredAt`,
    * and so does an already-retired target. Returns `undefined` when no such
-   * priority exists.
+   * priority exists. `outcome` replaces `'abandoned'` on the targets this call retires.
    */
-  retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined>;
+  retirePriority(
+    id: string,
+    retiredAt: string,
+    outcome?: StoredGoalTargetOutcome,
+  ): Promise<StoredPriority | undefined>;
 
   /**
    * Upsert a derived target on its `id`, `ON CONFLICT DO UPDATE`.
@@ -2533,6 +2754,41 @@ export interface SessionStore extends ExerciseSetupStore {
    * `undefined` when no such target exists.
    */
   setGoalTargetNewChapter(id: string, at: string): Promise<StoredGoalTarget | undefined>;
+
+  // --- Atomic goal target writes (VW-589) ---
+
+  /**
+   * Accept a proposal only if it is still the one read: unaccepted, unretired and carrying
+   * `expected.derivedAt`, else throw `GOAL_TARGET_CHANGED`. `claim` answers its offer in the
+   * same transaction, so a lost claim or a changed target writes nothing, the answer included.
+   */
+  acceptGoalTarget(
+    targetId: string,
+    acceptance: GoalTargetAcceptance,
+    expected: { derivedAt: string },
+    claim?: GoalTargetOfferClaim,
+  ): Promise<GoalTargetAcceptOutcome>;
+
+  /**
+   * Read every target of a live priority, derive the rows to write from them and upsert those
+   * rows, in ONE transaction. Throws `PRIORITY_RETIRED` (or `NOT_FOUND`) before deriving, and
+   * `GOAL_TARGET_CHANGED` when a derived row names an accepted or retired target. `derive` is
+   * synchronous; a throw from it writes nothing.
+   */
+  putGoalTargetsDerived(
+    priorityId: string,
+    derive: (live: readonly StoredGoalTarget[]) => readonly StoredGoalTarget[],
+  ): Promise<StoredGoalTarget[]>;
+
+  /**
+   * Insert `chapter` and stamp the target's `newChapterAt` with the latest live chapter's
+   * `startedAt` for that exercise (a backdated chapter does not move it back), in one
+   * transaction. `undefined`, with nothing written, when no such target exists.
+   */
+  startGoalChapter(
+    targetId: string,
+    chapter: MarkExerciseChapterInput,
+  ): Promise<{ target: StoredGoalTarget; chapter: StoredExerciseChapter } | undefined>;
 
   // --- Exercise baselines (I5 / B56, VW-116) ---
 
@@ -2623,6 +2879,25 @@ export interface SessionStore extends ExerciseSetupStore {
    * curve that no longer qualifies is deleted by the rule above.
    */
   refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts>;
+
+  /**
+   * Run `fn` as one caller-owned transaction (VW-512): every store call it awaits joins as a
+   * savepoint, and all of its writes commit when `fn` resolves or roll back when it throws.
+   * Callers queue first-in first-out, one open transaction at a time. While one is open, a store
+   * call from outside its async context throws `STORE_TRANSACTION_BUSY` rather than joining it,
+   * and a nested `transaction` from inside becomes a savepoint. Nest in sequence: a second nested
+   * `transaction` opened beside one still open throws `STORE_TRANSACTION_OVERLAP`. `fn` should
+   * await only the store: a transaction that spans an event-loop turn logs a warning, and one
+   * still open after `TRANSACTION_STALL_WARN_MS` logs another.
+   *
+   * Two hazards follow from ownership, and neither is detected:
+   * - Deadlock: if `fn` awaits a promise started outside its context that itself calls
+   *   `transaction`, that call queues behind `fn`, and `fn` never resolves.
+   * - Same-turn foreign work: a foreign microtask that runs while `fn` is pending throws
+   *   `STORE_TRANSACTION_BUSY`, even within one macrotask. So never run an audited action beside
+   *   other store work in `Promise.all`; await it alone.
+   */
+  transaction<T>(fn: () => Promise<T>): Promise<T>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;

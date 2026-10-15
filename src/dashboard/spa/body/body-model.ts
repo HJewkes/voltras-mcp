@@ -2,7 +2,7 @@
  * Pure derivations behind the `#/body` wall page (VW-338, plan D1).
  *
  * Everything here is `(payload) -> view data`: no fetch, no clock, no React, so
- * the page's render test can drive it with the same JSON the three `/api/muscle-*`
+ * the page's render test can drive it with the same JSON the four `/api/muscle-*`
  * routes return. `BodyView` holds no logic beyond layout.
  *
  * ── Two muscle vocabularies meet here ─────────────────────────────────────
@@ -30,16 +30,22 @@ import type { MuscleStripMuscleData } from '@titan-design/react-ui';
 
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthView,
   MuscleWeekMuscleView,
   MuscleWeekView,
 } from '../../read-models/index.js';
+import { formatMass, type MassUnit } from '../live-page/mass.js';
 
-/** Everything the page renders, as fetched. `plan` is null with no active training week. */
+/**
+ * Everything the page renders, as fetched. `plan` is null with no active
+ * training week; `recovery` is null when its route failed.
+ */
 export interface BodyPageData {
   week: MuscleWeekView;
   strength: MuscleStrengthView;
   plan: MusclePlanView | null;
+  recovery: MuscleRecoveryView | null;
 }
 
 const MUSCLE_BY_SLUG = new Map<string, MuscleGroup>(
@@ -67,9 +73,14 @@ export function intensityOf(muscle: MuscleWeekMuscleView): number {
   return Math.min(1, muscle.sets / muscle.landmarks.mrv);
 }
 
-/** The UI status a muscle's week reads as, including the untrained case. */
+/**
+ * The UI status a muscle's week reads as, including the untrained case. Titan
+ * has no "no verdict" status, so a withheld verdict (VW-561) paints the neutral
+ * `ontrack` fill; the THIS WEEK tiles still leave it out.
+ */
 export function statusOf(muscle: MuscleWeekMuscleView): TitanVolumeStatus {
   if (muscle.sets === 0) return 'untrained';
+  if (muscle.status === null) return 'ontrack';
   return landmarkZoneToStatus(muscle.status, intensityOf(muscle));
 }
 
@@ -130,7 +141,9 @@ export interface BodyWeekSummary {
   /**
    * Muscles below their MEV, WHICH INCLUDES the ones not trained at all: zero
    * sets is below every non-zero minimum. So this can exceed `trainedMuscles`,
-   * and the tile says "below MEV" rather than "under" for that reason.
+   * and the tile says "below MEV" rather than "under" for that reason. A muscle
+   * whose verdict is withheld (null status: glutes, lats, upper back) is never
+   * counted here, trained or not.
    */
   under: number;
   over: number;
@@ -223,13 +236,20 @@ export function prRows(strength: MuscleStrengthView): PrRow[] {
   return rows.sort((a, b) => (b.e1rm ?? 0) - (a.e1rm ?? 0));
 }
 
-/** `52 lb (+3)`, or `52 lb` with no prior to beat. Never a bare number — the unit carries. */
-export function prValueText(row: PrRow): string {
+/**
+ * `52 lb (+3)`, or `52 lb` with no prior to beat. Never a bare number — the unit carries.
+ * Kilograms read in whole kg, as the Live and Check-in pages show them (VW-934).
+ */
+export function prValueText(row: PrRow, unit: MassUnit = 'lbs'): string {
   if (row.e1rm === null) return '—';
-  const value = `${round1(row.e1rm)} lb`;
+  const value = `${massNumber(row.e1rm, unit)} ${unit === 'kg' ? 'kg' : 'lb'}`;
   if (row.priorBest === null) return value;
-  const delta = round1(row.e1rm - row.priorBest);
+  const delta = massNumber(row.e1rm - row.priorBest, unit);
   return `${value} (+${delta})`;
+}
+
+function massNumber(valueLbs: number, unit: MassUnit): number {
+  return unit === 'kg' ? formatMass(valueLbs, unit).value : round1(valueLbs);
 }
 
 function round1(value: number): number {

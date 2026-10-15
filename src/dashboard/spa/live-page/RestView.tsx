@@ -30,7 +30,8 @@ import {
   type SetPurpose,
 } from './model';
 import { setFatigueState } from './fatigue-state';
-import { restBasisCaption } from './live-copy';
+import { restBasisCaption, setCountLine } from './live-copy';
+import { EffortCaption } from './ExerciseHeader';
 import { type MassUnit, formatMass } from './mass';
 import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
 import { dashboardStore } from '../store';
@@ -188,7 +189,8 @@ function nextSetInfo(model: DashboardModel): string | undefined {
   const { session } = model;
   const doneCount = activeCompletedSets(session).length;
   if (session.plannedSets !== null && doneCount < session.plannedSets) {
-    return `Next · ${session.exerciseName} · set ${doneCount + 1} of ${session.plannedSets}`;
+    const line = `Next · ${session.exerciseName} · set ${doneCount + 1} of ${session.plannedSets}`;
+    return setCountLine(line, session);
   }
   const activeIndex = session.plannedExercises.findIndex((e) => e.active);
   const next = activeIndex >= 0 ? session.plannedExercises[activeIndex + 1] : undefined;
@@ -322,6 +324,11 @@ function RecapCard({
         setStates={rows.map((row) => ({ status: 'done' as const, velocities: row.velocities }))}
         testID="recap-card-heading"
       />
+      {heading.effort !== null && (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
+          <EffortCaption effort={heading.effort} />
+        </View>
+      )}
       <View style={{ borderTopWidth: 1 }}>
         <SetTableHeader unit={heading.unit} showPrevious={false} />
         {rows.map((row, i) => (

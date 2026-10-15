@@ -8,14 +8,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { fetchPlanTree } from '../plan-api.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 let dir: string;
-let store: SqliteSessionStore;
+let store: SessionStore;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'vmcp-rest-invalid-'));
-  store = SqliteSessionStore.open(join(dir, 'plan.sqlite'));
+  store = openTestStore({ path: join(dir, 'plan.sqlite') });
   await store.putTrainingProgram({ id: 'prog', name: 'P', createdAt: '2026-09-01T00:00:00.000Z' });
   await store.putTrainingBlock({
     id: 'blk',

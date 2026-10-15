@@ -15,10 +15,10 @@ import { ExerciseService } from '../../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { FetchedPages } from '../../integrations/truecoach/client.js';
 import type { RawWorkoutsPage } from '../../integrations/truecoach/types.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import { importWeek, resolveRange } from '../truecoach-tools.js';
 import * as analytics from '@voltras/workout-analytics';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const RANGE = { from: '2026-09-07', to: '2026-09-13' };
 
@@ -41,7 +41,7 @@ function pages(...docs: RawWorkoutsPage[]): (refresh: boolean) => Promise<Fetche
 }
 
 let dir: string;
-let store: SqliteSessionStore;
+let store: SessionStore;
 let state: ServerState;
 
 async function seedProgram(): Promise<string> {
@@ -65,7 +65,7 @@ function makeState(config: Config): ServerState {
 beforeEach(async () => {
   (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(SEED_CABLE_EXERCISES);
   dir = mkdtempSync(join(tmpdir(), 'vmcp-tc-tool-'));
-  store = SqliteSessionStore.open(join(dir, 'tc.sqlite'));
+  store = openTestStore({ path: join(dir, 'tc.sqlite') });
   state = makeState(loadConfig({ HOME: dir, VOLTRA_ADAPTER: 'mock' }));
   await seedProgram();
 });
@@ -467,6 +467,38 @@ describe('truecoach.import_week dates its block (VW-479)', () => {
       code: 'SCHEDULE_OVERLAP',
       message: expect.stringContaining('Block 2 — Orientation') as unknown as string,
     });
-    expect(await store.getTrainingWeeksForBlock((await importBlock()).id)).toEqual([]);
+    const blocks = await store.getTrainingBlocksForProgram('prog-1');
+    expect(blocks.map((block) => block.name)).toEqual(['Block 2 — Orientation']);
+  });
+});
+
+// VW-586: two imports that both found no import block, or no week of a label, each minted one.
+// Run in the two variants of `store-concurrency.test.ts`: one store, and two on one file.
+describe.each([1, 2] as const)('truecoach.import_week concurrency with %i connection(s)', (n) => {
+  const W37: RawWorkoutsPage = {
+    workouts: [{ id: 31, title: 'Upper A', due: '2026-09-07' }],
+    workout_items: [{ id: 41, workout_id: 31, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W39: RawWorkoutsPage = {
+    workouts: [{ id: 32, title: 'Upper B', due: '2026-09-21' }],
+    workout_items: [{ id: 42, workout_id: 32, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const SPAN = { from: '2026-09-07', to: '2026-09-27' };
+
+  it('writes one import block and one week per label', async () => {
+    const other = n === 1 ? store : openTestStore({ path: join(dir, 'tc.sqlite') });
+    const otherState = { ...state, store: other } as ServerState;
+
+    await Promise.all([
+      importWeek(state, SPAN, { fetchPages: pages(W37, W39) }),
+      importWeek(otherState, SPAN, { fetchPages: pages(W37, W39) }),
+    ]);
+    if (other !== store) await other.close();
+
+    const blocks = await store.getTrainingBlocksForProgram('prog-1');
+    expect(blocks.map((block) => block.name)).toEqual(['TrueCoach import']);
+    const weeks = await store.getTrainingWeeksForBlock(blocks[0]!.id);
+    expect(weeks.map((week) => week.name)).toEqual(['2026-W37', '2026-W38', '2026-W39']);
+    expect(blocks[0]!.weeksCount).toBe(3);
   });
 });

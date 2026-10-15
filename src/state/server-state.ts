@@ -34,6 +34,8 @@
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
+import { closeIdleSessionsAtBoot } from './idle-session-close.js';
+import { UserFacingError } from '../errors.js';
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
 import { setCatalog } from '@voltras/workout-analytics';
@@ -50,6 +52,7 @@ import type { ResolvedWatchConfig } from '../schemas/set.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
+import { HISTORY_SEED_EXERCISES } from '../exercises/history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
@@ -63,7 +66,7 @@ import { RestTimerRegistry } from './rest-timer.js';
 import { createPassiveScanState, type PassiveScanState } from './passive-scanner.js';
 import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
-import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
+import { makeVoiceHolder, type VoiceListenerHolder } from './voice-holder.js';
 import { makeCueSettings, type CueSettings } from '../voice/cue-settings.js';
 
 /**
@@ -113,6 +116,11 @@ export interface SlotState {
    * server startup (or in test setup).
    */
   unwireBridge?: () => void;
+  /**
+   * Throws the bridge's guarded listeners caught on this slot, per event label
+   * (VW-809). Absent until the first one; `device.get_state` reports it.
+   */
+  listenerFaults?: Record<string, number>;
   /**
    * Inactivity-watchdog threshold (in ms) for the next bridge-minted
    * guided-load auto-set. Set by `device.start_guided_load` before the
@@ -179,7 +187,7 @@ export const PRIMARY_SLOT = 'primary' as const;
 export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): SlotState {
   const slot = state.slots.get(slotId);
   if (!slot) {
-    throw new Error(`Unknown slot: ${slotId}`);
+    throw new UserFacingError(`Unknown slot: ${slotId}`);
   }
   return slot;
 }
@@ -309,6 +317,12 @@ export interface ServerState {
    * invented interval is not.
    */
   lastSetEndedAtMs: Map<string, number>;
+  /**
+   * Per-slot wall-clock ms of the newest idle rep (VW-856). With `lastSetEndedAtMs` it tells a
+   * live session that is still being trained from one nobody ended. Optional so the bridge's
+   * partial test states need not carry it.
+   */
+  lastIdleRepAtMs?: Map<string, number>;
   /**
    * Per-set idle-timeout watchdog backing the trigger DSL's
    * `idle_timeout_ms` spec. Armed at `set.start` when the watch config
@@ -449,8 +463,9 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // every search returns []. `setCatalog` is global module-state inside
     // the analytics package; calling once at boot is sufficient. When the
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
-    setCatalog(SEED_CABLE_EXERCISES);
+    setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
     await refitStaleRirVelocityModels(store);
+    await closeIdleSessionsAtBoot(store);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
@@ -494,6 +509,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       timers,
       setStartDeviceSnapshots,
       lastSetEndedAtMs,
+      lastIdleRepAtMs: new Map<string, number>(),
       setWatchdog,
       restTimers,
       voice: makeVoiceHolder(),

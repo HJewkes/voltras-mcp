@@ -2,7 +2,7 @@
 // `mesoMilestone`, `weekOutcomes`, and the two block verdicts `goal_met` and
 // `beyond_goal` that outrank every pace status once earned.
 //
-// Pure shaping only: literal bands, literal readings, a caller-supplied `now`.
+// Pure shaping only: literal or derived bands, literal readings, a caller-supplied `now`.
 
 import { describe, expect, it } from 'vitest';
 
@@ -12,7 +12,7 @@ import {
   type GoalActual,
   type GoalProgressInput,
 } from '../read-models/goal-progress.js';
-import type { GoalBand, GoalBandWeek } from '../../analytics/goal-band.js';
+import { deriveGoalBand, type GoalBand, type GoalBandWeek } from '../../analytics/goal-band.js';
 import type { StoredGoalTarget, StoredPriority } from '../../store/types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -281,6 +281,7 @@ describe('a loss goal', () => {
 describe('a hold goal', () => {
   const HOLD_BAND: GoalBand = {
     ...BAND,
+    corridorPct: 1.1,
     expected: WEEKS.map((week) => ({ weekIndex: week.index, low: 178, high: 182 })),
     committedValue: 178,
     stretchValue: 182,
@@ -303,6 +304,70 @@ describe('a hold goal', () => {
     expect(mid.status).not.toBe('goal_met');
     expect(mid.mesoMilestone.state).toBe('upcoming');
     expect(ended.mesoMilestone.state).toBe('hit');
+  });
+});
+
+// A lift held through a diet phase derives as `hold` with no corridor (VW-486 S2):
+// above the band is never missed, below its low edge always is.
+describe.each([
+  ['fat-loss', { phase: 'fat-loss', weeksInPhase: 6 }],
+  ['recomposition', { phase: 'recomposition', weeksInPhase: 6 }],
+] as const)('a lift held through %s', (_phase, dietState) => {
+  const heldBand = deriveGoalBand({
+    metric: 'top_load_at_reps',
+    startValue: 170,
+    horizonWeeks: 6,
+    weeks: WEEKS,
+    tier: 'intermediate',
+    infoLevel: 'ramp',
+    dietState,
+    layoff: false,
+    matchedSessionCount: 6,
+    baselineState: 'CALIBRATED',
+    completedMesoCount: 1,
+  });
+  const heldTarget: StoredGoalTarget = {
+    ...TARGET,
+    committedValue: heldBand.committedValue,
+    stretchValue: heldBand.stretchValue,
+    bandLowPctPerWeek: heldBand.bandLowPctPerWeek,
+    bandHighPctPerWeek: heldBand.bandHighPctPerWeek,
+    dietPhaseAtDerivation: dietState.phase,
+  };
+  const [week2, week6] = [heldBand.expected[1], heldBand.expected[5]];
+
+  function heldView(actuals: GoalActual[], now = tsInWeek(3)) {
+    return buildGoalProgressView(
+      input({ target: heldTarget, band: heldBand, actuals, now, dietState }),
+    );
+  }
+
+  it('derives the one-sided hold shape', () => {
+    expect(heldBand).toMatchObject({ direction: 'hold', corridorPct: null });
+  });
+
+  it('reads a week above the band ahead and a week below it missed', () => {
+    const view = heldView([actual(1, week2.high + 5), actual(2, week2.low - 5)]);
+
+    expect(view.weekOutcomes.slice(0, 2).map((week) => week.outcome)).toEqual(['ahead', 'missed']);
+  });
+
+  it('reads a week inside the band on track', () => {
+    const view = heldView([actual(2, (week2.low + week2.high) / 2)]);
+
+    expect(view.weekOutcomes[1].outcome).toBe('on_track');
+  });
+
+  it('is hit when the block finishes above the band', () => {
+    const view = heldView([actual(6, week6.high + 10)], tsInWeek(7));
+
+    expect(view.mesoMilestone.state).toBe('hit');
+  });
+
+  it('is missed when the block finishes below the band', () => {
+    const view = heldView([actual(6, week6.low - 5)], tsInWeek(7));
+
+    expect(view.mesoMilestone.state).toBe('missed');
   });
 });
 

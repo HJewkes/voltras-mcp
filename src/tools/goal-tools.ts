@@ -23,6 +23,7 @@
 // its optimistic one, and accepting a value outside the band never moves the
 // band to match.
 
+import { UserFacingError } from '../errors.js';
 import { todayLocal } from '../analytics/training-days.js';
 import {
   contextInFrame,
@@ -55,6 +56,7 @@ import {
 import type { ServerState } from '../state/server-state.js';
 import {
   LOCAL_USER_ID,
+  type GoalTargetAcceptance,
   type StoredAdvisoryDecision,
   type StoredGoalTarget,
   type StoredPriority,
@@ -89,12 +91,14 @@ import {
 } from './goal-descriptions.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
+import { alreadyAnsweredError, lostAnswer } from './advisory-answer.js';
 import {
   checkOffer,
-  completeOffer,
   declineOfferFor,
   findOpenOffer,
   listOfferDecisions,
+  offerClaim,
+  offerInputsOf,
   offerRowIds,
   reconcileRecalibrationOffers,
   withdrawOffersFor,
@@ -113,7 +117,7 @@ const DEFAULT_HORIZON_WEEKS = 12;
 /** The reconciliation every proposal and acceptance carries (plan §1.7). */
 const COMMITTED_EDGE_RP_IDS = ['rp:rp-s10-underpromise-overdeliver-goal-setting'];
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -524,18 +528,7 @@ async function proposeTargets(
 ): Promise<ProposeTargetsResult> {
   const priority = await findPriority(state, input.priorityId);
   const preview = await previewTargets(state, priority);
-  const targets: ProposedTarget[] = [];
-  for (const leg of preview.legs) {
-    const row = await state.store.putGoalTarget(
-      toStoredTarget(
-        leg.derived,
-        preview,
-        reusableId(preview.stored, leg.selection),
-        await chapterStamp(state, leg.derived),
-      ),
-    );
-    targets.push({ targetId: row.id, acceptedBy: null, ...leg.entry });
-  }
+  const targets = await writeProposals(state, preview);
   return {
     priorityId: preview.priorityId,
     targets,
@@ -547,6 +540,38 @@ async function proposeTargets(
     recalibrationOffers: await reconcileRecalibrationOffers(state, [priority.id]),
     ...(await readUnreviewed(state.store)),
   };
+}
+
+/**
+ * The bands are derived outside the write; which legs are written, and over which row, is
+ * decided again against the live rows inside it (VW-589), so a proposal, accept or retire
+ * that landed since the preview read is never written over or duplicated.
+ */
+async function writeProposals(
+  state: ServerState,
+  preview: GoalTargetPreview,
+): Promise<ProposedTarget[]> {
+  const stamped: { leg: PreviewedLeg; newChapterAt: string | null }[] = [];
+  for (const leg of preview.legs) {
+    stamped.push({ leg, newChapterAt: await chapterStamp(state, leg.derived) });
+  }
+  const written: PreviewedLeg[] = [];
+  const rows = await state.store.putGoalTargetsDerived(preview.priorityId, (live) =>
+    stamped.flatMap(({ leg, newChapterAt }) => {
+      const blocked = blockingRow(live, leg.selection, preview.offerRows);
+      if (blocked !== null) {
+        preview.skipped.push(blocked);
+        return [];
+      }
+      written.push(leg);
+      return [toStoredTarget(leg.derived, preview, reusableId(live, leg.selection), newChapterAt)];
+    }),
+  );
+  return rows.map((row, index) => ({
+    targetId: row.id,
+    acceptedBy: null,
+    ...written[index].entry,
+  }));
 }
 
 /**
@@ -706,18 +731,44 @@ async function acceptTarget(
   const stretch = input.stretchValue ?? target.stretchValue;
   const custom = input.committedValue !== undefined || input.stretchValue !== undefined;
   const outside = assertInsideBand(target, committed, stretch, input.acknowledgeStretch === true);
-  const saved = await state.store.putGoalTarget({
-    ...target,
-    ...(await blockStampFor(state, target)),
-    committedValue: committed,
-    stretchValue: stretch,
-    ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
-    acceptedBy: custom ? 'user' : 'coach-default',
-    acknowledgedStretch: outside,
-  });
+  const saved = await writeAcceptance(
+    state,
+    target,
+    {
+      ...(await blockStampFor(state, target)),
+      committedValue: committed,
+      stretchValue: stretch,
+      ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
+      acceptedBy: custom ? 'user' : 'coach-default',
+      acknowledgedStretch: outside,
+    },
+    offer,
+  );
   if (offer === undefined) return acceptedResult(saved);
-  const supersededTargetId = await completeOffer(state, offer, saved.id);
+  const supersededTargetId = offerInputsOf(offer).targetId;
   return { ...acceptedResult(saved), recalibration: { decisionId: offer.id, supersededTargetId } };
+}
+
+/**
+ * The offer row IS the target being accepted, so the answer is claimed in the
+ * acceptance's own write: an acceptance that lost the offer writes nothing
+ * (VW-587), and a target that moved since it was read leaves the offer open (VW-589).
+ */
+async function writeAcceptance(
+  state: ServerState,
+  target: StoredGoalTarget,
+  acceptance: GoalTargetAcceptance,
+  offer: StoredAdvisoryDecision | undefined,
+): Promise<StoredGoalTarget> {
+  const written = await state.store.acceptGoalTarget(
+    target.id,
+    acceptance,
+    { derivedAt: target.derivedAt },
+    offer === undefined ? undefined : offerClaim(offer, target.id),
+  );
+  if (written.kind === 'accepted') return written.target;
+  const lost = await lostAnswer(state.store, offer as StoredAdvisoryDecision);
+  throw alreadyAnsweredError(`The recalibration offer ${target.id}`, lost.standing);
 }
 
 /**
@@ -881,6 +932,8 @@ export interface RetireGoalResult {
   cascaded: number;
   /** True when the retired row was an open recalibration offer, now recorded as declined (VW-444). */
   declinedOffer?: boolean;
+  /** Present when another call answered that offer first, so no decline was recorded (VW-587). */
+  offerAlreadyAnswered?: true;
 }
 
 async function retireGoal(
@@ -896,18 +949,13 @@ async function retireGoal(
     );
   }
   if (input.targetId !== undefined) {
-    const target = await state.store.retireGoalTarget(input.targetId, input.outcome, retiredAt);
-    if (target === undefined) throw notFound('goal target', input.targetId);
-    const declinedOffer = await declineOfferFor(state, target.id);
-    await withdrawOffersFor(state, [target.id]);
-    return { priority: null, targets: [target], cascaded: 0, declinedOffer };
+    return retireOneTarget(state, input.targetId, input.outcome, retiredAt);
   }
   const priorityId = input.priorityId as string;
-  const priority = await state.store.retirePriority(priorityId, retiredAt);
+  const priority = await state.store.retirePriority(priorityId, retiredAt, input.outcome);
   if (priority === undefined) throw notFound('priority', priorityId);
   const targets = await state.store.listGoalTargets({ priorityId }, { includeRetired: true });
   const cascaded = targets.filter((target) => target.retiredAt === retiredAt).length;
-  await applyOutcome(state, targets, input.outcome, retiredAt);
   await withdrawOffersFor(
     state,
     targets.map((target) => target.id),
@@ -915,22 +963,23 @@ async function retireGoal(
   return { priority, targets: await refreshTargets(state, priorityId), cascaded };
 }
 
-/**
- * The cascade marks its targets `'abandoned'`, which is right when the
- * priority simply went away. A caller who says the priority was MET or MISSED
- * is stating something about the work, so the targets it just retired are
- * restamped with that outcome.
- */
-async function applyOutcome(
+async function retireOneTarget(
   state: ServerState,
-  targets: readonly StoredGoalTarget[],
+  targetId: string,
   outcome: 'met' | 'missed' | 'abandoned',
   retiredAt: string,
-): Promise<void> {
-  if (outcome === 'abandoned') return;
-  for (const target of targets.filter((row) => row.retiredAt === retiredAt)) {
-    await state.store.putGoalTarget({ ...target, outcome });
-  }
+): Promise<RetireGoalResult> {
+  const target = await state.store.retireGoalTarget(targetId, outcome, retiredAt);
+  if (target === undefined) throw notFound('goal target', targetId);
+  const decline = await declineOfferFor(state, target.id);
+  await withdrawOffersFor(state, [target.id]);
+  return {
+    priority: null,
+    targets: [target],
+    cascaded: 0,
+    declinedOffer: decline?.kind === 'answered',
+    ...(decline?.kind === 'already_answered' ? { offerAlreadyAnswered: true } : {}),
+  };
 }
 
 async function refreshTargets(state: ServerState, priorityId: string): Promise<StoredGoalTarget[]> {
@@ -956,17 +1005,16 @@ async function startNewChapter(
         'A new chapter is declared per exercise; use exercise.mark_new_chapter directly.',
     );
   }
-  const chapter = await state.store.markExerciseChapter({
+  const written = await state.store.startGoalChapter(input.targetId, {
     userId: LOCAL_USER_ID,
     exerciseId: existing.exerciseId,
     startedAt: at,
     declaredAt: new Date().toISOString(),
   });
-  const target = await state.store.setGoalTargetNewChapter(input.targetId, at);
-  if (target === undefined) throw notFound('goal target', input.targetId);
+  if (written === undefined) throw notFound('goal target', input.targetId);
   return {
-    target,
-    chapterId: chapter.id,
+    target: written.target,
+    chapterId: written.chapter.id,
     note:
       'New chapter stamped. The target’s numbers are unchanged — this records that the movement ' +
       'behind them changed, so the comparable series restarts here rather than reading as a drop. ' +

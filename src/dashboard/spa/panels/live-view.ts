@@ -27,13 +27,13 @@ import {
   buildCurrentSet,
   pickRepresentativeDevice,
   repMeanVelocityMps,
-  roundMps,
   type AccumulatorState,
   type CompletedSet as StoreCompletedSet,
   type PrescriptionView,
   type Snapshot,
 } from '../adapter';
 import { type LiveModel as StoreLiveModel } from '../live-stream';
+import { armSourceLabel } from '../live-page/live-copy';
 import {
   formatRepsRange,
   isRealCompletedSet,
@@ -160,7 +160,8 @@ function mapMode(trainingMode: string | null): CompletedSet['mode'] {
 function repVelocitiesMps(reps: readonly Rep[]): number[] {
   const out: number[] = [];
   for (const rep of reps) {
-    const mps = roundMps(repMeanVelocityMps(rep));
+    // Unrounded, like the live bars: titan formats the numbers and bands on the exact loss.
+    const mps = repMeanVelocityMps(rep);
     if (mps !== null) out.push(mps);
   }
   return out;
@@ -195,6 +196,7 @@ function mapLive(
   repVelocities: number[],
   autoCreatedBy: 'guided_load' | 'idle_rep' | null,
   fatigueStop: FatigueStop,
+  armSource: string | null,
 ): LiveModel {
   return {
     velocity: live.velocity,
@@ -207,6 +209,7 @@ function mapLive(
     peakForce: live.peakForce,
     autoCreatedBy,
     fatigueStop,
+    armSource,
   };
 }
 
@@ -239,9 +242,11 @@ function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExer
   const list = prescription?.exercises;
   if (list === undefined) return [];
   return list.map((e) => ({
+    ...(e.exerciseId !== undefined && { exerciseId: e.exerciseId }),
     name: e.name,
     plannedSets: e.sets,
     targetReps: e.repsLow ?? null,
+    repsHigh: e.repsHigh ?? null,
     repsLabel: formatRepsRange(e.repsLow, e.repsHigh),
     weightLbs: e.weightLbs ?? null,
     active: e.active,
@@ -266,6 +271,24 @@ function mapRestBasis(rest: Snapshot['rest']): RestBasisModel | null {
   return { source: rest.source, intent: rest.intent, extensionSeconds: rest.extensionSeconds };
 }
 
+/** Where the prescription came from (VW-643). A view from before `source` existed is the plan's. */
+function mapPrescriptionSource(
+  prescription: PrescriptionView | null,
+): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt' | 'derivedStaleDays'> {
+  if (prescription === null) {
+    return { prescriptionSource: null, derivedFromAt: null, derivedStaleDays: null };
+  }
+  if (prescription.source !== 'derived') {
+    return { prescriptionSource: 'prescribed', derivedFromAt: null, derivedStaleDays: null };
+  }
+  return {
+    prescriptionSource: 'derived',
+    derivedFromAt: prescription.derivedFrom?.startedAt ?? null,
+    derivedStaleDays:
+      prescription.derivedFrom?.stale === true ? (prescription.derivedFrom.daysAgo ?? null) : null,
+  };
+}
+
 /** The session read-model. */
 function mapSession(
   snapshot: Snapshot,
@@ -276,15 +299,16 @@ function mapSession(
   displayUnit: MassUnit,
 ): SessionModel {
   const plannedExercises = mapPlannedExercises(prescription);
+  // VW-169: the open set's own label wins over the session default — it is
+  // who is lifting RIGHT NOW, and the default only says who the next set
+  // will be attributed to. Null (the owner) renders nothing.
+  const lifter = snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null;
   return {
     // A real training session is open when the snapshot carries one, regardless of whether its
     // exercise is named yet — lets the idle stage tell "no session" from "session, no set".
     hasSession: snapshot.session != null,
     exerciseName: resolveExerciseName(snapshot, plannedExercises),
-    // VW-169: the open set's own label wins over the session default — it is
-    // who is lifting RIGHT NOW, and the default only says who the next set
-    // will be attributed to. Null (the owner) renders nothing.
-    lifter: snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null,
+    lifter,
     // Composed template · block title (VW-43); null when no plan is attached or the
     // block can't resolve — never a fabricated title.
     title: prescription?.title ?? null,
@@ -309,12 +333,16 @@ function mapSession(
     // Null when the session carries no plan attachment at all — the view then hides the
     // set count rather than implying a one-set prescription.
     plannedSets: prescription?.sets ?? null,
+    ...mapPrescriptionSource(prescription),
     targetReps,
     // VW-275: null with no active exercise, or if neither a confirmed nor a
     // digest-seeded card resolved for it server-side.
     expectedSetupCard: snapshot.expectedSetupCard ?? null,
     // VW-290: null with no plan attached — the rail footer then stays hidden.
     sessionPace: snapshot.sessionPace ?? null,
+    targetRpe: prescription?.rpe ?? null,
+    // VW-669: the plan channel reads the owner's tier; a named lifter on the cable gets none.
+    tier: lifter === null ? (prescription?.tier ?? null) : null,
   };
 }
 
@@ -358,6 +386,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
           repVelocities,
           currentSet.autoCreatedBy,
           fatigueStopForSet(snapshot.sets.active?.watch, exerciseStopOf(snapshot)),
+          snapshot.sets.active ? armSourceLabel(snapshot.sets.active) : null,
         )
       : null,
     restElapsedMs,

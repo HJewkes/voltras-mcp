@@ -7,13 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { log } from '../../logger.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredPriority } from '../../store/types.js';
 import { registerGoalTools } from '../../tools/goal-tools.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
 import { cardChart } from '../spa/goals/goals-model.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A Wednesday, so no case depends on the weekday the suite runs. */
@@ -36,13 +37,13 @@ const GOAL_TOOLS = [
   'goal.weekly_review',
 ];
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let tools: Map<string, FakeTool>;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   tools = new Map();
   for (const name of GOAL_TOOLS) {
     const tool: FakeTool = { update: (u) => (tool.callback = u.callback) };

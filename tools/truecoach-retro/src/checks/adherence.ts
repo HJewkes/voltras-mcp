@@ -7,7 +7,12 @@ import type { Context } from '../context.js';
 import { comparisonBlock, num, pct, section, table, type Figure } from '../markdown.js';
 import { MESO_RULE } from '../meso.js';
 import { inPeriod, type Period } from '../periods.js';
-import { modalWeeklyCount, sessionsPerWeek, weeklyFrequencyByMuscle } from '../weekly.js';
+import {
+  modalWeeklyCount,
+  sessionsPerWeek,
+  weeklyDoseFrequencyByMuscle,
+  weeklyFrequencyByMuscle,
+} from '../weekly.js';
 
 const CITATION =
   'Intermediate status needs adherence to the weekly session number; years with "six months off here and there" still read as a ' +
@@ -39,21 +44,29 @@ interface FrequencyRead {
   meanWhenTrained: number;
   weeksAtTwo: number;
   weeks: number;
+  /** Dose frequency (R15) over the weeks it is above 0: a comparison, never a verdict. */
+  doseMeanWhenHit: number;
 }
 
+function meanAboveZero(values: readonly number[]): number {
+  const hit = values.filter((n) => n > 0);
+  return hit.reduce((a, b) => a + b, 0) / Math.max(hit.length, 1);
+}
+
+/** Landmark frequency per muscle (R14), with the dose frequency beside it. */
 export function frequencyReads(ctx: Context): FrequencyRead[] {
   const weeks = weeklyFrequencyByMuscle(ctx.rows, ctx.lookup);
-  const muscles = new Set([...weeks.values()].flatMap((m) => [...m.keys()]));
+  const dose = weeklyDoseFrequencyByMuscle(ctx.rows, ctx.lookup);
+  const muscles = new Set([...dose.values()].flatMap((m) => [...m.keys()]));
   return [...muscles].sort().map((muscle) => {
     const counts = [...weeks.values()].map((m) => m.get(muscle) ?? 0);
-    const trained = counts.filter((n) => n > 0);
-    const meanWhenTrained = trained.reduce((a, b) => a + b, 0) / Math.max(trained.length, 1);
     return {
       muscle,
-      weeksTrained: trained.length,
-      meanWhenTrained,
+      weeksTrained: counts.filter((n) => n > 0).length,
+      meanWhenTrained: meanAboveZero(counts),
       weeksAtTwo: counts.filter((n) => n >= 2).length,
       weeks: weeks.size,
+      doseMeanWhenHit: meanAboveZero([...dose.values()].map((m) => m.get(muscle) ?? 0)),
     };
   });
 }
@@ -64,6 +77,7 @@ function frequencyRow(read: FrequencyRead): (string | number)[] {
     read.weeksTrained,
     num(read.meanWhenTrained, 2),
     `${read.weeksAtTwo} (${pct(read.weeksAtTwo, read.weeks)})`,
+    num(read.doseMeanWhenHit, 2),
   ];
 }
 
@@ -105,7 +119,7 @@ export function adherenceSection(ctx: Context, regular: Context | null = null): 
     frequencyFinding(reads),
   ];
   const body = [
-    'A training day is a date with at least one non-warm-up row. Weeks run Monday to Sunday from the first training day to the last, empty weeks included.',
+    "A training day is a date with at least one non-warm-up row. Weeks run Monday to Sunday from the first training day to the last, empty weeks included. A day counts toward a muscle's frequency only when one of its target exercises was trained that day. The dose column counts a day 1 for a target and 0.5 for a muscle hit only through a weighted row (Pelland et al. 2025); it is not a frequency verdict.",
     '',
     table(
       [
@@ -131,6 +145,7 @@ export function adherenceSection(ctx: Context, regular: Context | null = null): 
         'weeks trained',
         'mean sessions/wk when trained',
         'weeks at 2+ sessions (of weeks with training)',
+        'mean dose sessions/wk when hit (fractional; comparison only)',
       ],
       reads.map(frequencyRow),
     ),

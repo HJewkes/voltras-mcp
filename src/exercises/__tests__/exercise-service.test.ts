@@ -12,10 +12,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const searchExercisesSpy = vi.fn();
 const getExerciseByIdSpy = vi.fn();
+const getAllExercisesSpy = vi.fn();
+const getExercisesByMuscleGroupSpy = vi.fn();
 
 vi.mock('@voltras/workout-analytics', () => ({
   searchExercises: searchExercisesSpy,
   getExerciseById: getExerciseByIdSpy,
+  getAllExercises: getAllExercisesSpy,
+  getExercisesByMuscleGroup: getExercisesByMuscleGroupSpy,
 }));
 
 // Import after vi.mock so the mock is applied.
@@ -47,7 +51,7 @@ const benchPress: CatalogEntry = {
   movementPattern: 'push',
   exerciseType: 'compound',
   equipment: [{ name: 'barbell', category: 'barbell' }],
-  cableEquivalent: false,
+  cableEquivalent: true,
   qualityScore: 95,
 };
 
@@ -58,7 +62,7 @@ const inclineBench: CatalogEntry = {
   movementPattern: 'push',
   exerciseType: 'compound',
   equipment: [{ name: 'barbell', category: 'barbell' }],
-  cableEquivalent: false,
+  cableEquivalent: true,
   qualityScore: 90,
 };
 
@@ -66,6 +70,8 @@ describe('ExerciseService', () => {
   beforeEach(() => {
     searchExercisesSpy.mockReset();
     getExerciseByIdSpy.mockReset();
+    getAllExercisesSpy.mockReset();
+    getExercisesByMuscleGroupSpy.mockReset();
   });
 
   describe('search', () => {
@@ -78,7 +84,7 @@ describe('ExerciseService', () => {
 
       expect(searchExercisesSpy).toHaveBeenCalledTimes(1);
       expect(searchExercisesSpy).toHaveBeenCalledWith('bench');
-      expect(result).toBe(expected);
+      expect(result).toEqual(expected);
     });
 
     it('passes the query verbatim to the catalog (no trimming or casing)', () => {
@@ -95,6 +101,41 @@ describe('ExerciseService', () => {
       const service = new ExerciseService();
 
       expect(service.search('xyzzy')).toEqual([]);
+    });
+  });
+
+  describe('history lifts', () => {
+    const barbellSquat: CatalogEntry = {
+      ...benchPress,
+      id: 'barbell-back-squat',
+      cableEquivalent: false,
+    };
+
+    it('leaves a non-cable entry out of search', () => {
+      searchExercisesSpy.mockReturnValue([barbellSquat, benchPress]);
+
+      expect(new ExerciseService().search('squat')).toEqual([benchPress]);
+    });
+
+    it('leaves a non-cable entry out of list', () => {
+      getAllExercisesSpy.mockReturnValue([barbellSquat, benchPress, inclineBench]);
+
+      expect(new ExerciseService().list()).toEqual([benchPress, inclineBench]);
+    });
+
+    it('leaves a non-cable entry out of byMuscleGroup', () => {
+      getExercisesByMuscleGroupSpy.mockReturnValue([barbellSquat, benchPress]);
+
+      const result = new ExerciseService().byMuscleGroup('chest');
+
+      expect(getExercisesByMuscleGroupSpy).toHaveBeenCalledWith('chest');
+      expect(result).toEqual([benchPress]);
+    });
+
+    it('still resolves a non-cable entry by id', () => {
+      getExerciseByIdSpy.mockReturnValue(barbellSquat);
+
+      expect(new ExerciseService().getById('barbell-back-squat')).toBe(barbellSquat);
     });
   });
 
@@ -141,7 +182,7 @@ describe('ExerciseService', () => {
 
       const result = service.search('bench');
 
-      expect(result).toBe(expected);
+      expect(result).toEqual(expected);
       expect(result[0]).toBe(benchPress);
       expect(result[1]).toBe(inclineBench);
     });

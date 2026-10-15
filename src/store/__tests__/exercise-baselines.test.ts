@@ -34,8 +34,9 @@ import {
   type AnchorObservation,
   type BaselineObservations,
 } from '../exercise-baselines.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const NOW = new Date('2025-06-01T00:00:00.000Z');
 
@@ -92,6 +93,7 @@ function makeSet(
     startedAt: daysAgo(3),
     endedAt: daysAgo(3),
     partial: false,
+    trainingMode: 'Weight Training',
     reps: Array.from({ length: repCount }, (_, i) => makeRep(overrides.id, i, repDurationSec)),
     ...overrides,
   };
@@ -292,7 +294,7 @@ describe('SqliteSessionStore baseline read/write', () => {
   }
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openSqliteTestStore();
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }

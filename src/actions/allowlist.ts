@@ -20,7 +20,7 @@
 // store-writing namespaces and none is a device namespace. That is a NAMESPACE
 // check, not a proof that a handler touches no device: it guards the allowlist
 // against rotting open as tools are added, and it is not a semantic guarantee.
-// The semantic claim rests on reading the four handlers, which is a review
+// The semantic claim rests on reading the handlers, which is a review
 // step, not a test.
 
 /** Risk tier, from the chat design's write-path table. */
@@ -81,7 +81,9 @@ export const ACTION_ALLOWLIST: Readonly<Record<string, ActionEntry>> = {
   'goal.weekly_review': {
     tool: 'goal.weekly_review',
     tier: 'W2',
-    why: 'Keyed by weekOf, so an answer replaces rather than duplicates.',
+    why:
+      'Keyed by weekOf. One answer per proposal: a second is refused with ' +
+      'ADVISORY_ALREADY_ANSWERED, so the screen shows the standing answer instead.',
   },
   'plan.week.skip': {
     tool: 'plan.week.skip',
@@ -92,6 +94,13 @@ export const ACTION_ALLOWLIST: Readonly<Record<string, ActionEntry>> = {
     tool: 'profile.respond_recomp_advisory',
     tier: 'W2',
     why: 'Records an answer to a standing advisory. A later answer is the correction.',
+  },
+  'session.mark_kind': {
+    tool: 'session.mark_kind',
+    tier: 'W2',
+    why:
+      'Rewrites which days count as training. The screen shows the dry run first; a range ' +
+      'also needs its matched count.',
   },
   'profile.set_diet_phase': {
     tool: 'profile.set_diet_phase',
@@ -108,7 +117,6 @@ export const DEFERRED_ACTIONS: Readonly<Record<string, string>> = {
   'goal.retire':
     'A retired proposal is never re-offered and a mistaken retry cannot be undone. It needs ' +
     'a review screen this layer does not yet have.',
-  'session.mark_kind': 'The tool does not exist yet (VW-489).',
 };
 
 /** The allowlist entry for `name`, or `undefined` when it is not allowed. */

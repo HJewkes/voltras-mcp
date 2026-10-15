@@ -41,26 +41,26 @@ read a response to have happened. Every non-GET request now passes the same
 guard (`write-guard.ts`) BEFORE route matching, so a seventh write route cannot
 be added unguarded.
 
-| # | Route | Guards | Lease |
-| --- | --- | --- | --- |
-| 1 | `POST /api/plan/programs` | loopback Host, same `Origin`, JSON body, boot token | not needed — sqlite plan write, no device I/O |
-| 2 | `POST /api/plan/programs/:id/workouts` | same | same |
-| 3 | `POST /api/plan/templates/:id/exercises` | same | same |
-| 4 | `POST /api/plan/templates/:id/reorder` | same | same |
-| 5 | `PATCH /api/plan/exercises/:id` | same | same |
-| 6 | `DELETE /api/plan/exercises/:id` | same | same |
+| #   | Route                                    | Guards                                              | Lease                                         |
+| --- | ---------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| 1   | `POST /api/plan/programs`                | loopback Host, same `Origin`, JSON body, boot token | not needed — sqlite plan write, no device I/O |
+| 2   | `POST /api/plan/programs/:id/workouts`   | same                                                | same                                          |
+| 3   | `POST /api/plan/templates/:id/exercises` | same                                                | same                                          |
+| 4   | `POST /api/plan/templates/:id/reorder`   | same                                                | same                                          |
+| 5   | `PATCH /api/plan/exercises/:id`          | same                                                | same                                          |
+| 6   | `DELETE /api/plan/exercises/:id`         | same                                                | same                                          |
 
 None of the six touches the device, so none takes the single-writer lease. A
 route that ever does must take it under the dashboard's own client id.
 
 The four checks, in the order a refusal names them:
 
-| Check | Refusal | Why |
-| --- | --- | --- |
-| `Host` is `127.0.0.1`, `localhost` or `[::1]`, port optional | 403 `foreign_host` | Origin-vs-Host alone is defeated by DNS rebinding: a hostile domain resolving to 127.0.0.1 makes the two agree |
-| `Origin` present and equal to the request's own `Host` | 403 `origin_required` / `foreign_origin` | A page cannot forge `Origin`. Comparing against `Host` survives the ephemeral-port fallback and the `127.0.0.1`/`localhost` alias |
-| `content-type` is `application/json` | 415 `unsupported_media_type` | A cross-site `<form>` post can only send the three CORS-simple types, so it can never reach a handler |
-| `x-vmcp-dashboard-token` equals this boot's token | 403 `token_required` / `stale_token` | A custom header also forces a CORS preflight the sidecar never answers, so a cross-origin fetch dies before the request is sent |
+| Check                                                        | Refusal                                  | Why                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Host` is `127.0.0.1`, `localhost` or `[::1]`, port optional | 403 `foreign_host`                       | Origin-vs-Host alone is defeated by DNS rebinding: a hostile domain resolving to 127.0.0.1 makes the two agree                    |
+| `Origin` present and equal to the request's own `Host`       | 403 `origin_required` / `foreign_origin` | A page cannot forge `Origin`. Comparing against `Host` survives the ephemeral-port fallback and the `127.0.0.1`/`localhost` alias |
+| `content-type` is `application/json`                         | 415 `unsupported_media_type`             | A cross-site `<form>` post can only send the three CORS-simple types, so it can never reach a handler                             |
+| `x-vmcp-dashboard-token` equals this boot's token            | 403 `token_required` / `stale_token`     | A custom header also forces a CORS preflight the sidecar never answers, so a cross-origin fetch dies before the request is sent   |
 
 **A missing `Origin` is refused.** Per the Fetch spec a browser always sends it
 on a non-GET request, same-origin included, so requiring it costs the SPA
@@ -143,33 +143,83 @@ the read that separates two walls.
 
 The client sends one `actionId` per SUBMIT, reused across retries.
 
-| Case | Answer | Did the handler run? |
-| --- | --- | --- |
-| New id | the result | once |
-| Same id, same input | the STORED result, `replayed: true` | no |
-| Same id, different input | 409 `action_id_reused` | no |
-| Same id, row still `pending` | 409 `indeterminate` | no |
+| Case                       | Answer                              | Did the handler run? |
+| -------------------------- | ----------------------------------- | -------------------- |
+| New id                     | the result                          | once                 |
+| Same id, same input        | the STORED result, `replayed: true` | no                   |
+| Same id, different input   | 409 `action_id_reused`              | no                   |
+| Same id, old `pending` row | 409 `indeterminate`                 | no                   |
 
 The input hash is sha256 over a key-sorted rendering taken AFTER the tool's own
 parse, so key order and absent-versus-undefined cannot split one submission
 into two.
 
-### Two steps, and the crash window
+### One transaction, and what a failed handler leaves
 
-The claim and the completion are two statements, not one transaction. They
-cannot be one: `declareDietPhase` and six other store methods open their own
-transactions and the store has no SAVEPOINT nesting, so an outer `BEGIN` around
-a handler fails outright.
+The claim, the handler and the completion run inside one `store.transaction`
+(VW-659). Every store call the handler makes joins it as a savepoint, so they
+commit together or not at all. A crash before the commit leaves no row and no
+write, and a resubmit of that id runs.
 
-Claiming FIRST is what makes this safe. The primary key refuses the second claim
-before any handler runs, so two racing submits of one id cannot both execute.
+A handler that reports an error has its writes rolled back to a savepoint taken
+before it ran, and the `error` row is still recorded. An `error` row therefore
+means nothing changed.
 
-The cost is one window: a crash between the handler's write and the completion
-leaves the row `pending`, and whether the write landed is genuinely unknown. A
-replay then answers `indeterminate`, and the SPA surfaces that as "re-read
-state, do not resubmit". **Nothing sweeps pending rows at boot** — rewriting one
-to `error` would assert an outcome nobody knows. `listUiActions({ status:
+Two submits of one id queue behind each other: the second finds the first's
+completed row and replays it. Claiming first still matters, because the primary
+key refuses a second claim from another process on the same file.
+
+A handler must await only the store. A transaction that spans an event-loop
+turn lets other work on the shared connection run while it is open, and that
+work throws rather than joining. `audited-actions-no-yield.test.ts` pins every
+allowlisted action and plan route to one turn.
+
+`pending` is unreachable now. It survives for rows written before this change,
+when a crash between the two separate steps could leave a row claimed, and a
+replay of one answers `indeterminate`, which the SPA surfaces as "re-read state,
+do not resubmit". **Nothing sweeps pending rows at boot**: rewriting one to
+`error` would assert an outcome nobody knows. `listUiActions({ status:
 'pending' })` is the read for a later surface to show them.
+
+### Marking days (VW-847)
+
+`session.mark_kind` is allowlisted at W2, so the wall can mark a day or a range
+training or test through the same handler the MCP tool runs. The action layer
+adds no rule of its own: the range guard stays in the handler, and a real
+`from`/`to` call without `expectSessions` equal to every matched session leaves
+one `error` row, `EXPECTED_SESSIONS_MISMATCH`, and changes nothing. The expected
+count is the sum of the four disjoint lists a dry run returns (`newlyClassified`,
+`reclassified`, `skippedAlreadyMarked`, `alreadyThisKind`), never
+`newlyClassified` alone. A dry run goes through the action route too and leaves
+one `ok` row. The wall sends `reclassify` on a single day only, never on a range.
+`mark-kind-actions.test.ts` pins this through `executeAction` with captured
+handlers.
+
+### The MCP door (VW-892)
+
+Every write-classified MCP tool call leaves one row, actor `coach`, surface `mcp`,
+`deviceId` the connection's client id. `TOOL_ACCESS` is the only list: the
+lease-exempt stop tools and the `mock.*` tools are recorded, read tools are not.
+`actions/mcp-audit.ts` wraps the tool after the lease guard, so it is the outermost
+layer and a lease refusal is recorded with its code (`LEASE_HELD`, and so on). A
+call that fails or is refused is recorded as `error` with the tool's own code.
+
+This door does **not** use `executeAudited`. A device handler awaits BLE and
+`timer.wait` awaits for minutes, and a transaction held across that would make
+every other store call throw. So the row is claimed `pending` before the handler
+runs and completed after, as two separate statements with no transaction between
+them. A crash mid-call leaves a truthful `pending` row, never a write with no row.
+There is no replay here: each call mints its own id.
+
+A store failure at either end is logged and never blocks the call. For
+`device.unload` and `device.exit_guided_load` that is a safety rule, and
+`mcp-audit.test.ts` pins it. The voice stop phrase bypasses tools by design and
+stays unrecorded.
+
+A row holds the summary from `actions/command-summary.ts` (device tools are
+name-only), the live session id, the outcome and the code. It never holds the
+arguments, `result_json` is always null, and `input_hash` is one constant for
+every MCP row, so nothing derived from what the caller sent is stored.
 
 ### The six plan routes
 
@@ -247,6 +297,34 @@ on the wire. If you're adding a field to the snapshot, it must already be a
 plain, human-meaningful value (a weight, a mode string, a muscle name); if you
 find yourself reaching for a raw command code or frame byte to answer a
 dashboard need, that's a signal the field belongs somewhere else.
+
+### The `/api/muscle-week` contract (VW-329, VW-561)
+
+```ts
+{
+  weekStart: string; // Monday 00:00 UTC
+  muscleMapVersion: string; // exercises/muscle-map.ts MUSCLE_MAP_VERSION
+  landmarkBasis: 'population-default';
+  muscles: Array<{
+    muscle: TitanMuscleGroup; // all 15 slugs, always
+    sets: number; // landmark read: working sets of exercises that TARGET this muscle
+    status: 'under' | 'maintenance' | 'productive' | 'over' | null; // null = no verdict (glutes, lats, upper_back)
+    landmarks: { mev: number; mav: number; mrv: number };
+    sessions: number; // UTC days with a working set of an exercise that targets this muscle
+    dose: { sets: number; sessions: number }; // dose read: weighted sets, fractional days
+    lastTrainedAt: string | null;
+  }>;
+}
+```
+
+Every per-muscle read model attributes a set through one table,
+`exercises/seed-attribution.ts`: each exercise gives each muscle a weight of 1, 0.5
+or 0 and a target flag, and the delts are split by head. `sets`, `status` and
+`sessions` read targets only (B47). `dose` adds the weights (Pelland et al. 2025)
+and counts a day that hit the muscle only through a weighted row as half a
+session; it is a comparison and is never classified against a landmark. Glutes,
+lats and upper back carry `status: null` until RP's glute and back landmarks are
+verified, and the body page paints them with the neutral fill.
 
 ### The `/api/muscle-strength` contract (VW-330)
 

@@ -11,6 +11,7 @@
 // what "cancel" reverts to. Everything that declines still reaches the model as
 // an ordinary `voice_input` plus a loud `voice_command_rejected`.
 
+import { mapSdkError } from '../errors.js';
 import {
   buildVoiceCommandAppliedPayload,
   buildVoiceCommandRejectedPayload,
@@ -165,7 +166,7 @@ async function applyWeight(
   try {
     await context.setWeight(slot.slot, plan.lbs);
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = mapSdkError(err).message;
     return reject(channels, event, 'set_failed', slot.slot, detail);
   }
   rememberUndo(undoLedger, slot, event.command.kind);

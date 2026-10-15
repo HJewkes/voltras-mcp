@@ -129,7 +129,7 @@ describe('deriveRecapPrescription — the cells behind that heading', () => {
   it('states the plan when one is attached', () => {
     expect(
       deriveRecapPrescription(sessionModel({ plannedSets: 2, plannedExercises: [planned()] }), 2),
-    ).toEqual({ sets: 2, reps: '12–15', load: 45, unit: 'lbs' });
+    ).toEqual({ sets: 2, reps: '12–15', load: 45, unit: 'lbs', effort: null });
   });
 
   it('degrades reps and load to the em-dash with no plan and no cascade weight', () => {
@@ -138,6 +138,7 @@ describe('deriveRecapPrescription — the cells behind that heading', () => {
       reps: '—',
       load: '—',
       unit: 'lbs',
+      effort: null,
     });
   });
 
@@ -159,6 +160,7 @@ describe('deriveRecapPrescription — the cells behind that heading', () => {
       reps: '—',
       load: 45,
       unit: 'kg',
+      effort: null,
     });
   });
 });

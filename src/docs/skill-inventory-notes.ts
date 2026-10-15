@@ -330,7 +330,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'session.get': {
     job: 'record',
     when: 'One session in full',
-    rule: 'Carries `sessionPace` when a plan is attached: an estimate, never a measurement',
+    rule: 'Carries `sessionPace` when a plan is attached: an estimate, never a measurement. Its `state` and `slipMinutes` come from time alone; a finished session reports its final verdict',
   },
   'session.review_list': {
     job: 'record',
@@ -387,7 +387,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.next_workout': {
     job: 'planRead',
     when: '"What do I do today?"',
-    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes',
+    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes. Every shape carries `reEntry`: `phase` and `daysSinceLastTrainingDay`; in a break or the window after one it adds `band` (short, medium, long), `windowEndsOn` and the `rule` with its `source`. State the days and the band in one sentence; it reads only and changes no prescription',
   },
   'plan.block.planning_brief': {
     job: 'planRead',
@@ -509,7 +509,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.suggest_progression': {
     job: 'planSuggest',
     when: '"What next time?"',
-    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta',
+    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta. When `lastTime` is stale, use the `loadLbs` in `reEntry` (none after a long break: use the starting prescription) and say the days',
   },
   'plan.warmup_ramp': {
     job: 'planSuggest',

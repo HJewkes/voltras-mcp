@@ -12,6 +12,7 @@
 
 import { resolveTargetTempo } from '../tempo-defaults.js';
 import type { PlanGoalKind, StoredPlannedExercise } from '../../store/types.js';
+import type { Tier, TierConfidence, TierSource } from '../../tools/tier-signal.js';
 
 /** Narrow catalog lookup this module needs — name + movement pattern, nothing else. */
 export type ExerciseCatalogLookup = {
@@ -23,6 +24,8 @@ export type ExerciseCatalogLookup = {
  * client's `PlannedExerciseView` in `spa/adapter.ts` — the two must stay identical.
  */
 export interface PlannedExerciseView {
+  /** The catalog exercise id, so a consumer can match a pace suggestion to its row. */
+  exerciseId: string;
   /** Display name, or the exercise id when the catalog carries no name. Never invented. */
   name: string;
   /** 0-based position within the workout template. */
@@ -36,8 +39,22 @@ export interface PlannedExerciseView {
   active: boolean;
 }
 
-/** Prescribed targets for the active exercise, from its attached plan template. */
+/** The lifter's tier signal as the wall reads it (VW-668). Mirrors `TierView` in `spa/adapter.ts`. */
+export interface TierView {
+  tier: Tier;
+  confidence: TierConfidence;
+  source: TierSource;
+}
+
+/** Targets for the active exercise: from its attached plan, else from last time (VW-642). */
 export interface PrescriptionView {
+  /** Where the targets come from: a plan the coach attached, or the lifter's last session of it. */
+  source: 'prescribed' | 'derived';
+  /**
+   * Only on a derived view: when the session it was derived from started, how many local
+   * days ago that was, and whether that is a break of 15+ days (VW-908).
+   */
+  derivedFrom?: { startedAt: string; daysAgo: number; stale: boolean };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;
@@ -70,6 +87,8 @@ export interface PrescriptionView {
    * resolve the full template → week → block chain (each hop optional, never invented).
    */
   title?: string;
+  /** The lifter's tier signal (VW-668). Absent when the tier read failed or was not given. */
+  tier?: TierView;
 }
 
 /** Everything `buildSessionPlanView` needs, already resolved out of the store. */
@@ -82,6 +101,8 @@ export interface SessionPlanRows {
   planned: readonly StoredPlannedExercise[];
   /** Composed via `composeSessionTitle` from the resolved template → week → block chain. */
   title: string | null;
+  /** The tier signal, read by the caller; absent when that read failed. */
+  tier?: TierView;
 }
 
 /**
@@ -94,7 +115,7 @@ export function buildSessionPlanView(
   catalog: ExerciseCatalogLookup | undefined,
 ): PrescriptionView {
   const { match, planned, activeExerciseId, title } = rows;
-  const prescription: PrescriptionView = { sets: match.targetSets };
+  const prescription: PrescriptionView = { source: 'prescribed', sets: match.targetSets };
   if (match.targetRepsLow !== undefined) prescription.repsLow = match.targetRepsLow;
   if (match.targetRepsHigh !== undefined) prescription.repsHigh = match.targetRepsHigh;
   if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
@@ -120,6 +141,7 @@ export function buildSessionPlanView(
   if (tempo !== null) prescription.tempo = tempo;
   prescription.exercises = buildPlannedExerciseList(planned, activeExerciseId, catalog);
   if (title !== null) prescription.title = title;
+  if (rows.tier !== undefined) prescription.tier = rows.tier;
   return prescription;
 }
 
@@ -138,6 +160,7 @@ export function buildPlannedExerciseList(
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .map((p) => {
       const entry: PlannedExerciseView = {
+        exerciseId: p.exerciseId,
         name: catalog?.getById(p.exerciseId)?.name ?? p.exerciseId,
         order: p.orderIndex,
         sets: p.targetSets,

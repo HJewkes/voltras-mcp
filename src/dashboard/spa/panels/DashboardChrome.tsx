@@ -15,7 +15,8 @@
  * The rail is deliberately narrowed to the routes that EXIST. `defaultNavItems`
  * ships four categories (Live · Review · Plan · Body); a nav button that does
  * nothing is worse chrome than no button, so an item appears only once its
- * route is in {@link NAV_ROUTES}. `body` joined them with VW-338.
+ * route is in {@link NAV_ROUTES}. `body` joined them with VW-338; `goals`, which
+ * titan's categories do not carry, joined with VW-845 on titan's target glyph.
  *
  * Chrome inputs (devices, session state) are read from the store here rather
  * than passed down, so a route that knows nothing about BLE still renders a
@@ -23,23 +24,50 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
-import { DashboardShell, defaultNavItems, type SessionState } from '@titan-design/react-ui';
+import {
+  DashboardShell,
+  ScaleIcon,
+  TargetIcon,
+  workoutNavItems,
+  type SessionState,
+  type SideNavItem,
+} from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { routeHash, type Route } from '../routing';
+import { PAGE_PADDING } from '../planner/PlanBuilderPage';
 import { PinnedLiveStripSlot } from './PinnedLiveStripSlot';
 
-/** Nav key ⇄ route. The nav rail renders exactly these, in this order. */
-const NAV_ROUTES: Record<string, Route> = {
+/**
+ * Nav key ⇄ route. The nav rail renders exactly these, in this order: what is
+ * happening, what happened, the plan, the goals that plan serves, the weekly check-in, then the body.
+ */
+export const NAV_ROUTES: Record<string, Route> = {
   live: { name: 'live' },
-  program: { name: 'plan' },
   review: { name: 'summary', sessionId: 'latest' },
+  program: { name: 'plan' },
+  goals: { name: 'goals' },
+  checkin: { name: 'checkin' },
   body: { name: 'body' },
 };
 
-/** titan's default categories, filtered to the ones that route somewhere. */
-const NAV_ITEMS = defaultNavItems.filter((item) => item.key in NAV_ROUTES);
+const GOALS_NAV_ITEM: SideNavItem = {
+  key: 'goals',
+  label: 'Goals',
+  icon: <TargetIcon size={20} color="currentColor" />,
+};
+
+const CHECKIN_NAV_ITEM: SideNavItem = {
+  key: 'checkin',
+  label: 'Check-in',
+  icon: <ScaleIcon size={20} color="currentColor" />,
+};
+
+/** titan's categories plus Goals and Check-in, keyed and ordered by {@link NAV_ROUTES}. */
+const NAV_ITEMS = Object.keys(NAV_ROUTES).flatMap((key) =>
+  [...workoutNavItems, GOALS_NAV_ITEM, CHECKIN_NAV_ITEM].filter((item) => item.key === key),
+);
 
 /** The nav key a route highlights. Inverse of {@link NAV_ROUTES}. */
 export function navKeyForRoute(route: Route): string {
@@ -53,9 +81,9 @@ export function navKeyForRoute(route: Route): string {
     case 'body':
       return 'body';
     case 'goals':
-      // No rail entry yet (`NAV_ITEMS` has no `goals` key) — the route is reached
-      // by URL only, same as `#/goals` itself; this key simply matches nothing.
       return 'goals';
+    case 'checkin':
+      return 'checkin';
   }
 }
 
@@ -105,6 +133,11 @@ function useNavSelectedShim(activeKey: string): React.RefObject<HTMLDivElement> 
   return ref;
 }
 
+/** Inset on the page gutter, the same as the live strip, so both pinned rows line up. */
+function PinnedHeader({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return <div style={{ padding: `${PAGE_PADDING}px ${PAGE_PADDING}px 0` }}>{children}</div>;
+}
+
 /**
  * Shell chrome around a route's content.
  *
@@ -112,10 +145,14 @@ function useNavSelectedShim(activeKey: string): React.RefObject<HTMLDivElement> 
  * exactly one screen and must never scroll, while the operator surfaces are
  * documents. Both keep the same rail, so a wall that someone walks up to can
  * still reach the plan.
+ *
+ * `header` pins above the live strip on a scrolling route (VW-654): the page
+ * says what it is about first, then the strip flags the running set.
  */
 export function DashboardChrome(props: {
   route: Route;
   scroll?: boolean;
+  header?: React.ReactNode;
   children: React.ReactNode;
 }): React.JSX.Element {
   const snapshot = useStore(dashboardStore, (s) => s.snapshot);
@@ -146,6 +183,7 @@ export function DashboardChrome(props: {
       >
         {props.scroll === true ? (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {props.header != null && <PinnedHeader>{props.header}</PinnedHeader>}
             <PinnedLiveStripSlot route={props.route} />
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
               {props.children}

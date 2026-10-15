@@ -61,6 +61,7 @@ import {
   type StoredSide,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { targetMusclesOf } from './metrics-tools.js';
 
 const DEFAULT_LOOKBACK_WEEKS = 8;
 const DEFAULT_LIMIT = 20;
@@ -93,7 +94,7 @@ const PROGRESSION_GET_DESCRIPTION =
   'the same nominal load at a different anchor height is a different joint torque (Keogh, Lake & ' +
   'Swinton 2013). On that verdict do NOT read the left/right load difference as an imbalance — ' +
   "relay `sideSplit.setupReason` and `sideSplit.setupSignatures` (both sides' travel medians) " +
-  'instead. `setup_unverified` means neither side recorded travel, so the check never ran. ' +
+  'instead. `setup_unverified` means at least one side recorded no travel, so the check never ran. ' +
   '`setupCard` (VW-275) is a SEPARATE gate on the DECLARED setup: it compares the most recent ' +
   "session's confirmed card (anchor/mountHole/cableLengthSetting/mode) against the exercise's " +
   'reference card — the most recently confirmed one, or a digest-seeded default when nothing has ' +
@@ -351,7 +352,8 @@ async function pickProgressionBasis(
  * VW-211: wires the comparability v2 subject fields' store reads to this
  * server's store and exercise catalog — same wiring as
  * `metrics-tools.ts`'s `comparabilitySubjectFetchers`, duplicated rather than
- * shared so this file's store access stays self-contained.
+ * shared so this file's store access stays self-contained. The muscle lookup
+ * is the one shared piece, so both tools corroborate on the same target slugs.
  */
 function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectFetchers {
   return {
@@ -367,7 +369,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
       (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
         (s) => s.exerciseId,
       ),
-    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    targetMusclesOf: (exerciseId) => targetMusclesOf(state, exerciseId),
     getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
     getChapterStartedAt: (exerciseId) => state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
   };

@@ -11,7 +11,8 @@
 //   - VMCP_REP_UNRACK_DROP             — 'on' | 'off', default 'off'.
 //   - VMCP_REP_ECC_TRUNCATE            — 'on' | 'off', default 'on'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
-//   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
+//   - VMCP_CUES_MIDSET                 — 'on' | 'off' | 'risk', default 'off'.
+//   - VMCP_CUE_DELIVERY                — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
@@ -24,7 +25,7 @@
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
 // VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE,
-// VMCP_AUTO_ARM, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
+// VMCP_AUTO_ARM, VMCP_CUE_DELIVERY, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
 // failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
 // on the same terms.
 
@@ -132,8 +133,23 @@ export type CuesMode = 'off' | 'on';
  *     other physical backstop is present, or for supervised/controlled
  *     sets (e.g. filming) where the bounded per-cue mute window is
  *     acceptable.
+ *   - `'risk'` — mid-set lines speak only through the cue-delivery layer,
+ *     and only on a set whose pinned set-risk reading is green (VW-614).
+ *     The legacy cue tee treats it as `'off'`, so with
+ *     `VMCP_CUE_DELIVERY='off'` nothing speaks mid-set.
  */
-export type CuesMidSetMode = 'off' | 'on';
+export type CuesMidSetMode = 'off' | 'on' | 'risk';
+
+/**
+ * Which layer speaks the deterministic cues (VW-140 plan slice S6).
+ *   - `'off'` (DEFAULT) — the legacy cue tee: one templated line per category
+ *     per set, gated by `VMCP_CUES` and `VMCP_CUES_MIDSET` as before.
+ *   - `'on'` — the cue-delivery layer instead: per-interval budgets by tier,
+ *     one persistent technique focus, and a tone gate on measured decay. The
+ *     legacy tee is not installed, so no line is spoken twice. The same two
+ *     switches still gate it, and the tier only ever removes lines.
+ */
+export type CueDeliveryMode = 'off' | 'on';
 
 /**
  * Whether the bridge opens a set on its own when an idle-arm rep lands while
@@ -218,6 +234,7 @@ export interface Config {
   readonly repEccentricTruncate: RepEccentricTruncateMode;
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
+  readonly cueDelivery: CueDeliveryMode;
   readonly autoArm: AutoArmMode;
   readonly effortCue: EffortCueMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
@@ -279,8 +296,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid VMCP_CUES="${cues}". Must be "off" or "on".`);
   }
   const cuesMidSet = env.VMCP_CUES_MIDSET ?? 'off';
-  if (cuesMidSet !== 'off' && cuesMidSet !== 'on') {
-    throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off" or "on".`);
+  if (cuesMidSet !== 'off' && cuesMidSet !== 'on' && cuesMidSet !== 'risk') {
+    throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off", "on" or "risk".`);
   }
   const autoArm = env.VMCP_AUTO_ARM ?? 'on';
   if (autoArm !== 'off' && autoArm !== 'on') {
@@ -296,6 +313,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `Invalid VMCP_TRUECOACH_SUBMIT_ON_END="${trueCoachSubmitOnEnd}". Must be "off" or "on".`,
     );
   }
+  const cueDelivery = onOffFlag(env.VMCP_CUE_DELIVERY, 'VMCP_CUE_DELIVERY', 'off');
   const effortCue = onOffFlag(env.VOLTRAS_EFFORT_CUE, 'VOLTRAS_EFFORT_CUE', 'off');
   const mountRatingLbs = parseMountRatingLbs(env.VMCP_MOUNT_RATING_LBS);
   // HOME is normally set on every supported platform but is typed as
@@ -312,6 +330,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     repEccentricTruncate,
     cues,
     cuesMidSet,
+    cueDelivery,
     autoArm,
     effortCue,
     trueCoachOutbox,

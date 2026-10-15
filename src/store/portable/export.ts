@@ -1,7 +1,7 @@
 // `export`: one plain-text file per table plus a manifest (VW-534).
 //
 // The source is opened READ-ONLY and nothing here ever writes to it. The output
-// is newline-delimited JSON, one row per line, columns in schema order and rows
+// is newline-delimited JSON, one row per line, columns sorted by name and rows
 // in primary-key order, so two exports of an unchanged store are byte-identical
 // and a hash over the file means something a year from now.
 

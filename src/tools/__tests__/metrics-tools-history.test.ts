@@ -112,6 +112,9 @@ function makeState(
 ): ServerState {
   const store = {
     getSetsForExercise: vi.fn(async () => sets),
+    // VW-201: `history.trend` also reports the weekly summaries; none are asserted here.
+    listSessions: vi.fn(async () => []),
+    getSetsForSession: vi.fn(async () => []),
     // VW-150: `history.trend` reports the phase covering the plateau window.
     // Absent by default — the answer for a lifter who never declared one.
     getDietPhaseCovering: vi.fn(async (_userId: string, from: string, to: string) =>
@@ -121,7 +124,11 @@ function makeState(
     // every exercise gets until someone says the movement itself changed.
     chapterStartedAt: vi.fn(async () => chapterStartedAt),
   };
-  return { store, exercises: { getById: vi.fn(() => undefined) } } as unknown as ServerState;
+  return {
+    store,
+    exercises: { getById: vi.fn(() => undefined) },
+    config: { adapter: 'node' },
+  } as unknown as ServerState;
 }
 
 async function callTool(tools: Map<string, RegisteredHandler>, args: unknown): Promise<ToolResult> {
@@ -514,6 +521,14 @@ describe('metrics.compute — history.trend flatline (VW-452)', () => {
     const plateau = await plateauFor([100, 100.5, 101, 101.5, 102]);
 
     expect(plateau.verdict).toBe('plateau');
+  });
+
+  it('flags a stall under a quarter of the plateau step, so 0.7 lb a week at 100 lb is not flat (VW-677)', async () => {
+    const plateau = await plateauFor([100, 100.7, 101.4, 102.1, 102.8]);
+
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('none');
+    expect(plateau.flatline).toBeNull();
   });
 
   it('keeps the detector verdict for volume, which has no load step to judge by', async () => {

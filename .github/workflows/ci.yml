@@ -6,9 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to a PR branch supersedes its older run. Each push to main gets its own group (keyed by sha),
+# because a shared group would still cancel a pending run when a third queues (VW-888).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   pull-requests: read
+
+# onnxruntime-node's postinstall downloads the CUDA provider on linux/x64; CPU inference never loads it (VW-733).
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
   # Security: scan for leaked secrets
@@ -38,6 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -48,6 +60,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run changelog:check
       - run: npm run docs:check
+      - run: npm run check:nul-bytes
 
   # Unit + integration tests
   test:
@@ -58,8 +71,22 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            tools/truecoach-submit/package-lock.json
       - run: npm ci
+      - name: Confirm the onnxruntime GPU download was skipped
+        run: test ! -e node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so && echo "onnxruntime CUDA provider not downloaded"
       - run: npm test
+      - name: Test session-core
+        run: npm test --workspace @voltras/session-core
+      # Standalone package with its own lockfile; fixtures only, TRUECOACH_SMOKE stays unset so the live smoke test skips.
+      - name: Install truecoach-submit
+        run: npm ci
+        working-directory: tools/truecoach-submit
+      - name: Test truecoach-submit
+        run: npm test
+        working-directory: tools/truecoach-submit
 
   # Build verification
   build:
@@ -77,3 +104,13 @@ jobs:
           test -f dist/bin.js || (echo "dist/bin.js missing" && exit 1)
           test -f dist/server.js || (echo "dist/server.js missing" && exit 1)
           echo "Build verification passed"
+      # Context cost of tools/list and three scripted journeys against docs/token-budget.md (VW-831).
+      - run: npm run budget:check
+      # The fidelity overlay is dev tooling (VW-431): prove the production SPA carries none of it.
+      - run: npm run build:dashboard
+      - name: Fidelity overlay absent from the production SPA
+        run: node scripts/check-spa-bundle.mjs --absent dist/spa
+      # Positive control, so the absence check cannot pass vacuously.
+      - run: npm run build:dashboard:fidelity -- --outDir "$RUNNER_TEMP/spa-fidelity"
+      - name: Fidelity overlay present in the fidelity build
+        run: node scripts/check-spa-bundle.mjs --present "$RUNNER_TEMP/spa-fidelity"

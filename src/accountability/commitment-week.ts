@@ -7,7 +7,7 @@
 // is string arithmetic through `block-calendar`, which is timezone-independent.
 
 import { localDate } from '../analytics/training-days.js';
-import { addDays, isMonday } from '../plan/block-calendar.js';
+import { addDays, isMonday, mondayOf } from '../plan/block-calendar.js';
 
 /**
  * The Monday of the week a commitment declared at `instant` is for. A SUNDAY files against the
@@ -18,8 +18,5 @@ import { addDays, isMonday } from '../plan/block-calendar.js';
 export function commitmentWeekOf(instant: Date | string): string {
   const date = localDate(typeof instant === 'string' ? instant : instant.toISOString());
   const tomorrow = addDays(date, 1);
-  if (isMonday(tomorrow)) return tomorrow;
-  let cursor = date;
-  while (!isMonday(cursor)) cursor = addDays(cursor, -1);
-  return cursor;
+  return isMonday(tomorrow) ? tomorrow : mondayOf(date);
 }

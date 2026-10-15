@@ -12,11 +12,11 @@
 // clock and disables animations/transitions before every shot (VW-389), which
 // makes `dashboard-cold`, `plan-builder`, `goals` and `body-week` — the four
 // shots with no server-real-time field on the page — byte-identical across two
-// runs on ONE machine. The other four still carry a value the SERVER computed
+// runs on ONE machine. The live-page shots still carry a value the SERVER computed
 // from its own clock (a rep-shape curve's per-sample frame-decode timestamp, a
 // pace ETA, a session start/end stamp) that no client-side freeze reaches; see
 // `docs/screenshot-harness.md` for the exact split and the two-run proof, and
-// `guardLocalOverwrite` in the harness for what stops one of those four from
+// `guardLocalOverwrite` in the harness for what stops one of those from
 // being silently replaced by an ordinary local run. Font hinting, GPU
 // rasterisation and Skia antialiasing differ machine to machine on top of all
 // of that, so a byte or perceptual comparison in CI would either fail
@@ -32,6 +32,22 @@ export const CAPTURE_DIR = 'site/public/captures';
 
 /** The manifest the tests read, written next to the PNGs. */
 export const CAPTURE_MANIFEST = `${CAPTURE_DIR}/manifest.json`;
+
+/**
+ * The wall clock every shot's page sees, fixed so the header clock and any
+ * elapsed-time readout render the same text on every run. Only `Date.now()`/
+ * `new Date()` are pinned (`installShotDeterminism` in the harness) — real
+ * timers keep firing, so the 2s snapshot poll and the live SSE stream are
+ * untouched. The body scenario pins its server to the same instant.
+ */
+export const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
+
+/**
+ * Linux renders of every shot without `variesBy`, the byte baseline the CI
+ * captures check compares against: Chromium on Linux and on macOS rasterise
+ * text differently, so the published PNGs cannot be that baseline (VW-710).
+ */
+export const CAPTURE_LINUX_BASELINE_DIR = '.github/captures-linux';
 
 /**
  * 1440x900 — the smallest full-screen laptop size the wall dashboard is laid out
@@ -67,7 +83,7 @@ export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
 export const CAPTURE_DEVICE_SCALE_FACTOR = 1;
 
 /** Scenario names, each one no-hardware run. */
-export type CaptureScenarioName = 'cold' | 'planned' | 'dual' | 'goals' | 'body';
+export type CaptureScenarioName = 'cold' | 'planned' | 'fatigued' | 'dual' | 'goals' | 'body';
 
 /**
  * How a scenario is driven. `driver: null` boots `dist/bin.js` directly (nothing
@@ -108,6 +124,20 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     ],
   },
   {
+    name: 'fatigued',
+    driver: 'scripts/dashboard-plan-drive.mjs',
+    // The planned run with a longer pinned burst: ten reps carry the set's
+    // velocity loss past the 20% line, so the fatigue card leaves `Good`.
+    // Five reps (the `planned` scenario) stay under it.
+    args: [
+      '--port={port}',
+      '--control-port={controlPort}',
+      '--sets=1',
+      '--pinned-reps=10',
+      '--settle-ms=8000',
+    ],
+  },
+  {
     name: 'dual',
     driver: 'scripts/dashboard-mock-drive.mjs',
     // Asymmetric on purpose: equal sides prove nothing about the diverging
@@ -136,7 +166,17 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // lift a priority, accepts the coach's proposed band, then drives a
     // working set and a heavier set that passes it — the reading the goals
     // page's PR badge and trajectory chart need (VW-389).
-    args: ['--goal=cable-chest-press', '--port={port}', '--control-port={controlPort}'],
+    // Two companion lifts at `maintain` give the page its Per-lift section, which
+    // never lists the lead (VW-467). The tricep extension lists first so its long
+    // name wraps inside the phone shot's viewport. A cut with its weigh-ins and a
+    // session commitment give the page its Whole body cards (VW-455).
+    args: [
+      '--goal=cable-chest-press',
+      '--goal-companions=cable-overhead-tricep-extension:40,cable-row:100',
+      '--goal-whole-body',
+      '--port={port}',
+      '--control-port={controlPort}',
+    ],
   },
   {
     name: 'body',
@@ -148,7 +188,9 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // and uselessly, empty. This driver seeds recorded outcomes into the store
     // instead and boots the same server; the analytics over them are real.
     driver: 'scripts/dashboard-body-seed.mjs',
-    args: [],
+    // The page prints the seeded week's date, so the server's clock is pinned
+    // to the instant the page's clock is pinned to (VW-710).
+    args: [`--clock=${CAPTURE_FIXED_TIME_ISO}`],
   },
 ];
 
@@ -231,6 +273,34 @@ export interface CaptureShot {
   readonly holdsPageOpen: boolean;
   /** Overrides {@link CAPTURE_VIEWPORT} for this shot alone. @see viewportFor */
   readonly viewport?: CaptureViewport;
+  /**
+   * A heading, matched whole and case-insensitively, that the shot scrolls to the
+   * top of the frame before capturing: a section below the fold gets its own shot
+   * without the page's lead shots losing theirs (VW-455).
+   */
+  readonly scrollTo?: string;
+  /**
+   * The server-clock or calendar value on the page that makes two runs on one
+   * machine differ. When set, a fresh capture that differs from the committed PNG
+   * keeps the committed one and the run goes on; `CAPTURES_ALLOW_LOCAL=1`
+   * replaces it. Absent means the shot repeats byte for byte, so a difference is
+   * a real change and fails the run (VW-437).
+   */
+  readonly variesBy?: string;
+  /**
+   * The length of an entrance animation timed off `Date.now()` (titan's side sheet
+   * slides in through react-native `Animated`), which the pinned clock would hold
+   * at its first frame. The harness steps the clock past it, then pins it again.
+   */
+  readonly clockDrivenAnimationMs?: number;
+  /** A test id whose box must end at the viewport's right edge: proof a side sheet is fully open. */
+  readonly flushRight?: string;
+  /**
+   * Open the route as a new document, never as a hash change from the shot before.
+   * A hash change plays an entrance the deep link mounts already finished, and the
+   * pixels it leaves depend on when Chromium redraws the scaled layer (VW-735).
+   */
+  readonly loadsFresh?: true;
 }
 
 /** The viewport a shot is taken at — its own, or the default. */
@@ -242,16 +312,20 @@ export function viewportFor(shot: CaptureShot): CaptureViewport {
  * The goals scenario's computed numbers, shared by its wall and phone shots:
  * both read the same pipeline state, so a wrong number fails both.
  */
+/**
+ * The goals scenario's whole-body numbers. The latest weigh-in is a fixed point of
+ * the seeded cut (`seedPreviewCut`), whose readings sit at fixed offsets from now.
+ */
+const WHOLE_BODY_VALUES: readonly string[] = ['196.2'];
+
 const GOALS_VALUES: readonly string[] = [
   // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
   // and the coach's own proposal. Never asserted as a raw number elsewhere,
   // so a wrong target here would pass every other shot's check.
-  'Goal 8 x 133 lb',
+  'Goal 8 x 123 lb',
   // The driven PR set as the block's best, and the gap it leaves to the goal.
   'Best 8 x 110 lb',
-  '23 lb to goal',
-  // The whole-body panel's own line for the same priority.
-  'CABLE CHEST PRESS · specialize',
+  '13 lb to goal',
 ];
 
 /**
@@ -272,6 +346,31 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     holdsPageOpen: false,
   },
   {
+    name: 'checkin',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption:
+      'The weekly check-in page on its first step, bodyweight, with the four steps above it.',
+    // The stepper needs no history: its first step is a form, so the empty store is enough.
+    waitFor: { kind: 'idle' },
+    expectText: ['Bodyweight', 'Check-in', 'Review', 'Done', 'Note (optional)', 'Next', 'Skip'],
+    // The unit is filled in from the wall's display-unit setting, lbs when none is stored.
+    expectValues: ['Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
+    name: 'checkin-phone',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption: 'The weekly check-in page at phone width, one step at a time.',
+    waitFor: { kind: 'idle' },
+    viewport: PHONE_VIEWPORT,
+    // At phone width the stepper collapses to a step count.
+    expectText: ['Bodyweight', 'Note (optional)', 'Next', 'Skip'],
+    expectValues: ['Step 1 of 4', 'Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
     name: 'live-mid-set',
     scenario: 'planned',
     route: '/app',
@@ -286,13 +385,19 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '0/8 sets',
       // The velocity chart's per-rep peaks — the pipeline's own output, and the
       // reason the burst has to be pinned: these moved every run before it.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      // All five: the page draws the fifth rep a poll after the server counts
+      // it, and briefly with only its lifting half, so four passed on a page
+      // that had not caught up yet (VW-437).
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44',
       // The readout that caught this: two runs of the OLD harness disagreed
       // here (5.5 "Good" against 6.0 "Slowing") and both were green. The RPE is
       // a dash: withheld until a trusted fitted profile exists (VW-485).
       'FATIGUE — RPE Good',
+      // The rail's Pace tile (VW-580): no set done yet, so no slip to report.
+      'PACE on pace',
     ],
     holdsPageOpen: true,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'live-rest',
@@ -310,8 +415,11 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'SET REPS LBS RPE 1 5 140 —',
       'SET VERDICT 5 Reps 140 lbs 12%',
       'Next · Cable Chest Press · set 2 of 3',
+      // Seconds into the owed rest, far inside the two-minute pace tolerance.
+      'PACE on pace',
     ],
     holdsPageOpen: true,
+    variesBy: 'the pace ETA',
   },
   {
     name: 'session-summary',
@@ -332,6 +440,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5',
     ],
     holdsPageOpen: false,
+    variesBy: 'the session start and end stamps',
   },
   {
     name: 'plan-builder',
@@ -348,6 +457,25 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '3. Cable Chest Fly 2 × 12-15 · @ 45 lb · 60s rest',
     ],
     holdsPageOpen: false,
+  },
+  {
+    name: 'live-slowing',
+    scenario: 'fatigued',
+    route: '/app',
+    caption:
+      'The live page on a set whose velocity loss has passed the 20% line, ' +
+      'with the fatigue card reading Slowing.',
+    waitFor: { kind: 'set-open', reps: [['primary', 10]] },
+    expectText: ['Cable Chest Press', 'VELOCITY · this set', 'FATIGUE'],
+    expectValues: [
+      // Ten per-rep peaks: the last one sits 26% under the first.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37',
+      // The verdict the tour exists to show. `live-mid-set` pins `Good`.
+      'FATIGUE — RPE Slowing',
+      'PACE on pace',
+    ],
+    holdsPageOpen: true,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'live-dual-mid-set',
@@ -381,20 +509,22 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // straight off the snapshot poll, not off accumulated SSE, so a page
     // opened fresh after the predicate holds renders the same content.
     holdsPageOpen: false,
+    variesBy: 'rep-shape curve sample times',
   },
   {
     name: 'goals',
     scenario: 'goals',
     route: '/app#/goals',
     caption:
-      'The goal-coach wall page, with an accepted target and a personal record from the heavier set.',
-    // 2, not 1: the goal driver seeds one PREVIOUS-week session directly into
-    // the store before the server even opens (the reading the driven PR set
-    // has to pass), so `minSessions: 1` was satisfied at server startup,
-    // before `goal.declare_priorities` ever ran — the shot opened on an empty
-    // "No priorities declared" page every time (VW-389).
-    waitFor: { kind: 'sessions-ended', minSessions: 2 },
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+      'Seeded data, not yet available: the goal-coach wall page, with an accepted target and a personal record ' +
+      'from the heavier set.',
+    // 4: the goal driver seeds one PREVIOUS-week session per lift (the lead and
+    // its two companions) directly into the store before the server even opens,
+    // so any count up to 3 was satisfied at server startup, before
+    // `goal.declare_priorities` ever ran — the shot opened on an empty
+    // "No priorities declared" page (VW-389). The fourth is the driven session.
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'WHOLE BODY', 'Rate:'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
@@ -402,22 +532,54 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     name: 'goals-phone',
     scenario: 'goals',
     route: '/app#/goals',
-    caption: 'The goal-coach page at phone width, cards and chart stacked to one column.',
+    caption:
+      'Seeded data, not yet available: the goal-coach page at phone width, cards and chart stacked to one column.',
     // Same state as `goals` — this shot proves the phone layout (VW-356), not
     // a different read of the pipeline, so it reuses that shot's predicate
     // and content rather than re-deriving one.
-    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
     viewport: PHONE_VIEWPORT,
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'WHOLE BODY', 'Rate:'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
+  },
+  {
+    name: 'goals-whole-body',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption:
+      'Seeded data, not yet available: the Whole body cards on the goals page: the latest weigh-in against ' +
+      'this week’s band ' +
+      'during a cut, and training days in the last 28 days against the commitment.',
+    // Same run as `goals`, scrolled to the section the lead card pushes below the fold.
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    scrollTo: 'Whole body',
+    expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
+    expectValues: WHOLE_BODY_VALUES,
+    holdsPageOpen: false,
+    variesBy: 'weigh-in dates seeded relative to today',
+  },
+  {
+    name: 'goals-whole-body-phone',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption:
+      'Seeded data, not yet available: the Whole body cards at phone width, one card per row.',
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    viewport: PHONE_VIEWPORT,
+    scrollTo: 'Whole body',
+    expectText: ['WHOLE BODY', 'Rate:', 'Training days', 'MAINTAIN'],
+    expectValues: WHOLE_BODY_VALUES,
+    holdsPageOpen: false,
+    variesBy: 'weigh-in dates seeded relative to today',
   },
   {
     name: 'body-week',
     scenario: 'body',
     route: '/app#/body',
     caption:
-      "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "Seeded data, not yet available: the body page: a training week's volume per muscle, what is due next, " +
+      'and recent PRs.',
     // The seed is written before the server boots, so this holds from the first
     // poll — it is here to fail loudly if the seed ever writes fewer sessions.
     waitFor: { kind: 'sessions-ended', minSessions: 18 },
@@ -427,18 +589,45 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // The four glance tiles with their own labels: swapping two tiles' data
       // sources leaves every one of these numbers on the page, and this string
       // still fails.
-      'SETS 32 MUSCLES 7 PRODUCTIVE 1',
-      'BELOW MEV 11 OVER MRV 0',
-      // The one muscle over its MAV and the one still under its MEV, off the
-      // strip — the two ends of the status scale the figure paints.
+      'SETS 28 MUSCLES 5 PRODUCTIVE 1',
+      'BELOW MEV 9 OVER MRV 0',
+      // The one muscle over its MAV and one still under its MEV, off the strip:
+      // the two ends of the status scale the figure paints. Not lats, whose
+      // verdict is withheld (VW-561).
       'Chest 15/14',
-      'Lats 4/14',
+      'Biceps 3/10',
       // A PR the strength read model found, not one the seed declared.
       'Cable Chest Press Chest 221.7 lb (+12.7)',
       // The plan's remaining work, folded to one row per lift.
       'Cable Lat Pulldown Pull B 4 sets',
     ],
     holdsPageOpen: false,
+  },
+  {
+    name: 'body-drill',
+    scenario: 'body',
+    // The deep link opens the sheet on load, so no click step is needed (VW-713).
+    route: '/app#/body/lats',
+    caption:
+      "Seeded data, not yet available: the body page with one muscle's side sheet open: its weekly sets, " +
+      'when it was last trained, its strength and its remaining plan.',
+    waitFor: { kind: 'sessions-ended', minSessions: 18 },
+    viewport: WALL_VIEWPORT,
+    // The sheet title with its status, and the left rail the sheet leaves uncovered.
+    expectText: ['Lats on track', 'Last trained', 'STRENGTH', 'UPCOMING', 'Next up', 'Recent PRs'],
+    expectValues: [
+      'MEV 8 MRV 20 4 / 20 MRV',
+      'Cable Row 200 lb · prev 193 lb',
+      // Remaining rows only (VW-339 default), so the done count sits beside them.
+      'Sets 4 / 7',
+      'Cable Lat Pulldown 4 sets · Pull B',
+    ],
+    holdsPageOpen: false,
+    // titan's sheet slides in over 400 ms; the margin covers a late first frame.
+    clockDrivenAnimationMs: 1_000,
+    flushRight: 'body-map-detail-panel',
+    // From body-week's route, the figure's highlight would scale up on screen.
+    loadsFresh: true,
   },
 ];
 

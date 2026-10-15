@@ -60,6 +60,8 @@ class FakeActionStore {
     this.rows.set(input.actionId, next);
     return Promise.resolve(next);
   };
+
+  transaction = <T>(fn: () => Promise<T>): Promise<T> => fn();
 }
 
 interface Harness {
@@ -132,6 +134,17 @@ describe('executeAction', () => {
       expect(outcome.status).toBe(403);
     }
     expect(h.runs()).toBe(0);
+  });
+
+  it('keeps a device id in a throwing handler out of the recorded result (VW-878)', async () => {
+    const h = harness();
+    h.deps.tools.get('profile.log_bodyweight')!.handler = () => {
+      throw new Error('peripheral AA:BB:CC:DD:EE:FF vanished');
+    };
+    const outcome = await executeAction(request(), h.deps);
+    expect(outcome.body.error).toBe('HANDLER_THREW');
+    expect(JSON.stringify(outcome.body)).not.toContain('AA:BB:CC:DD:EE:FF');
+    expect(JSON.stringify([...h.store.rows.values()])).not.toContain('AA:BB:CC:DD:EE:FF');
   });
 
   it('rejects input its tool would reject, before claiming an id', async () => {

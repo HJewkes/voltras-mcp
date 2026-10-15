@@ -29,11 +29,13 @@
 // and velocity-at-load have no series behind them today, so each returns a
 // reason a surface can print rather than an empty array.
 
+import { targetMuscles } from '../exercises/muscle-attribution.js';
 import {
   isProxyMapping,
   mapCatalogMuscle,
   type TitanMuscleGroup,
 } from '../exercises/muscle-map.js';
+import { attributionOfExercise } from '../exercises/seed-attribution.js';
 import type { StoredPriorityKind, StoredPriorityLevel } from '../store/types.js';
 import type { GoalMetric } from './goal-band.js';
 
@@ -279,8 +281,9 @@ function trainsTarget(primary: string, target: string): boolean {
   return mapCatalogMuscle(primary).some((slug) => targetSlugs.includes(slug));
 }
 
+/** The slugs the lift's weekly sets land on: its target muscles, the landmark read (VW-561). */
 function primarySlugsOf(exercise: CatalogExercise): TitanMuscleGroup[] {
-  return exercise.muscleGroups.flatMap(mapCatalogMuscle);
+  return targetMuscles(attributionOfExercise(exercise));
 }
 
 /** The low edge: a top load is compared at the heaviest reps of the range. */

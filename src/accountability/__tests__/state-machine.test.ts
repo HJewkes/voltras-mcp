@@ -5,7 +5,9 @@
 // testing nothing. Dates below are real weekdays — 2026-09-13 is a Sunday.
 
 import { describe, expect, it } from 'vitest';
+import { validateSource } from '../../coach-copy/fragments.js';
 import {
+  ACCOUNTABILITY_POLICY,
   GHOST_SEND_TOTAL,
   initialAccountabilityState,
   reduceAccountability,
@@ -307,6 +309,42 @@ describe('realign ceiling', () => {
     expect(missed.state.state).toBe('realign_needed');
     expect(missed.decision.action).toBe('silent');
     expect(missed.decision.reason).toContain('without the human');
+  });
+});
+
+describe('where each coaching number comes from', () => {
+  it.each(Object.entries(ACCOUNTABILITY_POLICY))('%s has a valid source', (_name, entry) => {
+    expect(validateSource(entry.sourceKind, entry.sourceRef)).toEqual([]);
+  });
+
+  it('labels every number the corpus does not give as an engineering default', () => {
+    const defaults = Object.entries(ACCOUNTABILITY_POLICY)
+      .filter(([, entry]) => entry.sourceKind === 'engineering-default')
+      .map(([name]) => name);
+    expect(defaults).toEqual([
+      'firstMissRecoveryThreshold',
+      'ghostingMissThreshold',
+      'realignSustainedMesocycles',
+      'sessionCompletedClearsGhosting',
+    ]);
+  });
+
+  it('says engineering default, not guess, in every reason that rests on one', () => {
+    const firstMiss = step(fresh(), { type: 'planned_session_missed' }, MONDAY);
+    const ghosting = ghostingEntryState();
+    const cleared = step(ghosting.state, { type: 'session_completed' }, '2026-09-08T18:00:00.000Z');
+    const realign = step(
+      fresh(),
+      { type: 'deviation_trend_updated', trend: 'declining', sustainedMesocycles: 2 },
+      MONDAY,
+    );
+    const reasons = [firstMiss, ghosting, cleared, realign].map((t) => t.decision.reason);
+
+    expect(reasons[0]).toContain('N=1 is an engineering default');
+    expect(reasons[1]).toContain('N=2 is an engineering default');
+    expect(reasons[2]).toContain('an engineering default');
+    expect(reasons[3]).toContain('threshold 2 is an engineering default');
+    for (const reason of reasons) expect(reason).not.toMatch(/guess/i);
   });
 });
 

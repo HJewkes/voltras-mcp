@@ -23,6 +23,7 @@
 // Error-channel convention matches `session-tools.ts`: a thrown `ToolError`
 // with a `code` field is preserved by `mapSdkError` -> `errorResult`.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -98,8 +99,8 @@ import { cueRecordFor } from '../state/effort-cue.js';
 import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
 import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
-import { isModeRevertStillActive } from './device-handler-helpers.js';
-import { stopMotorForRest, type SetStopOutcome } from './device-exit.js';
+import { isModeRevertStillActive } from '../state/mode-revert-guard.js';
+import { stopMotorForRest, type SetStopOutcome } from '../state/device-exit.js';
 
 /**
  * The v7 capture fields stamped onto a stored set at close. A subset of
@@ -131,7 +132,7 @@ type SetCapture = Pick<
   | 'cueRecord'
 >;
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -1100,7 +1101,7 @@ export async function finalizeSet(
   });
   // Schema v7 grouping: reconcile BEFORE the first write so this side's row
   // carries its `bilateralGroupId` from the outset. The partner's row was
-  // written during its own close, so it needs a read-modify-write (below).
+  // written during its own close, so it takes a column patch (below).
   const match = state.bilateralReconciler?.record(toBilateralClose(slotId, unGrouped));
   const stored: StoredSet =
     match !== undefined
@@ -1182,7 +1183,7 @@ export async function finalizeSet(
   // channel events only — they never mutate the persisted set.
   publishWeightImpliedMismatch(stored, slotId, slotChannels);
   if (match?.divergent === true) {
-    state.channels.publish(buildBilateralDivergencePayload(match));
+    slotChannels.publish(buildBilateralDivergencePayload(match));
   }
   // VMCP-02.08 / VMCP-02.54: optionally kick off the passive rest_status
   // emission cycle. Starts AFTER the set_ended publish so a channel-consumer
@@ -1283,10 +1284,8 @@ function toBilateralClose(slotId: string, stored: StoredSet): BilateralSetClose 
 
 /**
  * Stamp the shared group id onto the partner side, whose row was already
- * persisted during its own close. Safe to re-put: `putSet` upserts via
- * `ON CONFLICT(id) DO UPDATE`, so the set's FK children survive — but it does
- * replace the rep array by design, which is why the reps read back are written
- * straight through unchanged.
+ * persisted during its own close. A column patch, so a rep write or a relabel
+ * that reached the partner row first survives the stamp (VW-583).
  *
  * Never rethrows: persisting the user's work is the store's primary job, and a
  * failed back-stamp must not fail the close that is happening now. A missing
@@ -1298,12 +1297,10 @@ async function stampPartnerGroup(
   groupId: string,
 ): Promise<void> {
   try {
-    const partner = await state.store.getSet(partnerSetId);
+    const partner = await state.store.patchSetBilateralGroup(partnerSetId, groupId, 'live');
     if (partner === undefined) {
       log.warn(`bilateral grouping: partner set ${partnerSetId} not found, group left one-sided`);
-      return;
     }
-    await state.store.putSet({ ...partner, bilateralGroupId: groupId, groupSource: 'live' });
   } catch (err) {
     log.warn(`bilateral grouping: failed to stamp partner set ${partnerSetId}`, err);
   }

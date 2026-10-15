@@ -25,6 +25,7 @@
 // precisely so the outgoing holder cannot drive a device that is being
 // unloaded.
 
+import { UserFacingError } from '../errors.js';
 import { buildLeaseLostPayload } from './channel-payloads.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 
@@ -32,7 +33,7 @@ import type { ChannelPublisher } from './channel-publisher.js';
  * Thrown by {@link LeaseFence.check}. `code` is what `mapSdkError` reads, so a
  * handler that lets this propagate returns a `LEASE_LOST` tool error.
  */
-export class LeaseLostError extends Error {
+export class LeaseLostError extends UserFacingError {
   readonly code = 'LEASE_LOST';
 
   constructor(tool: string, slot: string) {

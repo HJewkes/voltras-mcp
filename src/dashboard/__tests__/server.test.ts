@@ -23,9 +23,10 @@ import {
   type DashboardServerState,
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
-import type { StoredSession, StoredSet } from '../../store/types.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import type { StoredSession, StoredSet, StoredTrainingProfile } from '../../store/types.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { LiveSignalHub } from '../../state/live-signal.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
 // Track every handle a test acquires so `afterEach` can close stragglers.
 const liveHandles: DashboardServerHandle[] = [];
@@ -117,7 +118,10 @@ function completedRecord(
  * sets have already closed on it. The template is two exercises so the pace
  * costs more than one exercise's rest.
  */
-function paceState(completed: ReturnType<typeof completedRecord>[]): DashboardServerState {
+function paceState(
+  completed: ReturnType<typeof completedRecord>[],
+  activeSet?: ActiveSet,
+): DashboardServerState {
   const session: ActiveSession = {
     sessionId: 'sess-PACE',
     startedAt: '2026-05-09T12:00:00.000Z',
@@ -133,7 +137,7 @@ function paceState(completed: ReturnType<typeof completedRecord>[]): DashboardSe
           live: {
             snapshotDevice: () => ({ connected: true }),
             snapshotSession: () => session,
-            snapshotSet: () => undefined,
+            snapshotSet: () => activeSet,
             snapshotCompletedSets: () => completed,
           },
         },
@@ -378,7 +382,7 @@ describe('GET /api/snapshot', () => {
   // so this test wires the REAL `SqliteSessionStore` in as `state.store`, exactly
   // how `src/server.ts` wires the real `ServerState.store` into the dashboard.
   it('reads a confirmed card off a real SqliteSessionStore without losing method binding', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putExerciseSetup({
       id: 'setup@1.0.0:local/cable-chest-press/both#0',
       userId: LOCAL_USER_ID,
@@ -441,6 +445,46 @@ describe('GET /api/snapshot', () => {
     const body = JSON.parse(res.body) as { sessionPace: { plannedSetsRemaining: number } | null };
     // Only `s1` counts: the warm-up and the 0-rep set leave the plan untouched.
     expect(body.sessionPace?.plannedSetsRemaining).toBe(5);
+  });
+
+  it('serves the pace state, slip and a trim suggestion for a seeded plan running late', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2026-05-09T14:00:00.000Z'));
+    try {
+      const handle = await startWithFake(
+        paceState([
+          completedRecord('s1', {
+            exerciseId: 'bench',
+            setPurpose: 'working',
+            reps: [oneRep()],
+            endedAt: '2026-05-09T12:05:00.000Z',
+          }),
+        ]),
+      );
+      const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+      const body = JSON.parse(res.body) as {
+        sessionPace: { state: string; slipMinutes: number; suggestion?: { kind: string } };
+      };
+      expect(body.sessionPace.state).toBe('behind');
+      expect(body.sessionPace.slipMinutes).toBeGreaterThan(0);
+      expect(body.sessionPace.suggestion?.kind).toBe('trim');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads a streaming first set as live, so the pace is not idle', async () => {
+    const streaming = {
+      setId: 'live-1',
+      sessionId: 'sess-PACE',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      status: 'active',
+      reps: [],
+    } as unknown as ActiveSet;
+    const handle = await startWithFake(paceState([], streaming));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { sessionPace: { state: string } };
+    expect(body.sessionPace.state).not.toBe('idle');
   });
 
   it('reports sessionPace=null when no plan is attached to the session', async () => {
@@ -591,6 +635,7 @@ describe('GET /api/history', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body) as { plan: Record<string, unknown> | null };
     expect(body.plan).toEqual({
+      source: 'prescribed',
       sets: 3,
       repsLow: 8,
       repsHigh: 10,
@@ -600,8 +645,9 @@ describe('GET /api/history', () => {
       // The full ordered planned list (VW-49). No exercise catalog here, so names fall
       // back to the raw exercise ids — a real identifier, never invented.
       exercises: [
-        { name: 'squat', order: 0, sets: 3, active: false },
+        { exerciseId: 'squat', name: 'squat', order: 0, sets: 3, active: false },
         {
+          exerciseId: 'bench',
           name: 'bench',
           order: 1,
           sets: 3,
@@ -754,9 +800,9 @@ describe('GET /api/history', () => {
     };
     // Ordered by orderIndex; active flag on 'bench'; unknown 'row' falls back to its id.
     expect(body.plan.exercises).toEqual([
-      { name: 'Back Squat', order: 0, sets: 4, active: false },
-      { name: 'Bench Press', order: 1, sets: 3, active: true },
-      { name: 'row', order: 2, sets: 3, active: false },
+      { exerciseId: 'squat', name: 'Back Squat', order: 0, sets: 4, active: false },
+      { exerciseId: 'bench', name: 'Bench Press', order: 1, sets: 3, active: true },
+      { exerciseId: 'row', name: 'row', order: 2, sets: 3, active: false },
     ]);
   });
 
@@ -944,8 +990,9 @@ describe('GET /api/history', () => {
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
     const body = JSON.parse(res.body) as { plan: Record<string, unknown> };
     expect(body.plan).toEqual({
+      source: 'prescribed',
       sets: 4,
-      exercises: [{ name: 'bench', order: 0, sets: 4, active: true }],
+      exercises: [{ exerciseId: 'bench', name: 'bench', order: 0, sets: 4, active: true }],
     });
     expect(body.plan.restSec).toBeUndefined();
   });
@@ -987,6 +1034,151 @@ describe('GET /api/history', () => {
     await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/history?limit=garbage');
     const callArgs = state.store.listSessions.mock.calls[0]?.[0] as { limit: number };
     expect(callArgs.limit).toBe(HISTORY_DEFAULT_LIMIT);
+  });
+});
+
+describe('GET /api/session-plan tier (VW-668)', () => {
+  const declaredBeginner = (): Promise<StoredTrainingProfile | undefined> =>
+    Promise.resolve({
+      userId: LOCAL_USER_ID,
+      declaredTier: 'beginner',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    });
+
+  function planStateWithoutTierStore(
+    slot: { session?: Partial<ActiveSession>; activeSet?: ActiveSet } = {},
+  ): DashboardServerState {
+    const session: ActiveSession = {
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+      ...slot.session,
+    };
+    const base = makeFakeState({ primary: { session, activeSet: slot.activeSet } });
+    return {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-tier', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+      },
+    };
+  }
+
+  function planStateWithTierStore(
+    getTrainingProfile: () => Promise<StoredTrainingProfile | undefined>,
+    slot: { session?: Partial<ActiveSession>; activeSet?: ActiveSet } = {},
+  ): DashboardServerState {
+    const base = planStateWithoutTierStore(slot);
+    return {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getTrainingProfile,
+        listTrainingDayInstants: () => Promise.resolve([]),
+        getSessionDateSpan: () => Promise.resolve({ first: null, last: null }),
+        listSessionReviewRows: () => Promise.resolve([]),
+      },
+    };
+  }
+
+  async function fetchPlan(
+    state: DashboardServerState,
+  ): Promise<{ sets: number; tier?: unknown } | null> {
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    expect(res.status).toBe(200);
+    return (JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null }).plan;
+  }
+
+  it('carries the tier signal for a declared profile', async () => {
+    const state = planStateWithTierStore(() =>
+      Promise.resolve({
+        userId: LOCAL_USER_ID,
+        declaredTier: 'beginner',
+        updatedAt: '2026-05-01T00:00:00.000Z',
+      }),
+    );
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null };
+    expect(body.plan?.tier).toEqual({
+      tier: 'beginner',
+      confidence: 'provisional',
+      source: 'declared',
+    });
+  });
+
+  it('omits the tier but keeps the prescription when the tier read throws', async () => {
+    const state = planStateWithTierStore(() => Promise.reject(new Error('profile read failed')));
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { plan: { sets: number; tier?: unknown } | null };
+    expect(body.plan?.sets).toBe(3);
+    expect(body.plan).not.toHaveProperty('tier');
+  });
+
+  it('omits the tier on a store without the tier reads', async () => {
+    const plan = await fetchPlan(planStateWithoutTierStore());
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it('returns no plan, and so no tier, when no planned exercise matches', async () => {
+    const plan = await fetchPlan(
+      planStateWithTierStore(declaredBeginner, { session: { exerciseId: 'row' } }),
+    );
+    expect(plan).toBeNull();
+  });
+
+  it("does not put the owner's tier on a guest's session", async () => {
+    const plan = await fetchPlan(
+      planStateWithTierStore(declaredBeginner, { session: { lifter: 'Guest' } }),
+    );
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it("does not put the owner's tier on a set labelled for a partner", async () => {
+    const activeSet: ActiveSet = {
+      setId: 'set-partner',
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:05.000Z',
+      reps: [],
+      status: 'active',
+      lifter: 'Partner',
+    };
+    const plan = await fetchPlan(planStateWithTierStore(declaredBeginner, { activeSet }));
+    expect(plan?.sets).toBe(3);
+    expect(plan).not.toHaveProperty('tier');
+  });
+
+  it("keeps the owner's tier while the owner's own set is open", async () => {
+    const activeSet: ActiveSet = {
+      setId: 'set-owner',
+      sessionId: 'sess-tier',
+      startedAt: '2026-05-09T12:00:05.000Z',
+      reps: [],
+      status: 'active',
+    };
+    const plan = await fetchPlan(planStateWithTierStore(declaredBeginner, { activeSet }));
+    expect(plan?.tier).toMatchObject({ tier: 'beginner', source: 'declared' });
   });
 });
 

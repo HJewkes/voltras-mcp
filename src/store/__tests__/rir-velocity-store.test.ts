@@ -11,8 +11,9 @@ import { describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
 import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSession, type StoredSet } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -90,7 +91,7 @@ function session(id: string): StoredSession {
 }
 
 async function storeWith(sets: readonly StoredSet[]): Promise<SqliteSessionStore> {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openSqliteTestStore();
   const seen = new Set<string>();
   for (const set of sets) {
     if (!seen.has(set.sessionId)) {
@@ -207,7 +208,7 @@ describe('SqliteSessionStore — RIR-velocity fit', () => {
   it('ignores sets with no failure anchor rather than guessing their reps in reserve', async () => {
     // Arrange: recorded and in the band, but never harvested, so nothing says
     // how many reps were left.
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     try {
       for (const set of threeSessions('row', DECAY)) {
         await store.putSession(session(set.sessionId));
@@ -299,7 +300,7 @@ describe('SqliteSessionStore — RIR-velocity fit', () => {
 
   it('leaves a curve stamped with the current version alone', async () => {
     // Arrange: no sets at all, so a refit would delete it.
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openSqliteTestStore();
     try {
       storeOldCurve(store, 'row', RIR_VELOCITY_MODEL_VERSION);
 

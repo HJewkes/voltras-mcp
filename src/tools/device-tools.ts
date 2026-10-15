@@ -32,6 +32,7 @@
 // accept `timeoutMs` on the input schema (per spec R11) and forward it as
 // the SDK's `timeout` field.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { DiscoveredDevice, GuidedLoadState, VoltraClient } from '@voltras/node-sdk';
@@ -71,7 +72,11 @@ import {
   getSlot,
 } from '../state/server-state.js';
 import type { ActiveSet, DeviceSnapshot, PendingDisconnectNotice } from '../state/live-state.js';
-import { MODE_REVERT_WINDOW_MS, type ModeRevertAbort } from '../state/mode-revert-guard.js';
+import {
+  isModeRevertStillActive,
+  MODE_REVERT_WINDOW_MS,
+  type ModeRevertAbort,
+} from '../state/mode-revert-guard.js';
 import type { SlotBinding } from '../state/slot-bindings.js';
 import {
   createSlot,
@@ -111,11 +116,10 @@ import {
   shouldPreflightWeightTraining,
   buildGuidedLoadTrackedFields,
   teardownBleResources,
-  isModeRevertStillActive,
-  waitForModeEcho,
 } from './device-handler-helpers.js';
+import { waitForModeEcho } from '../state/mode-echo.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
-import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from './device-exit.js';
+import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from '../state/device-exit.js';
 import {
   readBackGuidedLoadExit,
   readBackGuidedLoadTrigger,
@@ -125,7 +129,7 @@ import {
 // The exit path moved to `device-exit.ts` (VW-200) so the stop-the-machine
 // callers need not import the whole tool surface. Re-exported here because
 // every existing call site imports it from this module.
-export { unloadSlot } from './device-exit.js';
+export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -453,7 +457,7 @@ const SET_CHAINS_DESCRIPTION =
   'Set the chains contribution for one slot (0-100 lbs, integer). Chains are a MODIFIER layered on the base weight, not a mode of their own. The firmware caps chains at the current base weight, so a request above it comes back as a `setting_coerced` channel event at the capped value rather than as an error here. The ramp DIRECTION across the rep is contested (open in workout-analytics KNOWN-ISSUES) — do not tell the user which end of the range is heavier. Confirm the applied value with device.get_state (`chainSettingLbs`).';
 
 const GET_STATE_DESCRIPTION =
-  "Read one slot's current device state. Call it after EVERY setter and after every bilateral.cascade: the setters resolve on BLE-write completion rather than on a device acknowledgement, so this is the only confirmation a request actually landed. Fields are FLAT, not nested — `weightLbs`, `chainSettingLbs`, `active_mode`, `requested_mode`, `load_state`, `mode_revert_latched`. VW-156 vocabulary: SETTINGS (`weightLbs`, `chainSettingLbs`) are what the device will apply next; MODE splits into what was asked for (`requested_mode`) and what the device reports (`active_mode`); `load_state` is the mechanical state of the cable and is independent of both; the SET LIFECYCLE (session.start / set.start / set.end) is recording state this tool neither reads nor drives. `mode_revert_latched` means the device bounced back out of the requested mode. Values are the preserved last-known ones across a disconnect window rather than defaults, and a delayed drop advisory is drained into `disconnect_notice` exactly once. `connectionState: awaitingAcceptance` means a connect is waiting for the lifter to accept it on the device; `state_confirmed: false` means the device has not yet reported its settings on this connection, and setters refuse with DEVICE_STATE_UNKNOWN until it does.";
+  "Read one slot's current device state. Call it after EVERY setter and after every bilateral.cascade: the setters resolve on BLE-write completion rather than on a device acknowledgement, so this is the only confirmation a request actually landed. Fields are FLAT, not nested — `weightLbs`, `chainSettingLbs`, `active_mode`, `requested_mode`, `load_state`, `mode_revert_latched`. VW-156 vocabulary: SETTINGS (`weightLbs`, `chainSettingLbs`) are what the device will apply next; MODE splits into what was asked for (`requested_mode`) and what the device reports (`active_mode`); `load_state` is the mechanical state of the cable and is independent of both; the SET LIFECYCLE (session.start / set.start / set.end) is recording state this tool neither reads nor drives. `mode_revert_latched` means the device bounced back out of the requested mode. Values are the preserved last-known ones across a disconnect window rather than defaults, and a delayed drop advisory is drained into `disconnect_notice` exactly once. `connectionState: awaitingAcceptance` means a connect is waiting for the lifter to accept it on the device; `state_confirmed: false` means the device has not yet reported its settings on this connection, and setters refuse with DEVICE_STATE_UNKNOWN until it does. `listener_faults` appears only after a device event handler failed on this slot: a count per event name, where each failure may have dropped a rep or set event; the server log carries the error.";
 
 type Placeholders = Map<string, RegisteredTool>;
 
@@ -569,11 +573,6 @@ export function registerDeviceTools(
   //     pipeline). Capped at MAX_SLOTS.
   //   * Explicit `slot: <existing-id>`: error — disconnect first or pick
   //     another slot.
-  //
-  // Known intermediate limitation: the event bridge is only re-wired for
-  // PRIMARY_SLOT. Frames, rep boundaries, and connection events from
-  // non-primary slots are NOT yet bridged. Step 4 fans the bridge out per
-  // slot with channel-meta tagging.
   install(
     placeholders,
     'device.connect',
@@ -1555,6 +1554,9 @@ export function registerDeviceTools(
       if (disconnectNotice !== undefined) {
         response.disconnect_notice = disconnectNotice;
       }
+      if (slot.listenerFaults !== undefined) {
+        response.listener_faults = { ...slot.listenerFaults };
+      }
       return response;
     }),
     GET_STATE_DESCRIPTION,
@@ -2157,7 +2159,7 @@ function copyDefinedFields<K extends keyof DeviceSnapshot>(
  * importing the SDK's error class hierarchy directly here.
  */
 function throwSdkLike(code: string, message: string): never {
-  const err = new Error(message) as Error & { code: string };
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   throw err;
 }

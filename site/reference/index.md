@@ -10,32 +10,63 @@ is the description a client actually sees.
 **130** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
 
-| Namespace                              | Tools | Availability      |
-| -------------------------------------- | ----- | ----------------- |
-| [`device.*`](./device)                 | 24    | always registered |
-| [`bilateral.*`](./bilateral)           | 1     | always registered |
-| [`slot.*`](./slot)                     | 5     | always registered |
-| [`session.*`](./session)               | 9     | always registered |
-| [`set.*`](./set)                       | 5     | always registered |
-| [`metrics.*`](./metrics)               | 1     | always registered |
-| [`exercise.*`](./exercise)             | 5     | always registered |
-| [`timer.*`](./timer)                   | 3     | always registered |
-| [`server.*`](./server)                 | 1     | always registered |
-| [`debug.*`](./debug)                   | 6     | always registered |
-| [`system.*`](./system)                 | 7     | always registered |
-| [`progression.*`](./progression)       | 1     | always registered |
-| [`isometric.*`](./isometric)           | 3     | always registered |
-| [`plan.*`](./plan)                     | 26    | always registered |
-| [`profile.*`](./profile)               | 11    | always registered |
-| [`baselines.*`](./baselines)           | 2     | always registered |
-| [`driftguard.*`](./driftguard)         | 1     | always registered |
-| [`mrvguard.*`](./mrvguard)             | 1     | always registered |
-| [`rir_velocity.*`](./rir_velocity)     | 2     | always registered |
-| [`coaching.*`](./coaching)             | 1     | always registered |
-| [`truecoach.*`](./truecoach)           | 1     | always registered |
-| [`report.*`](./report)                 | 2     | always registered |
-| [`accountability.*`](./accountability) | 3     | always registered |
-| [`goal.*`](./goal)                     | 7     | always registered |
-| [`mock.*`](./mock)                     | 2     | mock adapter only |
+The status column uses the words defined on the [page status](/status) page. A tool
+whose status differs from its namespace is named in the same cell.
 
-See also [resources](./resources) and [push events](./push-events).
+## Device and rig
+
+| Namespace                    | Tools | Status               |
+| ---------------------------- | ----- | -------------------- |
+| [`device.*`](./device)       | 24    | available by default |
+| [`slot.*`](./slot)           | 5     | available by default |
+| [`bilateral.*`](./bilateral) | 1     | available by default |
+
+## Recording
+
+| Namespace                    | Tools | Status               |
+| ---------------------------- | ----- | -------------------- |
+| [`session.*`](./session)     | 9     | available by default |
+| [`set.*`](./set)             | 5     | available by default |
+| [`exercise.*`](./exercise)   | 5     | available by default |
+| [`timer.*`](./timer)         | 3     | available by default |
+| [`isometric.*`](./isometric) | 3     | available by default |
+
+## Analytics
+
+| Namespace                          | Tools | Status               |
+| ---------------------------------- | ----- | -------------------- |
+| [`metrics.*`](./metrics)           | 1     | available by default |
+| [`rir_velocity.*`](./rir_velocity) | 2     | available by default |
+| [`baselines.*`](./baselines)       | 2     | available by default |
+| [`driftguard.*`](./driftguard)     | 1     | available by default |
+| [`mrvguard.*`](./mrvguard)         | 1     | available by default |
+| [`progression.*`](./progression)   | 1     | available by default |
+
+## Planning and goals
+
+| Namespace                              | Tools | Status               |
+| -------------------------------------- | ----- | -------------------- |
+| [`plan.*`](./plan)                     | 26    | available by default |
+| [`goal.*`](./goal)                     | 7     | available by default |
+| [`profile.*`](./profile)               | 11    | available by default |
+| [`accountability.*`](./accountability) | 3     | available by default |
+
+## Coaching and reports
+
+| Namespace                    | Tools | Status               |
+| ---------------------------- | ----- | -------------------- |
+| [`coaching.*`](./coaching)   | 1     | available by default |
+| [`report.*`](./report)       | 2     | available by default |
+| [`truecoach.*`](./truecoach) | 1     | available by default |
+
+## Server and diagnostics
+
+| Namespace              | Tools | Status                                                                                                                                   |
+| ---------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [`server.*`](./server) | 1     | available by default                                                                                                                     |
+| [`system.*`](./system) | 7     | available by default                                                                                                                     |
+| [`debug.*`](./debug)   | 6     | available by default                                                                                                                     |
+| [`mock.*`](./mock)     | 2     | mock adapter only (`VOLTRA_ADAPTER=mock`); `mock.configure`, `mock.inject_error` are [coming soon](/roadmap#registered-but-does-nothing) |
+
+See also [resources](./resources), [push events](./push-events),
+[environment variables](./environment-variables) and [dashboard pages](./dashboard-pages).

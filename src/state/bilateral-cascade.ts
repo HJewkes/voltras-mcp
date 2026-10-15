@@ -46,7 +46,8 @@
 
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
-import { waitForModeEcho } from '../tools/device-handler-helpers.js';
+import { mapSdkError } from '../errors.js';
+import { waitForModeEcho } from './mode-echo.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { LeaseFence } from './lease-fence.js';
 import { MODE_REVERT_WINDOW_MS, type ModeRevertGuard } from './mode-revert-guard.js';
@@ -436,11 +437,6 @@ async function runSetter<TValue extends number | string>(
     if (abortOnFirstFailure) {
       abortFlag.aborted = true;
     }
-    return { ok: false, error: errorMessage(err), value };
+    return { ok: false, error: mapSdkError(err).message, value };
   }
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }

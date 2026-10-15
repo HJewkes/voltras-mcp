@@ -31,6 +31,7 @@
 //   - the explicit lists below — not rendered, and editing one is itself the
 //     review gate.
 
+import { TITAN_MUSCLE_GROUPS } from '../exercises/muscle-map.js';
 import { normalizeIdentifier } from './protocol-guard.js';
 
 /** Identifier-shaped tokens, however spelled, for vocabulary harvesting. */
@@ -162,6 +163,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'biasPct',
   'fitFor',
   'highLbs',
+  // VW-809: `device.get_state` counts bridge event handlers that failed on a slot.
+  'listener_faults',
   'lowLbs',
   'seeLbs',
   'seePct',
@@ -301,6 +304,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'elapsedMinutes',
   'plannedSetsRemaining',
   'projectedEndAt',
+  'slipMinutes',
+  'on_pace',
   'perRep',
   'pauseBottom',
   'pauseTop',
@@ -325,6 +330,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'romVsBaselinePct',
   'setsByMuscle',
   'setsByTargetMuscle',
+  // VW-661: `session.volume`'s dose read and the weight-table stamp beside it.
+  'doseSetsByMuscle',
+  'muscleMapVersion',
+  // VW-662: `history.weekly_volume`'s tonnage total, which its per-muscle parts sum to.
+  'totalVolumeLbs',
   'setsPerExercise',
   // VW-327: `profile.get_body_metrics`'s trailing 7-day bodyweight mean.
   'sevenDayMeanBodyweightLbs',
@@ -496,8 +506,14 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'decisionId',
   'declinedOffer',
   'GOAL_RECALIBRATION_WITHDRAWN',
+  // VW-587: a second answer to one advisory is refused, and `goal.retire` says so.
+  'ADVISORY_ALREADY_ANSWERED',
+  'offerAlreadyAnswered',
   // VW-459: `goal.declare_priorities` refuses a second whole-body priority for one ref.
   'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
+  // VW-589: a target that moved since it was read, and a priority retired meanwhile.
+  'GOAL_TARGET_CHANGED',
+  'PRIORITY_RETIRED',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',
@@ -518,6 +534,20 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // null whenever `silentReason` says why nothing was offered.
   'recompReAsk',
   'silentReason',
+  // VW-906: `plan.next_workout`'s read of the break since the last training day.
+  'reEntry',
+  'daysSinceLastTrainingDay',
+  'lastTrainingDay',
+  'windowEndsOn',
+  'gapDays',
+  'loadFactor',
+  'sourceKind',
+  'sourceRef',
+  // VW-907: `plan.suggest_progression`'s age of the basis session, and the load after a break.
+  'lastTime',
+  'daysAgo',
+  'stale',
+  'loadLbs',
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
@@ -562,6 +592,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'blockBoundary.realignment',
   'history.fact',
   'recompReAsk.proposal',
+  // metrics.compute result fields whose only published source was the README's
+  // tool table, which the README trim removed.
+  'baseline.driftGuard',
+  'baseline.romVsBaselinePct',
+  'directionReason',
+  'plateau.phase',
+  'rSquared',
+  'percentChange',
+  'windowDays',
+  'slopeUnit',
 ];
 
 /**
@@ -614,6 +654,7 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'checkDriftGuard',
   'checkMrvGuard',
   'classifyWeeklyVolume',
+  'VolumeLandmarks',
   'detectPlateau',
   'e1RM',
   'evaluateE1RMPr',
@@ -651,5 +692,7 @@ export function derivePublicVocabulary(sources: VocabularySources): Set<string> 
   for (const name of DOCUMENTED_RESULT_FIELDS) vocabulary.add(normalizeIdentifier(name));
   for (const name of ANALYTICS_PIPELINE_IDS) vocabulary.add(normalizeIdentifier(name));
   for (const name of EXTERNAL_NAMES) vocabulary.add(normalizeIdentifier(name));
+  // VW-661: muscle slugs are the keys `session.volume` returns.
+  for (const name of TITAN_MUSCLE_GROUPS) vocabulary.add(normalizeIdentifier(name));
   return vocabulary;
 }

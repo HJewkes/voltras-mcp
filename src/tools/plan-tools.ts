@@ -12,6 +12,7 @@
 // in `registerStartingPlaceholders`; we hot-swap the real handler via
 // `RegisteredTool.update({ callback })`.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -43,10 +44,21 @@ import {
   lintPriorityMuscleChangedMidBlock,
   lintSameMuscleHighVolumeConsecutiveDays,
   lintWeeklyVolume,
+  lintWeekWithoutOffDay,
   type LintPlanExercise,
   type PlanWarning,
 } from '../plan/lint-plan.js';
+import { lintSpecializedMuscleExercises, specializedMuscles } from '../plan/specialization.js';
+import {
+  readLastTime,
+  readReEntry,
+  staleBasisReEntry,
+  type LastTime,
+  type ReEntryResult,
+  type StaleBasisReEntry,
+} from './re-entry-read.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
+import { targetMusclesOf } from './metrics-tools.js';
 import {
   dietPhaseTolerance,
   toleranceEffect,
@@ -69,6 +81,7 @@ import { computePercentIncrement } from '../analytics/percent-increment.js';
 import {
   LOCAL_USER_ID,
   type AppendBlockScheduleInput,
+  type StoredBlockSchedule,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredSet,
@@ -81,6 +94,7 @@ import {
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
 import { todayLocal } from '../analytics/training-days.js';
+import { classifyBreak } from '../analytics/re-entry.js';
 import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
 import {
@@ -88,10 +102,11 @@ import {
   type CurrentBlockRead,
   type PlanningRead,
 } from '../plan/current-block.js';
+import { lintMuscleFrequencyChange, type FrequencyTemplate } from '../plan/muscle-frequency.js';
 import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   /** The input field to fix, for a caller that cannot read the message (VW-537). */
   readonly field: string | undefined;
@@ -152,8 +167,10 @@ const PLAN_WEEK_LIST_DESCRIPTION =
 const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
   'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. ' +
-  'Returns `warnings: []` — a template holds no volume until exercises are added, so the ' +
-  'tier-aware volume lints run on `plan.exercise.create`, not here.';
+  'A template holds no volume until exercises are added, so the tier-aware volume lints run ' +
+  'on `plan.exercise.create`, not here. The one warning here comes once per week, on the ' +
+  'template that leaves the week with no day off (a rest template is not a training day); it ' +
+  'is advisory and the template is still created.';
 const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
 const PLAN_TEMPLATE_LIST_DESCRIPTION =
   'List the workout templates belonging to one week (takes weekId).';
@@ -163,10 +180,18 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot ' +
   'in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over ' +
   'the WHOLE template after the insert (sets per exercise, and hard sets per muscle per ' +
-  "session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template " +
+  "session, counted in full toward each TARGET muscle slug of the exercise's weight table: " +
+  'an overhead press counts toward `front_delts` only, a row toward both `lats` and ' +
+  '`upper_back`, and a chest press adds nothing to a delt), PLUS three cross-template ' +
   'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
   'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
-  'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
+  'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32), and each ' +
+  "target muscle's training days this week against its recovery-tier frequency band, a " +
+  'planning prior (VW-623): too few days is judged only once the week has filled enough days to ' +
+  'reach the band, and a frequency warning is returned only by the write that changed it. Past ' +
+  'the beginner tier, a muscle declared `specialize` that the inserted exercise trains warns ' +
+  'when the template holds only one distinct exercise for it: a specialized muscle gets two per ' +
+  'session, a back-burner muscle one (VW-624). Each ' +
   'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
@@ -212,7 +237,20 @@ const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
   'boundary) and `dietPhase` (null when none is declared; raise it for the next block). The ' +
   'suggested start is the Monday after the current block ends, else today when today is a ' +
   'Monday, even if a session was already logged today, else the next Monday. Each `history` ' +
-  'says how that block\u2019s dates changed, in one sentence (`fact`). Then date the block with ' +
+  'says how that block\u2019s dates changed, in one sentence (`fact`). `advisories` are notes to ' +
+  'weigh, never blocks: a main lift on an open flatline; the finishing block run past its ' +
+  'tier\u2019s accumulation-to-deload prior (never for a beginner); a declared advanced lifter ' +
+  'with 6+ weeks and no deload, as evidence against the tier; no active rest (a deload week ' +
+  'then an off week) in the last 12 months; and the next block adding a training day a week ' +
+  'before the previous day count held for 2 blocks; and, when the next block is the last ' +
+  'before an active rest, an offer of one more weekly session for each specialized muscle ' +
+  'limited by fatigue (biceps and delts; never hamstrings, never for a beginner or in a ' +
+  'fat-loss phase), noting when the specialization is younger than 2 mesocycles. The active ' +
+  'rest is a deload week then a week off: a week named or phased rest or off, or an empty week ' +
+  'in a block that has workouts; an empty week in a block with none is not yet built, so it is ' +
+  'never a week off. The ratio and ' +
+  'the hold are planning ' +
+  'priors; the deload trigger stays performance-based. Then date the block with ' +
   'plan.block.schedule or plan.block.create, and declare priorities for it.';
 
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
@@ -226,7 +264,7 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
-  'about planning the next block. ' +
+  'about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
@@ -306,6 +344,9 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'exactly where it was. When the phase changed the answer the `reasoning` string says so in a ' +
   'clause; relay that clause, never the bare delta. A named guest lifter always gets the ' +
   "unknown phase: the owner's declaration is a claim about the owner's eating. " +
+  '`lastTime`: basis start and age in days, `stale` from 15. A stale basis in a short or ' +
+  'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it; ' +
+  'any other stale basis holds. A stale basis never unlocks a set. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -561,9 +602,9 @@ async function createBlock(
   const today = todayLocal();
   const dating = await checkBlockCreate(state, previous, block, input, today);
   const written =
-    dating === null ? null : await state.store.putTrainingBlockWithSchedule(block, dating);
-  if (dating === null) await state.store.putTrainingBlock(block);
-  if (input.scaffoldWeeks === true) await scaffoldWeeks(state, block, input.deloadWeeks ?? []);
+    input.scaffoldWeeks === true
+      ? await scaffoldBlock(state, block, input.deloadWeeks ?? [], dating)
+      : await putBlock(state, block, dating);
   const warnings = await lintMesoLength(state, previous, block);
   return {
     block,
@@ -612,14 +653,26 @@ async function checkBlockCreate(
   return datingRow(state, block, input.startsOn, today, input.reason);
 }
 
-/** One plan week row per week of the block, "Week 1" onwards, flagging the named deloads. */
-async function scaffoldWeeks(
+async function putBlock(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  dating: AppendBlockScheduleInput | null,
+): Promise<StoredBlockSchedule | null> {
+  if (dating !== null) return state.store.putTrainingBlockWithSchedule(block, dating);
+  await state.store.putTrainingBlock(block);
+  return null;
+}
+
+/** The block, its dating row and one plan week per week ("Week 1" onwards), written as one unit. */
+async function scaffoldBlock(
   state: ServerState,
   block: StoredTrainingBlock,
   deloadWeeks: readonly number[],
-): Promise<void> {
+  dating: AppendBlockScheduleInput | null,
+): Promise<StoredBlockSchedule | null> {
+  const weeks: StoredTrainingWeek[] = [];
   for (let n = 1; n <= block.weeksCount; n++) {
-    await state.store.putTrainingWeek({
+    weeks.push({
       id: randomUUID(),
       blockId: block.id,
       orderIndex: n - 1,
@@ -627,6 +680,7 @@ async function scaffoldWeeks(
       isDeload: deloadWeeks.includes(n),
     });
   }
+  return state.store.scaffoldTrainingWeeks(block, weeks, dating ?? undefined);
 }
 
 /**
@@ -689,10 +743,10 @@ async function listWeeksForBlock(
 // --- workout templates ---
 
 /**
- * `warnings` is always empty here and that is not an oversight: a template is
- * created before it holds any exercise, so there is no volume to measure yet.
- * The key ships anyway so a caller can read `warnings` off both create tools
- * without branching on which one it called.
+ * A template is created before it holds any exercise, so there is no volume to
+ * measure yet; the only lint here is the week's shape, whether it still has a
+ * day off (VW-619). Advisory like every lint: a store hiccup costs the warning,
+ * never the write.
  */
 async function createTemplate(
   state: ServerState,
@@ -707,7 +761,21 @@ async function createTemplate(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putWorkoutTemplate(template);
-  return { template, warnings: [] };
+  return { template, warnings: await lintWeekOffDay(state, template) };
+}
+
+/** Warns once per week: only on the template that took the week's last day off. */
+async function lintWeekOffDay(
+  state: ServerState,
+  added: StoredWorkoutTemplate,
+): Promise<PlanWarning[]> {
+  try {
+    const week = await state.store.getWorkoutTemplatesForWeek(added.weekId);
+    const before = week.filter((template) => template.id !== added.id);
+    return lintWeekWithoutOffDay(before).length > 0 ? [] : lintWeekWithoutOffDay(week);
+  } catch {
+    return [];
+  }
 }
 
 async function getTemplate(
@@ -751,7 +819,7 @@ async function createPlannedExercise(
   const refusal = validatePrescription(plannedExercise);
   if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
-  const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
+  const warnings = await lintTemplateVolume(state, input.workoutTemplateId, plannedExercise.id);
   return { plannedExercise, warnings };
 }
 
@@ -782,6 +850,7 @@ function prescriptionGoalAndRest(
 async function lintTemplateVolume(
   state: ServerState,
   workoutTemplateId: string,
+  addedId: string,
 ): Promise<PlanWarning[]> {
   try {
     const siblings = await state.store.getPlannedExercisesForTemplate(workoutTemplateId);
@@ -791,17 +860,32 @@ async function lintTemplateVolume(
       tier,
       confidence,
     });
-    const crossTemplateWarnings = await lintAcrossWeek(
-      state,
-      workoutTemplateId,
-      siblings,
-      tier,
-      confidence,
-    );
-    return [...sessionWarnings, ...crossTemplateWarnings];
+    const added = { templateId: workoutTemplateId, exercises: siblings, addedId };
+    const crossTemplateWarnings = await lintAcrossWeek(state, added, tier, confidence);
+    const specialization = await lintSpecialization(state, added, tier, confidence);
+    return [...sessionWarnings, ...specialization, ...crossTemplateWarnings];
   } catch {
     return [];
   }
+}
+
+/** The specialization lint (VW-624), only for the muscles the inserted exercise trains. */
+async function lintSpecialization(
+  state: ServerState,
+  added: AddedExercise,
+  tier: Tier,
+  confidence: TierConfidence,
+): Promise<PlanWarning[]> {
+  const row = added.exercises.find((e) => e.id === added.addedId);
+  if (row === undefined) return [];
+  const trained = targetMusclesOf(state, row.exerciseId);
+  const priorities = await state.store.listPriorities(LOCAL_USER_ID);
+  return lintSpecializedMuscleExercises({
+    exercises: added.exercises.map((e) => toLintExercise(state, e)),
+    specialized: specializedMuscles(priorities).filter((m) => trained.includes(m)),
+    tier,
+    confidence,
+  });
 }
 
 interface TemplateExerciseBucket {
@@ -809,21 +893,24 @@ interface TemplateExerciseBucket {
   exercises: LintPlanExercise[];
 }
 
-/** Runs the weekly ceiling, consecutive-days, and priority-muscle B32 lints. */
+/** The template just written to, its exercises after the insert, and the inserted row's id. */
+interface AddedExercise {
+  templateId: string;
+  exercises: StoredPlannedExercise[];
+  addedId: string;
+}
+
+/** Runs the weekly ceiling, consecutive-days and priority-muscle B32 lints, and the frequency band (VW-623). */
 async function lintAcrossWeek(
   state: ServerState,
-  workoutTemplateId: string,
-  ownExercises: StoredPlannedExercise[],
+  added: AddedExercise,
   tier: Tier,
   confidence: TierConfidence,
 ): Promise<PlanWarning[]> {
-  const current = await state.store.getWorkoutTemplate(workoutTemplateId);
+  const current = await state.store.getWorkoutTemplate(added.templateId);
   if (current === undefined) return [];
   const weekTemplates = await state.store.getWorkoutTemplatesForWeek(current.weekId);
-  const buckets = await templateExerciseBuckets(state, weekTemplates, {
-    templateId: workoutTemplateId,
-    exercises: ownExercises,
-  });
+  const buckets = await templateExerciseBuckets(state, weekTemplates, added);
   const weekExercises = buckets.flatMap((b) => b.exercises);
   const weekly = lintWeeklyVolume({ exercises: weekExercises, tier, confidence });
   const consecutive = lintSameMuscleHighVolumeConsecutiveDays({
@@ -835,7 +922,32 @@ async function lintAcrossWeek(
     confidence,
   });
   const priority = await lintPriorityMuscle(state, current, weekExercises);
-  return [...weekly, ...consecutive, ...priority];
+  const frequency = lintMuscleFrequencyChange({
+    templates: buckets.map((b) => frequencyTemplate(b.template, b.exercises)),
+    before: buckets.map((b) =>
+      b.template.id === added.templateId
+        ? frequencyTemplate(b.template, withoutAdded(state, added))
+        : frequencyTemplate(b.template, b.exercises),
+    ),
+    tier,
+    confidence,
+  });
+  return [...weekly, ...consecutive, ...priority, ...frequency];
+}
+
+function frequencyTemplate(
+  template: StoredWorkoutTemplate,
+  exercises: LintPlanExercise[],
+): FrequencyTemplate {
+  return {
+    name: template.name,
+    ...(template.dayLabel !== undefined ? { dayLabel: template.dayLabel } : {}),
+    exercises,
+  };
+}
+
+function withoutAdded(state: ServerState, added: AddedExercise): LintPlanExercise[] {
+  return added.exercises.filter((e) => e.id !== added.addedId).map((e) => toLintExercise(state, e));
 }
 
 /** Fetches each template's planned exercises, reusing an already-known one to avoid a refetch. */
@@ -878,13 +990,12 @@ async function lintPriorityMuscle(
   });
 }
 
-/** Per-muscle lint is target-only (B47): `muscleGroups[0]`, never the secondaries. */
+/** Per-muscle lint is target-only (B47): the weight table's targets, never a dose row. */
 function toLintExercise(state: ServerState, e: StoredPlannedExercise): LintPlanExercise {
-  const muscleGroup = state.exercises.getById(e.exerciseId)?.muscleGroups[0];
   return {
     exerciseId: e.exerciseId,
     targetSets: e.targetSets,
-    ...(muscleGroup !== undefined ? { muscleGroup } : {}),
+    muscleGroups: targetMusclesOf(state, e.exerciseId),
   };
 }
 
@@ -979,6 +1090,10 @@ export interface ProgressionSuggestion {
    * CHECKED, not guess from a missing field.
    */
   dietPhaseContext: DietPhaseContext;
+  /** VW-907: the basis session's age. Set by `plan.suggest_progression` only. */
+  lastTime?: LastTime;
+  /** VW-907: present only when `lastTime` is stale and the break band scales a load. */
+  reEntry?: StaleBasisReEntry;
 }
 
 /**
@@ -1275,9 +1390,14 @@ type NextWorkoutResult =
 export async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
-): Promise<NextWorkoutResult & { planning: PlanningRead }> {
+): Promise<NextWorkoutResult & { planning: PlanningRead; reEntry: ReEntryResult }> {
   const read = await resolveCurrentBlock(state.store, todayLocal());
-  return { ...(await nextWorkoutFor(state, read, input.programId)), planning: read.planning };
+  const reEntry = await readReEntry(state.store, todayLocal(), new Date().toISOString());
+  return {
+    ...(await nextWorkoutFor(state, read, input.programId)),
+    planning: read.planning,
+    reEntry,
+  };
 }
 
 async function nextWorkoutFor(
@@ -1503,8 +1623,84 @@ async function suggestProgression(
     tier: tierSignal.tier,
     dietPhase,
   });
-  return { plannedExercise: planned, suggestion: { ...suggestion, tier } };
+  const basisAge = await readBasisAge(state, basisSessionId, sets);
+  return {
+    plannedExercise: planned,
+    suggestion: { ...applyStaleBasis(suggestion, basisAge), tier },
+  };
 }
+
+interface BasisAge {
+  lastTime: LastTime;
+  topLoadLbs: number | undefined;
+}
+
+/** VW-907: read here, like the tier, so `computeProgressionDelta` stays store-free. */
+async function readBasisAge(
+  state: ServerState,
+  basisSessionId: string,
+  sets: StoredSet[],
+): Promise<BasisAge | null> {
+  const session = await state.store.getSession(basisSessionId);
+  if (session === undefined) return null;
+  const workingSets = selectWorkingSets(sets);
+  const lastWorkingEnd = workingSets
+    .map((set) => set.endedAt)
+    .sort()
+    .at(-1);
+  const trainingDayInstant = session.endedAt ?? lastWorkingEnd ?? session.startedAt;
+  return {
+    lastTime: readLastTime(session.startedAt, trainingDayInstant, todayLocal()),
+    topLoadLbs: topLoadOf(workingSets),
+  };
+}
+
+/**
+ * A stale basis overrides the delta (owner rule, 2026-09-26): in a short or medium break the
+ * delta is the step down to the re-entry load, not a progression off a session that old. With no
+ * load to scale (a long break, or a session that recorded none) it holds. Either way no set is
+ * added: the medium band is one working set per muscle. The other gates report as read.
+ */
+function applyStaleBasis(
+  suggestion: ProgressionSuggestion,
+  basisAge: BasisAge | null,
+): ProgressionSuggestion {
+  if (basisAge === null) return suggestion;
+  const { lastTime, topLoadLbs } = basisAge;
+  if (!lastTime.stale) return { ...suggestion, lastTime };
+  const reEntry = staleBasisReEntry(lastTime, topLoadLbs);
+  const since = `Last time was ${lastTime.daysAgo} days ago, before a break`;
+  const read = suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
+  const stale = {
+    ...suggestion,
+    repDelta: 0,
+    basis: 'fixed' as const,
+    gates: { ...suggestion.gates, setsUnlocked: false },
+    lastTime,
+  };
+  if (reEntry === null || topLoadLbs === undefined) {
+    const rest = classifyBreak(lastTime.daysAgo) === 'long' ? LONG_BREAK_NOTE : NO_LOAD_NOTE;
+    const reasoning = `${since}: ${rest} The gates read that session: ${read}`;
+    return { ...stale, delta: PROGRESSION_HOLD_LBS, reasoning };
+  }
+  const percent = Math.round(reEntry.loadFactor * 100);
+  return {
+    ...stale,
+    delta: reEntry.loadLbs - topLoadLbs,
+    reasoning:
+      `${since} (${reEntry.band}): step down from ${topLoadLbs} lb to ${reEntry.loadLbs} lb, ` +
+      `${percent}% of that load rounded down, never under 5 lb (${reEntry.source}), rather ` +
+      `than progress off a stale basis. The gates read that session: ${read}`,
+    reEntry,
+  };
+}
+
+const SETS_UNLOCKED_CLAUSE = ', sets unlocked: consider +1 set next session';
+
+const LONG_BREAK_NOTE =
+  'hold; no old load is scaled after a break this long, so re-enter through ' +
+  "`profile.get_starting_prescription`'s feeler set.";
+const NO_LOAD_NOTE = 'hold; that session recorded no load to scale, so nothing is added to it.';
 
 /**
  * Pick the session id whose stored sets the progression heuristic reads from.
@@ -1826,7 +2022,7 @@ function routeHitHigh(
   const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
   const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
-    const unlock = gates.setsUnlocked ? ', sets unlocked: consider +1 set next session' : '';
+    const unlock = gates.setsUnlocked ? SETS_UNLOCKED_CLAUSE : '';
     return {
       delta: PROGRESSION_HOLD_LBS,
       repDelta: 0,

@@ -14,9 +14,10 @@
 // as an empty file that always round-trips.
 
 import { DatabaseSync } from 'node:sqlite';
-import type { Phase } from '@voltras/workout-analytics';
+import { EMPTY_PHASE } from '@voltras/workout-analytics';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../sqlite-store.js';
+import { LOCAL_USER_ID, type SqliteSessionStore } from '../../sqlite-store.js';
+import { openSqliteTestStore } from '../open-test-store.js';
 import type { StoredRep, StoredSession, StoredSet } from '../../types.js';
 
 export const FIXTURE_EXERCISE_ID = 'ex-back-squat';
@@ -24,22 +25,6 @@ export const FIXTURE_SESSION_ID = 'sess-round-trip';
 export const FIXTURE_SET_ID = 'set-round-trip';
 
 const AT = '2026-03-02T17:00:00.000Z';
-
-const EMPTY_PHASE: Phase = {
-  samples: [],
-  startTime: 0,
-  endTime: 0,
-  startPosition: 0,
-  endPosition: 0,
-  _totalVelocity: 0,
-  _totalForce: 0,
-  _totalLoad: 0,
-  _movementSampleCount: 0,
-  _totalHoldDuration: 0,
-  peakVelocity: 0,
-  peakForce: 0,
-  peakLoad: 0,
-};
 
 function rep(index: number): StoredRep {
   return {
@@ -83,7 +68,7 @@ const SET: StoredSet = {
 
 /** Builds a store at `path` holding at least one row in every table, and closes it. */
 export async function seedEveryTable(path: string): Promise<void> {
-  const store = SqliteSessionStore.open(path);
+  const store = openSqliteTestStore({ path });
   try {
     await seedTraining(store);
     await seedPlanTree(store);

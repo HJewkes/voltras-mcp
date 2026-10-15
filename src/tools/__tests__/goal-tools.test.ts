@@ -16,16 +16,21 @@
 //   * an accepted target does not move, in either direction, ever.
 
 import * as analytics from '@voltras/workout-analytics';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { loadSeedCatalog } from '../../exercises/__tests__/load-seed-catalog.js';
 
 import { programmedRampStepLbs } from '../../analytics/goal-band.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { Tier } from '../tier-signal.js';
 import { deriveTargetInFrame, readDerivationContext } from '../goal-derivation.js';
 import { registerGoalTools } from '../goal-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+
+beforeAll(loadSeedCatalog);
 
 const TOOL_NAMES = [
   'goal.declare_priorities',
@@ -49,7 +54,7 @@ interface FakeRegisteredTool {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (name: string, args?: unknown) => Promise<Record<string, unknown>>;
   expectError: (name: string, args?: unknown) => Promise<{ code: string; message: string }>;
 }
@@ -84,7 +89,7 @@ function makeReps(setId: string, count: number): StoredRep[] {
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = {
     store,
     exercises: { list: () => CATALOG, getById: (id: string) => CATALOG.find((e) => e.id === id) },
@@ -133,7 +138,7 @@ function setup(): Harness {
  * `withBaseline` adds the one failure anchor that carries it to PROVISIONAL.
  */
 async function seedLiftHistory(
-  store: SqliteSessionStore,
+  store: SessionStore,
   options: {
     exerciseId?: string;
     sessionCount: number;
@@ -165,6 +170,7 @@ async function seedLiftHistory(
         endedAt: at,
         partial: false,
         weightLbs: options.weightLbs,
+        trainingMode: 'Weight Training',
         setPurpose: 'working',
         reps: makeReps(lastSetId, options.reps),
       };
@@ -438,9 +444,9 @@ describe('goal.propose_targets', () => {
     });
     const target = (proposed.targets as (ProposedTargetShape & { tierUsed: Tier })[])[0];
     const tier = target.tierUsed;
-    // Six weeks, cold: five full steps on both edges.
+    // Six weeks, cold: four full steps, then week 6 opens the second undated block at half a step.
     expect(target.committedValue).toBeCloseTo(
-      40 + 5 * programmedRampStepLbs(40, 'isolation', tier),
+      40 + 4.5 * programmedRampStepLbs(40, 'isolation', tier),
       6,
     );
   });

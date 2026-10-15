@@ -9,11 +9,13 @@
 //
 // The set list is narrowed the same way every other analysis path narrows it:
 // the owner's sets only (VW-169 — a guest working in is not the owner's
-// result), real sets only (a mock-adapter row never reports as work), and the
-// working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
-// not read as a light top set.
+// result), real sets only (a mock-adapter row is left out unless the server
+// itself runs on the mock adapter), and the working sets picked by the shared
+// `selectWorkingSets` rule so a ramp-up does not read as a light top set.
 
+import { UserFacingError } from '../errors.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
+import { buildGoalLines, type WeeklyGoalLine } from './report-goals.js';
 import { datedWeeksOverlapping, scheduleChangeLines } from './report-calendar.js';
 import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -57,11 +59,12 @@ export const REPORT_SESSION_RESULTS_DESCRIPTION =
   'reads (`170 lb x 12` per working set, `L 30 lb x 13` / `R 30 lb x 12` for a bilateral pair, ' +
   'plus a `warm-up: 3 sets` count and a `missed: 1 of 3 sets below 8 reps` line when a planned ' +
   'rep band was attached). Working sets only, by the same warm-up-then-top-load rule ' +
-  "`plan.suggest_progression` uses; a guest lifter's sets, mock-adapter sets and zero-rep sets " +
-  'are excluded, and an exercise with no working set is omitted. Read-only and local: it queries ' +
+  "`plan.suggest_progression` uses; a guest lifter's sets and zero-rep sets are excluded, " +
+  'as are mock-adapter sets unless the server itself runs on the mock adapter, ' +
+  'and an exercise with no working set is omitted. Read-only and local: it queries ' +
   'the store and makes no network call. The session must already be ended.';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -320,7 +323,9 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'inactivity timeout with reps recorded, and velocity-loss holds at the VL30 stop point — ' +
   '`setting_coerced` is never included: it is a live-only signal with no persisted record, so ' +
   'there is nothing to read back after the session ends); and a check-in section built from ' +
-  'recorded self-reports, falling back to the `notes` input as a lifter note when none exist. ' +
+  'recorded self-reports, falling back to the `notes` input as a lifter note when none exist; and ' +
+  'a goals section (VW-358): one line per accepted goal target, worded from the goal-progress read ' +
+  'model (`goal: seated row 190x8 by Oct 25, on track (wk 3/6)`), plus a rollup line per muscle priority, omitted with no priorities. ' +
   'Read-only and local: no network call, and it writes nothing.';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -452,6 +457,8 @@ export interface WeeklyReport {
   progression: WeeklyProgressionLine[];
   flags: WeeklyFlags;
   checkIn: WeeklyCheckIn | null;
+  /** One line per accepted goal target; empty when the lifter declared no priorities (VW-358). */
+  goals: WeeklyGoalLine[];
 }
 
 export async function buildWeeklyReport(
@@ -495,9 +502,10 @@ export async function buildWeeklyReport(
     },
     scheduleChanges: await scheduleChangeLines(state.store, from, to),
     sessions: sessionEntries,
-    progression: await buildProgressionLines(state, endedSessions),
+    progression: await buildProgressionLines(state, endedSessions, to),
     flags: await buildFlags(state, endedSessions),
     checkIn: await buildCheckIn(state, input, from, to),
+    goals: await buildGoalLines(state, to, input.lifter),
   };
 }
 
@@ -603,6 +611,7 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
 async function buildProgressionLines(
   state: ServerState,
   endedSessions: (StoredSession & { endedAt: string })[],
+  asOf: string,
 ): Promise<WeeklyProgressionLine[]> {
   let program: StoredTrainingProgram;
   try {
@@ -610,7 +619,7 @@ async function buildProgressionLines(
   } catch {
     return [];
   }
-  const tierSignal = await getTierSignal(state);
+  const tierSignal = await getTierSignal(state, LOCAL_USER_ID, asOf);
 
   // The last (most recent, by `startedAt`) session in range that trained each
   // exercise is that exercise's progression basis for this report.
@@ -997,6 +1006,11 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
   if (flagLines.length > 0) lines.push('', '## Flags', ...flagLines);
 
   if (report.checkIn !== null) lines.push('', '## Check-in', ...renderCheckInLines(report.checkIn));
+
+  if (report.goals.length > 0) {
+    lines.push('', '## Goals');
+    for (const goal of report.goals) lines.push(`- ${goal.text}`);
+  }
 
   return lines.join('\n');
 }

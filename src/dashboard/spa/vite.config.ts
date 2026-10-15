@@ -7,6 +7,7 @@ import {
   svgWebAliases,
   webResolveExtensions,
 } from './vite-rn-svg-plugins';
+import { fidelityPlugin } from './dev/fidelity/vite-plugin';
 
 /**
  * Vite config for the dashboard SPA (VMCP-01.44).
@@ -72,6 +73,8 @@ export default defineConfig({
     reactNativeSvgWebResolver(),
     reactNativeBodyHighlighterEsm(),
     react(),
+    // Dev tooling (VW-431): the plugin applies itself only under `--mode fidelity`.
+    fidelityPlugin(__dirname),
   ],
   css: {
     postcss: __dirname,

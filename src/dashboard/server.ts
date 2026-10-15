@@ -100,7 +100,8 @@
 //                          write route cannot be added unguarded. None of the
 //                          six needs the single-writer device lease: every one
 //                          is a sqlite plan write through `plan-api.ts` with
-//                          no device I/O. See `README.md` for the table.
+//                          no device I/O. The route table is in
+//                          site/reference/dashboard-api.md.
 //
 //   GET /api/bootstrap    — `{ token, version }`. The SPA's recovery path for
 //                          the write token when its page predates a restart.
@@ -124,6 +125,19 @@
 //                          200 `{ banner: null }` — nothing to say is a valid
 //                          answer here, unlike the plan routes' 501.
 //
+//   ── Command trail (VW-893, VW-849) ───────────────────────────────────────
+//   GET /api/activity     — `{ rows, nextCursor }`: the audit trail, newest
+//                          first, filtered by `sessionId`, `flowId`, `actor`,
+//                          `since`, `until` and `status`, keyset-paged by
+//                          `cursor`, `limit` clamped to 200. Rows carry only
+//                          `ACTIVITY_ROW_FIELDS` (see `activity.ts`).
+//
+//   ── Day review (VW-899, VW-847) ──────────────────────────────────────────
+//   GET /api/session-review — `{ days, unreviewedDays }`: the local days still
+//                          waiting for a training or test mark, newest first
+//                          (`kind=any` for every day), `limit` clamped to 200.
+//                          See `session-review-api.ts`.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -137,16 +151,19 @@ import {
   buildHistoryView,
   buildMusclePlanView,
   buildMuscleRecoveryView,
+  buildDerivedPrescriptionView,
   buildMuscleWeekView,
   buildSessionPlanView,
   buildSessionSummary,
   buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
+  deriveExerciseTargets,
   recordWithEffort,
   withEffort,
   resolveSummarySessionId,
   startOfCalendarWeekIso,
+  type CompletedWorkingSet,
   type DashboardSessionStore,
   type DeviceEntry,
   type MusclePlanTemplateRow,
@@ -159,6 +176,7 @@ import {
   type SnapshotCompletedSet,
   type SnapshotSet,
   type SnapshotResponse,
+  type TierView,
 } from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
 import {
@@ -187,6 +205,7 @@ import {
   UI_ACTION_DEVICE_ID_MAX_LENGTH,
 } from '../store/ui-action-device-id.js';
 import {
+  commandSummaryJson,
   executeAction,
   executeAudited,
   hashInput,
@@ -203,6 +222,7 @@ import {
 } from './goal-progress-api.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { log } from '../logger.js';
+import { getTierSignal, type TierSignalState } from '../tools/tier-signal.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
   DeviceSnapshot,
@@ -222,7 +242,9 @@ import {
   type StoredTrainingProfile,
   type StoredTrainingWeek,
   type SetupCard,
+  type SessionStore,
 } from '../store/types.js';
+import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import {
   completedSetsForExercise,
   resolveRestLength,
@@ -235,6 +257,8 @@ import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
 import { readTopBanner, type BannerStore } from './read-models/banners.js';
+import { parseActivityQuery, readActivity } from './activity.js';
+import { parseSessionReviewQuery, readSessionReview } from './session-review-api.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -322,9 +346,13 @@ export interface DashboardServerState {
     ): Promise<StoredDietPhase | undefined>;
     /** Self-reported training background, read for the early-phase flag (VW-330). */
     getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
+    /** Last time's session of an exercise, for the derived prescription (VW-642). */
+    getMostRecentSessionIdForExercise?: SessionStore['getMostRecentSessionIdForExercise'];
     /** The action audit trail (VW-502). Optional for the same reason the rest are. */
     claimUiAction?: ActionStore['claimUiAction'];
     completeUiAction?: ActionStore['completeUiAction'];
+    /** The feed behind `GET /api/activity` (VW-893). */
+    listActivity?: SessionStore['listActivity'];
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore> &
     Partial<GoalProgressStore>;
@@ -676,6 +704,14 @@ async function handleRequest(
     await serveBanners(res, state);
     return;
   }
+  if (pathname === '/api/activity') {
+    await serveActivity(res, state, url);
+    return;
+  }
+  if (pathname === '/api/session-review') {
+    await serveSessionReview(res, state, url);
+    return;
+  }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
   if (summaryMatch !== null) {
     await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
@@ -818,7 +854,12 @@ async function findActiveWeek(store: DashboardPlanStore): Promise<ActiveWeek | n
       for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
         const completed = (await store.getAssignmentsForTemplate(template.id)).length > 0;
         if (!completed) hasIncomplete = true;
-        templates.push({ id: template.id, name: template.name, completed });
+        templates.push({
+          id: template.id,
+          name: template.name,
+          completed,
+          ...(template.dayLabel !== undefined ? { dayLabel: template.dayLabel } : {}),
+        });
       }
       if (hasIncomplete) return { week, templates };
     }
@@ -1113,6 +1154,54 @@ async function serveBanners(res: ServerResponse, state: DashboardServerState): P
   sendJson(res, 200, { banner });
 }
 
+/**
+ * `GET /api/activity` (VW-893): one page of the audit trail. Same auth as
+ * every other read. A store without the feed answers 501, as the plan routes
+ * do, because an empty page would claim nothing was ever recorded.
+ */
+async function serveActivity(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  const { listActivity } = state.store;
+  if (listActivity === undefined) {
+    sendJson(res, 501, { error: 'activity_unavailable' });
+    return;
+  }
+  const query = parseActivityQuery(url.searchParams);
+  if ('error' in query) {
+    sendJson(res, 400, { error: 'invalid_input', message: query.error });
+    return;
+  }
+  const store = { listActivity: listActivity.bind(state.store) };
+  sendJson(res, 200, await readActivity(store, query));
+}
+
+/**
+ * `GET /api/session-review` (VW-899): the days to mark training or test. A
+ * store without the review read answers 501, as `/api/goals` does, because an
+ * empty list would claim every day is already marked.
+ */
+async function serveSessionReview(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  const { listSessionReviewRows } = state.store;
+  if (listSessionReviewRows === undefined) {
+    sendJson(res, 501, { error: 'session_review_unavailable' });
+    return;
+  }
+  const query = parseSessionReviewQuery(url.searchParams);
+  if ('error' in query) {
+    sendJson(res, 400, { error: 'invalid_input', message: query.error });
+    return;
+  }
+  const store = { listSessionReviewRows: listSessionReviewRows.bind(state.store) };
+  sendJson(res, 200, await readSessionReview(store, query));
+}
+
 async function serveSessionSummary(
   res: ServerResponse,
   state: DashboardServerState,
@@ -1212,11 +1301,15 @@ async function handleAction(
     sendJson(res, 400, { error: 'invalid_input', message: request.error });
     return;
   }
-  const outcome = await executeAction(request, {
-    store: state.store,
-    tools: state.actionTools,
-    now: () => new Date(),
-  });
+  const { sessionId } = activeSessionContext(state);
+  const outcome = await executeAction(
+    { ...request, sessionId },
+    {
+      store: state.store,
+      tools: state.actionTools,
+      now: () => new Date(),
+    },
+  );
   sendActionOutcome(res, outcome);
 }
 
@@ -1324,7 +1417,12 @@ function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value
 function hasActionStore(
   store: DashboardServerState['store'],
 ): store is DashboardServerState['store'] & ActionStore {
-  return typeof store.claimUiAction === 'function' && typeof store.completeUiAction === 'function';
+  return (
+    typeof store.claimUiAction === 'function' &&
+    typeof store.completeUiAction === 'function' &&
+    'transaction' in store &&
+    typeof store.transaction === 'function'
+  );
 }
 
 /**
@@ -1378,6 +1476,9 @@ async function handlePlanMutation(
     return;
   }
   const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
+  const actionName = PLAN_ROUTE_ACTION_NAMES[route.kind];
+  const summaryJson = commandSummaryJson(actionName, payload);
+  const { sessionId } = activeSessionContext(state);
   if (!hasActionStore(store)) {
     // No audit table (a test fake, an older store): the write still happens.
     // Degrading to an unaudited write is better than refusing the plan builder,
@@ -1387,7 +1488,7 @@ async function handlePlanMutation(
   }
   const outcome = await executeAudited(
     {
-      actionName: PLAN_ROUTE_ACTION_NAMES[route.kind],
+      actionName,
       // A client that sends no id gets a minted one, which records the write
       // but buys NO retry safety: a retry mints another id and runs again.
       // The SPA sends its own; see `spa/api-client.ts`.
@@ -1396,6 +1497,8 @@ async function handlePlanMutation(
       actor: 'user',
       surface,
       ...device,
+      ...(summaryJson === undefined ? {} : { summaryJson }),
+      ...(sessionId === undefined ? {} : { sessionId }),
       inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
       run,
     },
@@ -1698,7 +1801,7 @@ async function resolveSessionPace(
   state: DashboardServerState,
   gathered: GatheredSnapshotState,
 ): Promise<SessionPaceView | undefined> {
-  const { session, completedSets } = gathered;
+  const { session, completedSets, activeSet } = gathered;
   const { getAssignmentsForSession, getPlannedExercisesForTemplate } = state.store;
   if (session === undefined || !getAssignmentsForSession || !getPlannedExercisesForTemplate) {
     return undefined;
@@ -1716,7 +1819,8 @@ async function resolveSessionPace(
       startedAt: session.startedAt,
       nowMs: Date.now(),
       planned,
-      completedWorkingSets: countWorkingSets(completedSets),
+      completedWorkingSets: workingSetsForPace(completedSets),
+      liveSetActive: activeSet !== undefined,
     },
     state.exercises,
   );
@@ -1779,12 +1883,17 @@ function findPlannedForDashboard(
  * inactivity watchdog force-closed, which the rail already drops from its own
  * "sets done" tally. Counting one would make the two disagree.
  */
-function countWorkingSets(completed: readonly CompletedSetRecord[]): number {
-  return completed.filter(
-    (record) =>
-      record.set.reps.length > 0 &&
-      (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
-  ).length;
+function workingSetsForPace(completed: readonly CompletedSetRecord[]): CompletedWorkingSet[] {
+  return completed
+    .filter(
+      (record) =>
+        record.set.reps.length > 0 &&
+        (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
+    )
+    .map((record) => ({
+      exerciseId: record.set.exerciseId,
+      endedAtMs: Date.parse(record.set.endedAt ?? record.set.startedAt),
+    }));
 }
 
 /**
@@ -1838,12 +1947,13 @@ async function fetchHistory(
 
 /**
  * The active exercise's prescription, when the live session is attached to a
- * workout template (plan.attach_to_session): find the planned exercise matching
- * the active exercise id and surface its target rep range / weight / RPE. Returns
- * null when the plan store isn't available, no session/exercise is active, or no
- * template-level attachment covers the active exercise. Single-exercise
- * (plannedExerciseId) attachments aren't resolved here — the store has no direct
- * getPlannedExercise(id); tracked as a follow-up. Plan metadata only (NF-07).
+ * plan (plan.attach_to_session): a whole workout template, or one planned
+ * exercise. The first assignment covering the active exercise wins, as in
+ * `findPlannedExerciseForSession`. With no attachment covering it, the targets
+ * are derived from the lifter's last training session of the exercise and
+ * labelled `derived` (VW-642). Returns null when the plan store isn't
+ * available, no session/exercise is active, or neither source knows anything.
+ * Plan metadata only (NF-07).
  */
 async function fetchSessionPlan(state: DashboardServerState): Promise<PrescriptionView | null> {
   const { store } = state;
@@ -1853,27 +1963,139 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
   ) {
     return null;
   }
-  let session: ActiveSession | undefined;
+  const live = findLiveSessionForPlan(state);
+  if (live === undefined) return null;
+  const { session, exerciseId } = live;
+  const attached = await resolveAttachedPlan(store, session.sessionId, exerciseId);
+  if (attached === undefined) return fetchDerivedPrescription(state, live);
+  // VW-669: the tier signal is the owner's; a guest or partner on the cable gets no tier.
+  const tier = live.lifter === undefined ? await readTierView(store) : undefined;
+  const rows: SessionPlanRows = {
+    activeExerciseId: exerciseId,
+    match: attached.match,
+    planned: attached.planned,
+    title: await resolveSessionTitle(store, attached.match.workoutTemplateId),
+    ...(tier !== undefined && { tier }),
+  };
+  return buildSessionPlanView(rows, state.exercises);
+}
+
+/** The live session a prescription is for; `lifter` absent means the owner is lifting. */
+interface LiveSessionForPlan {
+  session: ActiveSession;
+  exerciseId: string;
+  lifter?: string;
+}
+
+/** The first slot's open session with an active exercise, and who is lifting on it. */
+function findLiveSessionForPlan(state: DashboardServerState): LiveSessionForPlan | undefined {
   for (const [, slot] of state.slots) {
-    const candidate = slot.live.snapshotSession();
-    if (candidate !== undefined) {
-      session = candidate;
-      break;
+    const session = slot.live.snapshotSession();
+    if (session === undefined) continue;
+    if (session.exerciseId === undefined) return undefined;
+    const lifter = slot.live.snapshotSet()?.lifter ?? session.lifter;
+    return { session, exerciseId: session.exerciseId, ...(lifter !== undefined && { lifter }) };
+  }
+  return undefined;
+}
+
+/** Every slot's open session id: none of them is "last time" (VW-642). */
+function openSessionIds(state: DashboardServerState): string[] {
+  const ids: string[] = [];
+  for (const [, slot] of state.slots) {
+    const session = slot.live.snapshotSession();
+    if (session !== undefined) ids.push(session.sessionId);
+  }
+  return ids;
+}
+
+/**
+ * Last time's targets for the live exercise (VW-642): this lifter's most recent
+ * training session of it, before the live one and excluding every open session.
+ * A guest reads only the guest's history and the owner only the owner's.
+ */
+async function fetchDerivedPrescription(
+  state: DashboardServerState,
+  live: LiveSessionForPlan,
+): Promise<PrescriptionView | null> {
+  const { store } = state;
+  const { getMostRecentSessionIdForExercise, getSession, getSetsForSession } = store;
+  if (!getMostRecentSessionIdForExercise || !getSession || !getSetsForSession) return null;
+  const { session, exerciseId, lifter } = live;
+  const lastId = await getMostRecentSessionIdForExercise.call(store, {
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    ...(lifter !== undefined && { lifter }),
+    excludeSessionIds: openSessionIds(state),
+    startedBefore: session.startedAt,
+  });
+  if (lastId === null) return null;
+  const last = await getSession.call(store, lastId);
+  if (last === undefined) return null;
+  const sessionSets = await getSetsForSession.call(store, lastId);
+  const sets = scopeSetsToLifter(scopeSessionSetsToExerciseId(sessionSets, exerciseId), lifter);
+  const targets = deriveExerciseTargets(sets);
+  if (targets === null) return null;
+  return buildDerivedPrescriptionView(
+    {
+      activeExerciseId: exerciseId,
+      targets,
+      derivedFromStartedAt: last.startedAt,
+      today: localDate(session.startedAt),
+    },
+    state.exercises,
+  );
+}
+
+/** The planned row covering `exerciseId` and the rail it sits in: its whole template, or itself alone. */
+async function resolveAttachedPlan(
+  store: DashboardServerState['store'],
+  sessionId: string,
+  exerciseId: string,
+): Promise<
+  { match: StoredPlannedExercise; planned: readonly StoredPlannedExercise[] } | undefined
+> {
+  if (
+    store.getAssignmentsForSession === undefined ||
+    store.getPlannedExercisesForTemplate === undefined
+  ) {
+    return undefined;
+  }
+  for (const assignment of await store.getAssignmentsForSession(sessionId)) {
+    if (assignment.workoutTemplateId !== undefined) {
+      const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
+      const match = planned.find((p) => p.exerciseId === exerciseId);
+      if (match !== undefined) return { match, planned };
+    } else if (assignment.plannedExerciseId !== undefined && store.getPlannedExercise) {
+      const match = await store.getPlannedExercise(assignment.plannedExerciseId);
+      if (match?.exerciseId === exerciseId) return { match, planned: [match] };
     }
   }
-  if (session === undefined || session.exerciseId === undefined) return null;
-  const { sessionId, exerciseId } = session;
+  return undefined;
+}
 
-  for (const assignment of await store.getAssignmentsForSession(sessionId)) {
-    if (assignment.workoutTemplateId === undefined) continue;
-    const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
-    const match = planned.find((p) => p.exerciseId === exerciseId);
-    if (match === undefined) continue;
-    const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
-    const rows: SessionPlanRows = { activeExerciseId: exerciseId, match, planned, title };
-    return buildSessionPlanView(rows, state.exercises);
+/** @see hasPlanStore — same narrowing, for the tier read on the plan channel (VW-668). */
+function hasTierStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & TierSignalState['store'] {
+  return (
+    typeof store.getTrainingProfile === 'function' &&
+    typeof store.listTrainingDayInstants === 'function' &&
+    typeof store.getSessionDateSpan === 'function' &&
+    typeof store.listSessionReviewRows === 'function'
+  );
+}
+
+/** The tier signal as of now; fails soft, so a tier-read error never blanks the prescription. */
+async function readTierView(store: DashboardServerState['store']): Promise<TierView | undefined> {
+  if (!hasTierStore(store)) return undefined;
+  try {
+    const { tier, confidence, source } = await getTierSignal({ store });
+    return { tier, confidence, source };
+  } catch (err) {
+    log.debug('session-plan: tier read failed; omitting the tier', err);
+    return undefined;
   }
-  return null;
 }
 
 /**

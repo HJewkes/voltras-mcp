@@ -52,6 +52,28 @@ describe('buildSessionPlanView', () => {
     });
   });
 
+  it('carries the tier signal through when the caller read one (VW-668)', () => {
+    const tier = { tier: 'intermediate', confidence: 'confident', source: 'declared' } as const;
+    const rows: SessionPlanRows = {
+      activeExerciseId: 'bench',
+      match: plannedRow(),
+      planned: [plannedRow()],
+      title: null,
+      tier,
+    };
+    expect(buildSessionPlanView(rows, undefined).tier).toEqual(tier);
+  });
+
+  it('omits the tier when the caller gave none (VW-668)', () => {
+    const rows: SessionPlanRows = {
+      activeExerciseId: 'bench',
+      match: plannedRow(),
+      planned: [plannedRow()],
+      title: null,
+    };
+    expect(buildSessionPlanView(rows, undefined)).not.toHaveProperty('tier');
+  });
+
   it('carries the goal and the rest learning flag through (VW-537)', () => {
     const rows: SessionPlanRows = {
       activeExerciseId: 'bench',
@@ -147,9 +169,9 @@ describe('buildPlannedExerciseList', () => {
       catalog,
     );
     expect(list).toEqual([
-      { name: 'Back Squat', order: 0, sets: 4, active: false },
-      { name: 'Bench Press', order: 1, sets: 3, active: true },
-      { name: 'row', order: 2, sets: 3, active: false },
+      { exerciseId: 'squat', name: 'Back Squat', order: 0, sets: 4, active: false },
+      { exerciseId: 'bench', name: 'Bench Press', order: 1, sets: 3, active: true },
+      { exerciseId: 'row', name: 'row', order: 2, sets: 3, active: false },
     ]);
   });
 

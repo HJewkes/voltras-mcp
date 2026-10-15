@@ -95,6 +95,16 @@ class FakePlanStore {
   };
   getPlannedExercise = async (id: string): Promise<StoredPlannedExercise | undefined> =>
     this.plannedExercises.get(id);
+  patchPlannedExercise = async (
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined> => {
+    const live = this.plannedExercises.get(id);
+    if (live === undefined) return undefined;
+    const updated = apply(live);
+    this.plannedExercises.set(id, updated);
+    return updated;
+  };
   getPlannedExercisesForTemplate = async (templateId: string): Promise<StoredPlannedExercise[]> =>
     ordered([...this.plannedExercises.values()].filter((e) => e.workoutTemplateId === templateId));
   deletePlannedExercise = async (id: string): Promise<boolean> => this.plannedExercises.delete(id);
@@ -993,6 +1003,8 @@ class FakeActionRows {
     this.rows.set(id, row);
     return Promise.resolve(row);
   };
+
+  transaction = <T>(fn: () => Promise<T>): Promise<T> => fn();
 }
 
 /** A captured tool the action route can run, counting its calls. */
@@ -1028,6 +1040,7 @@ function actionState(
   };
   mutable.store.claimUiAction = audit.claimUiAction;
   mutable.store.completeUiAction = audit.completeUiAction;
+  mutable.store.transaction = audit.transaction;
   if (tools !== undefined) mutable.actionTools = tools;
   return state;
 }

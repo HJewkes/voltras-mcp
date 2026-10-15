@@ -14,12 +14,14 @@ import {
   type CompletedSet as StoreCompletedSet,
   type PrescriptionView,
   type Snapshot,
+  type TierView,
 } from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
   deriveActiveSetStates,
   derivePrescription,
   deriveRailExercises,
+  deriveRecapPrescription,
   deriveRailMetrics,
   peakVelocity,
   velocityLossPct,
@@ -141,6 +143,33 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
+  describe('live.armSource (VW-720)', () => {
+    function withActiveSet(active: Snapshot['sets']['active']): LiveViewSources {
+      return sources({ snapshot: { ...snapshot(), sets: { active } }, live: liveWithRep(0.58) });
+    }
+
+    it('words the wire armDefaultsSource and its stop for the header', () => {
+      const model = mapStoreToDashboardModel(
+        withActiveSet({
+          reps: [],
+          autoCreatedBy: 'idle_rep',
+          armDefaultsSource: 'default',
+          watch: {
+            notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30, thresholdSource: 'default' }],
+          },
+        }),
+      );
+      expect(model?.live?.armSource).toBe('Default · stop 30% (assumed)');
+    });
+
+    it('is null for a set the server applied no source to', () => {
+      const model = mapStoreToDashboardModel(
+        withActiveSet({ reps: [], autoCreatedBy: 'idle_rep' }),
+      );
+      expect(model?.live?.armSource).toBeNull();
+    });
+  });
+
   describe('session.unit follows the store displayUnit (VW-63)', () => {
     it('defaults to lbs with no displayUnit in sources', () => {
       const model = mapStoreToDashboardModel(sources());
@@ -202,6 +231,31 @@ describe('mapStoreToDashboardModel', () => {
     it('leaves the title null when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.title).toBeNull();
+    });
+  });
+
+  describe('session.tier and session.targetRpe (VW-669)', () => {
+    const tier: TierView = { tier: 'intermediate', confidence: 'confident', source: 'declared' };
+
+    it("carries the plan channel's tier and RPE onto the session model", () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, rpe: 8, tier } }));
+      expect(model?.session.tier).toEqual(tier);
+      expect(model?.session.targetRpe).toBe(8);
+    });
+
+    it('leaves the tier and RPE null when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.tier).toBeNull();
+      expect(model?.session.targetRpe).toBeNull();
+    });
+
+    it("drops the owner's tier while a guest is on the cable", () => {
+      const guest: Snapshot = { ...snapshot(), session: { sessionId: 's1', lifter: 'Guest' } };
+      const model = mapStoreToDashboardModel(
+        sources({ snapshot: guest, prescription: { sets: 4, tier } }),
+      );
+      expect(model?.session.lifter).toBe('Guest');
+      expect(model?.session.tier).toBeNull();
     });
   });
 
@@ -281,6 +335,7 @@ describe('mapStoreToDashboardModel', () => {
           name: 'Squat',
           plannedSets: 3,
           targetReps: 5,
+          repsHigh: null,
           repsLabel: 5,
           weightLbs: null,
           active: false,
@@ -289,11 +344,21 @@ describe('mapStoreToDashboardModel', () => {
           name: 'Bench',
           plannedSets: 3,
           targetReps: 8,
+          repsHigh: 10,
           repsLabel: '8–10',
           weightLbs: 135,
           active: true,
         },
       ]);
+    });
+
+    it('carries the exercise id through, so a pace suggestion can name its row', () => {
+      const prescription: PrescriptionView = {
+        sets: 3,
+        exercises: [{ exerciseId: 'ex-squat', name: 'Squat', order: 0, sets: 3, active: true }],
+      };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.plannedExercises[0]?.exerciseId).toBe('ex-squat');
     });
 
     it('leaves the list empty when the session carries no plan', () => {
@@ -612,7 +677,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
     const cells = derivePrescription(
       sessionModel({ plannedSets: 4, targetReps: null, plannedExercises: [planned()] }),
     );
-    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs' });
+    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs', effort: null });
   });
 
   it('keeps a prescribed rep RANGE as a range', () => {
@@ -677,7 +742,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
   it('reads sets × reps @ load when the plan states all three', () => {
     expect(
       derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: 140 })),
-    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs' });
+    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs', effort: null });
   });
 
   it('keeps the prescription and marks an unset load with the em-dash', () => {
@@ -685,7 +750,7 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
     // dropping the whole lockup for a missing load would hide what the coach wrote.
     expect(
       derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: null })),
-    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs' });
+    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs', effort: null });
   });
 
   it('returns null when no rep target is prescribed', () => {
@@ -763,6 +828,57 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
     expect(states.map((s) => s.status)).toEqual(['active', 'todo', 'todo']);
     expect(states[0]).toMatchObject({ planned: 8 });
     expect(states[1]).toMatchObject({ planned: 8 });
+  });
+
+  function withPlannedReps(targetReps: number, repsHigh: number | null, repsLabel: string) {
+    return plannedLive({
+      plannedExercises: [
+        {
+          name: 'Cable Chest Press',
+          plannedSets: 3,
+          targetReps,
+          repsHigh,
+          repsLabel,
+          weightLbs: 140,
+          active: true,
+        },
+      ],
+    });
+  }
+
+  it('draws a prescribed 8-10 todo set as a range from floor 8 to max 10', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
+    expect(states[1]).toEqual({ status: 'range', floor: 8, max: 10, doneVels: [] });
+  });
+
+  it('keeps the active 8-10 set as planned segments with the range label', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 10, '8–10'));
+    expect(states[0]).toMatchObject({ status: 'active', planned: 8, repsLow: 8, repsHigh: 10 });
+  });
+
+  it('leaves a single prescribed count as fixed columns with no range', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, null, '8'));
+    for (const state of states) {
+      expect(state).toMatchObject({ planned: 8 });
+      expect(state).not.toHaveProperty('repsHigh');
+      expect(state.status).not.toBe('range');
+    }
+  });
+
+  // Catches: buildActiveRow reusing the header's strip unchanged, so titan's absolutely
+  // positioned range label overlaps the rail row's prescription line (VW-926).
+  it('keeps the range label off the rail row but on the header strip', () => {
+    const model = withPlannedReps(8, 10, '8–10');
+    const [railRow] = deriveRailExercises(model);
+    expect(railRow.setStates[0]).toMatchObject({ status: 'active', planned: 8 });
+    expect(railRow.setStates[0]).not.toHaveProperty('repsLow');
+    expect(railRow.setStates[0]).not.toHaveProperty('repsHigh');
+    expect(deriveActiveSetStates(model)[0]).toMatchObject({ repsLow: 8, repsHigh: 10 });
+  });
+
+  it('treats a high bound at or below the floor as no range', () => {
+    const states = deriveActiveSetStates(withPlannedReps(8, 8, '8'));
+    expect(states[1]).not.toHaveProperty('repsHigh');
   });
 
   it('still emits no todo columns when neither the plan nor the device states a rep target', () => {
@@ -915,5 +1031,73 @@ describe('velocityRatios', () => {
 
   it('leaves an empty set empty rather than producing NaN', () => {
     expect(velocityRatios([])).toEqual([]);
+  });
+});
+
+describe('derivePrescription effort target (VW-669)', () => {
+  const CORPUS = ['rp-s7-rir-self-report-accuracy-by-tier', 'rp-s4-beginner-rir-floor-progression'];
+
+  function tiered(tier: TierView['tier'], source: TierView['source'] = 'declared'): SessionModel {
+    return sessionModel({
+      plannedSets: 4,
+      targetReps: 8,
+      tier: { tier, confidence: 'confident', source },
+    });
+  }
+
+  it('gives beginner, intermediate and advanced lifters different targets', () => {
+    const texts = (['beginner', 'intermediate', 'advanced'] as const).map(
+      (tier) => derivePrescription(tiered(tier))?.effort?.text,
+    );
+    expect(texts.every((text) => typeof text === 'string' && text.length > 0)).toBe(true);
+    expect(new Set(texts).size).toBe(3);
+  });
+
+  it.each(['beginner', 'intermediate', 'advanced'] as const)(
+    'names the %s tier in the basis and cites the RIR corpus entries',
+    (tier) => {
+      const basis = derivePrescription(tiered(tier))?.effort?.basis ?? '';
+      expect(basis).toContain(`${tier} tier (declared)`);
+      for (const id of CORPUS) expect(basis).toContain(id);
+    },
+  );
+
+  it('reads a default-sourced tier as assumed', () => {
+    const effort = derivePrescription(tiered('beginner', 'default'))?.effort;
+    expect(effort?.basis).toContain('beginner tier (assumed)');
+    expect(effort?.basis).not.toContain('default');
+  });
+
+  it("shows the plan's RPE as written over the tier target, with basis plan", () => {
+    const session = { ...tiered('intermediate'), targetRpe: 8 };
+    expect(derivePrescription(session)?.effort).toEqual({
+      text: 'RPE 8',
+      basis: 'plan',
+      assumed: false,
+    });
+  });
+
+  it('sets assumed from the tier source, not the basis text', () => {
+    expect(derivePrescription(tiered('beginner', 'default'))?.effort?.assumed).toBe(true);
+    expect(derivePrescription(tiered('advanced', 'declared'))?.effort?.assumed).toBe(false);
+  });
+
+  it('gives no effort line when neither a plan RPE nor a tier is known', () => {
+    const cells = derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, tier: null }));
+    expect(cells).not.toBeNull();
+    expect(cells?.effort).toBeNull();
+  });
+
+  it("carries the header's effort onto the rest recap", () => {
+    const session = tiered('advanced');
+    const recap = deriveRecapPrescription(session, 2);
+    expect(recap.effort).not.toBeNull();
+    expect(recap.effort).toEqual(derivePrescription(session)?.effort);
+  });
+
+  it('keeps the effort on a recap whose lockup degraded to placeholders', () => {
+    const session = { ...tiered('advanced'), plannedSets: null, targetReps: null };
+    expect(derivePrescription(session)).toBeNull();
+    expect(deriveRecapPrescription(session, 2).effort?.basis).toContain('advanced tier');
   });
 });

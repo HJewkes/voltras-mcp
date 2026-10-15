@@ -126,6 +126,8 @@ describe('buildSnapshotView', () => {
       elapsedMinutes: 18,
       plannedSetsRemaining: 9,
       projectedEndAt: '2026-05-09T13:02:00.000Z',
+      state: 'on_pace' as const,
+      slipMinutes: 0,
     };
     const view = buildSnapshotView({
       devices: [],

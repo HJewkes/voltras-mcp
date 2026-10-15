@@ -57,6 +57,7 @@ function setOf(velocities: number[], roms: number[], over: Partial<StoredSet> = 
     endedAt: '2026-09-01T10:01:00.000Z',
     partial: false,
     weightLbs: 100,
+    trainingMode: 'Weight Training',
     reps: velocities.map((v, i) => rep(i, v, roms[i])),
     ...over,
   };
@@ -178,5 +179,51 @@ describe('evaluateFailureCandidate — criterion v1', () => {
     expect(result.inputs.setIndexInSession).toBe(4);
     expect(result.inputs.sessionPositionSec).toBe(1830);
     expect(result.verdict).toBe('failure');
+  });
+});
+
+describe('evaluateFailureCandidate — resistance family (VW-541)', () => {
+  const STALL = [0.6, 0.62, 0.55, 0.48, 0.4];
+
+  it('labels a constant-load stall as a failure', () => {
+    const result = evaluateFailureCandidate(setOf(STALL, FULL_ROM));
+
+    expect(result).toMatchObject({ verdict: 'failure', inputs: { resistanceFamily: 'constant' } });
+  });
+
+  it('keeps the failure verdict for a chains stall, leaving the constant-load call to readers', () => {
+    const result = evaluateFailureCandidate(setOf(STALL, FULL_ROM, { chainsLbs: 20 }));
+
+    expect(result).toMatchObject({ verdict: 'failure', inputs: { resistanceFamily: 'chains' } });
+  });
+
+  it('keeps the failure verdict for an eccentric-overload stall, leaving the constant-load call to readers', () => {
+    const result = evaluateFailureCandidate(setOf(STALL, FULL_ROM, { eccentricPct: 30 }));
+
+    expect(result).toMatchObject({
+      verdict: 'failure',
+      inputs: { resistanceFamily: 'eccentric_overload' },
+    });
+  });
+
+  it('is not a candidate for a damper set, whose velocity carries no failure signal', () => {
+    const result = evaluateFailureCandidate(setOf(STALL, FULL_ROM, { damperLevel: 4 }));
+
+    expect(result.verdict).toBe('not_candidate');
+    expect(result.inputs.resistanceFamily).toBe('damper');
+    expect(result.terminalVelocityMps).toBeUndefined();
+  });
+
+  it('is not a candidate for an isokinetic set, whose velocity carries no failure signal', () => {
+    const result = evaluateFailureCandidate(setOf(STALL, FULL_ROM, { trainingMode: 'Isokinetic' }));
+
+    expect(result.verdict).toBe('not_candidate');
+    expect(result.inputs.resistanceFamily).toBe('isokinetic');
+  });
+
+  it('bumps the filter version so the old rows stay beside the new ones', () => {
+    expect(evaluateFailureCandidate(setOf(STALL, FULL_ROM)).filterVersion).toBe(
+      'failure-harvest@1.1.0',
+    );
   });
 });

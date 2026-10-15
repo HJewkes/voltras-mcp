@@ -94,6 +94,16 @@ describe('checkChangelog', () => {
     expect(findings).toEqual([]);
   });
 
+  it('reports a group of entries under a prose heading, where no release picks it up', () => {
+    const findings = checkChangelog({
+      version: '0.5.0',
+      markdown: changelog('## How to write an entry\n\n### Fixed\n\n- Lost (#9)\n', RELEASED_0_5_0),
+    });
+    expect(findings.map((finding) => finding.message)).toEqual([
+      expect.stringContaining('"### Fixed" sits outside any "## [...]" section'),
+    ]);
+  });
+
   it('holds for the real CHANGELOG.md', () => {
     const root = new URL('../../', import.meta.url);
     const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));

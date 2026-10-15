@@ -92,7 +92,7 @@ vi.mock('../../state/event-bridge.js', () => ({
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
-const { MODE_ECHO_POLL_MS } = await import('../device-handler-helpers.js');
+const { MODE_ECHO_POLL_MS } = await import('../../state/mode-echo.js');
 const { CoercionWatch } = await import('../../state/coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 const { ModeRevertGuard, MODE_REVERT_WINDOW_MS } = await import('../../state/mode-revert-guard.js');
@@ -721,7 +721,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       // The manager error is rethrown so callers see the failure ...
       expect(isError).toBe(true);
-      expect(String(payload.message)).toMatch(/manager kaboom/);
+      expect(String(payload.message)).not.toMatch(/manager kaboom/);
       // ... but the defensive teardown still ran: client is disposed,
       // adapter close was attempted, primary slot was reset to a fresh client.
       expect(client.dispose).toHaveBeenCalled();
@@ -1317,6 +1317,19 @@ describe('registerDeviceTools', () => {
         connectionState: 'awaitingAcceptance',
         state_confirmed: false,
       });
+    });
+
+    it('reports the event handler failures caught on the slot only once there are some', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({});
+      const reg = placeholders.get('device.get_state')!;
+
+      const before = await invoke(reg, {});
+      slot.listenerFaults = { frame: 2 };
+      const after = await invoke(reg, {});
+
+      expect(before.payload.listener_faults).toBeUndefined();
+      expect(after.payload.listener_faults).toEqual({ frame: 2 });
     });
 
     it('composes the response from live.snapshotDevice plus client live state', async () => {

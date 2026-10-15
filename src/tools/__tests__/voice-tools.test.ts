@@ -10,8 +10,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@voltras/node-sdk', () => ({}));
 
-const { registerVoiceTools, makeVoiceHolder, SAFETY_ACK_UNCONFIRMED } =
-  await import('../voice-tools.js');
+const { registerVoiceTools, SAFETY_ACK_UNCONFIRMED } = await import('../voice-tools.js');
+const { makeVoiceHolder } = await import('../../state/voice-holder.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';

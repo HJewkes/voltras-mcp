@@ -4,7 +4,7 @@
 //
 // Seeded and deterministic. Draws lifters (full, half and quarter ramp, flat,
 // falling, and a flatline after a six-week climb) at start loads 40/135/315 lb
-// with the real `plateauReferenceStepLbs` (or, with `--ramp-class`, the goal
+// climbing the real `plateauReferenceStepLbs` (or, with `--lifter-ramp`, the goal
 // ramp's `programmedRampStepLbs` for that class), noise ±1.5/3/5 lb (uniform and
 // gaussian) and 1/2/3 sessions a week, then reads every candidate once a week
 // the way `history.trend` would: weekly top-load points, 12-week lookback.
@@ -12,12 +12,20 @@
 // Usage:
 //   npm run build && node scripts/flatline-sim.mjs            # markdown to stdout
 //   node scripts/flatline-sim.mjs --draws 4000 --json out.json
-//   node scripts/flatline-sim.mjs --ramp-class isolation   # or upper_compound, lower_compound
+//   node scripts/flatline-sim.mjs --lifter-ramp isolation --rule reference
+//   node scripts/flatline-sim.mjs --lifter-ramp isolation --rule hybrid   # or class
+//   node scripts/flatline-sim.mjs --lifter-ramp reference --rule hybrid --rule-class isolation
+//   node scripts/flatline-sim.mjs --ramp-class isolation   # = --lifter-ramp isolation --rule class
+//   node scripts/flatline-sim.mjs --measured-pct 0.5       # a measured slope in percent of load a week
 //
-// Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs. The
-// real `flatline()` from dist/ is checked read for read against the row named
+// `--rule` picks the step every row judges by: reference, class, or hybrid
+// (VW-490 R7c's step, min of the two); the light_min_35d row on `--rule hybrid`
+// is R7c itself. Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs.
+// WA's `detectPlateau` rate mode is checked read for read against the row named
 // by `--shipped-as`, on the first 25 draws of every cell, and the run throws on
 // a disagreement.
+//
+// `--retro <path>` (VW-672) prints the historical recall count only; `--help` has the input shape.
 
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -28,8 +36,8 @@ import { detectPlateau } from '@voltras/workout-analytics';
 import * as core from './lib/flatline-sim-core.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { flatline, plateauReferenceStepLbs } = await import(
-  path.resolve(here, '../dist/analytics/flatline.js')
+const { plateauReferenceStepLbs } = await import(
+  path.resolve(here, '../dist/analytics/stall-step.js')
 );
 const { programmedRampStepLbs } = await import(
   path.resolve(here, '../dist/analytics/goal-band.js')
@@ -51,18 +59,91 @@ function argument(name, fallback) {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
-/** VW-482: `--ramp-class` swaps the stall rule's reference step for the goal ramp's intermediate step. */
-const RAMP_CLASS = argument('ramp-class', null);
-const stepAt =
-  RAMP_CLASS === null
-    ? plateauReferenceStepLbs
-    : (loadLbs) => programmedRampStepLbs(loadLbs, RAMP_CLASS, 'intermediate');
+const RAMP_CLASSES = ['isolation', 'upper_compound', 'lower_compound'];
+const RULES = ['reference', 'class', 'hybrid'];
+const classStep = (rampClass) => (loadLbs) =>
+  programmedRampStepLbs(loadLbs, rampClass, 'intermediate');
 
-function shippedVerdict(points, smoothing) {
+function oneOf(name, value, allowed) {
+  if (value !== null && !allowed.includes(value))
+    throw new Error(`--${name} must be one of ${allowed.join(', ')}; got '${value}'`);
+  return value;
+}
+
+/** VW-482: `--ramp-class` is shorthand for a lifter on that class ramp judged by the class step. */
+const RAMP_CLASS = oneOf('ramp-class', argument('ramp-class', null), RAMP_CLASSES);
+/** VW-558 H4: `--measured-pct` judges against a lifter's own measured weekly slope, with no floor. */
+const MEASURED_PCT = argument('measured-pct', null);
+/** VW-671: the lifter's climb, apart from the step the stall rule judges it by. */
+const LIFTER_RAMP = oneOf('lifter-ramp', argument('lifter-ramp', RAMP_CLASS ?? 'reference'), [
+  'reference',
+  ...RAMP_CLASSES,
+]);
+const RULE = oneOf('rule', argument('rule', RAMP_CLASS === null ? 'reference' : 'class'), RULES);
+const RULE_CLASS = oneOf(
+  'rule-class',
+  argument('rule-class', LIFTER_RAMP === 'reference' ? null : LIFTER_RAMP),
+  RAMP_CLASSES,
+);
+/** VW-672: the retro-data file for the historical recall count. */
+const HELP = `Usage: node scripts/flatline-sim.mjs --retro <path-to-retro-file> [--rule reference|class|hybrid]
+
+Reads the retro-data JSON that \`npm run retro:truecoach -- ... --json <file>\` writes and prints
+one line, "k of n historical flatlines fire (--rule <rule>)", and nothing else.
+
+Input shape (other keys are ignored; anything else malformed fails the run):
+  { "lifts": [ { "family": string,
+                 "sessions": [ { "date": "YYYY-MM-DD", "topLoad": number, "e1rm": number | null } ],
+                 "plateaus": [ { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD",
+                                 "rule": "flatline" | "wa_window" } ] } ] }
+Sessions are in date order, one a day. Each "flatline" plateau is one historical flatline.
+
+A window fires when the rule reads the lift's e1RM history, up to any session inside the window,
+flat, with the step read at the median top load of the lift's valued sessions: the retro tool's
+own labelling. --rule class and hybrid take the class from the family the way
+\`sim:goal-ramp --retro\` does (squat and deadlift lower compound, the rest upper compound) at the
+intermediate tier. hybrid is VW-490 R7c: the smaller step, and the light_min_35d row.
+Every read is also checked against WA detectPlateau rate mode at the rule's step; a disagreement throws.
+Without --retro the script runs the synthetic grid; see the header of this file.
+`;
+const RETRO = argument('retro', null);
+if (RULE !== 'reference' && RULE_CLASS === null && RETRO === null)
+  throw new Error(`--rule ${RULE} needs a class: pass --rule-class or a class --lifter-ramp`);
+
+function chooseLifterStep() {
+  if (MEASURED_PCT !== null) return (loadLbs) => (loadLbs * Number(MEASURED_PCT)) / 100;
+  return LIFTER_RAMP === 'reference' ? plateauReferenceStepLbs : classStep(LIFTER_RAMP);
+}
+
+/** `hybrid` is VW-490 R7c's step: the smaller of the reference and the class step. */
+function chooseRuleStep() {
+  if (MEASURED_PCT !== null) return chooseLifterStep();
+  if (RULE === 'reference') return plateauReferenceStepLbs;
+  if (RULE === 'class') return classStep(RULE_CLASS);
+  const byClass = classStep(RULE_CLASS);
+  return (loadLbs) => Math.min(plateauReferenceStepLbs(loadLbs), byClass(loadLbs));
+}
+const lifterStepAt = chooseLifterStep();
+const stepAt = chooseRuleStep();
+const describe = (ramp) => (ramp === 'reference' ? 'plateau reference' : `${ramp} class`);
+const STEP_LABEL =
+  MEASURED_PCT !== null
+    ? `measured ${MEASURED_PCT}%/wk`
+    : `lifter climbs the ${describe(LIFTER_RAMP)} step; rule '${RULE}'` +
+      (RULE === 'reference' ? '' : ` on the ${RULE_CLASS} class`);
+
+function shippedVerdict(
+  points,
+  smoothing,
+  expectedStepLbsPerWeek = stepAt(points[points.length - 1].v),
+) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
-  const expectedStepLbsPerWeek = stepAt(points[points.length - 1].v);
-  const options = { expectedStepLbsPerWeek, minDays: core.MIN_DAYS, smoothing };
-  return flatline(series, options) !== null;
+  const options = {
+    expectedRatePerWeek: expectedStepLbsPerWeek,
+    minDays: core.MIN_DAYS,
+    smoothing,
+  };
+  return detectPlateau(series, options).isPlateau;
 }
 
 const CANDIDATES = Object.fromEntries(
@@ -73,7 +154,7 @@ const CANDIDATES = Object.fromEntries(
 );
 const DEEPEST_CONFIRM = Math.max(...Object.values(core.STRATEGIES).map((s) => s.confirm ?? 1));
 
-/** The candidates the real `flatline()` must agree with, read for read: its default, and `smoothing: null`. */
+/** The candidates WA's rate mode must agree with, read for read: its default, and `smoothing: null`. */
 const SHIPPED_AS = argument('shipped-as', 'rolling_top_2wk_min_21d_settled_1');
 const RAW_AS = 'baseline';
 const PARITY_DRAWS_PER_CELL = 25;
@@ -85,7 +166,9 @@ function assertShippedParity(seen, verdicts) {
     shippedVerdict(seen, undefined) === verdicts[SHIPPED_AS] &&
     shippedVerdict(seen, null) === verdicts[RAW_AS];
   if (!agrees)
-    throw new Error(`flatline() disagrees with its candidate on ${JSON.stringify(seen)}`);
+    throw new Error(
+      `detectPlateau rate mode disagrees with its candidate on ${JSON.stringify(seen)}`,
+    );
 }
 
 /** One lifter, read weekly: which reads were flat, per candidate. */
@@ -111,7 +194,7 @@ function drawPoints(cell, random) {
   const fractions = late
     ? core.lateFlatlineFractions(CLIMB_WEEKS, weeks)
     : core.LIFTERS[cell.lifter](weeks);
-  const loads = core.trueLoads(cell.startLbs, fractions, stepAt);
+  const loads = core.trueLoads(cell.startLbs, fractions, lifterStepAt);
   const noise = core.noiseSampler(cell.noiseKind, cell.noiseLbs, random);
   return core.weeklyTopLoads(loads, cell.sessionsPerWeek, noise);
 }
@@ -269,7 +352,7 @@ function assertGateMatchesWa() {
   const random = core.seededRandom(1);
   for (let draw = 0; draw < 2000; draw++) {
     const noise = core.noiseSampler('uniform', 5, random);
-    const loads = core.trueLoads(100, core.LIFTERS.half_ramp(3 + (draw % 8)), stepAt);
+    const loads = core.trueLoads(100, core.LIFTERS.half_ramp(3 + (draw % 8)), lifterStepAt);
     const points = core.weeklyTopLoads(loads, 1, noise);
     const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
     const wa = detectPlateau(series, core.WA_THRESHOLD_PCT, 0);
@@ -282,8 +365,8 @@ function assertGateMatchesWa() {
 
 function report(results, draws) {
   const sections = [
-    `Step: ${RAMP_CLASS ?? 'plateau reference'}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
-      `The real flatline() matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
+    `Step: ${STEP_LABEL}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
+      `WA detectPlateau rate mode matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
     baselineSection(),
     quietSection(),
     summaryTable(results, {}, 'All cells pooled'),
@@ -305,20 +388,46 @@ function report(results, draws) {
   return sections.join('\n\n');
 }
 
-assertGateMatchesWa();
-const draws = Number(argument('draws', '1000'));
-const results = runGrid(draws);
-const jsonPath = argument('json', null);
-if (jsonPath !== null) {
-  const slim = results.map(({ cell, tallies }) => ({
-    cell,
-    tallies: Object.fromEntries(
-      Object.entries(tallies).map(([name, tally]) => [
-        name,
-        { ...tally, ...delayStats(tally), firstFlatRead: undefined },
-      ]),
-    ),
-  }));
-  writeFileSync(jsonPath, JSON.stringify({ draws, results: slim }, null, 2));
+/** The step `--rule` judges a retro lift by, at its median top load. */
+function retroStep({ loadLbs, rampClass }) {
+  const reference = plateauReferenceStepLbs(loadLbs);
+  if (RULE === 'reference') return reference;
+  const byClass = programmedRampStepLbs(loadLbs, rampClass, 'intermediate');
+  return RULE === 'class' ? byClass : Math.min(reference, byClass);
 }
-process.stdout.write(`${report(results, draws)}\n`);
+
+/** The shipped row must match WA's rate mode on every retro read, or the count is about a different rule. */
+function retroFires(points, retroCase) {
+  const step = retroStep(retroCase);
+  const shipped = shippedVerdict(points, undefined, step);
+  if (core.readsFlat(points, step, core.STRATEGIES[SHIPPED_AS]) !== shipped)
+    throw new Error(`detectPlateau rate mode disagrees with '${SHIPPED_AS}' on a retro read`);
+  return RULE === 'hybrid' ? core.readsFlat(points, step, core.STRATEGIES.light_min_35d) : shipped;
+}
+
+function runSyntheticGrid() {
+  assertGateMatchesWa();
+  const draws = Number(argument('draws', '1000'));
+  const results = runGrid(draws);
+  const jsonPath = argument('json', null);
+  if (jsonPath !== null) {
+    const slim = results.map(({ cell, tallies }) => ({
+      cell,
+      tallies: Object.fromEntries(
+        Object.entries(tallies).map(([name, tally]) => [
+          name,
+          { ...tally, ...delayStats(tally), firstFlatRead: undefined },
+        ]),
+      ),
+    }));
+    writeFileSync(jsonPath, JSON.stringify({ draws, results: slim }, null, 2));
+  }
+  process.stdout.write(`${report(results, draws)}\n`);
+}
+
+if (process.argv.includes('--help')) process.stdout.write(HELP);
+else if (RETRO !== null)
+  process.stdout.write(
+    `${core.recallLine(core.retroRecall(core.loadRetro(RETRO), retroFires), RULE)}\n`,
+  );
+else runSyntheticGrid();

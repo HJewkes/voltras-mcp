@@ -847,7 +847,7 @@ export function velocityLossBaseline(reps: readonly Rep[]): {
   };
 }
 
-export function baselineRepNumberFor(reps: readonly Rep[]): number {
+function baselineRepNumberFor(reps: readonly Rep[]): number {
   let best = 0;
   let idx = 0;
   for (let i = 0; i < reps.length; i++) {
@@ -1155,6 +1155,8 @@ export function buildVelocityLossExceededPayload(
 /**
  * How the threshold in a velocity-loss summary was arrived at (VW-266).
  *
+ * An assumed default says so (VW-719), so no reader takes it as the lifter's goal.
+ *
  * EMPTY FOR AN EXPLICIT THRESHOLD, which is every pre-VW-266 caller: the number
  * came from whoever asked for it, the summary said so by quoting it, and adding
  * prose to that sentence would change the text every existing consumer already
@@ -1168,6 +1170,9 @@ export function buildVelocityLossExceededPayload(
  * (Jukic 2023).
  */
 function describeThresholdProvenance(spec: ResolvedVelocityLossSpec): string {
+  if (spec.thresholdSource === 'default') {
+    return ' (an assumed default: no plan or agent named a goal for this auto-armed set)';
+  }
   if (spec.thresholdSource !== 'set_intent' && spec.thresholdSource !== 'plan_intent') {
     return '';
   }
@@ -1932,9 +1937,10 @@ export function buildWeightImpliedMismatchPayload(
 /**
  * Build the meta + content for a `bilateral_divergence` channel event
  * (VMCP-02.67). Fired when the reconciler pairs two opposite-slot set closes
- * whose rep counts differ by one or more. Cross-slot by nature, so it carries
- * both sides' slot / session / set ids and counts rather than being scoped to
- * a single slot. `delta` is `a.rep_count − b.rep_count` (signed).
+ * whose rep counts differ by one or more. Scoped to the closing slot (`slot`
+ * equals `slot_id`); `partner_slot_id` names the other side, and both sides'
+ * session / set ids and counts ride along. `delta` is
+ * `a.rep_count − b.rep_count` (signed).
  */
 export function buildBilateralDivergencePayload(divergence: BilateralDivergence): {
   meta: Record<string, string>;

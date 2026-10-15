@@ -17,15 +17,14 @@
 //                   (rp-s5-set-addition-not-progression-tool,
 //                    rp-s5-volume-history-calibration-conversation)
 //   RIR             beginner none — technique-led; intermediate about 3 in
-//                   week 1; advanced 2-3
-//                   (rp-s7-rir-self-report-accuracy-by-tier,
-//                    rp-s4-beginner-rir-floor-progression)
+//                   week 1; advanced 2-3 (`effort-target.ts`, shared with the wall)
 //
 // NO SEX-SEEDED VALUE anywhere, and no field for one (backlog B01 risk note,
 // B53 rejected). Pure: the caller reads the tier signal and the profile and
 // passes them in.
 
 import type { EffortTolerance } from '../store/types.js';
+import { effortTargetFor } from './effort-target.js';
 import type { Tier, TierConfidence, TierSource } from '../tools/tier-signal.js';
 
 /** Inclusive `[lo, hi]`. `lo === hi` is a single number, not an empty range. */
@@ -81,20 +80,6 @@ const SETS_PER_EXERCISE: Record<Exclude<Tier, 'advanced'>, SeedRange> = {
   intermediate: [2, 4],
 };
 
-const RIR_TARGET: Record<Tier, number | null> = {
-  beginner: null,
-  intermediate: 3,
-  advanced: 2,
-};
-
-const RIR_NOTE: Record<Tier, string> = {
-  beginner:
-    'Do not track RIR at this tier — beginner self-report runs 5-10 reps off. Progress on ' +
-    'technique instead, with a floor of never closer than 1-2 RIR.',
-  intermediate: 'Start around 3 RIR in week 1, trending toward 0 by the last pre-deload session.',
-  advanced: '2-3 RIR generally; 1-2 RIR for a prioritized small muscle.',
-};
-
 const LOW_TOLERANCE_NOTE =
   ' They reported a low tolerance for hard effort, so stay at the conservative end of that ' +
   'RIR target and earn the aggressive end rather than opening there. Set counts are unchanged ' +
@@ -117,7 +102,7 @@ export function startingPrescription(input: StartingPrescriptionInput): Starting
     seeds: {
       sessionsPerWeek,
       setsPerExercise,
-      rirTarget: RIR_TARGET[tier],
+      rirTarget: effortTargetFor(tier).rirTarget,
       rirNote: rirNote(tier, input.effortTolerance),
     },
     reasons: reasonsFor(input, sessionsPerWeek, setsPerExercise),
@@ -146,8 +131,8 @@ function seedSetsPerExercise(
 }
 
 function rirNote(tier: Tier, effortTolerance: EffortTolerance | undefined): string {
-  if (effortTolerance !== 'low') return RIR_NOTE[tier];
-  return RIR_NOTE[tier] + LOW_TOLERANCE_NOTE;
+  const { text } = effortTargetFor(tier);
+  return effortTolerance === 'low' ? text + LOW_TOLERANCE_NOTE : text;
 }
 
 function reasonsFor(
@@ -158,7 +143,7 @@ function reasonsFor(
   const reasons = [
     sessionsReason(input, sessionsPerWeek),
     setsReason(input.tier, setsPerExercise),
-    `RIR: ${RIR_NOTE[input.tier]}`,
+    `RIR: ${effortTargetFor(input.tier).text}`,
   ];
   if (input.source === 'default') {
     reasons.push(

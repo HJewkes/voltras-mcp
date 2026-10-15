@@ -28,6 +28,7 @@ import type { Device, DeviceRowState, SessionState } from '@titan-design/react-u
 // (VMCP-02.84) without pulling the store's runtime (sqlite, node:sqlite) into
 // this browser bundle.
 import type { SetPurpose } from '../../store/types.js';
+import type { Tier, TierConfidence, TierSource } from '../../tools/tier-signal.js';
 // Type-only, same rationale: the declared setup card (VW-275) mirrors
 // `store/types.ts`'s `SetupCard` without a runtime dependency.
 import type { SetupCard } from '../../store/types.js';
@@ -44,7 +45,7 @@ import { limbLabel, limbSlotBadge } from './limb';
 import { convertMass, type MassUnit } from './live-page/mass';
 
 /** Peak concentric velocity (m/s) for a rep, via WA. Null when unavailable. */
-export function repPeakVelocityMps(rep: Rep): number | null {
+function repPeakVelocityMps(rep: Rep): number | null {
   const v = getRepPeakVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
@@ -64,6 +65,22 @@ export function repMeanVelocityMps(rep: Rep): number | null {
 }
 
 /**
+ * The reps whose mean velocity is final: an open set's reps minus the one still
+ * in its concentric. The server appends a rep at its first concentric sample, and
+ * until its eccentric starts its mean climbs from zero sample by sample — the
+ * same "no eccentric samples" rule as the server's `isTrailingRepIncomplete`.
+ * The velocity bars must not read it: each poll lands a different partial value,
+ * and the chart replays the live bar's entrance on every change, so one rep grew
+ * in two or three times. A rep with no sample arrays at all carries no evidence
+ * of being mid-rep and is kept.
+ */
+export function settledReps(reps: readonly Rep[]): readonly Rep[] {
+  const last = reps.at(-1);
+  const eccentric = last?.eccentric.samples;
+  return Array.isArray(eccentric) && eccentric.length === 0 ? reps.slice(0, -1) : reps;
+}
+
+/**
  * Peak CONCENTRIC force (lbs) for a rep. Null when the rep logged no concentric
  * force (empty phase → `peakForce` defaults to 0).
  *
@@ -72,7 +89,7 @@ export function repMeanVelocityMps(rep: Rep): number | null {
  * (lifting) verdict, so folding in eccentric peaks would overstate it. WA force
  * samples are already lbs (`WorkoutSample.force`), so no conversion is needed.
  */
-export function repPeakConcentricForceLbs(rep: Rep): number | null {
+function repPeakConcentricForceLbs(rep: Rep): number | null {
   const f = rep.concentric.peakForce;
   return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : null;
 }
@@ -109,6 +126,8 @@ export interface WorkoutSetView {
  * server's `PlannedExerciseView` — the two must stay identical (see server.ts).
  */
 export interface PlannedExerciseView {
+  /** The catalog exercise id. The server always sends it; optional so older fixtures still type. */
+  exerciseId?: string;
   /** Display name, or the exercise id when the catalog carries no name. Never invented. */
   name: string;
   /** 0-based position within the workout template. */
@@ -122,8 +141,26 @@ export interface PlannedExerciseView {
   active: boolean;
 }
 
+/** The lifter's tier signal, matching `/api/session-plan`'s `prescription.tier`. */
+export interface TierView {
+  tier: Tier;
+  confidence: TierConfidence;
+  source: TierSource;
+}
+
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
+  /**
+   * Where the targets come from: a plan the coach attached, or the lifter's last session of
+   * the exercise (VW-642). The server always sends it; optional here so payloads and fixtures
+   * that predate it still type.
+   */
+  source?: 'prescribed' | 'derived';
+  /**
+   * Only on a derived view: when the session it was derived from started, and (VW-908) how
+   * many local days ago and whether that is a break. The age is absent from older payloads.
+   */
+  derivedFrom?: { startedAt: string; daysAgo?: number; stale?: boolean };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;
@@ -151,6 +188,8 @@ export interface PrescriptionView {
    * can't resolve the full template → week → block chain.
    */
   title?: string;
+  /** The lifter's tier signal (VW-668). Absent when the server's tier read failed. */
+  tier?: TierView;
 }
 
 /** Client-side view of a single device entry in the snapshot. */
@@ -204,6 +243,11 @@ export interface SnapshotActiveSet {
    * `ActiveSet.autoCreatedBy` (`state/live-state.ts`) for what each value means.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep';
+  /**
+   * Which source set an auto-armed set's watch (VW-720): its plan row, or the assumed
+   * default. Absent once an agent's own watch replaces it. See `ActiveSet.armDefaultsSource`.
+   */
+  armDefaultsSource?: 'plan_row' | 'default';
 }
 
 /**
@@ -432,10 +476,15 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   // MEAN concentric velocity per rep (not peak): the VelocityStrip bars must
   // read the same metric as the velocity-loss %/FatigueMeter/StatusPill rendered
   // beside them, so the visible bar-drop and the stated loss %/verdict agree
-  // across the room (VW-58).
+  // across the room (VW-58). Unrounded: titan bands each bar on the exact loss and
+  // formats the number itself, so a bar and the aura agree at a band edge (titan 0.21.1).
+  // Settled reps only: a bar lands once, at its final value.
+  // The loss % (and the aura and stop strip it feeds) reads the same settled reps: a
+  // partial rep's climbing mean reads as a collapse until its concentric ends.
+  const settled = [...settledReps(reps)];
   const velocitiesMps: number[] = [];
-  for (const rep of reps) {
-    velocitiesMps.push(roundMps(repMeanVelocityMps(rep)) ?? 0);
+  for (const rep of settled) {
+    velocitiesMps.push(repMeanVelocityMps(rep) ?? 0);
   }
 
   return {
@@ -445,8 +494,8 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     reps: reps.length,
     repTarget,
     repsLabel: fmtRepsLabel(reps.length, repTarget),
-    velocityLoss: fmtVelocityLoss(reps),
-    velocityLossPct: computeVelocityLossPct(reps),
+    velocityLoss: fmtVelocityLoss(settled),
+    velocityLossPct: computeVelocityLossPct(settled),
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     velocitiesMps,
     autoCreatedBy: set.autoCreatedBy ?? null,

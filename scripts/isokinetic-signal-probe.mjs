@@ -33,7 +33,7 @@
 //   VOLTRA_ADAPTER=node node scripts/isokinetic-signal-probe.mjs
 //
 //   # Target a named device and sweep three speeds:
-//   VOLTRA_ADAPTER=node DEVICE=VTR-1234 SWEEP=400,550,700 \
+//   VOLTRA_ADAPTER=node DEVICE=my-voltra SWEEP=400,550,700 \
 //     node scripts/isokinetic-signal-probe.mjs
 //
 //   # Dry-run the plumbing with the in-process mock (NO real force — see below):

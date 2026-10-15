@@ -16,6 +16,7 @@
 // Confidentiality: fitness units and plan metadata only, no protocol data (NF-07).
 
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
+import { log } from '../../logger.js';
 import {
   GOAL_BAND_CONSTANTS,
   type GoalBand,
@@ -146,6 +147,19 @@ export function isCorridor(band: GoalBand): boolean {
   return band.direction === 'hold' && (band.corridorPct ?? 0) > 0;
 }
 
+/**
+ * A lift held through a diet phase: a `hold` rate band with no corridor. Every
+ * metric that reaches this shape is more-is-better, so it reads with the `up` rules (VW-486).
+ */
+export function isOneSidedHold(band: GoalBand): boolean {
+  return band.direction === 'hold' && band.corridorPct === null;
+}
+
+/** A `hold` band judged on distance from its middle; a lift held through a diet phase is not one. */
+export function readsTwoSided(band: GoalBand): boolean {
+  return band.direction === 'hold' && !isOneSidedHold(band);
+}
+
 /** Which side of its corridor a reading sits on, or `null` inside it. */
 export function corridorSideOf(
   expected: GoalBandExpectation,
@@ -165,14 +179,14 @@ function holdToleranceOf(band: GoalBand): number {
 export function behindEdge(committedEdge: number, value: number, band: GoalBand): boolean {
   const tolerance = holdToleranceOf(band);
   if (band.direction === 'down') return value > committedEdge + tolerance;
-  if (band.direction === 'hold') return false;
+  if (band.direction === 'hold' && !isOneSidedHold(band)) return false;
   return value < committedEdge - tolerance;
 }
 
-/** Past the stretch edge. A `hold` goal has no stretch to pass. */
+/** Past the stretch edge. A two-sided `hold` goal has no stretch to pass. */
 export function aheadOfEdge(stretchEdge: number, value: number, band: GoalBand): boolean {
   if (band.direction === 'down') return value < stretchEdge;
-  if (band.direction === 'hold') return false;
+  if (band.direction === 'hold' && !isOneSidedHold(band)) return false;
   return value > stretchEdge;
 }
 
@@ -261,12 +275,26 @@ function atPrecision(metric: StoredGoalMetric, value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+/** In-block readings placed in a later block week than `currentWeek` (VW-422); none while the grid agrees. */
+export function goalReadingWeekViolations(
+  readings: readonly BlockReading[],
+  currentWeek: number,
+): BlockReading[] {
+  return readings.filter((reading) => reading.position + 1 > currentWeek);
+}
+
 export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
   const { target, band, weeks, readings } = input;
   const weekCount = weeks.length;
   const currentWeek = Math.max(1, blockWeekAt(input.weekOneAt, input.now));
   const last = readings[readings.length - 1];
   const ended = currentWeek > weekCount;
+  const violations = goalReadingWeekViolations(readings, currentWeek);
+  if (violations.length > 0) {
+    log.warn(
+      `goal-milestone: '${target.id}' has ${violations.length} reading(s) past week ${currentWeek}`,
+    );
+  }
   return {
     target: mesoTargetOf(target),
     goalWeek: weeks[weekCount - 1]?.index ?? weekCount,
@@ -280,8 +308,8 @@ export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
 
 /**
  * Hit the moment the committed number is lifted; missed only once the block
- * has ended without it. A lift held through a diet phase has no number to lift, so
- * it is judged at the boundary alone: held if its last reading sits inside that week's band.
+ * has ended without it. A `hold` band with no reach is judged at the boundary alone,
+ * off its last reading against that week's band row.
  */
 function milestoneState(
   input: MesoMilestoneInput,
@@ -292,7 +320,13 @@ function milestoneState(
   if (!ended) return 'upcoming';
   if (input.reach !== null || last === undefined) return 'missed';
   const expected = expectationAt(input.band, input.weeks, last.position);
-  return insideCorridor(expected, last.value) ? 'hit' : 'missed';
+  return heldAt(expected, last.value, input.band) ? 'hit' : 'missed';
+}
+
+/** Inside a two-sided band; for a lift held through a diet phase, not under its low edge (VW-486). */
+function heldAt(expected: GoalBandExpectation, value: number, band: GoalBand): boolean {
+  if (readsTwoSided(band)) return insideCorridor(expected, value);
+  return !behindEdge(expected.low, value, band);
 }
 
 /** One entry per week of the block, aligned to week 1. */
@@ -319,7 +353,7 @@ function outcomeAgainst(
   value: number,
   band: GoalBand,
 ): GoalWeekOutcome {
-  if (band.direction === 'hold') return insideCorridor(expected, value) ? 'on_track' : 'missed';
+  if (readsTwoSided(band)) return insideCorridor(expected, value) ? 'on_track' : 'missed';
   if (behindEdge(expected.low, value, band)) return 'missed';
   return aheadOfEdge(expected.high, value, band) ? 'ahead' : 'on_track';
 }

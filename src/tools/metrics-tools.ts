@@ -33,10 +33,9 @@
 // within-set losses side by side over recorded work, which is the paired
 // comparison that has to run before the live 25% guard can be rebased.
 //
-// `session.volume` (VMCP-06.05 / B47) records the volume model rather than
-// changing it: target-only set counting, one set to one primary muscle, no
-// synergist weighting. See `setsByTargetMuscle` for the decision and the
-// reason it is not to be built speculatively.
+// `session.volume` (VMCP-06.05 / B47, VW-661) reads the VW-561 weight table
+// two ways: `setsByMuscle` is the landmark read (target rows only) and
+// `doseSetsByMuscle` is the labelled dose read. See `setsByAttribution`.
 //
 // ── Status of the original 9 pipelines ─────────────────────────────────────
 //
@@ -73,6 +72,7 @@
 // set defaults to the heaviest pre-working-load set rather than the first
 // rep of the session — see `selectReadinessProbeSet`.
 
+import { UserFacingError } from '../errors.js';
 import {
   analyzeTrend,
   assessRepQuality,
@@ -132,7 +132,7 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
-import { flatline, plateauReferenceStepLbs, type Flatline } from '../analytics/flatline.js';
+import { flatlineOf, plateauReferenceStepLbs, type Flatline } from '../analytics/stall-step.js';
 import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
@@ -146,6 +146,15 @@ import {
   type RomIntegrityReading,
 } from '../analytics/rom-integrity.js';
 import { movementClassForExerciseId, type MovementClass } from '../exercises/movement-class.js';
+import {
+  countSetsByAttribution,
+  targetMuscles,
+  UNATTRIBUTED_MUSCLE,
+  type AttributedSetCounts,
+  type SlugAttribution,
+} from '../exercises/muscle-attribution.js';
+import { MUSCLE_MAP_VERSION, type TitanMuscleGroup } from '../exercises/muscle-map.js';
+import { attributionOfExercise } from '../exercises/seed-attribution.js';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import {
@@ -317,9 +326,12 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // way the pipelines below are. See `setsForSessionExercise`.
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
+      const counts = setsByAttribution(state, sets);
       const result: SessionVolumeResult = {
         tonnageLbs: computeVolume(sets.map(toAnalyticsSet), weightsOf(sets)),
-        setsByMuscle: setsByTargetMuscle(state, sets),
+        setsByMuscle: counts.landmark,
+        doseSetsByMuscle: counts.dose,
+        muscleMapVersion: MUSCLE_MAP_VERSION,
         model: 'target-only',
       };
       return result;
@@ -504,7 +516,7 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       return computeE1RM(state, input);
 
     case 'history.trend':
-      return computeHistoryTrend(state, input);
+      return computeHistoryTrendWithWeekly(state, input);
 
     case 'history.weekly_volume':
       return computeHistoryWeeklyVolume(state, input);
@@ -733,7 +745,8 @@ interface StallRun {
 
 /**
  * VW-452: a load run is a stall only when it is a flatline, judged against the
- * plateau's reference weekly step at the newest load. `volume` keeps WA's own finding.
+ * plateau's reference weekly step at the newest load by WA's rate mode (VW-677).
+ * `volume` keeps WA's window finding: it has no constant expected weekly rate.
  */
 function stallRun(
   series: TimeSeries,
@@ -744,11 +757,13 @@ function stallRun(
   if (metric === 'volume') {
     return { isStall: plateau.isPlateau, days: plateau.plateauDays, flatline: null };
   }
-  const found = flatline(series, {
-    expectedStepLbsPerWeek: plateauReferenceStepLbs(latestPoint(series).value),
-    thresholdPct: input.thresholdPct,
-    minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
-  });
+  const found = flatlineOf(
+    detectPlateau(series, {
+      expectedRatePerWeek: plateauReferenceStepLbs(latestPoint(series).value),
+      ...(input.thresholdPct !== undefined && { thresholdPct: input.thresholdPct }),
+      minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
+    }),
+  );
   return { isStall: found !== null, days: found?.days ?? 0, flatline: found };
 }
 
@@ -951,6 +966,9 @@ type HistoryWeeklyVolumeInput = Extract<
 interface HistoryWeeklyVolumeResult {
   weekly: WeeklySummary[];
   byMuscleGroup: VolumeByMuscleGroup;
+  setsByMuscle: Record<string, number>;
+  doseSetsByMuscle: Record<string, number>;
+  muscleMapVersion: string;
   verdict: null;
 }
 
@@ -1014,21 +1032,23 @@ function sessionSource(
 ): ProcessedSessionSource {
   return {
     id: session.id,
-    startedAt: earliestStartedAt(eligibleSets),
+    startedAt: localWallClockIso(earliestStartedAt(eligibleSets)),
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
   };
 }
 
-async function computeHistoryWeeklyVolume(
-  state: ServerState,
-  input: HistoryWeeklyVolumeInput,
-): Promise<HistoryWeeklyVolumeResult> {
-  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+/** The owner's eligible sets per session across the `weeks` window, every exercise. */
+interface WeeklyWindow {
+  fromIso: string;
+  sessions: StoredSession[];
+  eligibleBySession: Map<string, StoredSet[]>;
+}
+
+async function loadWeeklyWindow(state: ServerState, weeks: number): Promise<WeeklyWindow> {
   const fromIso = weeksAgoIso(weeks);
-  const toIso = new Date().toISOString();
   // Owner-only by default (VW-169) — `listSessions` filters `lifter IS NULL`
-  // the same way `getSetsForExercise` does. No `exerciseId` here: this
-  // pipeline rolls up EVERY exercise, unlike `history.trend`.
+  // the same way `getSetsForExercise` does. No `exerciseId` here: the weekly
+  // rollup covers EVERY exercise, unlike the single-exercise trend series.
   const sessions = await state.store.listSessions({
     from: fromIso,
     limit: HISTORY_WEEKLY_VOLUME_SESSION_LIMIT,
@@ -1039,18 +1059,46 @@ async function computeHistoryWeeklyVolume(
       return [session.id, weeklyVolumeEligibleSets(raw, state.config.adapter)] as const;
     }),
   );
-  const eligibleBySession = new Map(eligibleEntries);
+  return { fromIso, sessions, eligibleBySession: new Map(eligibleEntries) };
+}
 
-  // Whole-session granularity for `getWeeklySummaries`: `sessionCount` and
-  // `topWeightLbs` are physical-session facts, not per-exercise ones.
-  const wholeSessionSources: ProcessedSessionSource[] = sessions
-    .filter((s) => (eligibleBySession.get(s.id)?.length ?? 0) > 0)
-    .map((s) => sessionSource(s, eligibleBySession.get(s.id)!));
-  const weeklySessions = toProcessedSessions(wholeSessionSources, eligibleBySession);
-  if (weeklySessions.length === 0) {
+/**
+ * The one weekly-summary build behind `history.weekly_volume` and
+ * `history.trend`'s `weekly`. Whole-session granularity for
+ * `getWeeklySummaries`: `sessionCount` and `topWeightLbs` are physical-session
+ * facts, not per-exercise ones. Empty when the window holds no eligible set.
+ */
+function buildWeeklySummaries(window: WeeklyWindow, weeks: number): WeeklySummary[] {
+  const wholeSessionSources: ProcessedSessionSource[] = window.sessions
+    .filter((s) => (window.eligibleBySession.get(s.id)?.length ?? 0) > 0)
+    .map((s) => sessionSource(s, window.eligibleBySession.get(s.id)!));
+  const weeklySessions = toProcessedSessions(wholeSessionSources, window.eligibleBySession);
+  return weeklySessions.length === 0 ? [] : getWeeklySummaries(weeklySessions, weeks);
+}
+
+/** `history.trend` plus the lifter's weekly summaries, the same ones `history.weekly_volume` reports. */
+async function computeHistoryTrendWithWeekly(
+  state: ServerState,
+  input: HistoryTrendInput,
+): Promise<HistoryTrendResult & { weekly: WeeklySummary[] }> {
+  const trend = await computeHistoryTrend(state, input);
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const weekly = buildWeeklySummaries(await loadWeeklyWindow(state, weeks), weeks);
+  return { ...trend, weekly };
+}
+
+async function computeHistoryWeeklyVolume(
+  state: ServerState,
+  input: HistoryWeeklyVolumeInput,
+): Promise<HistoryWeeklyVolumeResult> {
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const window = await loadWeeklyWindow(state, weeks);
+  const { sessions, eligibleBySession } = window;
+  const period = { from: window.fromIso, to: new Date().toISOString() };
+  const weekly = buildWeeklySummaries(window, weeks);
+  if (weekly.length === 0) {
     throw notFound(`no working sets in the last ${weeks} weeks`);
   }
-  const weekly = getWeeklySummaries(weeklySessions, weeks);
 
   // Per-(session, exercise) granularity for `getVolumeByMuscleGroup` — see
   // `groupByExerciseId`'s note on why one real session can become more than
@@ -1069,18 +1117,43 @@ async function computeHistoryWeeklyVolume(
   const byMuscleGroup = getVolumeByMuscleGroup(
     muscleSessions,
     (exerciseId: string) => {
-      // B47 (VMCP-06.05, PR #263): target-only — the PRIMARY muscle group and
-      // nothing else, matching `session.volume`'s `setsByTargetMuscle`. A
-      // single-element array degenerates WA's own even-split-across-groups
-      // math to "all of it", which IS the target-only rule.
-      const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0];
-      return muscle === undefined ? undefined : { muscleGroups: [muscle] };
+      // VW-662: the landmark targets, so WA's even split gives a row half its
+      // tonnage on lats and half on upper_back and the parts still sum to the total.
+      const targets = targetMusclesOf(state, exerciseId);
+      return { muscleGroups: targets.length > 0 ? targets : [UNATTRIBUTED_MUSCLE] };
     },
-    { from: fromIso, to: toIso },
+    period,
   );
+  const counts = setsInPeriodByAttribution(state, muscleSessions, period);
 
   // THRESHOLDS LEAVE NULL — see the schema's `history.weekly_volume` comment.
-  return { weekly, byMuscleGroup, verdict: null };
+  return {
+    weekly,
+    byMuscleGroup,
+    setsByMuscle: counts.landmark,
+    doseSetsByMuscle: counts.dose,
+    muscleMapVersion: MUSCLE_MAP_VERSION,
+    verdict: null,
+  };
+}
+
+/**
+ * Both set reads over the per-exercise sessions `getVolumeByMuscleGroup` sums,
+ * inside the same inclusive bounds it applies to a session's start.
+ */
+function setsInPeriodByAttribution(
+  state: ServerState,
+  sessions: readonly ProcessedSession[],
+  period: { from: string; to: string },
+): AttributedSetCounts {
+  return countSetsByAttribution(
+    sessions
+      .filter((s) => s.startedAt >= period.from && s.startedAt <= period.to)
+      .map((s) => ({
+        rows: s.exerciseId === undefined ? [] : attributionOf(state, s.exerciseId),
+        sets: s.sets.length,
+      })),
+  );
 }
 
 /**
@@ -1512,20 +1585,19 @@ const UNKNOWN_KEY = 'unknown';
 interface SessionVolumeResult {
   tonnageLbs: number;
   setsByMuscle: Record<string, number>;
+  doseSetsByMuscle: Record<string, number>;
+  muscleMapVersion: string;
   model: 'target-only';
 }
 
 /**
- * VOLUME MODEL: TARGET-ONLY SET COUNTING (B47 / VMCP-06.05).
+ * VOLUME MODEL (B47 / VMCP-06.05, on the VW-561 table since VW-661).
  *
- * A working set counts toward its exercise's PRIMARY muscle group and nothing
- * else. `secondaryMuscleGroups` is NEVER counted, at any weight. RP built
- * fractional / synergist-weighted set counting, scrapped it, and ships
- * target-only because the complexity rarely earns its keep. Weighted counting
- * stays reserved as an optional diagnostic for one specific non-responding
- * muscle, and only if a real case appears — it is NOT to be built
- * speculatively. The regression test on this function is what keeps a future
- * synergist weighting from landing silently.
+ * `landmark` counts a working set 1 toward each TARGET muscle of its exercise
+ * and nothing else; it is the only count a landmark band may read. `dose` adds
+ * each row's weight and is shown labelled, never compared with a landmark.
+ * Keys are titan slugs; an exercise the catalog does not know counts under
+ * `unknown` in `landmark` and nowhere in `dose`.
  *
  * SCOPE DIFFERS FROM `tonnageLbs` ON PURPOSE. Tonnage stays every set in the
  * session, guest sets included, because that contract predates this and
@@ -1533,16 +1605,30 @@ interface SessionVolumeResult {
  * dose for one lifter, so it takes the owner's working sets only: a guest's
  * set (VW-169) is not the owner's volume and a warm-up is not a working set.
  */
-function setsByTargetMuscle(
-  state: ServerState,
-  sets: readonly StoredSet[],
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const [exerciseId, working] of workingSetsByExercise(sets, undefined)) {
-    const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0] ?? UNKNOWN_KEY;
-    counts[muscle] = (counts[muscle] ?? 0) + working.length;
-  }
-  return counts;
+function setsByAttribution(state: ServerState, sets: readonly StoredSet[]): AttributedSetCounts {
+  return countSetsByAttribution(
+    [...workingSetsByExercise(sets, undefined)].map(([exerciseId, working]) => ({
+      rows: attributionOf(state, exerciseId),
+      sets: working.length,
+    })),
+  );
+}
+
+/** An exercise's weight-table rows; an id the catalog does not know has none. */
+function attributionOf(
+  state: Pick<ServerState, 'exercises'>,
+  exerciseId: string,
+): SlugAttribution[] {
+  const exercise = state.exercises.getById(exerciseId);
+  return exercise === undefined ? [] : attributionOfExercise(exercise);
+}
+
+/** An exercise's landmark target slugs; an id the catalog does not know has none. */
+export function targetMusclesOf(
+  state: Pick<ServerState, 'exercises'>,
+  exerciseId: string,
+): TitanMuscleGroup[] {
+  return targetMuscles(attributionOf(state, exerciseId));
 }
 
 /**
@@ -2100,7 +2186,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
       (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
         (s) => s.exerciseId,
       ),
-    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    targetMusclesOf: (exerciseId) => targetMusclesOf(state, exerciseId),
     getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
     getChapterStartedAt: (exerciseId) => state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
   };
@@ -2392,7 +2478,7 @@ function recommendLoad(
   return { targetVelocity, recommendedLoad, confidence: profile.confidence };
 }
 
-class CodedError extends Error {
+class CodedError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -2438,11 +2524,17 @@ const METRICS_COMPUTE_DESCRIPTION =
   'WITH its caveats; do not present it as a precise rep count, and never present the ' +
   '`profile-estimate` basis as measuring proximity to failure. Its velocity loss is peak-based ' +
   "by model contract and will not equal `vbt.set`'s mean-based lossPct. " +
-  '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, model }`. Tonnage is ' +
-  'whole-session, deliberately NOT narrowed to one exercise (a session may span several). ' +
-  "`setsByMuscle` counts the owner's working sets under each exercise's PRIMARY muscle group " +
-  'only — `model` is always `target-only`, and secondary/synergist muscles are never credited ' +
-  '(B47). An exercise the catalog does not know counts under `unknown`. ' +
+  '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, doseSetsByMuscle, ' +
+  'muscleMapVersion, model }`. Tonnage is whole-session, deliberately NOT narrowed to one ' +
+  "exercise (a session may span several). Both counts take the owner's working sets and key " +
+  'them by muscle slug (`front_delts`, `side_delts`, `rear_delts`, `lats`, `upper_back` and so on). ' +
+  '`setsByMuscle` is the landmark read: a set counts 1 toward each TARGET muscle of its exercise ' +
+  'and nothing else, so `model` is always `target-only` (B47). An overhead press is one ' +
+  '`front_delts` set; a chest press is one `chest` set and no delt set. `doseSetsByMuscle` is ' +
+  'the dose read: a set adds each muscle its weight (1 or 0.5), so the chest press also adds ' +
+  '0.5 to `front_delts` and `triceps`. Compare only `setsByMuscle` with a volume landmark; ' +
+  'show the dose read labelled as dose. `muscleMapVersion` stamps the weight table used. An ' +
+  'exercise the catalog does not know counts under `unknown` in `setsByMuscle` only. ' +
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
   'folded with within-set fatigue so a single hard set still reads as fatigued, plus ' +
   '`fatigueAxes` (see `session.perturbation`). ' +
@@ -2590,6 +2682,10 @@ const METRICS_COMPUTE_DESCRIPTION =
   "the detector's raw answer. `plateau.flatline` carries that run (days, points, slopeLbsPerWeek, " +
   "flatBelowLbsPerWeek, reasoning) or null. `volume` keeps the detector's own verdict and a " +
   'null flatline. A window with no working sets is NOT_FOUND. ' +
+  "VW-201: `weekly` is the owner's weekly summaries across EVERY exercise over the same lookback " +
+  'window — the very list `history.weekly_volume` returns as `weekly`, so a caller reads one ' +
+  "week's tonnage beside this exercise's series. It is an empty list when the window holds no " +
+  'eligible set, including the new-chapter state, never an error. ' +
   "VW-361: `chapterStartedAt` is where this exercise's comparable series restarts, or null " +
   'when no chapter is declared, and the window is CLAMPED to it — the lookback asked for is a ' +
   'floor, never a way back past the boundary, so the top-load PR a caller reads off `series` ' +
@@ -2601,10 +2697,18 @@ const METRICS_COMPUTE_DESCRIPTION =
   '(rp:rp-s3-old-prs-irrelevant-reframe). ' +
   '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
-  "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +
-  "own `getWeeklySummaries`; `byMuscleGroup` is WA's `getVolumeByMuscleGroup`, attributed " +
-  "target-only to each exercise's PRIMARY muscle group only (B47, matching `session.volume`'s " +
-  '`setsByTargetMuscle`). `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
+  'working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, setsByMuscle, ' +
+  "doseSetsByMuscle, muscleMapVersion, verdict }`. `weekly` is WA's own " +
+  "`getWeeklySummaries`. `byMuscleGroup` is WA's `getVolumeByMuscleGroup` keyed by muscle " +
+  "slug: each exercise's tonnage splits evenly across its TARGET muscles (B47), so a row puts " +
+  'half on `lats` and half on `upper_back`, and the parts sum to its `totalVolumeLbs`. ' +
+  '`setsByMuscle` and `doseSetsByMuscle` read the same sets and window the way `session.volume` ' +
+  'does: the landmark read counts a set 1 toward each target muscle (a deadlift is one ' +
+  '`hamstrings` set), and the dose read adds each muscle its weight (the deadlift adds 0.5 to ' +
+  '`lats`). Compare only `setsByMuscle` with a volume landmark. `muscleMapVersion` stamps the ' +
+  'weight table used. An exercise the catalog does not know files its tonnage under ' +
+  '`unknown` in `byMuscleGroup` and its sets under `unknown` in `setsByMuscle`, so the ' +
+  'per-muscle tonnage still sums to `totalVolumeLbs`. `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
   'caller-supplied `VolumeLandmarks` that no source in this repo states for this athlete, so no ' +
   'landmark is invented here. A window with no working sets is NOT_FOUND. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +

@@ -15,10 +15,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
 import { estimateE1RMFromReps } from '@voltras/workout-analytics';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredPlannedExercise, StoredRep, StoredSet } from '../../store/types.js';
 import { E1RM_SEE_PCT, withinE1RMBand } from '../e1rm-band.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -196,13 +197,17 @@ interface SuggestionResponse {
 }
 
 describe('plan.suggest_progression — e1RM jump, end to end (VW-267)', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(() => {
-    store = SqliteSessionStore.open(':memory:');
+    // The day after both sessions: against the wall clock the basis would read stale (VW-907).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-02T12:00:00.000Z'));
+    store = openTestStore();
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await store.close();
   });
 

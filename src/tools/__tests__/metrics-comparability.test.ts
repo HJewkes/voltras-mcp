@@ -6,9 +6,10 @@
 // they need (sets that differ by a single context field) are unlike the
 // dispatch fixtures there.
 
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 import * as analytics from '@voltras/workout-analytics';
+import { setCatalog } from '@voltras/workout-analytics';
 
 class FakeVoltraSDKError extends Error {
   readonly code: string;
@@ -21,12 +22,15 @@ class FakeVoltraSDKError extends Error {
 vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerMetricsTools } = await import('../metrics-tools.js');
+const { ExerciseService } = await import('../../exercises/exercise-service.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredRep, StoredSession, StoredSet } from '../../store/types.js';
 import type { ComparabilityReport } from '../../analytics/comparability.js';
 import { setupRowId } from '../../store/exercise-setups.js';
+import { HISTORY_SEED_EXERCISES } from '../../exercises/history-seed-catalog.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { ToolResult } from '../helpers.js';
 
 const EMPTY_PHASE: Phase = {
@@ -61,7 +65,7 @@ function makeSet(id: string, sessionId: string, overrides: Partial<StoredSet> = 
     startedAt: '2026-09-01T00:00:00.000Z',
     endedAt: '2026-09-01T00:00:30.000Z',
     partial: false,
-    exerciseId: 'bench-press',
+    exerciseId: 'cable-chest-press',
     trainingMode: 'WeightTraining',
     settingsHash: 'v1:aaaa',
     weightLbs: 170,
@@ -106,7 +110,7 @@ function makeState(setsBySession: Record<string, StoredSet[]>): ServerState {
       async (id: string): Promise<StoredSession> => ({
         id,
         startedAt: '2026-09-01T00:00:00.000Z',
-        exerciseId: 'bench-press',
+        exerciseId: 'cable-chest-press',
       }),
     ),
     getBaseline: vi.fn(async () => undefined),
@@ -126,8 +130,7 @@ function makeState(setsBySession: Record<string, StoredSet[]>): ServerState {
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
-  const exercises = { getById: vi.fn(() => undefined) };
-  return { store, exercises } as unknown as ServerState;
+  return { store, exercises: new ExerciseService() } as unknown as ServerState;
 }
 
 async function compute(state: ServerState, args: unknown): Promise<unknown> {
@@ -139,6 +142,8 @@ async function compute(state: ServerState, args: unknown): Promise<unknown> {
   expect(result.isError).toBeUndefined();
   return JSON.parse(result.content[0]?.text ?? '{}') as unknown;
 }
+
+beforeAll(() => setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]));
 
 interface ReadinessPayload {
   observed: { baselineVelocityMps: number };
@@ -235,18 +240,25 @@ describe('session.readiness comparability (VW-94)', () => {
     );
     state.store.listSessions = vi.fn(async (filter: { lifter?: string }) =>
       filter.lifter === 'Jordan'
-        ? [{ id: 'sess-j', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' }]
+        ? [
+            {
+              id: 'sess-j',
+              startedAt: '2026-08-05T00:00:00.000Z',
+              exerciseId: 'cable-incline-chest-press',
+            },
+          ]
         : [
-            { id: 'sess-o1', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' },
-            { id: 'sess-o2', startedAt: '2026-08-10T00:00:00.000Z', exerciseId: 'shoulder-press' },
+            {
+              id: 'sess-o1',
+              startedAt: '2026-08-05T00:00:00.000Z',
+              exerciseId: 'cable-incline-chest-press',
+            },
+            {
+              id: 'sess-o2',
+              startedAt: '2026-08-10T00:00:00.000Z',
+              exerciseId: 'cable-shoulder-press',
+            },
           ],
-    );
-    state.exercises.getById = vi.fn((id: string) =>
-      id === 'bench-press' || id === 'incline-press'
-        ? ({ muscleGroups: ['chest'] } as never)
-        : id === 'shoulder-press'
-          ? ({ muscleGroups: ['shoulders'] } as never)
-          : undefined,
     );
 
     const payload = (await compute(state, {
@@ -269,7 +281,8 @@ describe('session.readiness comparability (VW-94)', () => {
       'different programme entry date for this exercise (2026-01-01T00:00:00.000Z vs 2026-06-01T00:00:00.000Z)',
     );
     expect(reasons).not.toContain('neither set records a programme entry date');
-    // corroboration (d): both sides see 2 chest exercises (bench + incline).
+    // corroboration (d): both sides see 2 chest exercises (flat + incline press);
+    // the shoulder press targets the front delts, so it does not corroborate.
     expect(reasons).toContain('2 corroborating exercises for this muscle (2 vs 2)');
     expect(reasons).not.toContain('neither set records how many exercises');
     // trainingAge (f): Jordan's 1 tracked month is inside the neural window.
@@ -321,7 +334,7 @@ describe('session.strength comparability (VW-94)', () => {
   });
 
   it('reads the VW-119 setup stamp off the stored set and splits on it', async () => {
-    const key = { userId: 'local', exerciseId: 'bench-press', side: 'right' } as const;
+    const key = { userId: 'local', exerciseId: 'cable-chest-press', side: 'right' } as const;
     const state = makeState({
       'sess-S': [
         makeSet('s1', 'sess-S', { setupId: setupRowId(key, 0) }),
@@ -363,18 +376,25 @@ describe('session.strength comparability (VW-94)', () => {
     );
     state.store.listSessions = vi.fn(async (filter: { lifter?: string }) =>
       filter.lifter === 'Jordan'
-        ? [{ id: 'sess-j', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' }]
+        ? [
+            {
+              id: 'sess-j',
+              startedAt: '2026-08-05T00:00:00.000Z',
+              exerciseId: 'cable-incline-chest-press',
+            },
+          ]
         : [
-            { id: 'sess-o1', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' },
-            { id: 'sess-o2', startedAt: '2026-08-10T00:00:00.000Z', exerciseId: 'shoulder-press' },
+            {
+              id: 'sess-o1',
+              startedAt: '2026-08-05T00:00:00.000Z',
+              exerciseId: 'cable-incline-chest-press',
+            },
+            {
+              id: 'sess-o2',
+              startedAt: '2026-08-10T00:00:00.000Z',
+              exerciseId: 'cable-shoulder-press',
+            },
           ],
-    );
-    state.exercises.getById = vi.fn((id: string) =>
-      id === 'bench-press' || id === 'incline-press'
-        ? ({ muscleGroups: ['chest'] } as never)
-        : id === 'shoulder-press'
-          ? ({ muscleGroups: ['shoulders'] } as never)
-          : undefined,
     );
 
     const payload = (await compute(state, {
@@ -397,12 +417,40 @@ describe('session.strength comparability (VW-94)', () => {
       'different programme entry date for this exercise (2026-06-01T00:00:00.000Z vs 2026-01-01T00:00:00.000Z)',
     );
     expect(reasons).not.toContain('neither set records a programme entry date');
-    // corroboration (d): Jordan's own exercise (bench-press) sees 2 chest
-    // exercises; s1's owner history sees the same 2.
+    // corroboration (d): Jordan's own exercise (the chest press) sees 2 chest
+    // exercises; s1's owner history sees the same 2, the shoulder press not among them.
     expect(reasons).toContain('2 corroborating exercises for this muscle (2 vs 2)');
     expect(reasons).not.toContain('neither set records how many exercises');
     // trainingAge (f): Jordan's 1 tracked month is inside the neural window.
     expect(reasons).toContain('tracked training in months: 1 vs 19');
     expect(reasons).not.toContain('neither set records how many months');
+  });
+
+  it('corroborates an overhead press on front-delt targets only, not on the catalog group (VW-664)', async () => {
+    const press = { exerciseId: 'cable-shoulder-press' };
+    const state = makeState({
+      'sess-S': [makeSet('s1', 'sess-S', press), makeSet('s2', 'sess-S', press)],
+    });
+    state.store.getSession = vi.fn(async (id: string) => ({
+      id,
+      startedAt: '2026-09-01T00:00:00.000Z',
+      ...press,
+    }));
+    state.store.listSessions = vi.fn(async () =>
+      ['cable-shoulder-press', 'cable-front-raise', 'cable-lateral-raise', 'not-in-catalog'].map(
+        (exerciseId, i) => ({ id: `sess-${i}`, startedAt: '2026-08-05T00:00:00.000Z', exerciseId }),
+      ),
+    );
+
+    const payload = (await compute(state, {
+      pipeline: 'session.strength',
+      sessionId: 'sess-S',
+    })) as StrengthPayload;
+
+    // The front raise shares front_delts; the lateral raise (side_delts) and
+    // the unknown exercise add nothing, though the raises share a catalog group.
+    expect(payload.comparability.comparedTo?.reasons.join(' ')).toContain(
+      '2 corroborating exercises for this muscle (2 vs 2)',
+    );
   });
 });

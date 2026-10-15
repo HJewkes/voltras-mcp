@@ -21,6 +21,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { unloadSlot } from './device-tools.js';
 import { getSlot, type ServerState } from '../state/server-state.js';
 import { log } from '../logger.js';
+import { mapSdkError } from '../errors.js';
 
 /** How long to wait for an in-flight `set.start` to install its set. */
 const SET_START_SETTLE_TIMEOUT_MS = 3000;
@@ -111,7 +112,7 @@ export async function surrenderDevice(state: ServerState): Promise<SurrenderResu
       const stored = await finalizeSet(state, slotId, { cause: 'tool', disengageMotor: true });
       outcome.finalizedSetId = stored?.id ?? null;
     } catch (err) {
-      appendError(outcome, `failed to finalize the active set: ${String(err)}`);
+      appendError(outcome, `failed to finalize the active set: ${mapSdkError(err).message}`);
       log.error(`surrender: could not finalize set on slot ${slotId}`, err);
     }
 
@@ -132,7 +133,7 @@ export async function surrenderDevice(state: ServerState): Promise<SurrenderResu
       }
     } catch (err) {
       unloadFailures += 1;
-      appendError(outcome, `failed to unload: ${String(err)}`);
+      appendError(outcome, `failed to unload: ${mapSdkError(err).message}`);
       log.error(`surrender: could not unload slot ${slotId}`, err);
     }
     slots.push(outcome);

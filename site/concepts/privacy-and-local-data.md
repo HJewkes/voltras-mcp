@@ -1,0 +1,129 @@
+---
+title: Privacy and local data
+description: Where your training record lives, who can reach the dashboard, what leaves your machine and when, how to back the record up, and the promise about device protocol detail.
+diataxis: explanation
+audience: [lifter, coach]
+status: available
+sources:
+  - src/config.ts
+  - src/store/sqlite-store.ts
+  - src/dashboard/server.ts
+  - src/dashboard/write-guard.ts
+  - src/logger.ts
+  - src/state/session-recorder.ts
+  - src/state/debug-buffer.ts
+  - src/tools/device-tools.ts
+  - src/tools/voice-tools.ts
+  - src/tools/tts-tools.ts
+  - src/integrations/truecoach/client.ts
+  - src/docs/protocol-guard.ts
+  - site/coaches/consent-and-data-loop.md
+  - README.md
+  - CLAUDE.md
+  - src/store/types.ts
+  - src/actions/execute.ts
+lastVerified: 2026-10-15
+sourced: 2026-09-30
+---
+
+# Privacy and local data
+
+This page explains where your training data lives, who can reach it, and what leaves your
+machine. The short answer: it all stays on your machine unless you turn something on.
+
+## Your record is one file on your machine
+
+Every session, set and rep goes into one database file: `~/.voltras/vmcp.sqlite` unless you set
+`VMCP_DB_PATH` to move it (`src/config.ts:5`). The database is SQLite, run by Node's own built-in
+module, so there is no database server and no account (`src/store/sqlite-store.ts:24`).
+
+The same folder can hold a few other files. The device slot assignments sit there
+(`src/config.ts:6`). A TrueCoach login token, cache and outbox appear there only if you use those
+features (`src/config.ts:18-20`, `src/config.ts:259-260`). An opt-in debugging recorder,
+`VMCP_RECORD_SESSION=1`, writes device captures under `~/.voltras/captures`
+(`src/state/session-recorder.ts:1-20`).
+
+The database also keeps a command trail: one row for each write, whether Claude made it
+through a tool or you made it with a tap on the dashboard. A row records the tool, when, in
+which session, whether it worked, and a short summary in fitness units such as a load or a rep
+count. It never records the arguments of a tool call. For a dashboard tap it also keeps the
+result, so a retried tap returns the first answer instead of writing twice
+(`src/store/types.ts`, `src/actions/execute.ts`). The dashboard reads the trail back at
+`/api/activity` ([Dashboard API](/reference/dashboard-api#command-trail-api-activity)).
+
+Keep one server process per database file. Two processes on the same file can both open it, and
+their writes then fail.
+
+## The dashboard only answers your own machine
+
+The server runs a small web dashboard next to itself. It listens on `127.0.0.1`, the address that
+only your own computer can reach, so a phone or another computer on your network cannot open it
+(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:266`). It sends no headers that
+would let another website read its data (`src/dashboard/server.ts:14-17`).
+
+Most of its routes only read: the live view, your history, your plan, and your goals
+(`src/dashboard/server.ts:28-85`). A small set of routes can change things: six routes that edit
+your training plan, and an action route that runs only tools on a fixed list
+(`src/dashboard/server.ts:87-104`, `src/dashboard/server.ts:1268-1276`).
+
+Every change request passes a guard before anything else happens
+(`src/dashboard/server.ts:586-602`). The guard requires all of these
+(`src/dashboard/write-guard.ts:12-32`):
+
+- the request is addressed to your own machine by name;
+- it comes from the dashboard's own page, not another website;
+- it is sent as JSON, which a plain web form cannot do;
+- it carries a secret made fresh each time the server starts.
+
+The guard protects you from other web pages. It does not protect you from another program
+running under your own account, which could read the database file directly anyway
+(`src/dashboard/write-guard.ts:34-36`).
+
+## What leaves your machine
+
+By default, the server sends nothing to anyone
+([Consent and the data loop](/coaches/consent-and-data-loop#local-by-default)).
+
+- **Logs** go to your terminal's error stream only (`src/logger.ts:1-4`).
+- **Voice.** Listening runs on your machine: speech detection and transcription run inside the
+  server process (`src/tools/voice-tools.ts:1-5`). Speaking uses the voice built into macOS
+  (`src/tools/tts-tools.ts:1-8`).
+- **Claude.** Tool results do go into your conversation with Claude, because that is how Claude
+  reads them. That conversation belongs to your own Claude Code session, which this server does
+  not control ([Consent and the data loop](/coaches/consent-and-data-loop#local-by-default)).
+
+Two TrueCoach features can send or fetch data, and both are opt-in:
+
+- **The TrueCoach import** reads your own assigned workouts, and only when a tool call asks it
+  to. Apart from logging in, it only reads, and nothing runs on a timer
+  (`src/integrations/truecoach/client.ts:3-8`).
+- **The TrueCoach write-back** is a separate tool that posts results into TrueCoach. It is off by
+  default and not installed with the server (`src/config.ts:20`,
+  [Consent and the data loop](/coaches/consent-and-data-loop#truecoach-write-back-experimental-and-gated)).
+
+[Consent and the data loop](/coaches/consent-and-data-loop) covers both features, TrueCoach's
+terms of service, and how to switch each one off.
+
+## Backing up
+
+`npm run store` exports the whole database to plain text files, rebuilds a database from them,
+and checks that the two match. It is your backup and your way out. Stop every
+server process before you copy the live file, so the copy is not taken mid-write.
+
+An export holds your whole training record in plain text. Keep it somewhere as private as the
+database itself, and delete a practice copy when you are done.
+
+## The promise about device internals
+
+The device maker shared details of how the Voltra communicates to help the community SDK, and
+asked that they stay private (`CLAUDE.md`, "Confidentiality / Privacy"). This project keeps that
+request.
+
+No raw device messages, byte values or device command codes appear in a log line, a
+documentation page or a commit. The everyday tools pass Claude only plain values such as
+weights, speeds and counts.
+The exceptions are diagnostic tools for hardware debugging: `device.send_raw` takes and returns
+raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1409-1431`,
+`src/state/debug-buffer.ts:44-62`). A lint rule checks the source
+code, and a separate guard checks the generated documentation pages for anything shaped like
+device detail (`CLAUDE.md`, "Confidentiality / Privacy"; `src/docs/protocol-guard.ts:1-5`).

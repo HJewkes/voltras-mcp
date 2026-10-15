@@ -4,6 +4,7 @@
 // to [].
 
 import { describe, it, expect } from 'vitest';
+import { HISTORY_SEED_EXERCISES } from '../history-seed-catalog.js';
 import { SEED_CABLE_EXERCISES } from '../seed-catalog.js';
 import {
   isProxyMapping,
@@ -23,6 +24,7 @@ const EXPECTED: Record<string, TitanMuscleGroup[]> = {
   quads: ['quads'],
   hamstrings: ['hamstrings'],
   glutes: ['glutes'],
+  calves: ['calves'],
   adductors: ['quads'],
   abductors: ['glutes'],
   obliques: ['obliques'],
@@ -33,7 +35,7 @@ const EXPECTED: Record<string, TitanMuscleGroup[]> = {
 
 function seedCatalogMuscleStrings(): Set<string> {
   const strings = new Set<string>();
-  for (const ex of SEED_CABLE_EXERCISES) {
+  for (const ex of [...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]) {
     for (const g of ex.muscleGroups) strings.add(g);
     for (const g of ex.secondaryMuscleGroups ?? []) strings.add(g);
   }
@@ -49,7 +51,7 @@ describe('mapCatalogMuscle', () => {
     expect(mapCatalogMuscle('not-a-real-muscle-group')).toEqual([]);
   });
 
-  it('every string the seed catalog actually uses has a row above', () => {
+  it('every string the seed and history catalogs actually use has a row above', () => {
     const seedStrings = seedCatalogMuscleStrings();
     expect(seedStrings.size, [...seedStrings].sort().join(', ')).toBe(Object.keys(EXPECTED).length);
     for (const s of seedStrings) {

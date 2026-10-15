@@ -12,10 +12,21 @@
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
 
-import { BodyView } from '../spa/body/BodyView.js';
+import { BodyView, type BodyViewProps } from '../spa/body/BodyView.js';
+import {
+  bindIdleHeal,
+  bodyDrillHandlers,
+  bodyHashFor,
+  initialBodyStack,
+  openMuscle,
+  syncToRoute,
+} from '../spa/body/body-drill.js';
+import { drillStackReducer, type DrillAction, type DrillStack } from '../spa/drill/drill-stack.js';
+import { IDLE_HEAL_MS } from '../spa/drill/idle-heal.js';
+import { loadBodyPage } from '../spa/body/BodyPage.js';
 import {
   bodyMapData,
   muscleStripData,
@@ -30,10 +41,11 @@ import { buildMuscleWeekView, type MuscleWeekRows } from '../read-models/muscle-
 import { e1rmBand } from '../../tools/e1rm-band.js';
 import type {
   MusclePlanView,
+  MuscleRecoveryView,
   MuscleStrengthBestE1rm,
   MuscleStrengthView,
 } from '../read-models/index.js';
-import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
+import { MUSCLE_MAP_VERSION, TITAN_MUSCLE_GROUPS } from '../../exercises/muscle-map.js';
 import type { StoredSet } from '../../store/types.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z'); // Wednesday
@@ -79,6 +91,15 @@ function bestE1rm(value: number, confidence: number): MuscleStrengthBestE1rm {
   return { value, band: e1rmBand(value, 'reps'), method: 'reps', confidence };
 }
 
+/** The recency fields (VW-558) this page does not read yet. */
+const NO_RECENCY = {
+  setCount: 0,
+  currentLevel: null,
+  relativeIndex: null,
+  daysSinceTrained: null,
+  recency: null,
+} as const;
+
 const STRENGTH: MuscleStrengthView = {
   muscleMapVersion: MUSCLE_MAP_VERSION,
   agreementBasis: 'two exercises trending the same way',
@@ -88,6 +109,8 @@ const STRENGTH: MuscleStrengthView = {
       muscle: 'chest',
       agreement: 'stronger',
       earlyPhase: false,
+      relativeIndexBySide: {},
+      daysSinceTrained: null,
       exercises: [
         {
           exerciseId: 'chest-press',
@@ -99,6 +122,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: true,
           priorBest: 175,
           plateau: 'none',
+          ...NO_RECENCY,
         },
       ],
     },
@@ -107,6 +131,8 @@ const STRENGTH: MuscleStrengthView = {
       muscle: 'lats',
       agreement: 'insufficient',
       earlyPhase: false,
+      relativeIndexBySide: {},
+      daysSinceTrained: null,
       exercises: [
         {
           exerciseId: 'chest-press',
@@ -118,6 +144,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: true,
           priorBest: 175,
           plateau: 'none',
+          ...NO_RECENCY,
         },
         {
           exerciseId: 'cable-row',
@@ -129,6 +156,7 @@ const STRENGTH: MuscleStrengthView = {
           isPR: false,
           priorBest: 165,
           plateau: 'none',
+          ...NO_RECENCY,
         },
       ],
     },
@@ -145,6 +173,7 @@ const PLAN: MusclePlanView = {
       muscle: 'chest',
       plannedSetsThisWeek: 12,
       doneSetsThisWeek: 9,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Push A', exerciseId: 'chest-press', exerciseName: 'Chest Press', sets: 3 },
       ],
@@ -154,6 +183,7 @@ const PLAN: MusclePlanView = {
       muscle: 'triceps',
       plannedSetsThisWeek: 3,
       doneSetsThisWeek: 0,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Push A', exerciseId: 'chest-press', exerciseName: 'Chest Press', sets: 3 },
       ],
@@ -162,6 +192,7 @@ const PLAN: MusclePlanView = {
       muscle: 'lats',
       plannedSetsThisWeek: 9,
       doneSetsThisWeek: 3,
+      frequency: { plannedPerWeek: 2, observedThisWeek: 1 },
       plannedRemaining: [
         { workoutName: 'Pull A', exerciseId: 'cable-row', exerciseName: 'Cable Row', sets: 6 },
       ],
@@ -169,13 +200,30 @@ const PLAN: MusclePlanView = {
   ],
 };
 
+/** No muscle trained yet: the page does not render recovery until the sheet (VW-339 S3). */
+const RECOVERY: MuscleRecoveryView = {
+  muscleMapVersion: MUSCLE_MAP_VERSION,
+  muscles: TITAN_MUSCLE_GROUPS.map((muscle) => ({
+    muscle,
+    lastTrainedAt: null,
+    daysSince: null,
+    lastEntryDepression: null,
+    lastSessionMatchedPrior: null,
+    reason: 'insufficient history',
+  })),
+};
+
 function pageData(over: Partial<BodyPageData> = {}): BodyPageData {
-  return { week: weekView(), strength: STRENGTH, plan: PLAN, ...over };
+  return { week: weekView(), strength: STRENGTH, plan: PLAN, recovery: RECOVERY, ...over };
+}
+
+function markup(data: BodyPageData, drill: Omit<BodyViewProps, 'data'> = {}): string {
+  return renderToStaticMarkup(createElement(BodyView, { data, ...drill }));
 }
 
 /** Rendered text with runs of whitespace collapsed, same normalisation the captures use. */
-function text(data: BodyPageData): string {
-  return renderToStaticMarkup(createElement(BodyView, { data }))
+function text(data: BodyPageData, drill: Omit<BodyViewProps, 'data'> = {}): string {
+  return markup(data, drill)
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -206,14 +254,26 @@ describe('the body page model', () => {
   it('counts sets per muscle, so a lift training two muscles counts in both', () => {
     // 16 chest sets + 3 back sets, and `back` maps to BOTH lats and upper_back,
     // so the set total is 16 + 3 + 3. `under` includes the untrained muscles,
-    // minus abs and obliques, whose mev of 0 nothing can fall below.
+    // minus abs and obliques, whose mev of 0 nothing can fall below, and glutes,
+    // lats and upper back, whose landmarks draw no verdict (VW-561).
     expect(weekSummary(weekView())).toEqual({
       totalSets: 22,
       trainedMuscles: 3,
       productive: 1,
-      under: 12,
+      under: 9,
       over: 0,
     });
+  });
+
+  it('paints a trained muscle with a withheld verdict in the neutral fill (VW-561)', () => {
+    const week = weekView();
+    const withGlutes = {
+      ...week,
+      muscles: week.muscles.map((m) => (m.muscle === 'glutes' ? { ...m, sets: 5 } : m)),
+    };
+    const glutes = bodyMapData(withGlutes).find((d) => d.muscleGroup === 'glutes');
+    expect(glutes?.volumeStatus).toBe('ontrack');
+    expect(weekSummary(withGlutes)).toMatchObject({ productive: 1, under: 9, over: 0 });
   });
 
   it('folds one planned lift owed to several muscles into a single next-up row', () => {
@@ -243,7 +303,7 @@ describe('the body page render', () => {
     expect(rendered).toContain('Sets 22');
     expect(rendered).toContain('Muscles 3');
     expect(rendered).toContain('Productive 1');
-    expect(rendered).toContain('Below MEV 12');
+    expect(rendered).toContain('Below MEV 9');
     expect(rendered).toContain('Over MRV 0');
   });
 
@@ -281,6 +341,46 @@ describe('the body page render', () => {
   });
 });
 
+describe('the body page load', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Serves each `/api/muscle-*` route from its fixture, failing the ones named. */
+  function stubRoutes(failing: readonly string[]): void {
+    const bodies: Record<string, unknown> = {
+      '/api/muscle-week': weekView(),
+      '/api/muscle-strength': STRENGTH,
+      '/api/muscle-plan': PLAN,
+      '/api/muscle-recovery': RECOVERY,
+    };
+    vi.stubGlobal('fetch', (url: string) =>
+      Promise.resolve(
+        failing.includes(url)
+          ? new Response(JSON.stringify({ message: 'store unavailable' }), { status: 500 })
+          : new Response(JSON.stringify(bodies[url]), { status: 200 }),
+      ),
+    );
+  }
+
+  it('still renders the glance when only the recovery route fails', async () => {
+    stubRoutes(['/api/muscle-recovery']);
+
+    const data = await loadBodyPage();
+
+    expect(data.recovery).toBeNull();
+    const rendered = text(data);
+    expect(rendered).toContain('Weekly sets by muscle');
+    expect(rendered).not.toContain('store unavailable');
+  });
+
+  it('still fails the page when the week route fails', async () => {
+    stubRoutes(['/api/muscle-week']);
+
+    await expect(loadBodyPage()).rejects.toThrow('store unavailable');
+  });
+});
+
 describe('the body route in the shell chrome', () => {
   it('is a nav key titan already ships an item for', () => {
     expect(navKeyForRoute({ name: 'body' })).toBe('body');
@@ -304,5 +404,181 @@ describe('the body route in the shell chrome', () => {
     // The live page never cues itself — that is the same branch that keeps the
     // body page's live signal on the rail and off the page.
     expect(liveNavKey('live', 'live')).toBeNull();
+  });
+});
+
+/** Chest trained two days ago, so the sheet has a "Last trained" line to show. */
+const CHEST_TRAINED: MuscleRecoveryView = {
+  ...RECOVERY,
+  muscles: RECOVERY.muscles.map((row) =>
+    row.muscle === 'chest'
+      ? {
+          ...row,
+          lastTrainedAt: MONDAY,
+          daysSince: 2,
+          lastSessionMatchedPrior: true,
+          reason: null,
+        }
+      : row,
+  ),
+};
+
+describe('the body page drill', () => {
+  const chestOpen = initialBodyStack('chest');
+
+  it('renders the chest sheet over the glance when the stack holds chest', () => {
+    const rendered = text(pageData({ recovery: CHEST_TRAINED }), { stack: chestOpen });
+
+    expect(rendered).toContain('Chest');
+    expect(rendered).toContain('Chest target met ×');
+    expect(rendered).toContain('2 days ago · matched last session');
+    // The sheet slides over the glance; the glance headers stay rendered beneath it.
+    expect(rendered).toContain('Weekly sets by muscle');
+    expect(markup(pageData(), { stack: chestOpen })).toContain('aria-label="Chest volume details"');
+  });
+
+  it('renders no sheet with an empty stack', () => {
+    expect(markup(pageData())).not.toContain('volume details');
+  });
+
+  /** Each figure's legend chip for a muscle, as its opening tag. */
+  function chips(html: string, name: string): string[] {
+    return html.match(new RegExp(`<[^>]*aria-label="${name}, [^>]*>`, 'g')) ?? [];
+  }
+
+  it('highlights the open muscle on both figures', () => {
+    const open = markup(pageData(), { stack: chestOpen });
+
+    expect(chips(open, 'Chest').filter((tag) => tag.includes('aria-pressed="true"'))).toHaveLength(
+      2,
+    );
+    expect(chips(open, 'Lats').some((tag) => tag.includes('aria-pressed="true"'))).toBe(false);
+    expect(
+      chips(markup(pageData()), 'Chest').some((tag) => tag.includes('aria-pressed="true"')),
+    ).toBe(false);
+  });
+
+  it('draws no sheet for a muscle the week does not carry', () => {
+    const week = weekView();
+    const noChest = { ...week, muscles: week.muscles.filter((m) => m.muscle !== 'chest') };
+
+    expect(markup(pageData({ week: noChest }), { stack: chestOpen })).not.toContain(
+      'volume details',
+    );
+  });
+});
+
+describe('the body drill handlers', () => {
+  /** Runs handler calls through the real reducer, the way `useReducer` would. */
+  function drive(start: DrillStack, act: (h: ReturnType<typeof bodyDrillHandlers>) => void) {
+    let stack = start;
+    act(bodyDrillHandlers((action: DrillAction) => (stack = drillStackReducer(stack, action))));
+    return stack;
+  }
+
+  it('opens the pressed muscle on an empty stack', () => {
+    expect(openMuscle(drive([], (h) => h.onMusclePress('lats')))).toBe('lats');
+  });
+
+  it('replaces the open sheet when a second muscle is pressed', () => {
+    const stack = drive(initialBodyStack('chest'), (h) => h.onMusclePress('lats'));
+
+    expect(stack).toEqual([{ lineage: 'muscle', id: 'lats' }]);
+  });
+
+  it('pops the sheet on the panel onClose, which Escape and the close button both call', () => {
+    expect(drive(initialBodyStack('chest'), (h) => h.onClose())).toEqual([]);
+  });
+
+  it('starts closed with no deep link and open on one', () => {
+    expect(initialBodyStack(undefined)).toEqual([]);
+    expect(openMuscle(initialBodyStack('quads'))).toBe('quads');
+  });
+
+  it('names the open sheet in the hash and drops it once closed', () => {
+    expect(bodyHashFor(initialBodyStack('upper_back'))).toBe('#/body/upper_back');
+    expect(bodyHashFor([])).toBe('#/body');
+  });
+
+  it('follows a hash change the stack did not make, and ignores one it did', () => {
+    const chest = initialBodyStack('chest');
+
+    expect(syncToRoute(chest, 'chest')).toBeNull();
+    expect(syncToRoute([], undefined)).toBeNull();
+    expect(syncToRoute(chest, undefined)).toEqual({ type: 'reset' });
+    expect(syncToRoute(chest, 'lats')).toEqual({
+      type: 'open',
+      layer: { lineage: 'muscle', id: 'lats' },
+    });
+  });
+});
+
+describe('the body drill idle heal', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A deep-linked chest sheet with the heal bound to a stand-in document. */
+  function openSheet() {
+    const doc = new EventTarget();
+    let stack: DrillStack = initialBodyStack('chest');
+    const bound = bindIdleHeal(doc, (action) => (stack = drillStackReducer(stack, action)));
+    bound.heal.setActive(true);
+    return { doc, bound, stack: () => stack };
+  }
+
+  it('returns the page to the glance after 60 s with no input', () => {
+    const { stack } = openSheet();
+
+    vi.advanceTimersByTime(IDLE_HEAL_MS);
+
+    expect(stack()).toEqual([]);
+  });
+
+  it('keeps the sheet open while the lifter keeps touching the wall', () => {
+    const { doc, stack } = openSheet();
+
+    vi.advanceTimersByTime(IDLE_HEAL_MS - 1_000);
+    doc.dispatchEvent(new Event('pointerdown'));
+    vi.advanceTimersByTime(IDLE_HEAL_MS - 1_000);
+
+    expect(openMuscle(stack())).toBe('chest');
+  });
+
+  it('stops listening and never heals once unbound', () => {
+    const { doc, bound, stack } = openSheet();
+
+    bound.unbind();
+    bound.heal.setActive(true);
+    doc.dispatchEvent(new Event('keydown'));
+    vi.advanceTimersByTime(IDLE_HEAL_MS * 2);
+
+    expect(openMuscle(stack())).toBe('chest');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the body page in the wall’s kg display unit (VW-934)', () => {
+  it('reads a PR and its gain over the prior best in whole kg', () => {
+    const row = prRows(STRENGTH)[0]!;
+
+    expect(prValueText(row, 'kg')).toBe('83 kg (+3)'); // 182.5 lb, 7.5 lb over 175
+  });
+
+  it('lists Recent PRs in kg with no pound reading on the page', () => {
+    const rendered = text(pageData(), { displayUnit: 'kg' });
+
+    expect(rendered).toContain('Chest Press');
+    expect(rendered).toContain('83 kg (+3)');
+    expect(rendered).not.toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(text(pageData(), { displayUnit: 'lbs' })).toContain('182.5 lb (+7.5)');
+    expect(markup(pageData(), { displayUnit: 'lbs' })).toBe(markup(pageData()));
   });
 });

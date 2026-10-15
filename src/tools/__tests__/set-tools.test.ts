@@ -130,6 +130,7 @@ function makeStore(): SessionStore & {
   listSessions: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
   getSet: ReturnType<typeof vi.fn>;
+  patchSetBilateralGroup: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
   harvestFailureAnchor: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
@@ -142,6 +143,7 @@ function makeStore(): SessionStore & {
     putSet: vi.fn(async () => {}),
     getSession: vi.fn(async () => undefined),
     getSet: vi.fn(async () => undefined),
+    patchSetBilateralGroup: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
     putTrainingProgram: vi.fn(async () => {}),
@@ -2179,6 +2181,8 @@ describe('set.end', () => {
     );
     expect(events).toHaveLength(1);
     const meta = (events[0][0] as { meta: Record<string, string> }).meta;
+    expect(meta.slot).toBe('primary');
+    expect(meta.slot_id).toBe('primary');
     expect(meta.header_weight_lbs).toBe('30');
     expect(Number(meta.implied_weight_lbs)).toBeCloseTo(49.6, 1);
     expect(Number(meta.mismatch_pct)).toBeGreaterThan(10);
@@ -2233,6 +2237,7 @@ describe('set.end', () => {
     expect(events).toHaveLength(1);
     const meta = (events[0][0] as { meta: Record<string, string> }).meta;
     expect(meta.slot_id).toBe('primary');
+    expect(meta.slot).toBe(meta.slot_id);
     expect(meta.partner_slot_id).toBe('secondary');
     expect(meta.rep_count).toBe('1');
     expect(meta.partner_rep_count).toBe('12');
@@ -2976,6 +2981,13 @@ describe('bilateral group id at finalize', () => {
     h.store.putSet.mockImplementation(async (s: StoredSet) => {
       rows.set(s.id, s);
     });
+    h.store.patchSetBilateralGroup.mockImplementation(
+      async (id: string, bilateralGroupId: string, groupSource: 'live') => {
+        const row = rows.get(id);
+        if (row !== undefined) rows.set(id, { ...row, bilateralGroupId, groupSource });
+        return rows.get(id);
+      },
+    );
     return rows;
   }
 
@@ -3045,6 +3057,7 @@ describe('bilateral group id at finalize', () => {
     const meta = (divergences[0][0] as { meta: Record<string, string> }).meta;
     expect(meta.rep_count).toBe('11');
     expect(meta.partner_rep_count).toBe('12');
+    expect(meta.slot).toBe(meta.slot_id);
     expect(rows.get(PARTNER_ID)?.bilateralGroupId).toBeTruthy();
   });
 
@@ -3063,7 +3076,7 @@ describe('bilateral group id at finalize', () => {
     expect(stored.groupSource).toBeUndefined();
   });
 
-  it("preserves the partner's reps across the re-put", async () => {
+  it("preserves the partner's reps across the stamp", async () => {
     const h = setup();
     const rows = backWithMap(h, [partnerRow(12)]);
 
@@ -3074,13 +3087,10 @@ describe('bilateral group id at finalize', () => {
     expect(partner?.reps.map((r) => r.index)).toEqual([...Array(12).keys()]);
   });
 
-  it('persists the closing set even when the partner re-put throws', async () => {
+  it('persists the closing set even when the partner stamp throws', async () => {
     const h = setup();
     const rows = backWithMap(h, [partnerRow(12)]);
-    h.store.putSet.mockImplementation(async (s: StoredSet) => {
-      if (s.id === PARTNER_ID) throw new Error('partner row vanished');
-      rows.set(s.id, s);
-    });
+    h.store.patchSetBilateralGroup.mockRejectedValue(new Error('partner row vanished'));
 
     await closePairedSet(h, 11, 12);
 

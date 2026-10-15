@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Generate the published capability reference from the tool registry.
 //
-// The README's tool table is hand-maintained, which is fine for a file people
-// edit and wrong for a published page: it reflows on every row edit (so any two
-// PRs touching it conflict) and a drifted page is worse than no page. So this
-// boots the server over stdio against the MOCK adapter and asks it — descriptions
-// taken from `tools/list` cannot drift from what a client actually sees.
+// The README no longer carries a tool table. A hand-maintained one was fine for a
+// file people edit and wrong for a published page: it reflowed on every row edit
+// (so any two PRs touching it conflicted) and a drifted page is worse than no
+// page. So this boots the server over stdio against the MOCK adapter and asks
+// it — descriptions taken from `tools/list` cannot drift from what a client
+// actually sees.
 //
 // The same boot also renders the coach skill's tool inventory (VW-503), so the
 // skill that ships beside the server cannot name a tool the server does not
@@ -15,16 +16,18 @@
 //                                            [--skill-inventory path.md]
 
 import { spawn, spawnSync } from 'node:child_process';
-import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import prettier from 'prettier';
 
+import { createClient, initialize, unwrap } from './lib/mcp-stdio-client.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const PUSH_EVENTS_DOC = path.join(REPO_ROOT, 'docs/push-events.md');
+const TOOL_STATUS = path.join(REPO_ROOT, 'src/docs/tool-status.json');
 const DOCS_DIR = path.join(REPO_ROOT, 'docs');
 const SKILL_INVENTORY = path.join(
   REPO_ROOT,
@@ -33,7 +36,6 @@ const SKILL_INVENTORY = path.join(
 /** Files this generator copies text out of, and so must never harvest. */
 const RENDERED_SOURCES = new Set([PUSH_EVENTS_DOC]);
 const BOOT_SETTLE_MS = 2000;
-const REQUEST_TIMEOUT_MS = 20000;
 
 function parseArgs(argv) {
   const args = {
@@ -87,51 +89,6 @@ function isolatedEnv(scratchDir) {
   };
 }
 
-function createClient(child) {
-  const pending = new Map();
-  // A multi-byte UTF-8 character (e.g. an em dash) can land across two
-  // separate `data` events on a large response — `tools/list` grows with
-  // every tool's schema. `chunk.toString()` decodes each chunk in isolation
-  // and mangles a split character into a replacement-character run;
-  // `StringDecoder` holds back a trailing incomplete sequence until the byte
-  // that completes it arrives, decoding the same as one contiguous buffer.
-  const decoder = new StringDecoder('utf8');
-  let buffer = '';
-  let nextId = 1;
-  child.stdout.on('data', (chunk) => {
-    buffer += decoder.write(chunk);
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const waiter = pending.get(message.id);
-      if (!waiter) continue;
-      clearTimeout(waiter.timer);
-      pending.delete(message.id);
-      waiter.resolve(message);
-    }
-  });
-  return function request(method, params) {
-    const id = nextId++;
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timed out: ${method}`)), REQUEST_TIMEOUT_MS);
-      pending.set(id, { resolve, timer });
-    });
-  };
-}
-
-function unwrap(response, method) {
-  if (response.error) throw new Error(`${method} failed: ${JSON.stringify(response.error)}`);
-  return response.result;
-}
-
 /** Boot the mock server and read back its whole advertised surface. */
 async function readServerSurface(scratchDir) {
   const child = spawn(process.execPath, [BIN_PATH], {
@@ -141,17 +98,7 @@ async function readServerSurface(scratchDir) {
   });
   try {
     const request = createClient(child);
-    unwrap(
-      await request('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'gen-tool-reference', version: '1' },
-      }),
-      'initialize',
-    );
-    child.stdin.write(
-      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
-    );
+    await initialize(child, request, 'gen-tool-reference');
     // The bootstrap swaps placeholder handlers for real ones after the handshake.
     await new Promise((resolve) => setTimeout(resolve, BOOT_SETTLE_MS));
     return {
@@ -232,9 +179,19 @@ async function formatWith(prettierConfig, filepath, text) {
   return prettier.format(text, { ...prettierConfig, filepath });
 }
 
-async function writePages(outDir, pages, sidebar) {
+/** Remove only what this generator wrote, so hand-written reference pages survive a run. */
+function removeGeneratedPages(referenceDir, isGeneratedPage) {
+  if (!fs.existsSync(referenceDir)) return;
+  for (const entry of fs.readdirSync(referenceDir, { withFileTypes: true })) {
+    const full = path.join(referenceDir, entry.name);
+    if (entry.isDirectory()) fs.rmSync(full, { recursive: true, force: true });
+    else if (isGeneratedPage(fs.readFileSync(full, 'utf8'))) fs.rmSync(full);
+  }
+}
+
+async function writePages(outDir, pages, sidebar, isGeneratedPage) {
   const referenceDir = path.join(outDir, 'reference');
-  fs.rmSync(referenceDir, { recursive: true, force: true });
+  removeGeneratedPages(referenceDir, isGeneratedPage);
   fs.mkdirSync(referenceDir, { recursive: true });
   const config = (await prettier.resolveConfig(path.join(REPO_ROOT, 'site/index.md'))) ?? {};
   for (const [relative, body] of pages) {
@@ -253,7 +210,12 @@ async function main() {
   const { CORE_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
     path.join(REPO_ROOT, 'dist/tool-registry.js')
   );
-  const { buildReference } = await import(path.join(REPO_ROOT, 'dist/docs/reference-pages.js'));
+  const { buildReference, isGeneratedPage, HAND_WRITTEN_REFERENCE_PAGES } = await import(
+    path.join(REPO_ROOT, 'dist/docs/reference-pages.js')
+  );
+  const { ENVIRONMENT_VARIABLES } = await import(
+    path.join(REPO_ROOT, 'dist/docs/environment-variables.js')
+  );
   const { renderSkillInventory } = await import(
     path.join(REPO_ROOT, 'dist/docs/skill-inventory.js')
   );
@@ -290,8 +252,11 @@ async function main() {
     }),
   );
 
+  assertHandWrittenPagesExist(HAND_WRITTEN_REFERENCE_PAGES);
   const reference = buildReference({
     guard,
+    toolStatus: JSON.parse(fs.readFileSync(TOOL_STATUS, 'utf8')),
+    environmentVariables: ENVIRONMENT_VARIABLES,
     coreToolNames: CORE_TOOL_NAMES,
     mockToolNames: MOCK_TOOL_NAMES,
     tools: surface.tools,
@@ -299,8 +264,9 @@ async function main() {
     resourceTemplates: surface.resourceTemplates,
     pushEvents,
   });
-  assertPushEventsDocIsClean(reference.docRedactions);
-  await writePages(args.out, reference.pages, reference.sidebar);
+  assertHandMaintainedInputIsClean(reference.docRedactions);
+  warnOnUnmappedNamespaces(reference.unmappedNamespaces);
+  await writePages(args.out, reference.pages, reference.sidebar, isGeneratedPage);
   assertNoProtocolDetail(args.out, reference.pages, guard);
 
   const inventory = renderSkillInventory({
@@ -375,14 +341,38 @@ function assertRegistryMatchesServer(tools, coreNames, mockNames) {
   }
 }
 
-// docs/push-events.md carries no protocol detail today, unlike the tool
-// descriptions (VW-213), so a redaction in it is a regression rather than the
-// status quo. Redacting alone would publish a clean page and say nothing.
-function assertPushEventsDocIsClean(findings) {
+// docs/push-events.md and the environment-variable list carry no protocol
+// detail, unlike the tool descriptions once did (VW-213), so a redaction in
+// either is a regression rather than the status quo. Redacting alone would
+// publish a clean page and say nothing.
+function assertHandMaintainedInputIsClean(findings) {
   if (findings.length === 0) return;
   throw new Error(
-    `protocol detail in docs/push-events.md (${findings.length} hits) — ${findings.join('; ')}`,
+    `protocol detail in docs/push-events.md or src/docs/environment-variables.ts ` +
+      `(${findings.length} hits) — ${findings.join('; ')}`,
   );
+}
+
+// A namespace missing from src/docs/reference-groups.ts still gets a page, in
+// the "Other" group; this says so, so the table gets the new row.
+function warnOnUnmappedNamespaces(namespaces) {
+  if (namespaces.length === 0) return;
+  console.warn(
+    `[reference] WARNING: namespace(s) not in src/docs/reference-groups.ts, filed under ` +
+      `"Other": ${namespaces.join(', ')}`,
+  );
+}
+
+// The sidebar links hand-written reference pages; a missing one is a dead link.
+function assertHandWrittenPagesExist(links) {
+  const missing = links
+    .map((link) => path.join(REPO_ROOT, 'site', `${link.link}.md`))
+    .filter((file) => !fs.existsSync(file));
+  if (missing.length > 0) {
+    throw new Error(
+      `the sidebar links hand-written page(s) that do not exist: ${missing.join(', ')}`,
+    );
+  }
 }
 
 // Fail the build rather than publish a byte, opcode, offset or register name.

@@ -20,6 +20,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { Exercise, ExerciseService } from '../../exercises/exercise-service.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -42,7 +43,6 @@ const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 const { SlotBindingsStore } = await import('../../state/slot-bindings.js');
-const { SqliteSessionStore } = await import('../../store/sqlite-store.js');
 const { registerSessionTools } = await import('../session-tools.js');
 const { registerSetTools } = await import('../set-tools.js');
 
@@ -131,14 +131,14 @@ function makeRep(n: number, romM: number): Rep {
 interface Harness {
   state: ServerState;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
-  store: InstanceType<typeof SqliteSessionStore>;
+  store: SessionStore;
   live: LiveStateType;
   cleanup: () => void;
 }
 
 function setup(): Harness {
   const live = new LiveState();
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const client = {
     startRecording: vi.fn().mockResolvedValue(undefined),
     endSet: vi.fn().mockResolvedValue(undefined),

@@ -29,6 +29,9 @@ import type { SetPurpose } from '../../../store/types.js';
 import type { SetupCard } from '../../../store/types.js';
 // Type-only, same rationale: the server-computed session pace (VW-290).
 import type { SessionPaceView } from '../../read-models/session-pace.js';
+// Type-only, same rationale: the lifter's tier signal off the plan channel (VW-668).
+import type { TierView } from '../../read-models/session-plan.js';
+import { effortTargetFor } from '../../../profile/effort-target.js';
 import type { FatigueStop } from './fatigue-state';
 import type { ResolvedRest } from '../../../analytics/rest-defaults.js';
 
@@ -75,6 +78,8 @@ export interface LiveModel {
    * Optional so a fixture built before this field existed still type-checks.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
+  /** Which source set this auto-armed set's stop (VW-720), as `armSourceLabel` words it; null for none. */
+  armSource?: string | null;
 }
 
 /** A logged set on the session read-model. */
@@ -144,11 +149,15 @@ export interface CompletedSet {
  * {@link SessionModel} fields; this carries only the plan-side targets.
  */
 export interface PlannedExerciseModel {
+  /** The catalog exercise id, when the server sent one; names a pace suggestion's target. */
+  exerciseId?: string;
   name: string;
   /** Prescribed set count — the rail row's column count and summary sets. */
   plannedSets: number;
   /** Rep target sizing an upcoming row's `todo` columns; null when no rep range. */
   targetReps: number | null;
+  /** The range's top as a number, so a strip can draw it; absent or null for a single count. */
+  repsHigh?: number | null;
   /** Preformatted reps cell for the rail summary: `"8–10"`, `8`, or the em-dash. */
   repsLabel: number | string;
   /** Null when the plan prescribes no working weight. */
@@ -206,6 +215,15 @@ export interface SessionModel {
   /** Prescribed set count. Null until `targetSets` reaches the view (VW-42). */
   plannedSets: number | null;
   /**
+   * Whether the targets are the plan's or copied from last time (VW-643), so a derived
+   * number never reads as the coach's. Absent or null with no prescription.
+   */
+  prescriptionSource?: 'prescribed' | 'derived' | null;
+  /** When "last time" started, an ISO instant. Absent or null unless the targets are derived. */
+  derivedFromAt?: string | null;
+  /** Days since "last time" when that is a break of 15+ days (VW-908). Absent or null otherwise. */
+  derivedStaleDays?: number | null;
+  /**
    * Prescribed reps per set. The lab fixture hardcoded `8` in the header; the store has
    * this for real as the active set's configured rep target, so the port reads it.
    * Null when no target is configured (an AMRAP/untargeted set).
@@ -223,6 +241,13 @@ export interface SessionModel {
    * rather than pacing the lifter against a budget nobody prescribed.
    */
   sessionPace: SessionPaceView | null;
+  /** The coach's RPE for the active exercise. Absent or null when the plan states none. */
+  targetRpe?: number | null;
+  /**
+   * The owner's tier signal (VW-669), read off the plan channel. Absent or null with no plan,
+   * a failed tier read, or a non-owner on the cable, so nobody gets another lifter's target.
+   */
+  tier?: TierView | null;
 }
 
 /** The provenance of a resolved rest (VW-441), from the snapshot's `rest`. */
@@ -319,9 +344,14 @@ export function autoArmedBadge(
 /** Compact badge text for an auto-armed set — identical wherever the badge appears. */
 export const AUTO_ARM_BADGE_TEXT = 'AUTO';
 
-/** The badge's tooltip/title line, naming which auto-arm mechanism opened the set. */
-export function autoArmedTitle(source: 'guided_load' | 'idle_rep'): string {
-  return source === 'guided_load' ? 'Auto-armed · guided load' : 'Auto-armed · your reps';
+/** The badge's tooltip/title line: which auto-arm mechanism opened the set, then its stop's source. */
+export function autoArmedTitle(
+  source: 'guided_load' | 'idle_rep',
+  armSource: string | null = null,
+): string {
+  const mechanism =
+    source === 'guided_load' ? 'Auto-armed · guided load' : 'Auto-armed · your reps';
+  return armSource === null ? mechanism : `${mechanism} · ${armSource}`;
 }
 
 /**
@@ -442,6 +472,35 @@ export interface PrescriptionCells {
   /** The formatted load, or `NO_VALUE` ("—") for an unset/discovery load — never a faked 0. */
   load: number | string;
   unit: MassUnit;
+  /** The effort target for a working set (VW-669); null when neither the plan nor a tier states one. */
+  effort: EffortCell | null;
+}
+
+/** An effort target and what it rests on: `plan` for a coach-written RPE, else the tier and its corpus. */
+export interface EffortCell {
+  text: string;
+  basis: string;
+  /** True when the tier was defaulted rather than declared or derived; never parsed from `basis`. */
+  assumed: boolean;
+}
+
+/**
+ * The working-set effort target: the coach's RPE as written (never converted to RIR, which
+ * is not interchangeable with it), else RP's per-tier target. A defaulted tier reads assumed.
+ */
+function deriveEffort(session: SessionModel): EffortCell | null {
+  if (session.targetRpe != null)
+    return { text: `RPE ${session.targetRpe}`, basis: 'plan', assumed: false };
+  if (session.tier == null) return null;
+  const { tier, source } = session.tier;
+  const { wallText, sources } = effortTargetFor(tier);
+  const assumed = source === 'default';
+  const provenance = assumed ? 'assumed' : source;
+  return {
+    text: wallText,
+    basis: `${tier} tier (${provenance}) · RP ${sources.join(', ')}`,
+    assumed,
+  };
 }
 
 /**
@@ -467,14 +526,41 @@ function plannedRepTarget(session: SessionModel): number | string | null {
  * The rep COUNT to size a strip column by — the same plan-first sourcing as
  * {@link plannedRepTarget}, but numeric.
  *
- * A prescribed RANGE collapses to its committed floor (`repsLow`): those are the reps the
- * set is definitely expected to carry. The reps between the floor and the range's top are
- * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
- * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
+ * A prescribed RANGE sizes the committed columns by its floor (`repsLow`), the reps the set
+ * is definitely expected to carry. A todo set draws the whole range as titan's `range`
+ * variant (floor..max). The active set keeps `planned` segments and its live pulse, plus the
+ * {@link plannedRepRange} label, because `range` has no pulse; VW-576 asks titan for one.
  */
 export function plannedRepCount(session: SessionModel): number | null {
   const active = session.plannedExercises.find((e) => e.active);
   return active?.targetReps ?? session.targetReps;
+}
+
+/**
+ * The active exercise's prescribed rep range for titan's `SetStrip`, or `{}` when the plan
+ * states a single count or no high bound. A high at or below the floor is not a range.
+ */
+export function plannedRepRange(session: SessionModel): { repsLow?: number; repsHigh?: number } {
+  const active = session.plannedExercises.find((e) => e.active);
+  const low = active?.targetReps ?? null;
+  const high = active?.repsHigh ?? null;
+  if (low === null || high === null || high <= low) return {};
+  return { repsLow: low, repsHigh: high };
+}
+
+/**
+ * A not-yet-started set. A prescribed range (high above low) draws titan's `range` variant,
+ * floor..max with the variable zone; anything else stays fixed `planned` columns.
+ */
+function todoSet(
+  planned: number,
+  low: number | undefined,
+  high: number | null | undefined,
+): SessionRailExercise['setStates'][number] {
+  if (low === undefined || high === undefined || high === null || high <= low) {
+    return { status: 'todo', planned };
+  }
+  return { status: 'range', floor: low, max: high, doneVels: [] };
 }
 
 /**
@@ -531,7 +617,7 @@ export function derivePrescription(
   const reps = plannedRepTarget(session) ?? session.targetReps;
   if (plannedSets === null || reps === null) return null;
   const { weight, unit } = summaryLoad(prescribedLoadLbs(session), displayUnit);
-  return { sets: plannedSets, reps, load: weight, unit };
+  return { sets: plannedSets, reps, load: weight, unit, effort: deriveEffort(session) };
 }
 
 /**
@@ -569,6 +655,7 @@ export function deriveRecapPrescription(
     reps: plannedRepTarget(session) ?? session.targetReps ?? NO_VALUE,
     load: weight,
     unit,
+    effort: deriveEffort(session),
   };
 }
 
@@ -593,6 +680,7 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
       status: 'active',
       velocities: velocityRatios(live.repVelocities),
       planned: plannedRepCount(session) ?? live.repVelocities.length,
+      ...plannedRepRange(session),
     });
   }
   // Any planned sets beyond those done + the one in progress. Skipped entirely without a
@@ -602,7 +690,8 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
   const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
   if (targetReps !== null) {
     for (let i = 0; i < remaining; i++) {
-      setStates.push({ status: 'todo', planned: targetReps });
+      const { repsLow, repsHigh } = plannedRepRange(session);
+      setStates.push(todoSet(targetReps, repsLow, repsHigh));
     }
   }
   return setStates;
@@ -638,8 +727,24 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
-    setStates: deriveActiveSetStates(model),
+    setStates: withoutRangeLabels(deriveActiveSetStates(model)),
   };
+}
+
+/**
+ * The rail row's strip carries no rep-range label: titan's `SetStrip` draws it absolutely
+ * above the bar without reserving space, so in the compact rail row it lands on the
+ * prescription line above. The page header keeps the label. Drop this once VW-927 (the
+ * titan `SetStrip` fix) ships and the rail pins it.
+ */
+function withoutRangeLabels(
+  setStates: SessionRailExercise['setStates'],
+): SessionRailExercise['setStates'] {
+  return setStates.map((set) => {
+    if (set.status !== 'active') return set;
+    const { repsLow: _repsLow, repsHigh: _repsHigh, ...rest } = set;
+    return rest;
+  });
 }
 
 /**
@@ -678,7 +783,7 @@ function buildUpcomingRow(
   const setStates: SessionRailExercise['setStates'] = [];
   if (planned.targetReps !== null) {
     for (let i = 0; i < planned.plannedSets; i++) {
-      setStates.push({ status: 'todo', planned: planned.targetReps });
+      setStates.push(todoSet(planned.targetReps, planned.targetReps, planned.repsHigh ?? null));
     }
   }
   return {
@@ -812,17 +917,62 @@ export function deriveMissedSetsMetric(model: DashboardModel): MetricTileData | 
  *
  * The planned/elapsed MINUTES of the same estimate are not tiles: they go to the
  * rail's own `elapsedMs` / `budgetMs`, which draw the header clock and its pace
- * marker. Two tiles keep the row readable at the rail's width.
+ * marker.
+ *
+ * A `Pace` tile (VMCP-02.76) reads the time-based state: `+9 min` behind, `-7 min`
+ * ahead, or `on pace`. Idle gets no Pace tile, because the clock before the first set
+ * is setup time and the rail's budget already says how long the plan runs.
  */
 export function derivePaceMetrics(pace: SessionPaceView | null): MetricTileData[] {
   if (pace === null) return [];
+  const paceTile = derivePaceTile(pace);
   return [
     {
       label: 'Left',
       value: `${pace.plannedSetsRemaining} ${pluralSets(pace.plannedSetsRemaining)}`,
     },
     { label: 'ETA', value: formatClockTime(pace.projectedEndAt) },
+    ...(paceTile ? [paceTile] : []),
   ];
+}
+
+function derivePaceTile(pace: SessionPaceView): MetricTileData | null {
+  switch (pace.state) {
+    case 'idle':
+      return null;
+    case 'on_pace':
+      return { label: 'Pace', value: 'on pace' };
+    case 'behind':
+      return { label: 'Pace', value: `+${Math.abs(pace.slipMinutes)} min` };
+    case 'ahead':
+      return { label: 'Pace', value: `-${Math.abs(pace.slipMinutes)} min` };
+  }
+}
+
+/**
+ * The pace suggestion as one sentence naming its exercises (VMCP-02.76), or null
+ * when the server offered none. A trim that cannot cover the whole slip says so
+ * rather than promising an on-time finish.
+ */
+export function derivePaceSuggestion(
+  pace: SessionPaceView | null,
+  plannedExercises: readonly PlannedExerciseModel[],
+): string | null {
+  const suggestion = pace?.suggestion;
+  if (!suggestion) return null;
+  const nameOf = (exerciseId: string): string =>
+    plannedExercises.find((e) => e.exerciseId === exerciseId)?.name ?? exerciseId;
+  if (suggestion.kind === 'add') {
+    const sets = `${suggestion.sets} more ${pluralSets(suggestion.sets)}`;
+    return `Ahead of plan: room for ${sets} of ${nameOf(suggestion.exerciseId)} (about ${suggestion.costsMinutes} min).`;
+  }
+  const cuts = suggestion.cuts
+    .map((cut) => `${nameOf(cut.exerciseId)} to ${cut.toSets} ${pluralSets(cut.toSets)}`)
+    .join(' and ');
+  const trim = `Behind plan: trim ${cuts} to save ${suggestion.savesMinutes} min`;
+  return suggestion.coversSlip
+    ? `${trim}.`
+    : `${trim}, short of the ${pace.slipMinutes} min you are behind.`;
 }
 
 function pluralSets(count: number): string {

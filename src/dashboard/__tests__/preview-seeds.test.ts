@@ -15,38 +15,60 @@
 // A fake that answered `getBaseline: () => undefined` would pass this file while
 // the command previewed one status for all six names.
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CAPTURE_SCENARIOS } from '../../docs/capture-shots.js';
 import {
+  GOAL_PREVIEW_COMPANIONS,
+  GOAL_PREVIEW_EXERCISE,
   GOAL_PREVIEW_STATES,
   PREVIEW_PAGES,
+  acceptedBandOf,
   goalPreviewState,
+  previewWeightLbs,
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
-import { fetchGoalProgressViews } from '../goal-progress-api.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
+import { readUnreviewed } from '../../analytics/session-review.js';
+import { fetchGoalPriorityRows, fetchGoalProgressViews } from '../goal-progress-api.js';
+import { primaryTarget, type GoalsPageData } from '../spa/goals/goals-model.js';
+import { wholeBodyCards } from '../spa/goals/whole-body-cards.js';
+import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
-/** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
-const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
+// `now` feeds a whole-body target's startMeasuredAt as a raw day offset (preview-seeds.ts,
+// seedWholeBodyGoal), not a calendar-week-aligned one, so its meso week position flips with
+// the real weekday the suite runs on; freeze it to the weekday this fixture was written against.
+const PREVIEW_NOW = new Date('2026-09-27T12:00:00.000Z');
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(PREVIEW_NOW);
+});
 
 const scratchDirs: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   while (scratchDirs.length > 0) {
     rmSync(scratchDirs.pop()!, { recursive: true, force: true });
   }
 });
 
+// Views are plain data and never mutated; one seed per state and clock serves every test.
+const viewCache = new Map<string, GoalProgressView>();
+
 /** Seed one state into a throwaway store and project it exactly as the route does. */
 async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
+  const key = `${state.name}@${Date.now()}`;
+  const cached = viewCache.get(key);
+  if (cached) return cached;
   const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
   scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'preview.sqlite'));
+  const store = openTestStore({ path: join(dir, 'preview.sqlite') });
   try {
     const now = new Date();
     await seedGoalPreview(store, state, now);
@@ -54,6 +76,7 @@ async function viewFor(state: GoalPreviewState): Promise<GoalProgressView> {
     expect(priorities).toHaveLength(1);
     const views = await fetchGoalProgressViews(store, priorities[0]!, now);
     expect(views).toHaveLength(1);
+    viewCache.set(key, views[0]!);
     return views[0]!;
   } finally {
     store.close();
@@ -150,27 +173,23 @@ describe('dashboard:preview goal states', () => {
   }
 
   // The newest session has to share `now`'s calendar week, even seconds after it turned.
-  it(
-    'keeps every state on its status and its current-week reading just past Monday midnight UTC',
-    async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
-      try {
-        for (const state of GOAL_PREVIEW_STATES) {
-          const view = await viewFor(state);
+  it('keeps every state on its status and its current-week reading just past Monday midnight UTC', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
+    try {
+      for (const state of GOAL_PREVIEW_STATES) {
+        const view = await viewFor(state);
 
-          const matched = view.actuals.filter((actual) => actual.matched);
-          expect(view.status, state.name).toBe(state.expectedStatus);
-          expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
-            view.mesoMilestone.currentWeek,
-          );
-        }
-      } finally {
-        vi.useRealTimers();
+        const matched = view.actuals.filter((actual) => actual.matched);
+        expect(view.status, state.name).toBe(state.expectedStatus);
+        expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
+          view.mesoMilestone.currentWeek,
+        );
       }
-    },
-    SEED_ALL_STATES_TIMEOUT_MS,
-  );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('rejects a state nobody defined, naming the ones that exist', () => {
     expect(() => goalPreviewState('nearly')).toThrow(/unknown --state nearly; known: calibrating/);
@@ -196,6 +215,119 @@ describe('dashboard:preview pages', () => {
     for (const page of PREVIEW_PAGES) {
       if (page.captureScenario === null) continue;
       expect(known).toContain(page.captureScenario);
+    }
+  });
+});
+
+describe('dashboard:preview companion lifts (VW-467)', () => {
+  it('seeds two accepted lifts beside the lead, which still lists first', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+    try {
+      const now = new Date();
+      await seedGoalPreview(store, goalPreviewState('on_track'), now, { companions: true });
+      const priorities = await store.listPriorities(LOCAL_USER_ID);
+
+      expect(priorities.map((p) => p.ref)).toEqual([
+        GOAL_PREVIEW_EXERCISE.id,
+        ...GOAL_PREVIEW_COMPANIONS.map((c) => c.exercise.id),
+      ]);
+      expect(priorities[0]!.level).toBe('specialize');
+      for (const priority of priorities) {
+        const views = await fetchGoalProgressViews(store, priority, now);
+        expect(views).toHaveLength(1);
+        // Derived like every seed: the stored numbers are the derivation's band ends.
+        expect(views[0]!.committed).toBe(views[0]!.target.committedValue);
+        expect(views[0]!.target.acceptedBy).toBe('user');
+      }
+      const lead = await fetchGoalProgressViews(store, priorities[0]!, now);
+      expect(lead[0]!.status).toBe('on_track');
+
+      // Each lift ramps at its own exercise class (VW-482): the isolation tricep extension's
+      // band is the isolation one, not the chest press's upper-compound one.
+      const tricep = priorities[2]!;
+      const [tricepView] = await fetchGoalProgressViews(store, tricep, now);
+      const context = await readDerivationContext({ store }, tricep);
+      const start = tricepView!.target.startValue;
+      expect(tricepView!.target.stretchValue).toBe(
+        acceptedBandOf(context, start, 'ramp', tricep.ref).stretchValue,
+      );
+      expect(tricepView!.target.stretchValue).toBeLessThan(
+        acceptedBandOf(context, start, 'ramp', GOAL_PREVIEW_EXERCISE.id).stretchValue,
+      );
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('dashboard:preview whole-body goals (VW-455)', () => {
+  async function seededPage(
+    stateName: string,
+  ): Promise<{ data: GoalsPageData; wholeBody: string[] }> {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+    try {
+      const now = new Date();
+      const report = await seedGoalPreview(store, goalPreviewState(stateName), now, {
+        wholeBody: true,
+      });
+      const rows = await fetchGoalPriorityRows(store, now);
+      const progress: GoalsPageData['progress'] = {};
+      for (const row of rows) {
+        progress[row.priority.id] = await fetchGoalProgressViews(store, row.priority, now);
+      }
+      return { data: { priorities: rows, progress, mesocycle: null }, wholeBody: report.wholeBody };
+    } finally {
+      store.close();
+    }
+  }
+
+  it('draws a cut with its rate and a session commitment beside the lead lift', async () => {
+    const { data, wholeBody } = await seededPage('on_track');
+    const cards = wholeBodyCards(data);
+
+    expect(wholeBody).toEqual(['bodyweight', 'sessions_28d']);
+    expect(primaryTarget(data)?.view.target.exerciseId).toBe(GOAL_PREVIEW_EXERCISE.id);
+    expect(cards?.bodyweight).toMatchObject({
+      direction: 'down',
+      phase: { name: 'fat-loss' },
+      latest: { value: previewWeightLbs(0) },
+      week: { index: 3 },
+    });
+    expect(cards?.bodyweight?.rate?.observedPctPerWeek).toBeLessThan(0);
+    expect(cards?.sessions?.committed).toBeGreaterThan(0);
+    expect(cards?.sessions?.counted).toBeGreaterThan(0);
+  });
+
+  it('leaves the session goal out when the lifter had not trained yet when taking it on', async () => {
+    const { data, wholeBody } = await seededPage('calibrating');
+
+    expect(wholeBody).toEqual(['bodyweight']);
+    expect(wholeBodyCards(data)?.sessions).toBeNull();
+  });
+});
+
+describe('dashboard:preview --unreviewed (VW-514)', () => {
+  it('leaves that many unmarked days for /api/goals to report, and the goal unchanged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+    scratchDirs.push(dir);
+    const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+    try {
+      const now = new Date();
+      const report = await seedGoalPreview(store, goalPreviewState('on_track'), now, {
+        unreviewedDays: 3,
+      });
+      const [priority] = await store.listPriorities(LOCAL_USER_ID);
+      const [view] = await fetchGoalProgressViews(store, priority!, now);
+
+      expect(report.unreviewedDays).toBe(3);
+      expect((await readUnreviewed(store)).unreviewedDays).toBe(3);
+      expect(view?.status).toBe('on_track');
+    } finally {
+      store.close();
     }
   });
 });

@@ -1,5 +1,5 @@
 {
-  "definitionHash": "3ef21a06132c456e2983c49eaff2d5ccb5c3ef3156f1a83b423a490e969a8a1a",
+  "definitionHash": "6782ffaac688ca34b537129e0aa082e35c51b035574616446b677a2be2557edc",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -15,17 +15,52 @@
       "waitFor": {
         "kind": "idle"
       },
-      "assertedText": [
-        "No Voltra connected",
-        "VELOCITY · this set"
-      ],
-      "assertedValues": [
-        "Session 0/0 sets"
-      ],
+      "assertedText": ["No Voltra connected", "VELOCITY · this set"],
+      "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 43802,
-      "sha256": "b11546ad26685360100c9a4932625bd6e44a01347e33460c565d9c5f9c339330"
+      "bytes": 45925,
+      "sha256": "ff3e1f0adfc1a584117fdf56e0205aef690a056da165f2000f5bbc8ba88ba2f4"
+    },
+    {
+      "name": "checkin",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page on its first step, bodyweight, with the four steps above it.",
+      "file": "checkin.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": [
+        "Bodyweight",
+        "Check-in",
+        "Review",
+        "Done",
+        "Note (optional)",
+        "Next",
+        "Skip"
+      ],
+      "assertedValues": ["Bodyweight (lbs)"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 37609,
+      "sha256": "bfb70f84be8c1226b1fbfd05cba1738460f87ecc28387665392162b54f51fbbc"
+    },
+    {
+      "name": "checkin-phone",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page at phone width, one step at a time.",
+      "file": "checkin-phone.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": ["Bodyweight", "Note (optional)", "Next", "Skip"],
+      "assertedValues": ["Step 1 of 4", "Bodyweight (lbs)"],
+      "width": 390,
+      "height": 844,
+      "bytes": 25091,
+      "sha256": "42dab914fdcb5c5880fcc5d3aef53643fc4dbda6e7a3c1fd6d42206635329e7c"
     },
     {
       "name": "live-mid-set",
@@ -35,12 +70,7 @@
       "file": "live-mid-set.png",
       "waitFor": {
         "kind": "set-open",
-        "reps": [
-          [
-            "primary",
-            5
-          ]
-        ]
+        "reps": [["primary", 5]]
       },
       "assertedText": [
         "Push A · Hypertrophy",
@@ -51,13 +81,14 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0/8 sets",
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46",
-        "FATIGUE — RPE Good"
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44",
+        "FATIGUE — RPE Good",
+        "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 729736,
-      "sha256": "afd7416c2b8fd5d42e42c1fb7a36513b46ae85fad705b4330babff10ed154634"
+      "bytes": 826883,
+      "sha256": "2bb3e65c215d4575a1ebb1322cb9a27289bed8538f233a46e61a9b1bc5dc5679"
     },
     {
       "name": "live-rest",
@@ -68,22 +99,19 @@
       "waitFor": {
         "kind": "rest"
       },
-      "assertedText": [
-        "TONNAGE",
-        "Cable Chest Press",
-        "Push A · Hypertrophy"
-      ],
+      "assertedText": ["TONNAGE", "Cable Chest Press", "Push A · Hypertrophy"],
       "assertedValues": [
         "VOLUME 5 TONNAGE 700 lbs",
         "1/8 sets",
         "SET REPS LBS RPE 1 5 140 —",
         "SET VERDICT 5 Reps 140 lbs 12%",
-        "Next · Cable Chest Press · set 2 of 3"
+        "Next · Cable Chest Press · set 2 of 3",
+        "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 106126,
-      "sha256": "d938a03e5b06a120e56cf9db450d7bd8a2cdd76a46e4ac16d9e54f41a48fa55b"
+      "bytes": 120492,
+      "sha256": "72141137def20f5936e8cb12ad44f15da1f4e6e2600499577818830f9592ef34"
     },
     {
       "name": "session-summary",
@@ -95,11 +123,7 @@
         "kind": "sessions-ended",
         "minSessions": 3
       },
-      "assertedText": [
-        "Session complete",
-        "EXERCISES",
-        "NEXT SESSION"
-      ],
+      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
       "assertedValues": [
         "EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb",
         "FATIGUE — RPE Good",
@@ -110,8 +134,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 65499,
-      "sha256": "12dd529189b75dd5d4211ac182069fa07f1da70b36f15b4fa56958522a87439f"
+      "bytes": 68563,
+      "sha256": "740483859d912e71af311808e1a9d17165d374a63b323be109e908e9e15221fc"
     },
     {
       "name": "plan-builder",
@@ -123,11 +147,7 @@
         "kind": "plan-seeded",
         "minExercises": 3
       },
-      "assertedText": [
-        "Push A — planned exercises",
-        "Cable Incline Chest Press",
-        "Save targets"
-      ],
+      "assertedText": ["Push A — planned exercises", "Cable Incline Chest Press", "Save targets"],
       "assertedValues": [
         "30 exercises",
         "Push A Block 1 · Week 1 · 3 exercises completed",
@@ -137,8 +157,29 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 118887,
-      "sha256": "394145cba5f0fca4bbcc4ff74616ddc8e0bd7a7c164ee90fc7ca57ac3fbe0225"
+      "bytes": 122021,
+      "sha256": "b357945078302ba6b59de193084e6e73278651cd3d366506cafa9111db31cf99"
+    },
+    {
+      "name": "live-slowing",
+      "scenario": "fatigued",
+      "route": "/app",
+      "caption": "The live page on a set whose velocity loss has passed the 20% line, with the fatigue card reading Slowing.",
+      "file": "live-slowing.png",
+      "waitFor": {
+        "kind": "set-open",
+        "reps": [["primary", 10]]
+      },
+      "assertedText": ["Cable Chest Press", "VELOCITY · this set", "FATIGUE"],
+      "assertedValues": [
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37",
+        "FATIGUE — RPE Slowing",
+        "PACE on pace"
+      ],
+      "width": 1440,
+      "height": 900,
+      "bytes": 914409,
+      "sha256": "0fadf93390600b53148577a6d1a46abf2afac297708014d4c52ebcb1db04300a"
     },
     {
       "name": "live-dual-mid-set",
@@ -149,118 +190,157 @@
       "waitFor": {
         "kind": "set-open",
         "reps": [
-          [
-            "left",
-            6
-          ],
-          [
-            "right",
-            4
-          ]
+          ["left", 6],
+          ["right", 4]
         ]
       },
-      "assertedText": [
-        "MOCK-VOLTRA-LEFT",
-        "MOCK-VOLTRA-RIGHT",
-        "L/R"
-      ],
+      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R"],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46",
         "L/R 2% Right leading"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 289614,
-      "sha256": "fbe923688167815da98b41d57e47cb44ef22e3c2f3ebf8fac342e75c9bf2b5a6"
+      "bytes": 293767,
+      "sha256": "6d36c19f15f569fcc8d2cf765930c5066b01f8838e05a713c01bafa7c07891d7"
     },
     {
       "name": "goals",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The goal-coach wall page, with an accepted target and a personal record from the heavier set.",
+      "caption": "Seeded data, not yet available: the goal-coach wall page, with an accepted target and a personal record from the heavier set.",
       "file": "goals.png",
       "waitFor": {
         "kind": "sessions-ended",
-        "minSessions": 2
+        "minSessions": 4
       },
       "assertedText": [
         "CABLE CHEST PRESS",
         "Calibrating",
         "to goal",
-        "Per-lift",
-        "Whole body"
+        "PER-LIFT",
+        "WHOLE BODY",
+        "Rate:"
       ],
-      "assertedValues": [
-        "Goal 8 x 133 lb",
-        "Best 8 x 110 lb",
-        "23 lb to goal",
-        "CABLE CHEST PRESS · specialize"
-      ],
+      "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 94135,
-      "sha256": "634a406c0018b5850fb901697360e6fac7cf87d80a50b3b36cadb972cd41cc47"
+      "bytes": 91600,
+      "sha256": "b6e86c5ae185b34e517508293d50891410925bd7b746219c093f79ad5465db71"
     },
     {
       "name": "goals-phone",
       "scenario": "goals",
       "route": "/app#/goals",
-      "caption": "The goal-coach page at phone width, cards and chart stacked to one column.",
+      "caption": "Seeded data, not yet available: the goal-coach page at phone width, cards and chart stacked to one column.",
       "file": "goals-phone.png",
       "waitFor": {
         "kind": "sessions-ended",
-        "minSessions": 2
+        "minSessions": 4
       },
       "assertedText": [
         "CABLE CHEST PRESS",
         "Calibrating",
         "to goal",
-        "Per-lift",
-        "Whole body"
+        "PER-LIFT",
+        "WHOLE BODY",
+        "Rate:"
       ],
-      "assertedValues": [
-        "Goal 8 x 133 lb",
-        "Best 8 x 110 lb",
-        "23 lb to goal",
-        "CABLE CHEST PRESS · specialize"
-      ],
+      "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 390,
       "height": 844,
-      "bytes": 55341,
-      "sha256": "120e412436e7a4d1188ace9ee5ecfa31e52266a3daa7348d83df007803704a42"
+      "bytes": 54331,
+      "sha256": "2cd693b9c10e8a3dddda6634f4c7ef2d6e481f34e0e641c4823075986625ea31"
+    },
+    {
+      "name": "goals-whole-body",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "Seeded data, not yet available: the Whole body cards on the goals page: the latest weigh-in against this week’s band during a cut, and training days in the last 28 days against the commitment.",
+      "file": "goals-whole-body.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 4
+      },
+      "assertedText": ["WHOLE BODY", "Rate:", "Training days", "MAINTAIN"],
+      "assertedValues": ["196.2"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 101266,
+      "sha256": "360d1d9f855e792b78da2c244487ff49faeb03da5d48a691fa9734e0ab0157d0"
+    },
+    {
+      "name": "goals-whole-body-phone",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "Seeded data, not yet available: the Whole body cards at phone width, one card per row.",
+      "file": "goals-whole-body-phone.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 4
+      },
+      "assertedText": ["WHOLE BODY", "Rate:", "Training days", "MAINTAIN"],
+      "assertedValues": ["196.2"],
+      "width": 390,
+      "height": 844,
+      "bytes": 64433,
+      "sha256": "4f48ba1ae4365fac64c3751341fe534b4c64fd9b81ff1955a6631559561fd710"
     },
     {
       "name": "body-week",
       "scenario": "body",
       "route": "/app#/body",
-      "caption": "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "caption": "Seeded data, not yet available: the body page: a training week's volume per muscle, what is due next, and recent PRs.",
       "file": "body-week.png",
       "waitFor": {
         "kind": "sessions-ended",
         "minSessions": 18
       },
-      "assertedText": [
-        "Next up",
-        "Recent PRs",
-        "This week",
-        "Legend",
-        "Weekly sets by muscle"
-      ],
+      "assertedText": ["Next up", "Recent PRs", "This week", "Legend", "Weekly sets by muscle"],
       "assertedValues": [
-        "SETS 32 MUSCLES 7 PRODUCTIVE 1",
-        "BELOW MEV 11 OVER MRV 0",
+        "SETS 28 MUSCLES 5 PRODUCTIVE 1",
+        "BELOW MEV 9 OVER MRV 0",
         "Chest 15/14",
-        "Lats 4/14",
+        "Biceps 3/10",
         "Cable Chest Press Chest 221.7 lb (+12.7)",
         "Cable Lat Pulldown Pull B 4 sets"
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 200752,
-      "sha256": "3c621e2eee44951e7013a2079aa4e230a05f8da134ae4c262a2584a1f07ffe51"
+      "bytes": 197430,
+      "sha256": "d3ff076e8b2770db828e6f48a1d4c300d7ebf82a52e31c5f1055ff2f93ec2864"
+    },
+    {
+      "name": "body-drill",
+      "scenario": "body",
+      "route": "/app#/body/lats",
+      "caption": "Seeded data, not yet available: the body page with one muscle's side sheet open: its weekly sets, when it was last trained, its strength and its remaining plan.",
+      "file": "body-drill.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 18
+      },
+      "assertedText": [
+        "Lats on track",
+        "Last trained",
+        "STRENGTH",
+        "UPCOMING",
+        "Next up",
+        "Recent PRs"
+      ],
+      "assertedValues": [
+        "MEV 8 MRV 20 4 / 20 MRV",
+        "Cable Row 200 lb · prev 193 lb",
+        "Sets 4 / 7",
+        "Cable Lat Pulldown 4 sets · Pull B"
+      ],
+      "width": 1920,
+      "height": 1080,
+      "bytes": 217739,
+      "sha256": "683dd7173875e6a05a2591e72cb34cd62bbf21554441951f8586eeb78debe19b"
     }
   ],
-  "clipDefinitionHash": "608e12dc1d0b4fb606157cab9b1068c2c5226620a20dd4c88134de40305a3365",
+  "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
   "clipSize": {
     "width": 1280,
     "height": 800
@@ -280,12 +360,7 @@
       "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [
-          [
-            "primary",
-            1
-          ]
-        ]
+        "reps": [["primary", 1]]
       },
       "endWhen": {
         "kind": "rest"
@@ -300,31 +375,32 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40",
-        "VOLUME 8 TONNAGE 1.1k lbs"
+        "VOLUME 8 TONNAGE 1.1k lbs",
+        "PACE on pace"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
       "seconds": 33.32,
-      "bytes": 598007,
+      "bytes": 588032,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 228333,
-          "sha256": "a0cf38b66b1c8cb46c898dc4418d8a2eee705e83aab7b3955a83e81993dadc22"
+          "bytes": 211955,
+          "sha256": "5c263da00c5c2ff52e5d21c61273eb1f86649ab66ca90a7c5b12b839a318702c"
         },
         {
           "atSeconds": 16.66,
-          "bytes": 194637,
-          "sha256": "66750f7ae4c5e1bf395feeacff8118c718292b6a8826c6efbc2b8bb48f3a06aa"
+          "bytes": 238115,
+          "sha256": "25ffbbadca429addbf82d6fcca3c024e74b69ebb64eeb9c9630ff5950f2afed7"
         },
         {
           "atSeconds": 28.32,
-          "bytes": 200546,
-          "sha256": "e5d080028b916fac15416da480092b163fd81c9ba15ba80e5114004898b7063f"
+          "bytes": 228622,
+          "sha256": "c7971aa1089498d5966a00ec7e3493275c7add60ad9779a5cd13e94441811ae0"
         }
       ],
-      "sha256": "8300eae8f64f1dff0f78e05c8cb587a303df5255d5412fc72e7158c140a36fa1"
+      "sha256": "b34af7f94106cfa072f05c916c7c2d14d9f53f43543a0ba2255186dd0c2d1d62"
     },
     {
       "name": "dual-divergence",
@@ -339,27 +415,13 @@
       "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [
-          [
-            "left",
-            1
-          ]
-        ]
+        "reps": [["left", 1]]
       },
       "endWhen": {
         "kind": "slots-rest",
-        "slots": [
-          "left",
-          "right"
-        ]
+        "slots": ["left", "right"]
       },
-      "assertedText": [
-        "MOCK-VOLTRA-LEFT",
-        "MOCK-VOLTRA-RIGHT",
-        "L/R",
-        "CON ECC",
-        "TONNAGE"
-      ],
+      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R", "CON ECC", "TONNAGE"],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44"
       ],
@@ -367,25 +429,25 @@
       "height": 800,
       "fps": 25,
       "seconds": 36.32,
-      "bytes": 575446,
+      "bytes": 512299,
       "frames": [
         {
           "atSeconds": 5.45,
-          "bytes": 195160,
-          "sha256": "0a6d11b1f6b7d69266a85dd22a1d6e9d17221cfde92d2cb82b5f639659deab10"
+          "bytes": 154581,
+          "sha256": "c13f4df5e1626ef2fc2d8b0ed4fac432567afe3b34a4b6c5e060048b3ccd70cd"
         },
         {
           "atSeconds": 18.16,
-          "bytes": 215696,
-          "sha256": "a977ff8fa3d6c06760eaad6be65eff83553c04bc39c6105f7ac6fc4df296aabb"
+          "bytes": 194407,
+          "sha256": "f09845b550f5d136f725362389496306c0e7a3d089c453ee37e6ad866e325bd8"
         },
         {
           "atSeconds": 30.87,
-          "bytes": 141638,
-          "sha256": "9e95deafb484bf1f7b6fbf285bd3137e9ef79350dac278af842e8c114f53a6fc"
+          "bytes": 142423,
+          "sha256": "5264bd0cd6b78ff211fd4c1027dcfd11348e13be74643211910d5cc6f5e9ae60"
         }
       ],
-      "sha256": "1634074ffb4ac66739e5fc967bd875d3e99ea764ef3ea4e93f1c726875048fd3"
+      "sha256": "b28f58f1b55d532518b40c26778818e33f89abdd972daab6447ca6918d1d3919"
     }
   ]
 }

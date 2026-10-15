@@ -5,8 +5,6 @@
 // Pure: the caller loads the live blocks and passes the world as it WOULD be after the write,
 // so a cascaded move is checked as one proposal rather than block by block.
 
-import { addDays, isMonday } from './block-calendar.js';
-
 export interface PlacedBlock {
   blockId: string;
   programId: string;
@@ -45,11 +43,4 @@ export function placementConflict(
     }
   }
   return null;
-}
-
-/** The Mondays either side of a date that is not one, for an error that says which was meant. */
-export function mondaysAround(date: string): { before: string; after: string } {
-  let before = date;
-  while (!isMonday(before)) before = addDays(before, -1);
-  return { before, after: addDays(before, 7) };
 }

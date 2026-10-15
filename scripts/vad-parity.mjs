@@ -21,8 +21,7 @@ const FRAME = 512;
 const STATE_LEN = 2 * 1 * 64;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODEL_PATH = join(HERE, '..', 'voice-models', 'silero_vad.onnx');
-const DEFAULT_WAV =
-  '/private/tmp/claude-501/-Users-hjewkes-Library-Application-Support-active-work-voltras-workspace/5fa6d4c9-1b98-4632-bb13-86634e1183a9/scratchpad/mictest.wav';
+const DEFAULT_WAV = join(HERE, '..', 'voice-models', 'sample.wav');
 
 function loadPcm(wavPath) {
   const buf = readFileSync(wavPath);

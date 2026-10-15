@@ -97,7 +97,7 @@ function withReps(reps: Rep[]): LiveViewSources {
     snapshot,
     accumulator: initialAccumulatorState(),
     live: null,
-    prescription: { sets: 3, repsLow: 8, repsHigh: 12, tempo: [3, 0, 1, 0] },
+    prescription: { source: 'prescribed', sets: 3, repsLow: 8, repsHigh: 12, tempo: [3, 0, 1, 0] },
   };
 }
 

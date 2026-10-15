@@ -173,6 +173,7 @@ import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
 import { autoArmSet } from './auto-arm.js';
+import { endStaleLiveSession, noteLiveRep } from './idle-session-close.js';
 import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
@@ -181,6 +182,7 @@ import { evaluateEffortCue } from './effort-cue.js';
 import { logEffortGateDisagreement } from './effort-gate-disagreement.js';
 import { markSettingChange, repinEffortContext } from './effort-pin.js';
 import { onSetStarted } from './set-start-seam.js';
+import { guardClientListeners, guardStep } from './guard-listener.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -500,6 +502,12 @@ export function wireEventBridge(state: ServerState): () => void {
 export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => void {
   const { client, live } = slot;
   const slotId = slot.slotId;
+  const listeners = guardClientListeners(client, slot);
+  // VW-869: the non-critical steps of the frame and set-summary listeners run
+  // through these, so a throw in one cannot skip the rep publish or set close.
+  const frameStep = (step: string, fn: () => void): void => guardStep('frame', slot, step, fn);
+  const setSummaryStep = (step: string, fn: () => void): void =>
+    guardStep('set_summary', slot, step, fn);
   const server = state.server;
   const channels = state.channels;
   const slotChannels = channels.forSlot(slotId);
@@ -613,7 +621,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onRawFrame === 'function') {
     pushUnsub(
       unsubs,
-      client.onRawFrame((data: Uint8Array) => {
+      listeners.onRawFrame((data: Uint8Array) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'raw_frame',
@@ -632,7 +640,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onFrame((frame: TelemetryFrame) => {
+    listeners.onFrame((frame: TelemetryFrame) => {
       debug.frames.push({
         sequence: frame.sequence,
         timestamp: frame.timestamp,
@@ -689,14 +697,16 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // protocol bytes cross this tap. Shared derivation with VMCP-02.58's
       // Tier-1 cue matcher.
       if (liveSignals !== undefined) {
-        liveSignals.frame({
-          t: sample.timestamp,
-          phase: mapPhase(phase),
-          position: frame.position,
-          velocity: sample.velocity,
-          force: sample.force,
-          repInProgress: live.set !== undefined ? live.set.reps.length : null,
-        });
+        frameStep('live_signal', () =>
+          liveSignals.frame({
+            t: sample.timestamp,
+            phase: mapPhase(phase),
+            position: frame.position,
+            velocity: sample.velocity,
+            force: sample.force,
+            repInProgress: live.set !== undefined ? live.set.reps.length : null,
+          }),
+        );
       }
 
       // ── Idle-arm rep detection ────────────────────────────────────────────
@@ -718,6 +728,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
+          // VW-856: a rep after a long pause must not arm into a session nobody ended.
+          // The session leaves memory now; its end persists in the background.
+          void endStaleLiveSession(state, slotId, new Date());
+          noteLiveRep(state, slotId, new Date());
           // VW-164: with a session open, an idle rep means the lifter started
           // before `set.start` could land. Open the set here and adopt this
           // rep into it rather than reporting it as lost work. VW-181: reps
@@ -765,7 +779,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       live.processSample(sample);
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
-        notifySlot(server, slotId, SET_URI, setUriForSlot);
+        frameStep('notify', () => notifySlot(server, slotId, SET_URI, setUriForSlot));
         // Publish a `rep_finalized` channel event only when a rep has
         // actually closed. Per workout-analytics's `addSampleToSet`:
         //   - The first CONCENTRIC sample creates rep 1 in-progress
@@ -817,23 +831,26 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // fitness-units-only signal so the dashboard can update its live
           // per-rep readout without waiting for the next 2000 ms snapshot poll.
           if (liveSignals !== undefined) {
-            liveSignals.rep({
-              repIndex: finalizedIndex + 1,
-              vCon: roundMps(getPhaseMeanVelocity(finalizedRep.concentric)),
-              // WA 2.0.0: `getRepRangeOfMotion` already returns metres, because
-              // `sample.position` is fed in as metres at the bridge above — no
-              // post-hoc mm→m conversion needed any more. VW-160: velocity is
-              // metres/second for the same reason, so these only round.
-              rom: getRepRangeOfMotion(finalizedRep),
-              peakVelocity: roundMps(finalizedRep.concentric.peakVelocity),
-              peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
-            });
+            frameStep('live_signal_rep', () =>
+              liveSignals.rep({
+                repIndex: finalizedIndex + 1,
+                vCon: roundMps(getPhaseMeanVelocity(finalizedRep.concentric)),
+                // WA 2.0.0: `getRepRangeOfMotion` already returns metres, because
+                // `sample.position` is fed in as metres at the bridge above — no
+                // post-hoc mm→m conversion needed any more. VW-160: velocity is
+                // metres/second for the same reason, so these only round.
+                rom: getRepRangeOfMotion(finalizedRep),
+                peakVelocity: roundMps(finalizedRep.concentric.peakVelocity),
+                peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
+              }),
+            );
           }
           // Reset the idle watchdog — an active lifter must never trip
           // the abandonment alarm. Safe to call unconditionally; no-op
           // when the set has no idle_timeout_ms specs registered.
-          if (set.watch !== undefined) {
-            resetIdleWatchdog(state, set.setId, set.watch);
+          const watch = set.watch;
+          if (watch !== undefined) {
+            frameStep('idle_watchdog', () => resetIdleWatchdog(state, set.setId, watch));
           }
           // Evaluate any registered trigger DSL specs against the
           // finalized rep. F14/F15 rewrite: triggers are advisory cues
@@ -841,13 +858,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // coach the user, but they never force-close the set. The
           // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
-          markSettingChange(state, live, set.setId, finalizedRep.repNumber, device);
-          if (state.config?.effortCue === 'on') {
-            evaluateEffortCue(live, slotChannels, set, finalizedIndex, device);
-          } else {
-            evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
-          }
-          logEffortGateDisagreement(set, finalizedIndex, device);
+          frameStep('setting_change', () =>
+            markSettingChange(state, live, set.setId, finalizedRep.repNumber, device),
+          );
+          frameStep('cue', () => {
+            if (state.config?.effortCue === 'on') {
+              evaluateEffortCue(live, slotChannels, set, finalizedIndex, device);
+            } else {
+              evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
+            }
+          });
+          frameStep('effort_gate', () => logEffortGateDisagreement(set, finalizedIndex, device));
         }
       }
     }),
@@ -855,7 +876,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onPerRep((payload: PerRepEvent) => {
+    listeners.onPerRep((payload: PerRepEvent) => {
       // Diagnostic capture: full device payload to debug ring for byte-level
       // analysis. The PerRepEvent fires twice per real rep (pull start +
       // return start, same repCount); both phases land in the debug buffer.
@@ -925,7 +946,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSummary((payload: SummaryEvent) => {
+    listeners.onSummary((payload: SummaryEvent) => {
       // End-of-set vendor frame. Capture on the active set so the
       // finalize path can read-and-clear it for the persisted payload
       // (the `set_ended*` payload's `device_summary` block — see
@@ -951,7 +972,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSetSummary((payload: SetSummaryEvent) => {
+    listeners.onSetSummary((payload: SetSummaryEvent) => {
       // Vendor set-summary report — emitted by the device per-set
       // in WT/RB/Damper after all reps complete (renamed from `preSummary`
       // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
@@ -960,18 +981,20 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // emits the single `set_ended` channel event (`closed_by='device'`).
       // Ghost setSummary after `set.end` already closed the set: silent
       // drop (the explicit tool finalize already cleared `live.set`).
-      debug.events.push({
-        capturedAt: Date.now(),
-        type: 'pre_summary',
-        payload: {
-          schemaVersion: payload.schemaVersion,
-          targetWeightTenths: payload.targetWeightTenths,
-          repCount: payload.repCount,
-          totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
-          rawHex: Buffer.from(payload.raw).toString('hex'),
-          rawLength: payload.raw.length,
-        },
-      });
+      setSummaryStep('debug_capture', () =>
+        debug.events.push({
+          capturedAt: Date.now(),
+          type: 'pre_summary',
+          payload: {
+            schemaVersion: payload.schemaVersion,
+            targetWeightTenths: payload.targetWeightTenths,
+            repCount: payload.repCount,
+            totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
+            rawHex: Buffer.from(payload.raw).toString('hex'),
+            rawLength: payload.raw.length,
+          },
+        }),
+      );
       const set = live.snapshotSet();
       if (set === undefined) {
         return;
@@ -986,7 +1009,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // Modes that don't emit a per-set close (rowing, iso, custom-curves)
       // fall through to the inactivity watchdog defined below
       // (`SET_INACTIVITY_TIMEOUT_MS`).
-      live.applySetSummary(payload);
+      setSummaryStep('apply_summary', () => live.applySetSummary(payload));
       // VMCP-02.29 PR4: finalize the parallel firmware-rep pipeline BEFORE
       // `finalizeSet` discards the set. The last rep never fires its own
       // `onPerRep` 'return' boundary (the device disengages after the final
@@ -1001,10 +1024,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // carried no unique data, and was a second reconciliation surface. No
       // consumer read it by name. `set_ended` (emitted by `finalizeSet` below)
       // is now the single per-set close event.
-      finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
+      setSummaryStep('firmware_reps', () =>
+        finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload),
+      );
       // Poke the set resource so polling clients refresh on the device close
       // (independent of the channel event; `finalizeSet` does not notify).
-      notifySlot(server, slotId, SET_URI, setUriForSlot);
+      setSummaryStep('notify', () => notifySlot(server, slotId, SET_URI, setUriForSlot));
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
           log.warn('event-bridge: set_ended_by_device finalize failed', err);
@@ -1015,7 +1040,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onInProgress((payload: InProgressEvent) => {
+    listeners.onInProgress((payload: InProgressEvent) => {
       // Device emits this continuously during workout mode (~1 Hz
       // heartbeat). The bridge no longer treats `onInProgress` as a
       // close signal — that heuristic (`SET_START_GRACE_MS = 500ms`)
@@ -1134,7 +1159,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onGuidedLoadState === 'function') {
     pushUnsub(
       unsubs,
-      client.onGuidedLoadState((gls: GuidedLoadState) => {
+      listeners.onGuidedLoadState((gls: GuidedLoadState) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'guided_load_state',
@@ -1210,7 +1235,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSettingsUpdate((settings: SdkSettingsUpdate) => {
+    listeners.onSettingsUpdate((settings: SdkSettingsUpdate) => {
       debug.events.push({
         capturedAt: Date.now(),
         type: 'settings_update',
@@ -1306,7 +1331,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   if (typeof client.onStateDump === 'function') {
     pushUnsub(
       unsubs,
-      client.onStateDump((dump: SdkStateDump) => {
+      listeners.onStateDump((dump: SdkStateDump) => {
         debug.events.push({
           capturedAt: Date.now(),
           type: 'state_dump',
@@ -1362,7 +1387,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onConnectionStateChange((connState) => {
+    listeners.onConnectionStateChange((connState) => {
       debug.events.push({
         capturedAt: Date.now(),
         type: 'connection_state_change',

@@ -4,8 +4,8 @@
 // the round trip against a real SQLite handle rather than a mock store.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredSelfReport, StoredSession } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 function makeSelfReport(overrides: Partial<StoredSelfReport> = {}): StoredSelfReport {
   return {
@@ -26,10 +26,10 @@ const SESSION: StoredSession = {
 };
 
 describe('SqliteSessionStore self-reports', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     await store.putSession(SESSION);
   });
 

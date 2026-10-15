@@ -13,8 +13,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredTrainingProfile } from '../../store/types.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { registerProfileTools } from '../profile-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -74,7 +75,7 @@ function parseResult(r: { content: { text: string }[] }): unknown {
 }
 
 interface Harness {
-  store: SqliteSessionStore;
+  store: SessionStore;
   invoke: (
     name: string,
     args: unknown,
@@ -82,7 +83,7 @@ interface Harness {
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const state = { store } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders();
   registerProfileTools(

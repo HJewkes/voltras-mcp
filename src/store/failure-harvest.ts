@@ -24,6 +24,7 @@
 
 import { getPhaseMeanVelocity, getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
+import { resistanceFamilyOf, type ResistanceFamily } from '../analytics/resistance-family.js';
 import { setPurposeOf } from './set-purpose.js';
 import type { SetPurpose, StoredSet } from './types.js';
 import { normaliseVelocityToMps } from './velocity-units.js';
@@ -33,8 +34,12 @@ import { normaliseVelocityToMps } from './velocity-units.js';
  * the threshold block below. Bump on ANY threshold or rule change: a stored
  * verdict is only interpretable against the rules that produced it, and a new
  * version adds a row beside the old one rather than overwriting history.
+ * 1.1.0: damper and isokinetic sets are no longer candidates (VW-541).
  */
-export const FAILURE_FILTER_VERSION = 'failure-harvest@1.0.0';
+export const FAILURE_FILTER_VERSION = 'failure-harvest@1.1.0';
+
+/** Families whose velocity carries no failure signal, so they never anchor. */
+const UNREADABLE_FAMILIES: ReadonlySet<ResistanceFamily> = new Set(['damper', 'isokinetic']);
 
 /**
  * Criterion v1. Every threshold carries the one line that justifies it; none
@@ -102,6 +107,8 @@ export interface FailureFilterInputs extends FailureCandidateContext {
   setPurpose: SetPurpose;
   /** Derived from {@link setPurpose}; kept so stored rows stay comparable. */
   isWarmup: boolean;
+  /** The resistance family the set met, kept so a later filter can re-score it. */
+  resistanceFamily: ResistanceFamily;
   /** Concentric mean velocity of the final rep, m/s. */
   lastRepVelocityMps?: number;
   /** Fastest non-first rep's concentric mean velocity, m/s — the stall denominator. */
@@ -148,12 +155,16 @@ export function evaluateFailureCandidate(
     repCount: reps.length,
     setPurpose,
     isWarmup: setPurpose === 'warmup',
+    resistanceFamily: resistanceFamilyOf(set),
     reason: '',
     ...ctx,
   };
 
   if (setPurpose === 'warmup') return notCandidate(base, 'warm-up set');
   if (setPurpose !== 'working') return notCandidate(base, `${setPurpose} set, not working`);
+  if (UNREADABLE_FAMILIES.has(base.resistanceFamily)) {
+    return notCandidate(base, `${base.resistanceFamily} set, velocity carries no failure signal`);
+  }
   if (reps.length < HARVEST_THRESHOLDS.minReps) {
     return notCandidate(base, `fewer than ${String(HARVEST_THRESHOLDS.minReps)} reps`);
   }

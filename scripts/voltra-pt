@@ -77,7 +77,7 @@ EOF
 
   # The plugin ships the MCP server too, so a separate `claude mcp add voltras`
   # would spawn a second process against the same SQLite file and dashboard
-  # port. See "Running more than one instance" in the README.
+  # port. See "Running more than one instance" in site/start/launch-options.md.
   if claude mcp list 2>&1 | grep -qE '^voltras:'; then
     cat >&2 <<'EOF'
 voltra-pt: both the voltras-channel plugin and a standalone `voltras` MCP

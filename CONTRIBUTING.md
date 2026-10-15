@@ -23,6 +23,7 @@ npm run format:check  # Prettier — src/**, scripts/**, eslint-rules/** only
 npm run typecheck     # tsc --noEmit (+ dashboard SPA + test sources)
 npm test              # Vitest
 npm run build         # emits dist/, then verifies dist/bin.js and dist/server.js exist
+npm run changelog:check  # CHANGELOG.md and changelog.d/ fragments
 ```
 
 `npm run format:check` does **not** cover Markdown or `site/**`. Markdown
@@ -36,6 +37,34 @@ If your change touches hardware behavior (device modes, framing, live
 metrics) and you don't have a Voltra to test against, say so explicitly in
 the PR. A hardware-dependent change that a contributor could not verify
 locally is normal here; hiding that is the only way it becomes a problem.
+
+## Changelog entries
+
+A change a user can see gets one entry, as a new file under `changelog.d/`
+named after its ticket (`changelog.d/VW-123.md`). Do not edit `CHANGELOG.md`
+directly: every pull request that did so added to the same `### Fixed` or
+`### Added` list, and adjacent pull requests conflicted on it.
+
+```markdown
+---
+section: Fixed
+---
+
+- The rest timer no longer skips its last ten seconds (VW-123, #456).
+```
+
+`section` is one of Added, Changed, Deprecated, Removed, Fixed or Security.
+Write the entry from the user's side, as the "How to write an entry" section
+of `CHANGELOG.md` describes. A change with no user-visible effect adds no
+fragment. `npm run changelog:check` (in CI) validates every fragment and
+passes when there are none, and `npm run docs:check` scans fragments for
+protocol detail just as it scans `CHANGELOG.md`. At release, `npm run
+changelog:fold -- --version <x.y.z>` folds the fragments into `CHANGELOG.md`
+and deletes them.
+
+A fragment does not appear on the docs site's `/changelog` page until that
+release fold: the page renders `CHANGELOG.md` only. Until then the entry is
+visible in `changelog.d/` and in its pull request.
 
 ## The confidentiality boundary
 
@@ -67,10 +96,33 @@ value in any shape a pattern can match. If you're writing or editing a docs
 page, read what you're adding and ask whether a reader could reconstruct
 protocol detail from it, the same way you'd review for a leaked secret.
 
-**A known limit of the ESLint rule:** it cannot see a value split across a
-string concatenation (`'0x' + '1f'` reads as two harmless-looking pieces).
-Keep a value on one line, where the rule can actually see it, rather than
-relying on the rule to catch a value assembled at runtime.
+**What the ESLint rule does not catch.** It joins a `+` chain of adjacent
+string literals (and templates with no `${}`) before scanning, so
+`'0x' + '1f'` is caught. It does not catch:
+
+- a value built from variables or calls (`PREFIX + digits`, `[a, b].join('')`,
+  `.concat()`, `+=`, tagged templates, `String.fromCharCode(...)`); nothing
+  is evaluated;
+- a chain piece that is not a bare string literal: a number literal, a piece
+  wrapped in TypeScript `as` or `satisfies`, or a template holding a literal
+  inside `${}`. Each one breaks the run of joined literals at that point;
+- one literal split by a backslash-newline continuation, which is a single
+  literal, not a chain;
+- a value spelled in escape sequences inside one literal: the whole-text
+  scan reads the escapes as written and the join only runs across pieces;
+- prose provenance: a sentence saying where a value came from, or what a
+  register does, without quoting a value or a private path;
+- deliberate evasion: anyone set on it can spell a value in a shape the rule
+  does not know. The rule is for accidents, not adversaries.
+
+The join has one known false-positive shape: a short word made of hex
+letters joined to a digit (`'add' + '1'`, `'feed' + '2'`) reads as a bare
+hex run. Put a separator between the word and the number.
+
+`npm run lint:text-confidentiality` runs the same detector over the raw
+text of markdown, site sources and non-JS files. It reads text, not a
+parse tree, so the concatenation join does not apply there: a value split
+across `' + '` in a markdown code block is not caught.
 
 The 15 test files under `src/**/__tests__/` are exempt by path and may hold
 protocol fixtures that predate the rule; that exemption governs what's

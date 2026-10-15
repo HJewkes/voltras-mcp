@@ -22,6 +22,8 @@ export {
 
 export type { DashboardCatalogEntry } from './catalog-entry.js';
 
+export type { MesocycleView, MesocycleWeek } from './mesocycle.js';
+
 export { composeSessionTitle, type SessionTitleInput } from './session-title.js';
 
 export type {
@@ -58,9 +60,90 @@ export {
   type PlannedExerciseView,
   type PrescriptionView,
   type SessionPlanRows,
+  type TierView,
 } from './session-plan.js';
 
+export {
+  buildDerivedPrescriptionView,
+  deriveExerciseTargets,
+  type DerivableSet,
+  type DerivedPrescriptionRows,
+  type DerivedTargets,
+} from './derived-prescription.js';
+
 export { buildHistoryView, type HistoryRows } from './history.js';
+
+export {
+  addDays,
+  daysBetween,
+  evidenceOf,
+  historyTrainingDays,
+  type HistoryEvidence,
+  type HistoryEvidenceKind,
+  type HistorySetRow,
+} from './history-rows.js';
+
+export {
+  buildHistoryWeeksView,
+  LIVE_SEGMENT_RULE,
+  type HistorySource,
+  type HistoryWeekView,
+  type HistoryWeeksInput,
+  type HistoryWeeksView,
+} from './history-weeks.js';
+
+export {
+  blockLength,
+  blockSpans,
+  BOUNDARY_CHOICES,
+  bridgedGapWeeks,
+  buildHistoryBlocksView,
+  HISTORY_BLOCK_CONSTANTS,
+  progressionBlocks,
+  restartKind,
+  type BlockLength,
+  type BoundaryChoice,
+  type HistoryBlockSpan,
+  type HistoryBlockView,
+  type HistoryBlocksInput,
+  type HistoryBlocksView,
+  type HistoryBoundary,
+  type HistoryGapSpan,
+  type HistoryRestartRung,
+  type RestartKind,
+} from './history-blocks.js';
+
+export {
+  buildHistoryLiftsView,
+  HISTORY_LIFT_CONSTANTS,
+  plateauWindows,
+  trendRead,
+  type HistoryChapter,
+  type HistoryLiftChapterView,
+  type HistoryLiftPoint,
+  type HistoryLiftSlope,
+  type HistoryLiftsInput,
+  type HistoryLiftsView,
+  type HistoryPeriod,
+  type HistoryPlateauWindow,
+  type HistoryTrendRead,
+} from './history-lifts.js';
+
+export {
+  buildHistoryMuscleWeeksView,
+  HISTORY_MUSCLE_WEEK_CONSTANTS,
+  type HistoryMuscleWeek,
+  type HistoryMuscleWeekRow,
+  type HistoryMuscleWeeksInput,
+  type HistoryMuscleWeeksView,
+} from './history-muscle-weeks.js';
+
+export {
+  historyInputsFromRetroData,
+  type RetroData,
+  type RetroHistoryInputs,
+  type RetroLiftSeries,
+} from './history-fixtures.js';
 
 export {
   buildMuscleStrengthView,
@@ -71,6 +154,7 @@ export {
   type MuscleStrengthExerciseRow,
   type MuscleStrengthInput,
   type MuscleStrengthMuscle,
+  type MuscleStrengthRecency,
   type MuscleStrengthSetRow,
   type MuscleStrengthSide,
   type MuscleStrengthSideKey,
@@ -80,7 +164,16 @@ export {
 
 export {
   buildSessionPaceView,
+  classifyPace,
   DEFAULT_SET_WORK_SECONDS,
+  PACE_ADD_MAX_SETS,
+  PACE_TOLERANCE_FLOOR_SECONDS,
+  PACE_TOLERANCE_FRACTION,
+  suggestPaceAdjustment,
+  type CompletedWorkingSet,
+  type PaceState,
+  type PaceSuggestion,
+  type PaceTrimCut,
   type SessionPaceInput,
   type SessionPaceView,
 } from './session-pace.js';
@@ -136,6 +229,7 @@ export {
 
 export {
   buildMusclePlanView,
+  type MusclePlanFrequency,
   type MusclePlanMuscleView,
   type MusclePlanRemainingExercise,
   type MusclePlanRows,

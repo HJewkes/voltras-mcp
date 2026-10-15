@@ -4,19 +4,21 @@
 the docs site publishes, from committed definitions, with no hardware and no browser
 interaction.
 
-| Piece                                 | What it is                                                             |
-| ------------------------------------- | ---------------------------------------------------------------------- |
-| `src/docs/capture-shots.ts`           | The stills definition: shots, routes, viewport, predicates, assertions |
-| `src/docs/capture-clips.ts`           | The clips definition: clips, scenarios, video constants, narration     |
-| `scripts/lib/mock-burst.mjs`          | The determinism lever: exact rep bursts from a parked mock device      |
-| `scripts/lib/dashboard-launch.mjs`    | Booting one scenario: free port, scratch store, bind wait, stop        |
-| `scripts/capture-screens.mjs`         | The harness: boots a scenario, waits, captures, asserts, writes        |
-| `site/guides/*.narration.txt`         | The spoken scripts, beside the guides that embed the clips             |
-| `site/public/captures/*.png`          | The stills, served by VitePress at `/captures/…`                       |
-| `site/public/captures/clips/*.mp4`    | The clips, and their narration tracks as separate `*.narration.m4a`    |
-| `site/public/captures/manifest.json`  | What was captured, and from which definitions — one manifest, not two  |
-| `src/__tests__/docs/captures.test.ts` | The stills staleness gate, run by `npm test` in CI                     |
-| `src/__tests__/docs/clips.test.ts`    | The clips staleness gate, same job, same CI run                        |
+| Piece                                  | What it is                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| `src/docs/capture-shots.ts`            | The stills definition: shots, routes, viewport, predicates, assertions |
+| `src/docs/capture-clips.ts`            | The clips definition: clips, scenarios, video constants, narration     |
+| `scripts/lib/mock-burst.mjs`           | The determinism lever: exact rep bursts from a parked mock device      |
+| `scripts/lib/dashboard-launch.mjs`     | Booting one scenario: free port, scratch store, bind wait, stop        |
+| `scripts/capture-screens.mjs`          | The harness: boots a scenario, waits, captures, asserts, writes        |
+| `site/guides/*.narration.txt`          | The spoken scripts, beside the guides that embed the clips             |
+| `site/public/captures/*.png`           | The stills, served by VitePress at `/captures/…`                       |
+| `site/public/captures/clips/*.mp4`     | The clips, and their narration tracks as separate `*.narration.m4a`    |
+| `site/public/captures/manifest.json`   | What was captured, and from which definitions — one manifest, not two  |
+| `src/__tests__/docs/captures.test.ts`  | The stills staleness gate, run by `npm test` in CI                     |
+| `src/__tests__/docs/clips.test.ts`     | The clips staleness gate, same job, same CI run                        |
+| `.github/workflows/captures-check.yml` | The stills check in CI, against the mock device (VW-710)               |
+| `.github/captures-linux/*.png`         | Its byte baseline: Linux renders of every shot without `variesBy`      |
 
 ## Running it
 
@@ -43,8 +45,9 @@ npx playwright@1.63.0 install chromium
 Version 1.63.0 is the release whose bundled chromium revision (1243) matches the pinned
 `playwright-core`. If `~/Library/Caches/ms-playwright/chromium-1243` already exists the
 command is a no-op; on this machine it already did, so the harness cost nothing to set up.
-The install is **not** wired into `postinstall` and **not** run in CI: CI never takes a
-screenshot, and a browser download on every install is hostile.
+The install is **not** wired into `postinstall`: a browser download on every install is
+hostile. Only the separate captures check workflow installs it, from a cache keyed on the
+`playwright-core` version (see "The CI captures check" below).
 
 ## Running it on a busy machine
 
@@ -64,12 +67,24 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | Shot                | Scenario                                      | Shows                            |
 | ------------------- | --------------------------------------------- | -------------------------------- |
 | `dashboard-cold`    | bare `dist/bin.js`, nothing connected         | the empty wall view              |
+| `checkin`           | bare `dist/bin.js`, nothing connected         | the check-in page's first step   |
+| `checkin-phone`     | bare `dist/bin.js`, nothing connected         | the same step at phone width     |
 | `live-mid-set`      | `dashboard-plan-drive.mjs`                    | live page mid-set with a plan    |
 | `live-rest`         | `dashboard-plan-drive.mjs`                    | the rest stage between two sets  |
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
 | `plan-builder`      | `dashboard-plan-drive.mjs`                    | the plan builder with a template |
+| `live-slowing`      | `dashboard-plan-drive.mjs`, 10 pinned reps    | live page past the 20% loss line |
 | `live-dual-mid-set` | `dashboard-mock-drive.mjs --dual`, asymmetric | the diverging two-slot stage     |
 | `goals`             | `dashboard-mock-drive.mjs --goal`, PR loop    | the goal-coach page with a PR    |
+
+`live-slowing` has a scenario of its own, `fatigued`: the same plan driver with one set of
+ten pinned reps instead of five. The per-rep peaks fall from 0.50 to 0.37, a 26% loss, so
+the fatigue card reads `Slowing` rather than the `Good` that `live-mid-set` pins.
+
+The goals and body shots are captioned `Seeded data, not yet available:`. Both pages are
+Coming soon, and their captures come from seeded store rows, so `captures.test.ts` fails a
+caption without that prefix and a site page that embeds one outside a `status: coming-soon`
+page or a section headed by a Coming soon badge.
 
 `dashboard-plan-drive.mjs` is the only driver that can show a prescription; `dashboard-sim`
 carries no plan data and plain `dashboard-mock-drive` attaches none
@@ -131,18 +146,24 @@ remove:
 That reaches every shot whose non-determinism was ours (the harness's) to fix. It does
 **not** reach a shot whose page renders a value the SERVER computed from ITS OWN real clock:
 
-| Shot                | Server-real-time field                                         | Byte-reproducible? |
-| ------------------- | -------------------------------------------------------------- | ------------------ |
-| `dashboard-cold`    | none                                                           | yes                |
-| `plan-builder`      | none                                                           | yes                |
-| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
-| `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
-| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | not guaranteed     |
-| `live-dual-mid-set` | same, both slots' curves                                       | not guaranteed     |
-| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
-| `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
+| Shot                | Server-real-time field                                                          | Byte-reproducible? |
+| ------------------- | ------------------------------------------------------------------------------- | ------------------ |
+| `dashboard-cold`    | none                                                                            | yes                |
+| `checkin`           | none                                                                            | yes                |
+| `checkin-phone`     | none                                                                            | yes                |
+| `plan-builder`      | none                                                                            | yes                |
+| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)                    | yes                |
+| `body-week`         | none (its "Week of" date comes from a server clock pinned by `--clock`, VW-710) | yes                |
+| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time                       | not guaranteed     |
+| `live-slowing`      | same, one set of ten reps                                                       | not guaranteed     |
+| `live-dual-mid-set` | same, both slots' curves                                                        | not guaranteed     |
+| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()`                  | not guaranteed     |
+| `session-summary`   | session start/end stamps in the header                                          | not guaranteed     |
 
-"Not guaranteed" means exactly that and no more: the four rows above render a value the
+`goals-whole-body` and `goals-whole-body-phone` carry no clock field, but their weigh-in
+dates are seeded relative to today, so they repeat within a day and differ across days.
+
+"Not guaranteed" means exactly that and no more: the five rows above render a value the
 SERVER computed from its own real clock, so nothing on the harness side pins it, and whether
 two runs land on the same value is down to timing, not design. A fast back-to-back run can
 have the frame-decode clock, the pace ETA or the session start/end stamp land on the same
@@ -185,18 +206,28 @@ instead of the fixed `12:00` every frozen run shows, and its `shasum -a 256` no 
 matches the frozen baseline above. Restoring the call brings both the `12:00` clock and
 the matching digest straight back.
 
-`guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
-one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four not-guaranteed-reproducible shots can't
-drift by accident on a routine local run — regenerating one is still a normal, deliberate
-action, just an explicit one.
+`guardLocalOverwrite` in the harness never overwrites a committed PNG with a byte-different
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so no shot drifts by accident on a routine local
+run. What it does instead depends on the shot's `variesBy` field in the definition:
+
+- **Set** (the not-guaranteed shots above, and the two whole-body shots): the difference is
+  expected, so the harness keeps the committed PNG, logs `kept the committed PNG`, and goes
+  on. The shot's assertions still ran against the live page.
+- **Absent**: the shot repeats byte for byte, so a difference is a real change to the page.
+  The run fails and names the shot.
+
+Before VW-437 a differing shot of either kind failed the run, so a plain run could never pass
+and every shot after the first live-page shot went unasserted. Regenerating is still a
+deliberate action: rerun with `CAPTURES_ALLOW_LOCAL=1` and commit the result.
 
 ## What the staleness gate can and cannot check
 
 **It cannot compare pixels ACROSS MACHINES.** Font hinting, GPU rasterisation and Skia
-antialiasing differ between machines regardless of anything above, and four of the eight shots
-carry a genuine server-real-time field even on one machine (see above). A byte comparison run
-in CI would fail on every run there; a perceptual threshold loose enough to survive that would
-be loose enough never to fail. Neither is shipped.
+antialiasing differ between machines regardless of anything above, and five of the twelve shots
+carry a genuine server-real-time field even on one machine (see above). A byte comparison of a
+Linux run against the published PNGs fails on every shot; a perceptual threshold loose enough to
+survive that would be loose enough never to fail. Neither is shipped. The pixel comparison CI
+does run is the separate captures check below, against a Linux baseline.
 
 **It checks everything around the pixels**, and each of these does fail:
 
@@ -212,6 +243,72 @@ be loose enough never to fail. Neither is shipped.
 - Every shot must pin at least one computed value.
 - The captures directory must hold nothing the definition does not declare.
 - Every `/captures/*.png` any site page references must resolve to a declared shot.
+- Every `<CaptureCallouts>` on a site page must name a declared shot, and every callout's
+  `quote` must be one of that shot's `expectText` or `expectValues` strings.
+- `.github/captures-linux/` must hold exactly one PNG per shot without `variesBy`, at the
+  declared geometry (the baseline for the check below).
+
+## The CI captures check (VW-710)
+
+`.github/workflows/captures-check.yml` runs on every pull request to `main`, nightly, and on
+demand. It is not a required check. It runs
+
+```bash
+npm run docs:captures -- --stills --check --baseline .github/captures-linux --diff-dir captures-diff
+```
+
+against the mock device. `--stills` drops the clips, so it needs no Kokoro and no ffmpeg.
+On a Mac, leave out `--baseline`: the default baseline is the published PNGs, which were
+rendered on one.
+`--check` writes no PNG and no manifest. Every shot's `expectText` and `expectValues` are
+asserted against the live page, as in a normal run. A shot without `variesBy` must also match
+its baseline byte for byte. A byte mismatch is collected rather than thrown, so every later
+shot is still asserted, and the run fails at the end naming each one with its changed pixel
+count, largest channel delta and bounding box.
+
+**Why a Linux baseline, not the published PNGs.** Chromium on Linux and on macOS rasterise
+the same page differently. On the first CI run every one of the twelve shots differed from the
+published (macOS) PNGs across almost the whole frame, with channel deltas over 200: 0.97% of
+`dashboard-cold`'s pixels, which shows nothing time-derived. A real content change is far
+smaller than that: the `live-rest` pace ETA moving by a few minutes changed 265 pixels (0.02%)
+on one machine. No pixel threshold separates the two. Two Linux runs on different runners, by
+contrast, rendered all five shots without `variesBy` byte for byte the same. So the check stays
+byte-exact and compares Linux against Linux.
+
+**Wall-clock text on a baselined shot.** A shot without `variesBy` must render no date the
+server derives from its own clock, or its baseline goes stale the week after it is taken. The
+body page prints "Week of" the seeded week's Monday, so the `body` scenario passes
+`--clock=<CAPTURE_FIXED_TIME_ISO>` to `scripts/dashboard-body-seed.mjs`. The seed and the
+server it boots then run on a clock shifted to start at the instant the page's own clock is
+pinned to (`scripts/fixed-clock-preload.mjs`). The other baselined shots print no server date:
+the goals pages show relative weeks ("Week 2 of 12") from a reading seeded seven days back, and
+the header clock is the pinned page clock.
+
+**Refreshing the baseline.** When a pull request changes a page on purpose, the check fails
+and uploads the fresh render of each differing shot as the `captures-diff-attempt-<n>`
+artifact. Download it, copy the named shots into `.github/captures-linux/`, and commit them
+beside the regenerated published PNGs. A new shot without `variesBy` fails the same way with
+"no baseline", and `npm test` fails until its Linux PNG is committed. The published PNGs and
+the Linux baseline are refreshed separately, so nothing proves they show the same page; both
+are checked against the same definition and assertions.
+
+## Callouts on a capture
+
+`site/.vitepress/theme/CaptureCallouts.vue` renders one capture with a numbered legend
+under it. Nothing is drawn on the PNG, so the committed images and their gates are
+unchanged. The alt text is the shot's caption from the manifest.
+
+```md
+<CaptureCallouts
+  shot="live-slowing"
+  :callouts='[{"quote": "FATIGUE — RPE Slowing", "text": "The verdict once the loss passes 20%."}]'
+/>
+```
+
+`:callouts` is JSON inside single quotes, so neither field may contain a `'`. Each `quote`
+must be a string the shot asserts. A callout can then only point at text the harness proved
+was on the page when the image was taken, and a changed page fails `npm run docs:captures`
+before the legend can go stale (VW-215).
 
 **The values are checked by the capture run, not by CI.** CI has no browser, so it can only
 hold the committed capture to the values the definition pins _now_; the comparison against
@@ -349,6 +446,7 @@ Voltra or a PT session:
 ```bash
 npm run dashboard:preview -- goals                  # #/goals, held until Ctrl-C
 npm run dashboard:preview -- goals --state behind   # …in a chosen goal state
+npm run dashboard:preview -- goals --unreviewed 3   # …with 3 days waiting to be marked
 npm run dashboard:preview -- body                   # #/body, the capture's own seed
 npm run dashboard:preview -- plan                   # #/plan, the capture's own driver
 ```

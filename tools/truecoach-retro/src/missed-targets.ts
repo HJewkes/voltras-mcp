@@ -27,14 +27,11 @@ export interface BlockVerdict {
   minReps: number | null;
 }
 
-function matchedRows(block: Block, loadLbs: number | null): SetRecord[] {
+function matchedRows(block: Block, loadLbs: number | null, warmupShare: number): SetRecord[] {
   const work = block.rows.filter(isWorkRow);
   if (loadLbs === null) return work;
   const atLoad = work.filter(
-    (row) =>
-      row.is_warmup === false ||
-      row.load === null ||
-      row.load >= loadLbs * UNDIVIDED_WARMUP_LOAD_SHARE,
+    (row) => row.is_warmup === false || row.load === null || row.load >= loadLbs * warmupShare,
   );
   return atLoad.length > 0 ? atLoad : work;
 }
@@ -51,10 +48,13 @@ const NO_TARGET: BlockVerdict = {
 };
 
 /** A block misses when it reports fewer sets than prescribed or any set under the rep floor. */
-export function judgeBlock(block: Block): BlockVerdict {
+export function judgeBlock(
+  block: Block,
+  warmupShare: number = UNDIVIDED_WARMUP_LOAD_SHARE,
+): BlockVerdict {
   const target = blockTarget(block.prescriptionLines);
   if (target === null) return NO_TARGET;
-  const rows = matchedRows(block, target.loadLbs);
+  const rows = matchedRows(block, target.loadLbs, warmupShare);
   if (rows.length === 0) return { ...NO_TARGET, target, verdict: 'miss', setsShort: true };
   const reported = rows.reduce((sum, row) => sum + row.sets, 0);
   const repCounts = rows.flatMap((row) => Array<number>(row.sets).fill(row.reps));

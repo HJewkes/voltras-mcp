@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import {
   LOCAL_USER_ID,
   type SessionStore,
@@ -22,6 +21,7 @@ import {
   type StoredSet,
 } from '../../store/types.js';
 import { registerSetTools } from '../set-tools.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: class extends Error {},
@@ -99,7 +99,7 @@ const opened: SessionStore[] = [];
 
 function openStore(): SessionStore {
   dir ??= mkdtempSync(join(tmpdir(), 'vmcp-set-update-'));
-  const store = SqliteSessionStore.open(join(dir, 'store.sqlite'));
+  const store = openTestStore({ path: join(dir, 'store.sqlite') });
   opened.push(store);
   return store;
 }

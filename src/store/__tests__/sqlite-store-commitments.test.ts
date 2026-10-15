@@ -6,8 +6,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
-import { SqliteSessionStore } from '../sqlite-store.js';
+import type { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type DeclareCommitmentInput } from '../types.js';
+import { openSqliteTestStore } from './open-test-store.js';
 
 const WEEK_ONE = '2026-09-21';
 const WEEK_TWO = '2026-09-28';
@@ -32,7 +33,7 @@ function declaration(overrides: Partial<DeclareCommitmentInput> = {}): DeclareCo
 }
 
 beforeEach(() => {
-  store = SqliteSessionStore.open(':memory:');
+  store = openSqliteTestStore();
 });
 
 afterEach(() => {

@@ -46,14 +46,43 @@ export interface BlockCalendar {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** A real calendar date in 'YYYY-MM-DD' form (rejects 2026-02-30). */
-export function isIsoDate(value: string): boolean {
-  return ISO_DATE.test(value) && utcDate(value).toISOString().slice(0, 10) === value;
+/** A real calendar date in 'YYYY-MM-DD' form (rejects 2026-02-30 and any non-string). */
+export function isIsoDate(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    ISO_DATE.test(value) &&
+    utcDate(value).toISOString().slice(0, 10) === value
+  );
 }
 
 /** Whether a 'YYYY-MM-DD' date falls on a Monday, independent of the process timezone. */
 export function isMonday(date: string): boolean {
   return utcDate(date).getUTCDay() === 1;
+}
+
+/**
+ * The Monday of the LOCAL calendar week (Monday to Sunday) containing `dateOrInstant`. A
+ * 'YYYY-MM-DD' date is already local; an instant is read in the process timezone through
+ * `localDate`, so a Sunday-evening instant west of UTC stays in that Sunday's week.
+ */
+export function mondayOf(dateOrInstant: string): string {
+  const date = ISO_DATE.test(dateOrInstant) ? dateOrInstant : localDate(dateOrInstant);
+  return addDays(date, -((utcDate(date).getUTCDay() + 6) % 7));
+}
+
+export type MondayProblem =
+  | { kind: 'not-a-date'; date: string }
+  | { kind: 'not-a-monday'; date: string; before: string; after: string };
+
+/**
+ * Throws `reject(problem)` unless `date` is a real calendar date on a Monday. A date that is not
+ * a Monday carries the Mondays either side, so the error can say which was meant.
+ */
+export function assertMonday(date: string, reject: (problem: MondayProblem) => Error): void {
+  if (!isIsoDate(date)) throw reject({ kind: 'not-a-date', date });
+  if (isMonday(date)) return;
+  const before = mondayOf(date);
+  throw reject({ kind: 'not-a-monday', date, before, after: addDays(before, 7) });
 }
 
 export function addDays(date: string, days: number): string {

@@ -7,21 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLANNING_PROMPT } from '../../plan/current-block.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { ServerState } from '../../state/server-state.js';
-import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { buildWeeklyReport, renderWeeklyMarkdown } from '../report-tools.js';
 import { runWeeklyReview } from '../goal-weekly-review.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 const FROM = '2026-09-14T00:00:00.000Z';
 // The range ends inside week 1: a `to` of Monday 00:00 would reach into week 2.
 const TO = '2026-09-20T18:00:00.000Z';
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let state: ServerState;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-20T18:00:00.000Z'));
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
   state = {
     config: { adapter: 'node' },

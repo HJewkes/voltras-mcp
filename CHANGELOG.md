@@ -14,40 +14,90 @@ Entries name the pull request that shipped them. Anything not listed did not cha
 
 ## How to write an entry
 
-Entries are hand-written. There is no generator, no changeset tooling and no release
-workflow: this file is the record a reader trusts, so a human writes it.
+Entries are hand-written. This file is the record a reader trusts, so a human writes each
+entry; the only tooling files it into place.
 
 - Write what a **user** can now do, now sees, or no longer has to work around. Not which
   file changed and not how it was implemented. "The rest timer now announces the last ten
   seconds" is an entry; "refactored `timer-tools.ts`" is not.
-- Put it under `## [Unreleased]`, grouped **Added / Changed / Fixed / Removed**. Add only
-  the groups the release actually has.
+- Add it as a new file, `changelog.d/<ticket>.md` (for example `changelog.d/VW-123.md`),
+  not as an edit to this file. Its front matter names the group, one of **Added / Changed /
+  Deprecated / Removed / Fixed / Security**, and its body is the entry, one list item:
+
+  ```markdown
+  ---
+  section: Fixed
+  ---
+
+  - The rest timer no longer skips its last ten seconds (VW-123, #456).
+  ```
+
+  Two pull requests that each add their own file never conflict. Two that each edit the
+  same list here always did.
+
 - Name the pull request that shipped it, as `(#123)`, or the ticket and the PR when both
   exist.
 - **A change with no user-visible effect gets no entry, and that is fine.** Refactors,
   test-only changes and internal renames belong in `git log`, not here. Padding this file
   to prove work happened makes it useless for the thing it is for.
-- On release, rename `[Unreleased]` to the new version with its date, bump
-  `package.json`, and open a fresh empty `[Unreleased]`.
+- On release, `npm run changelog:fold -- --version <x.y.z>` moves `[Unreleased]` and every
+  fragment into a new `## [x.y.z] - <date>` section, leaves an empty `[Unreleased]` above
+  it and deletes the fragments. Bump `package.json` in the same commit.
 
-`npm run changelog:check` enforces the mechanical half of this in CI: the version in
-`package.json` has a section, sections run newest first, and no released section is empty.
-An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
-entry is written from the user's point of view is a review question, not a check.
+Until the fragment transition ends, an entry written straight into `[Unreleased]` below
+still passes; new entries go in `changelog.d/`.
 
-### Fixed
-
-- The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
-  16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
-  top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
-  (0 px tall, now 16). Cause: titan's published build dropped every size, weight and leading
-  override a component passed to its text; fixed upstream in `@titan-design/react-ui` 0.18.1
-  and picked up here. Nothing was redesigned, the intended styles now apply (VW-420).
+`npm run changelog:check` enforces the mechanical half of this in CI: every fragment has a
+known group and one list item, the version in `package.json` has a section, sections run
+newest first, no released section is empty, and no group of entries sits outside a version
+section. An empty `[Unreleased]` and an empty `changelog.d/` are the normal state after a
+release and never fail. Whether an entry is written from the user's point of view is a
+review question, not a check.
 
 ## [Unreleased]
 
 ### Added
 
+- The wall's session rail now says where you stand against the plan. A Pace tile reads
+  `+9 min` when you are behind, `-7 min` when you are ahead, or `on pace`, and a sentence under
+  the rail names what to change: which exercises to trim and to how many sets, or how many sets
+  of which exercise you have room to add. When trimming cannot win back all the lost time, the
+  sentence says so. Before your first set there is no Pace tile, only the budget (VW-580, #589).
+
+- The session pace now reaches you live: the dashboard snapshot counts a streaming set as
+  work in progress, so the state leaves idle when your first set starts, and the trim or add
+  suggestion rides on `sessionPace` next to `state` and `slipMinutes` on both the snapshot and
+  `session.get`. A finished session reads its final verdict against its own end time. The
+  pacing guide gained a Session pace section on why time alone drives the state (VW-579).
+
+- The weekly report now shows where each goal stands. With priorities declared, `report.weekly`
+  adds a Goals section with one line per accepted target, such as `goal: seated row 190x8 by
+Oct 25, on track (wk 3/6)`, plus a "k of n primary lifts on track" line for a muscle
+  priority. The status word is the same one the goals page shows. The section is left out when
+  you have no priorities, and the JSON form carries the same lines as `goals` (VW-358).
+
+- A session's pace against its plan now says where you stand, not only how long is left:
+  `sessionPace` on `session.get` and the dashboard snapshot carries a `state` (ahead, on
+  pace, behind, or idle before your first working set) and a signed `slipMinutes`, positive
+  when behind. Rest inside the rest the plan gives you never counts against you, and slip
+  within two minutes (or 5% of a long plan) reads as on pace (VW-577, #573).
+
+- The session-pace model can now work out what to change when you are off pace: behind, it
+  names the sets to trim (last exercise first, never below one set, never the exercise you
+  are on) and whether that covers the delay; ahead, it offers up to two extra sets for the
+  exercise you are on. It is not shown anywhere yet (VW-578).
+
+- The live page and the rest recap now show the effort target for a working set under the
+  prescription: the plan's RPE as the coach wrote it, else the target for your training tier,
+  marked "(assumed tier)" when you never declared one. Hover it for what the target rests on.
+  A session with no plan shows none (VW-670, #566).
+
+- A **For coaches** section on the docs site, for a coach who reads a lifter's reports and
+  has never seen an MCP (VMCP-07.07): the onboarding model with a data-loop diagram, consent
+  and the data loop (with TrueCoach's terms quoted in full and the write-back marked
+  experimental), paired coach and lifter onboarding steps, importing a TrueCoach week, and a
+  glossary. The session-report and weekly-report guides moved there from Guides; their old
+  addresses keep a one-line pointer.
 - An opt-in effort cue, off by default: `VOLTRAS_EFFORT_CUE=on` hands the mid-set ending cue to
   the effort rule. A set then gets **at most one** ending event (`set_target_reached`,
   `velocity_loss_exceeded` or the new `effort_target_reached`), each saying which goal the set
@@ -55,9 +105,130 @@ entry is written from the user's point of view is a review question, not a check
   loss percent now gets one event, not two: whichever is met first, with a tie going to the
   rep count. The set also stores what the cue decided. `server.health` reports the setting as
   `effortCue`. With it off, nothing changes (VW-544).
+- TrueCoach retro map entries may name more than one primary muscle (VW-560).
+  `primary_muscle` takes one muscle or a list, and every muscle in the list counts a set in
+  full toward weekly sets and frequency, so a deadlift can count toward hamstrings and glutes
+  together. Secondary muscles still never count.
+- `plan.block.planning_brief` now carries `advisories` (VW-558): a declared main lift going into
+  the sitting on an open flatline gets a staleness note citing the swap-at-meso-end rule, and a
+  finishing block with no deload week, or more than five accumulation weeks before one, gets a
+  deload-cadence note with the program's own planned-deload count. Advisory only.
+
+### Changed
+
+- The `#/goals` page now reads the current block along with your goals, in the same request,
+  so the block header can pin above the live strip without a second fetch. Nothing on the page
+  looks different yet; the header itself follows (VW-654, #590).
+- `bilateral_divergence` now carries `slot`, set to the side whose close fired it, so a
+  consumer filtering on `slot` no longer drops it (VW-685). `slot_id` and `partner_slot_id`
+  stay.
+- `history.weekly_volume` reads the muscle weight table, the way `session.volume` does
+  (VW-662). Its tonnage breakdown is keyed by muscle (`front_delts` and `side_delts`, never
+  `shoulders`), and a row splits its tonnage evenly between `lats` and `upper_back`, so the
+  per-muscle parts still add up to the total. It also returns `setsByMuscle` (the count to
+  compare with a volume landmark), `doseSetsByMuscle` (the weighted dose count) and
+  `muscleMapVersion`.
+- The corroboration note in the comparability block of `session.readiness`,
+  `session.strength` and `progression.get_for_exercise` counts exercises that share a target
+  muscle from the weight table (VW-664, #559). A lateral raise no longer backs an overhead press
+  (side delts against front delts), and a lat pulldown now backs a cable row (both target
+  the lats).
+- Plan warnings from `plan.exercise.create` count sets per muscle from the weight table
+  (VW-665). An overhead press and a lateral raise on one day no longer pool into one
+  shoulders total, a chest press adds nothing to the delts, and a row counts toward both
+  `lats` and `upper_back`. A warning's `muscleGroup` is a muscle slug (`front_delts`, never
+  `shoulders`) and its message says "front delts".
+- A goal ramp no longer projects its first block's weekly step across later blocks (VW-510). The
+  horizon now continues past the named block through the program's later dated blocks, and
+  undated weeks are split into 5-week blocks, the length the owner chose.
+  The first block keeps the class step; every later block ramps at the lifter's measured
+  block-to-block rate when 8 sessions across 2 blocks back it, never above half the class step,
+  and at half the class step otherwise. A 12-week goal for a 100 lb beginner chest press now
+  ends at 122.5 lb, not 133. Accepted targets keep their stored numbers; the band drawn beside
+  them is re-derived.
+
+- The TrueCoach retro map now gives each exercise a weight table: every muscle it trains gets a
+  weight of 1, 0.5 or 0 and a target flag (VW-561, #513). Weekly sets, frequency, the
+  MEV/MAV/MRV bands and the missed-session runs count target muscles only, as before. A new
+  "dose" column beside them adds the weights (half a set for a secondary muscle) for
+  comparison and is never read against a landmark. A day now counts toward a muscle's
+  frequency only when one of its target exercises was trained that day. Glutes, lats and
+  upper back show sets but no landmark verdict until RP's glute and back numbers are
+  verified. Map entries written the old way still read as before.
+- The body page and every per-muscle panel now split the shoulders by head (VW-561, #514). A
+  shoulder press counts toward front delts only, a lateral raise toward side delts and a
+  rear-delt fly or face pull toward rear delts; a chest press no longer counts toward any
+  delt. A pulldown now counts toward lats only, and a Romanian deadlift toward hamstrings
+  only. Each muscle's week also reports how many days trained it directly (`sessions`) and a
+  labelled `dose` comparison (half a set for a secondary muscle), which is never read against
+  the landmarks. Glutes, lats and upper back show their sets with no MEV verdict until RP's
+  glute and back numbers are verified, and the "below MEV" tile no longer counts them. A lift
+  goal's weekly sets follow the same split. `session.volume`, `history.weekly_volume` and the
+  plan lint still count by catalog muscle group (`shoulders`).
 
 ### Fixed
 
+- The agent transcript export no longer refuses ordinary words such as "feedback" or plain
+  numbers such as 123456. A run of six or more hex characters is refused only when it mixes
+  digits with the letters a to f (VW-705).
+
+- Marking a whole day or range with `session.mark_kind` no longer overwrites a session you
+  marked on its own while the bulk mark was running. The bulk mark now checks each session
+  as it writes it, leaves one already marked the other kind alone, and its counts
+  (`newlyClassified`, `reclassified`, `skippedAlreadyMarked`, `setsChanged`) describe the
+  rows it actually changed (VW-586).
+
+- Two `truecoach.import_week` calls at once no longer create two "TrueCoach import" blocks
+  or two weeks of one ISO week. The block, its weeks and its dates are now found or created
+  together, and an import refused for its dates (`BLOCK_STARTED`, `SCHEDULE_OVERLAP`) no
+  longer leaves an empty import block behind (VW-586).
+
+- Classifying an exercise into a ramp class on an empty exercise catalog now fails with
+  `CATALOG_NOT_LOADED` instead of quietly answering upper-body compound for every lift. An id
+  missing from a loaded catalog still gets that default (VW-495).
+
+- The live page now shows the prescription and a one-row exercise rail when a session was
+  attached to a single planned exercise (`plan.attach_to_session` with `plannedExerciseId`),
+  not only to a whole workout template. Its title comes from that exercise's template, and
+  an attachment for a different exercise still shows nothing (VW-641).
+
+- Two edits to the same planned exercise no longer land an inverted rep band. Each edit in
+  the plan builder is now checked against the row as the other edit left it, so raising the
+  low end while another edit lowers the high end refuses the second one. Retrying
+  `plan.block.create` with the same id and `scaffoldWeeks` no longer writes a second set of
+  weeks: the second call answers `WEEKS_EXIST` (VW-585).
+
+- The plan lint again warns when a block's priority muscle shifts between week 1 and a later
+  week in a row-based plan. A lift that trains two muscles ties them for the top spot, and
+  the warning stayed silent on every tie; it now compares the tied muscles and warns only when
+  the two weeks share none (VW-698).
+- The effort target's "(assumed tier)" marker now comes from whether the tier was defaulted,
+  not from matching the wording of the hover text, so rewording that text can no longer drop
+  it. The text saying what the target rests on is also read aloud by screen readers and no
+  longer needs a hover (VW-700).
+- Two answers to one goal offer or weekly-review proposal no longer both report success. The
+  first answer is kept, and a later one is refused with `ADVISORY_ALREADY_ANSWERED`, naming
+  the answer that stands (`goal.retire` on an offer returns `offerAlreadyAnswered: true`).
+  An accepted recalibration target can no longer be retired by a withdrawal that arrived
+  second (VW-587).
+- Two goal proposals or weekly reviews at once no longer double an offer. Two
+  `goal.propose_targets` calls could each offer a recalibrated target for one starting ramp,
+  and two `goal.weekly_review` runs of one week could each record a rate proposal. Each now
+  lands as one. A review or proposal that refreshes an offer also keeps an answer given
+  meanwhile, where it used to reopen a declined offer or clear an accepted proposal (VW-588).
+- A dashboard action or plan-builder edit that fails part way no longer leaves half its
+  writes behind. The action, its writes and its audit row now land together or not at all,
+  so an action recorded as an error changed nothing, and one cut short before it finished
+  leaves no trace and can be resubmitted under the same id. Two submits of one id now always
+  run once and replay, where the second could answer `indeterminate` (VW-659, VW-660, #570).
+- Goal targets no longer change under a call that read them a moment earlier. Accepting a
+  target that was retired or re-proposed meanwhile is refused with `GOAL_TARGET_CHANGED`
+  (re-read it and accept again), where it used to un-retire the target or fix a stale band;
+  a refused acceptance of a recalibration offer now leaves the offer open. Two
+  `goal.propose_targets` calls at once leave one proposal per lift, a proposal never lands
+  under a priority retired meanwhile (`PRIORITY_RETIRED`), and `goal.retire` with `met` or
+  `missed` records that outcome in the same step as the retirement. `goal.new_chapter` now
+  records the chapter and the target's stamp together (VW-589, #572).
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
   of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
   priority of their own, and the goals page then drew one goal twice. The second now folds
@@ -67,6 +238,15 @@ entry is written from the user's point of view is a review question, not a check
   the whole set back as it had read it, reps included, so a set whose reps were saved by
   another session in that moment lost them. It now changes the lifter label and nothing
   else (VW-536).
+- Closing one side of a two-device set can no longer undo the other side's reps or label.
+  Pairing the two sides wrote the other side's set back as it had read it, so reps or a
+  `set.update` relabel saved in that moment were lost. Re-saving a set after a disconnect
+  also no longer clears a lifter label or a pairing made since it was first saved
+  (VW-583).
+- A session's lifter label and pre-session carbs now survive its close. A guest label set
+  with `session.set_lifter` on a guided-load session was cleared when the session closed,
+  and the owner's diet phase was stamped onto the guest's session. A label or carb check-in
+  written from a second session was undone by `session.end` in the same way (VW-584).
 - A block's dates now keep every change made to them from two sessions at once. A missed
   week recorded while another session skipped a different week, resized the block or
   re-imported it from TrueCoach could vanish from the calendar, while the schedule history
@@ -101,6 +281,31 @@ entry is written from the user's point of view is a review question, not a check
   needing a reload. The plan builder behaves exactly as before (VW-500).
 
 ### Changed
+
+- The goals page's Whole body section is two cards now, not two bare numbers and a row of
+  pills. The Bodyweight card shows your latest weigh-in and the day you logged it. It shows the
+  diet phase, this week's rate ("Rate: -0.6%/wk", or "Rate: N/A" before there is one) and where
+  the weigh-in sits in this week's band. A bodyweight goal with no weigh-in yet now shows "No
+  weigh-in yet" instead of vanishing. The Training days card counts your training days in the
+  last 28 days against your commitment. It marks how many are due by now, and its tip says how
+  many leave the window this week. The two cards sit in the same grid as the lift cards. Below
+  them, one line lists every declared priority by level and names any priority nothing tracks.
+  The old panel, with its Sessions (28d) and Bodyweight tiles and its pill for every priority,
+  is gone. With no bodyweight or session goal the section still does not render (VW-455).
+
+- The dashboard picks up `@titan-design/react-ui` 0.21.2. A calibrating goal chart's info tip
+  reads its explanation as one paragraph instead of two stacked lines (VW-559). On a phone, the
+  first tap on a goal card's status or info glyph now opens its tip; before, it took a second tap.
+
+- The dashboard picks up `@titan-design/react-ui` 0.21.1. Goal charts drop their y-axis
+  labels and carry each gridline's value inside the plot. A calibrating chart moves its note
+  into an info tip in the plot's corner ("Why is there no band?"). Every week of a goal chart
+  opens a tip with that week's reading and band. On a phone, a goal card's Week / Best / Goal
+  lines sit together as one block. Velocity bars on the live page and the pinned strip now
+  colour by the exact loss from the set's best rep, not the loss rounded to a whole percent. The
+  dashboard now hands those bars unrounded velocities too, so a bar and the red or amber
+  background agree at a band edge. The rest recap's "Vel loss" and Fatigue tile read the same
+  exact loss as the live page, so they can shift by up to about a percent from before.
 
 - A fitted RIR-velocity curve now has to be tighter before its readings are called
   high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
@@ -392,10 +597,10 @@ entry is written from the user's point of view is a review question, not a check
   lifter's local calendar day. Any accepted session-count goal made under the old count is
   retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
   one in days (VW-460, #455).
-- A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
-  session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
-  no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no
-  such note, keeps the sentence (VW-444).
+- A calibrating goal's chart now says what it is waiting on ("1 more comparable session to
+  calibrate.", or the set it needs), in full, in the chart's info tip, instead of titan's
+  generic "No band yet", so the full goal card no longer repeats it in a sentence underneath.
+  The compact per-lift card, whose chart has no such tip, keeps the sentence (VW-444).
 - The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
   colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
   thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and
@@ -494,6 +699,9 @@ entry is written from the user's point of view is a review question, not a check
 - `accountability.state` with an `at` on a Thursday read the adherence trend over the seven
   days before the real clock, not before `at`, so sessions logged after `at` counted. It
   now reads the week ending at `at`, as `accountability.preview` already did (VW-472, #461).
+- `report.weekly` for a past or pinned week judged the lifter's tier by today's training
+  history, so a progression line could allow a set that week's history did not. It now counts
+  only sessions up to the report's end (VW-575, #542).
 - A maintenance bodyweight goal now reads `behind` when the weight leaves its ±2% corridor,
   on either side. Before, it read `on_track` however far outside the weight drifted.
   `/api/goal-progress` says which side in a new `corridorSide` field (`above` or `below`),
@@ -502,6 +710,21 @@ entry is written from the user's point of view is a review question, not a check
   advice for any bodyweight goal behind its line now names intake and activity, not load
   and reps. A maintenance block is met when the latest weigh-in of its final week sits
   inside the corridor. It is never `beyond_goal` (VW-457, #463).
+- On a phone the per-lift goal cards on `#/goals` fit the screen again. They were about 80 px
+  wider than the page, so the right edge was cut off: a long lift name, the status mark and the
+  goal figure ran out of view. A long name now wraps inside the card. The "Per-lift" and
+  "Muscle priorities" titles now sit on the page background with their cards as the first
+  raised surface, instead of a panel around the cards, so each card is 40 px wider on a phone
+  and 10 px wider on the wall (VW-454, VW-435).
+- The lead lift on `#/goals`, which already has the large card at the top, is no longer
+  repeated in the Per-lift list. A page with only one lift shows the large card and no
+  Per-lift section (VW-467). `npm run dashboard:preview -- goals` now seeds two more accepted lifts
+  beside the lead (Cable Row and Cable Overhead Tricep Extension), so the previewed page has a
+  Per-lift section in every `--state`; the lead's state is unchanged.
+- The goals page drops its "Whole body" section, priority list included, when there is no
+  sessions or bodyweight goal. It used to draw the panel with nothing in it but the list of
+  priorities (VW-454).
+
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
   backwards. It now shows and judges the newest reading (VW-451).
@@ -1270,7 +1493,7 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
-- Added a coach-facing [weekly report guide](/guides/weekly-report) for
+- Added a coach-facing [weekly report guide](/coaches/read-the-weekly-report) for
   `report.weekly` (VW-292, #378): what the header's rolling 28-day count and adherence trend
   mean, per-session blocks, progression suggestions labelled "not applied", why
   `setting_coerced` never appears in flags, the check-in section, and how the adherence

@@ -1,11 +1,10 @@
 // The B31 lints as the plan tools actually surface them (VMCP-06.03).
 //
 // A real `:memory:` SqliteSessionStore, so "the row still persisted" is a
-// genuine claim about the database rather than about a spy. The exercise
-// catalog is stubbed on `ExerciseService` because the lint's contract is about
-// which FIELD it reads (`muscleGroups[0]`, never `secondaryMuscleGroups`), and
-// a stub is the only way to state that without depending on the published
-// catalog's data.
+// genuine claim about the database rather than about a spy. Two stubbed
+// catalog entries sit outside the weight table, so they pin the fallback: the
+// catalog primary is the target and a secondary never reaches a bucket. Every
+// other id resolves through the seed catalog and its weight-table targets.
 //
 // The tier here is always the default beginner/provisional — nothing writes a
 // `training_profile` row. The advanced-tier ceilings are covered in
@@ -26,12 +25,13 @@ vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerPlanTools } = await import('../plan-tools.js');
 const { ExerciseService } = await import('../../exercises/exercise-service.js');
-const { SqliteSessionStore } = await import('../../store/sqlite-store.js');
 
 import type { Exercise } from '../../exercises/exercise-service.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { PlanWarning } from '../../plan/lint-plan.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredPlannedExercise } from '../../store/types.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown) => Promise<unknown>;
@@ -94,28 +94,20 @@ const CATALOG: Record<string, Exercise> = {
     cableEquivalent: true,
     qualityScore: 90,
   },
-  row: {
-    id: 'row',
-    name: 'Cable Row',
-    muscleGroups: ['back'],
-    secondaryMuscleGroups: ['biceps'],
-    movementPattern: 'pull',
-    exerciseType: 'compound',
-    equipment: [{ name: 'cable', category: 'cable' }],
-    cableEquivalent: true,
-    qualityScore: 92,
-  },
 };
 
+const SEED_BY_ID = new Map(SEED_CABLE_EXERCISES.map((e) => [e.id, e]));
+
 interface Harness {
-  store: InstanceType<typeof SqliteSessionStore>;
+  store: SessionStore;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
 }
 
 function setup(): Harness {
-  const store = SqliteSessionStore.open(':memory:');
+  const store = openTestStore();
   const exercises = new ExerciseService();
-  exercises.getById = ((id: string) => CATALOG[id]) as ExerciseService['getById'];
+  exercises.getById = ((id: string) =>
+    CATALOG[id] ?? SEED_BY_ID.get(id)) as ExerciseService['getById'];
   const state = { store, exercises } as unknown as ServerState;
 
   const placeholders = new Map<string, FakeRegisteredTool>();
@@ -324,6 +316,105 @@ describe('plan.exercise.create lints', () => {
     expect(weekly[0]).toMatchObject({ muscleGroup: 'chest', observed: 21, ceiling: 20 });
   });
 
+  it('warns when a week trains chest on more days than the beginner band (VW-623)', async () => {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const frequencyAfter: PlanWarning[][] = [];
+    for (const [i, day] of days.entries()) {
+      const templateId = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, i, day))
+        .template.id;
+      const r = await addExercise(h, templateId, 'bench-press', 2, 0);
+      frequencyAfter.push(
+        body<{ warnings: PlanWarning[] }>(r).warnings.filter((w) =>
+          w.code.startsWith('muscle_frequency_'),
+        ),
+      );
+    }
+
+    expect(frequencyAfter.slice(0, 4).flat()).toEqual([]);
+    expect(frequencyAfter[4]).toMatchObject([
+      { code: 'muscle_frequency_above_band', muscleGroup: 'chest', observed: 5, ceiling: 4 },
+    ]);
+    expect(frequencyAfter[4]?.[0]?.message).toContain('planning prior');
+  });
+
+  /** The frequency-band warnings on one plan.exercise.create response. */
+  function frequencyWarnings(r: ToolResult): PlanWarning[] {
+    return body<{ warnings: PlanWarning[] }>(r).warnings.filter((w) =>
+      w.code.startsWith('muscle_frequency_'),
+    );
+  }
+
+  async function weekWithTemplates(days: string[]): Promise<string[]> {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const ids: string[] = [];
+    for (const [i, day] of days.entries()) {
+      ids.push(
+        body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, i, day)).template.id,
+      );
+    }
+    return ids;
+  }
+
+  it('stays quiet on a half-built week, even when every template already exists', async () => {
+    const [mon] = await weekWithTemplates(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+
+    const first = await addExercise(h, mon!, 'bench-press', 3, 0);
+    const second = await addExercise(h, mon!, 'cable-bicep-curl', 3, 1);
+
+    expect(frequencyWarnings(first)).toEqual([]);
+    expect(frequencyWarnings(second)).toEqual([]);
+  });
+
+  it('warns below the band once the week is filled, and does not repeat it on the next add', async () => {
+    const [mon, thu] = await weekWithTemplates(['Mon', 'Thu']);
+    await addExercise(h, mon!, 'bench-press', 3, 0);
+
+    const fills = await addExercise(h, thu!, 'cable-bicep-curl', 3, 0);
+    const next = await addExercise(h, thu!, 'cable-bicep-curl', 2, 1);
+
+    expect(frequencyWarnings(fills).map((w) => [w.code, w.muscleGroup, w.observed])).toEqual([
+      ['muscle_frequency_below_band', 'chest', 1],
+      ['muscle_frequency_below_band', 'biceps', 1],
+    ]);
+    expect(frequencyWarnings(next)).toEqual([]);
+  });
+
+  it('warns again when an add changes a warned muscle', async () => {
+    const [mon, tue, wed, thu, fri, sat] = await weekWithTemplates([
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+    ]);
+    for (const id of [mon, tue, wed, thu, fri]) await addExercise(h, id!, 'bench-press', 2, 0);
+
+    const sixth = await addExercise(h, sat!, 'bench-press', 2, 0);
+
+    expect(frequencyWarnings(sixth)).toMatchObject([
+      { code: 'muscle_frequency_above_band', muscleGroup: 'chest', observed: 6, ceiling: 4 },
+    ]);
+  });
+
+  it('reads the clamped tier: a declared advanced lifter with no history gets the beginner band', async () => {
+    await h.store.putTrainingProfile({
+      userId: 'local',
+      declaredTier: 'advanced',
+      updatedAt: new Date().toISOString(),
+    });
+    const ids = await weekWithTemplates(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+    const responses: ToolResult[] = [];
+    for (const id of ids) responses.push(await addExercise(h, id, 'bench-press', 2, 0));
+
+    // The advanced chest band is 2-3, so a 4th chest day would warn there; at beginner it is 2-4.
+    expect(responses.slice(0, 4).flatMap(frequencyWarnings)).toEqual([]);
+    expect(frequencyWarnings(responses[4]!)).toMatchObject([
+      { code: 'muscle_frequency_above_band', observed: 5, ceiling: 4, tier: 'beginner' },
+    ]);
+  });
+
   it('warns when the same muscle is stacked over ceiling on two consecutive templates', async () => {
     const programId = await makeProgram(h);
     const blockId = await makeBlock(h, programId, 4);
@@ -359,12 +450,98 @@ describe('plan.exercise.create lints', () => {
     ).template.id;
     await addExercise(h, week1Template, 'bench-press', 10, 0);
 
-    const r = await addExercise(h, week2Template, 'row', 10, 0);
+    const r = await addExercise(h, week2Template, 'cable-lat-pulldown', 10, 0);
 
     const { warnings } = body<{ warnings: PlanWarning[] }>(r);
     const priority = warnings.filter((w) => w.code === 'priority_muscle_changed_mid_block');
     expect(priority).toHaveLength(1);
-    expect(priority[0].muscleGroup).toBe('back');
+    expect(priority[0].muscleGroup).toBe('lats');
+  });
+});
+
+describe('plan.template.create lints (VW-619)', () => {
+  const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  async function fillWeek(days: string[]): Promise<PlanWarning[]> {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    let warnings: PlanWarning[] = [];
+    for (const [i, day] of days.entries()) {
+      warnings = body<{ warnings: PlanWarning[] }>(
+        await makeTemplateAt(h, weekId, i, day),
+      ).warnings;
+    }
+    return warnings;
+  }
+
+  it('flags the template that leaves the week with no off day', async () => {
+    const warnings = await fillWeek(WEEKDAYS);
+
+    expect(warnings.map((w) => w.code)).toEqual(['week_without_off_day']);
+  });
+
+  it('warns once per week, not again on the next template or exercise', async () => {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const codes: string[][] = [];
+    for (const [i, day] of [...WEEKDAYS, 'Sun PM'].entries()) {
+      const r = await makeTemplateAt(h, weekId, i, day);
+      codes.push(body<{ warnings: PlanWarning[] }>(r).warnings.map((w) => w.code));
+    }
+    const templateId = (await h.store.getWorkoutTemplatesForWeek(weekId))[0]!.id;
+    const exercise = await addExercise(h, templateId, 'bench-press', 3, 0);
+
+    expect(codes.flat()).toEqual(['week_without_off_day']);
+    expect(codes[6]).toEqual(['week_without_off_day']);
+    expect(body<{ warnings: PlanWarning[] }>(exercise).warnings).toEqual([]);
+  });
+
+  it('stays quiet while the week keeps a day off', async () => {
+    expect(await fillWeek(WEEKDAYS.slice(0, 6))).toEqual([]);
+  });
+});
+
+describe('plan lint on the seed weight table (VW-563)', () => {
+  function perMuscle(r: ToolResult): [string | undefined, number | undefined][] {
+    return body<{ warnings: PlanWarning[] }>(r)
+      .warnings.filter((w) => w.code === 'sets_per_muscle_per_session_over_tier_ceiling')
+      .map((w) => [w.muscleGroup, w.observed]);
+  }
+
+  it('counts an overhead press toward front delts only', async () => {
+    const templateId = await makeTemplate(h);
+    await addExercise(h, templateId, 'cable-shoulder-press', 5, 0);
+
+    const r = await addExercise(h, templateId, 'cable-front-raise', 4, 1);
+
+    expect(perMuscle(r)).toEqual([['front_delts', 9]]);
+  });
+
+  it('keeps an overhead press and a lateral raise in separate delt buckets', async () => {
+    const templateId = await makeTemplate(h);
+    await addExercise(h, templateId, 'cable-shoulder-press', 5, 0);
+
+    const r = await addExercise(h, templateId, 'cable-lateral-raise', 5, 1);
+
+    expect(perMuscle(r)).toEqual([]);
+  });
+
+  it('adds nothing to front delts for a chest press', async () => {
+    const templateId = await makeTemplate(h);
+    await addExercise(h, templateId, 'cable-shoulder-press', 5, 0);
+
+    const r = await addExercise(h, templateId, 'cable-chest-press', 5, 1);
+
+    expect(perMuscle(r)).toEqual([]);
+  });
+
+  it('counts a row toward both lats and upper back', async () => {
+    const templateId = await makeTemplate(h);
+
+    const r = await addExercise(h, templateId, 'cable-row', 9, 0);
+
+    expect(perMuscle(r)).toEqual([
+      ['lats', 9],
+      ['upper_back', 9],
+    ]);
   });
 });
 

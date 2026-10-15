@@ -1,7 +1,7 @@
 /**
  * `#/body` fetch wrapper (VW-338, plan D1).
  *
- * Polls the three `/api/muscle-*` read models at the same cadence the other
+ * Polls the four `/api/muscle-*` read models at the same cadence the other
  * operator routes use, for the same reason `goals-client.ts` gives: a `set.end`
  * writes derived numbers to sqlite with no live-signal push, so a poll is the
  * only way a set logged during a session reaches this page.
@@ -10,35 +10,47 @@
  * nothing else on the wall reads per-muscle volume.
  */
 import React, { useEffect, useState } from 'react';
+import { useStore } from 'zustand';
 import { Caption, Spinner, Surface } from '@titan-design/react-ui';
 
-import { fetchMusclePlan, fetchMuscleStrength, fetchMuscleWeek } from './body-client.js';
+import {
+  fetchMusclePlan,
+  fetchMuscleRecovery,
+  fetchMuscleStrength,
+  fetchMuscleWeek,
+} from './body-client.js';
 import { BodyView } from './BodyView.js';
+import { useBodyDrill } from './use-body-drill.js';
 import type { BodyPageData } from './body-model.js';
 import { ErrorNote, PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
+import { dashboardStore } from '../store';
 
 const POLL_INTERVAL_MS = 2000;
 
-async function load(): Promise<BodyPageData> {
-  const [week, strength, plan] = await Promise.all([
+export async function loadBodyPage(): Promise<BodyPageData> {
+  const [week, strength, plan, recovery] = await Promise.all([
     fetchMuscleWeek(),
     fetchMuscleStrength(),
     fetchMusclePlan(),
+    fetchMuscleRecovery(),
   ]);
-  return { week, strength, plan };
+  return { week, strength, plan, recovery };
 }
 
-export function BodyPage(): React.JSX.Element {
+/** `muscle` is the route's deep-linked sheet; the drill stack owns it once the page is up. */
+export function BodyPage(props: { muscle?: string }): React.JSX.Element {
   const [data, setData] = useState<BodyPageData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { stack, drill } = useBodyDrill(props.muscle, data);
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
 
   useEffect(() => {
     let cancelled = false;
     const poll = async (): Promise<void> => {
       try {
-        const loaded = await load();
+        const loaded = await loadBodyPage();
         if (!cancelled) {
           setData(loaded);
           setError(null);
@@ -73,5 +85,5 @@ export function BodyPage(): React.JSX.Element {
       </Surface>
     );
   }
-  return <BodyView data={data} />;
+  return <BodyView data={data} stack={stack} drill={drill} displayUnit={displayUnit} />;
 }

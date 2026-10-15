@@ -40,7 +40,11 @@ import {
 } from '@voltras/workout-analytics';
 
 import { checkDriftGuard } from './drift-guard.js';
-import { isEligibleForComparison, scopeSessionSetsToExerciseId } from './set-scope.js';
+import {
+  isEligibleForComparison,
+  scopeSessionSetsToExerciseId,
+  scopeSetsToLifter,
+} from './set-scope.js';
 import type { SessionStore } from './types.js';
 import { normaliseVelocityToMps } from './velocity-units.js';
 
@@ -51,6 +55,8 @@ export interface MrvGuardInput {
   baselineSessionId: string;
   /** The session being judged against the reference. */
   currentSessionId: string;
+  /** Whose sets to read (VW-717); absent is the owner, as in `scopeSetsToLifter`. */
+  lifter?: string;
 }
 
 /**
@@ -69,8 +75,8 @@ export async function checkMrvUnderperformance(
   const driftVerdict = await checkDriftGuard(store, input);
 
   const [baseline, current] = await Promise.all([
-    summarizeSession(store, input.baselineSessionId, input.key),
-    summarizeSession(store, input.currentSessionId, input.key),
+    summarizeSession(store, input.baselineSessionId, input.key, input.lifter),
+    summarizeSession(store, input.currentSessionId, input.key, input.lifter),
   ]);
 
   if (baseline === undefined || current === undefined) {
@@ -90,13 +96,17 @@ export async function checkMrvUnderperformance(
  * ABSOLUTE reading, and `velocityDeltaPct` divides one session's by another's,
  * so a capture-era difference between the two sessions would otherwise read as
  * underperformance rather than as the unit mismatch it is.
+ *
+ * Sets are scoped to one lifter first (VW-717), the same rule as
+ * `summarizeSessionForDrift`, so a guest working in never moves the verdict.
  */
 async function summarizeSession(
   store: SessionStore,
   sessionId: string,
   key: BaselineKey,
+  lifter?: string,
 ): Promise<PerformanceSummary | undefined> {
-  const allSets = await store.getSetsForSession(sessionId);
+  const allSets = scopeSetsToLifter(await store.getSetsForSession(sessionId), lifter);
   const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId)
     .filter((set) => isEligibleForComparison(set, key))
     .map(normaliseVelocityToMps);
@@ -112,6 +122,8 @@ export interface MrvGuardCheckInput {
   session2Id: string;
   /** Newest session — the current pair's current, and the one judged live. */
   session3Id: string;
+  /** Whose sets to read (VW-717); absent is the owner. */
+  lifter?: string;
 }
 
 /**
@@ -128,16 +140,19 @@ export async function checkMrvGuard(
   currentPair: MrvUnderperformanceVerdict;
   guard: MrvGuardVerdict;
 }> {
+  const lifter = input.lifter !== undefined ? { lifter: input.lifter } : {};
   const [priorPair, currentPair] = await Promise.all([
     checkMrvUnderperformance(store, {
       key: input.key,
       baselineSessionId: input.session1Id,
       currentSessionId: input.session2Id,
+      ...lifter,
     }),
     checkMrvUnderperformance(store, {
       key: input.key,
       baselineSessionId: input.session2Id,
       currentSessionId: input.session3Id,
+      ...lifter,
     }),
   ]);
   return { priorPair, currentPair, guard: evaluateMrvGuard(priorPair, currentPair) };

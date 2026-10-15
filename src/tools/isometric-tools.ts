@@ -41,6 +41,7 @@
 // description nudges callers toward that workflow. Open question 1 in the
 // brief flags this for hardware validation.
 
+import { UserFacingError } from '../errors.js';
 import { randomUUID } from 'node:crypto';
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -101,10 +102,10 @@ import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channe
 import { publishImbalanceResult, publishMaxResult } from './isometric-result-emit.js';
 import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
 import { checkMountLoad, ISOMETRIC_MAX_PEAK_LBS_PER_UNIT } from '../state/mount-load-gate.js';
-import { unloadSlot } from './device-exit.js';
+import { unloadSlot } from '../state/device-exit.js';
 import { wrapHandler } from './helpers.js';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

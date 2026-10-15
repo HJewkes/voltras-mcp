@@ -211,7 +211,7 @@ describe('v6 → v7 migration: identity, capture and state', { timeout: 20_000 }
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(41);
+      expect(version.user_version).toBe(44);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -590,7 +590,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -703,7 +703,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -763,7 +763,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -849,7 +849,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
       } finally {
         void opened.close();
       }
@@ -887,7 +887,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
       } finally {
         void opened.close();
       }
@@ -990,7 +990,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         // The pre-existing row survived the additive migration untouched.
         const sessions = raw.prepare(`SELECT id FROM sessions`).all() as { id: string }[];
         expect(sessions.map((s) => s.id)).toEqual(['s1']);
@@ -1030,7 +1030,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         // Nothing is backfilled: a pre-v13 row genuinely does not know which
         // path opened it, and it survives the additive migration untouched.
         const rows = raw.prepare(`SELECT id, auto_created_by, upgraded FROM sets`).all() as {
@@ -1101,7 +1101,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
       } finally {
         void second.close();
       }
@@ -1150,7 +1150,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(41);
+        expect(version.user_version).toBe(44);
         expect(await opened.getSet('set-old')).not.toHaveProperty('lifter');
         expect(await opened.getSession('s1')).not.toHaveProperty('lifter');
       } finally {
@@ -1195,10 +1195,9 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
     }
   });
 
-  it('clears the label on a re-put rather than leaving the old one behind', async () => {
-    // The DO UPDATE half of the upsert: a column present in the INSERT but
-    // missing from the update list silently never updates, which is invisible
-    // until a relabel has to move a set back to the owner.
+  it('hands a set and a session back to the owner by patch, and a re-put keeps them there', async () => {
+    // A re-put keeps the stored label on a set (VW-583) and on a session (VW-584),
+    // so each goes back through its patch method.
     const store = SqliteSessionStore.open(':memory:');
     try {
       await store.putSession({
@@ -1218,8 +1217,8 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
       };
       await store.putSet(set);
 
-      const { lifter: _dropped, ...ownerSet } = set;
-      await store.putSet(ownerSet);
+      await store.patchSetLifter('set-1', null);
+      await store.patchSession('s', { lifter: null });
       await store.putSession({ kind: 'training', id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
 
       expect(await store.getSet('set-1')).not.toHaveProperty('lifter');

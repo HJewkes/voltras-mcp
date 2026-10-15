@@ -14,9 +14,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Phase, Rep } from '@voltras/workout-analytics';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredPlannedExercise, StoredRep, StoredSet } from '../../store/types.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -570,10 +571,10 @@ function fakePlaceholders(names: readonly string[]): {
 }
 
 describe('plan.suggest_progression — tier read', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
 
   beforeEach(() => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
   });
 
   afterEach(async () => {

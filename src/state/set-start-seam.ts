@@ -6,8 +6,10 @@
 // independently, and a failure in one is logged and never reaches the set.
 
 import { log } from '../logger.js';
+import { applyAutoArmDefaults } from './arm-defaults.js';
 import { pinEffortContext } from './effort-pin.js';
 import { getSlot, type ServerState } from './server-state.js';
+import { pinSetRiskReading } from './set-risk-pin.js';
 
 export interface SetStartEvent {
   slotId: string;
@@ -19,7 +21,15 @@ export type SetStartSubscriber = (state: ServerState, event: SetStartEvent) => P
 const pinEffortOnStart: SetStartSubscriber = (state, event) =>
   pinEffortContext(state, getSlot(state, event.slotId).live, event.setId);
 
-export const SET_START_SUBSCRIBERS: readonly SetStartSubscriber[] = [pinEffortOnStart];
+const pinSetRiskOnStart: SetStartSubscriber = (state, event) =>
+  pinSetRiskReading(state, getSlot(state, event.slotId).live, event.setId);
+
+// The arm defaults start first: the pin they race is dropped once their watch lands, then re-pinned.
+export const SET_START_SUBSCRIBERS: readonly SetStartSubscriber[] = [
+  applyAutoArmDefaults,
+  pinEffortOnStart,
+  pinSetRiskOnStart,
+];
 
 /** Run every subscriber for one started set. Never rejects. */
 export async function onSetStarted(

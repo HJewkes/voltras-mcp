@@ -36,7 +36,7 @@ function makeEmitter(
     speakDeps: { ...speakDeps, ...deps },
     speak: speakSpy as never,
     selector: new CueSelector({ rng: () => 0 }),
-    settings: { enabled, midSetEnabled },
+    settings: { enabled, midSetEnabled, midSetMode: midSetEnabled ? 'on' : 'off' },
   });
 }
 

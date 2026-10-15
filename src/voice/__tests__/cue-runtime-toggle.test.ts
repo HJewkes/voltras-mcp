@@ -82,7 +82,7 @@ describe('installCueTee', () => {
     // never start cueing, whatever a settings toggle says afterwards.
     const inner = makeInner();
     const tee = installCueTee(inner, {
-      settings: { enabled: false, midSetEnabled: false },
+      settings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       voiceListenerRef: null,
     });
     expect(tee).not.toBe(inner);
@@ -97,7 +97,7 @@ describe('installCueTee', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     try {
       tts.speak.mockClear();
-      const settings: CueSettings = { enabled: false, midSetEnabled: false };
+      const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
       const tee = installCueTee(makeInner(), { settings, voiceListenerRef: null });
       tee.publish(setStarted('s1'));
       expect(tts.speak).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe('installCueTee', () => {
   it('passes events through untouched while cues are off', () => {
     const inner = makeInner();
     const tee = installCueTee(inner, {
-      settings: { enabled: false, midSetEnabled: false },
+      settings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
       voiceListenerRef: null,
     });
     const ev = setStarted();
@@ -126,7 +126,7 @@ describe('installCueTee', () => {
 describe('cue master switch at runtime', () => {
   it('starting from cues OFF, turning them on produces cues with no restart', () => {
     // Arrange: a cold start with VMCP_CUES unset — the bench-sitting shape.
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
     tee.publish(setStarted('s1'));
@@ -143,7 +143,7 @@ describe('cue master switch at runtime', () => {
   it('a cue suppressed while off can still fire for the same set once on', () => {
     // Suppression must not consume the once-per-set budget, or turning cues on
     // mid-set would silently skip that set's categories.
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
     tee.publish(setStarted('s1'));
@@ -155,7 +155,7 @@ describe('cue master switch at runtime', () => {
   });
 
   it('turning cues off at runtime silences subsequent cues', () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: false };
+    const settings: CueSettings = { enabled: true, midSetEnabled: false, midSetMode: 'off' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
     tee.publish(setStarted('s1'));
@@ -168,7 +168,7 @@ describe('cue master switch at runtime', () => {
   });
 
   it('keeps passing every event through whichever way the switch is thrown', () => {
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const { tee, inner } = makeTee(settings, makeSpeakSpy());
     tee.publish(setStarted('s1'));
     settings.enabled = true;
@@ -179,7 +179,7 @@ describe('cue master switch at runtime', () => {
 
 describe('mid-set switch at runtime', () => {
   it('turning midSet off suppresses slowdown and target_hit', () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: true };
+    const settings: CueSettings = { enabled: true, midSetEnabled: true, midSetMode: 'on' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
 
@@ -191,7 +191,7 @@ describe('mid-set switch at runtime', () => {
   });
 
   it('turning midSet off leaves set_intro and set_complete speaking', () => {
-    const settings: CueSettings = { enabled: true, midSetEnabled: true };
+    const settings: CueSettings = { enabled: true, midSetEnabled: true, midSetMode: 'on' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
 
@@ -205,7 +205,7 @@ describe('mid-set switch at runtime', () => {
   it('turning midSet on arms slowdown and target_hit without a restart', () => {
     // The trial that would otherwise be silently unrunnable: slowdown under a
     // grind never fires when VMCP_CUES_MIDSET was missing at startup.
-    const settings: CueSettings = { enabled: true, midSetEnabled: false };
+    const settings: CueSettings = { enabled: true, midSetEnabled: false, midSetMode: 'off' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
     tee.publish(slowdown('s1'));
@@ -218,7 +218,7 @@ describe('mid-set switch at runtime', () => {
   });
 
   it('midSet on its own speaks nothing while the master switch is off', () => {
-    const settings: CueSettings = { enabled: false, midSetEnabled: true };
+    const settings: CueSettings = { enabled: false, midSetEnabled: true, midSetMode: 'on' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy);
     tee.publish(setStarted('s1'));
@@ -229,7 +229,7 @@ describe('mid-set switch at runtime', () => {
 
 describe('platform gate', () => {
   it('stays static — no toggle makes cues speak off macOS', () => {
-    const settings: CueSettings = { enabled: false, midSetEnabled: false };
+    const settings: CueSettings = { enabled: false, midSetEnabled: false, midSetMode: 'off' };
     const speakSpy = makeSpeakSpy();
     const { tee } = makeTee(settings, speakSpy, 'linux');
 

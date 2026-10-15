@@ -18,6 +18,7 @@
 // waits on B56 baselines reaching PROVISIONAL for the exercise. v1 ships the
 // population ramp, widened or narrowed only by the tier signal.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { estimateE1RMFromReps } from '@voltras/workout-analytics';
@@ -66,7 +67,7 @@ export interface WarmupRamp {
   reason: string;
 }
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);

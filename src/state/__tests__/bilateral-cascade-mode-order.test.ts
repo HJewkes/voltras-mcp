@@ -13,6 +13,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@voltras/node-sdk', () => ({
+  VoltraSDKError: class VoltraSDKError extends Error {},
   TrainingMode: {
     Idle: 0,
     WeightTraining: 1,

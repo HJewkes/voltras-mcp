@@ -5,7 +5,7 @@
 // function `/api/goal-progress` calls) over literal bands, so the fixtures are
 // exactly the shape the route returns — then renders `GoalsView` with
 // `renderToStaticMarkup`, same technique as `spa-session-summary-e1rm-toggle.test.ts`.
-// Asserts the sections plan G8' names and the hidden bodyweight tile.
+// Asserts the sections plan G8' names and the whole-body cards (VW-455).
 //
 // `useIsNarrowViewport` is mocked rather than driven by a real `matchMedia`:
 // the suite runs under vitest's `node` environment (no `window`), so the real
@@ -19,7 +19,13 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import { cardChart, cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
+import {
+  cardChart,
+  cardMilestone,
+  liftRows,
+  primaryTarget,
+  type GoalsPageData,
+} from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -180,6 +186,7 @@ function baseData(): { data: GoalsPageData; benchPriority: StoredPriority } {
       [benchPriority.id]: [benchView, sessionsView],
       [armsPriority.id]: [curlView, hammerCurlView],
     },
+    mesocycle: null,
   };
   return { data, benchPriority };
 }
@@ -210,7 +217,7 @@ describe('GoalsView (VW-355)', () => {
     expect(html).toContain('Per-lift');
     expect(html).toContain('Muscle priorities');
     expect(html).toContain('Whole body');
-    expect(html).toContain('Sessions (28d)');
+    expect(html).toContain('aria-label="Training days goal"');
   });
 
   it('renders one lift card per exercise-tracked target, with its block-end target', () => {
@@ -243,12 +250,12 @@ describe('GoalsView (VW-355)', () => {
     expect(card).toContain('HAMMER CURL');
   });
 
-  it('hides the bodyweight tile with no bodyweight target at all (VW-327 not landed)', () => {
+  it('draws no bodyweight card with no bodyweight target', () => {
     const html = render(baseData().data);
     expect(html).not.toContain('Bodyweight');
   });
 
-  it('hides the bodyweight tile when a bodyweight target exists but has no readings yet', () => {
+  it('says "No weigh-in yet" for an accepted bodyweight target with no reading (VW-455)', () => {
     const { data, benchPriority } = baseData();
     const bwTarget = target({
       id: 'tgt-bw',
@@ -263,10 +270,12 @@ describe('GoalsView (VW-355)', () => {
     data.priorities[0]!.targets.push(bwTarget);
     data.progress[benchPriority.id]!.push(bwView);
 
-    expect(render(data)).not.toContain('Bodyweight');
+    const html = render(data);
+    expect(html).toContain('aria-label="Bodyweight goal"');
+    expect(html).toContain('No weigh-in yet');
   });
 
-  it('shows the bodyweight tile once a bodyweight target has a reading', () => {
+  it('shows the latest weigh-in on the bodyweight card once there is one', () => {
     const { data, benchPriority } = baseData();
     const bwTarget = target({
       id: 'tgt-bw',
@@ -281,12 +290,87 @@ describe('GoalsView (VW-355)', () => {
     data.priorities[0]!.targets.push(bwTarget);
     data.progress[benchPriority.id]!.push(bwView);
 
-    expect(render(data)).toContain('Bodyweight');
+    const html = render(data);
+    expect(html).toContain('aria-label="Bodyweight goal"');
+    expect(html).toContain('192.0');
+    // No diet phase on this fixture, so the review has no rate to judge.
+    expect(html).toContain('N/A');
   });
 
   it('renders an empty state with no priorities declared', () => {
-    const html = render({ priorities: [], progress: {} });
+    const html = render({ priorities: [], progress: {}, mesocycle: null });
     expect(html).toContain('No priorities declared');
+  });
+});
+
+describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
+  it('leaves the lead lift out of the per-lift rows', () => {
+    const { data } = baseData();
+    const leadId = primaryTarget(data)?.view.target.id;
+
+    expect(leadId).toBe('tgt-bench');
+    expect(liftRows(data).map((row) => row.view.target.id)).toEqual([
+      'tgt-curl',
+      'tgt-hammer-curl',
+    ]);
+  });
+
+  it('shows the lead card and no Per-lift section on a page with one lift', () => {
+    const { data, benchPriority } = baseData();
+    const onlyBench: GoalsPageData = {
+      priorities: [data.priorities[0]!],
+      progress: { [benchPriority.id]: data.progress[benchPriority.id]! },
+      mesocycle: null,
+    };
+
+    const html = render(onlyBench);
+
+    expect(liftRows(onlyBench)).toEqual([]);
+    expect(html).toContain('BENCH PRESS');
+    expect(html).not.toContain('Per-lift');
+  });
+
+  it('removes nothing when no lift target leads', () => {
+    const { data, benchPriority } = baseData();
+    const sessionsOnly: GoalsPageData = {
+      priorities: [{ ...data.priorities[0]!, targets: [data.priorities[0]!.targets[1]!] }],
+      progress: { [benchPriority.id]: [data.progress[benchPriority.id]![1]!] },
+      mesocycle: null,
+    };
+
+    expect(primaryTarget(sessionsOnly)).toBeNull();
+    expect(liftRows(sessionsOnly)).toEqual([]);
+  });
+});
+
+describe('the whole-body section needs a whole-body goal (VW-454 ruling)', () => {
+  it('drops the section and its priority index when no sessions or bodyweight goal exists', () => {
+    const { data, benchPriority } = baseData();
+    data.priorities[0]!.targets.splice(1, 1);
+    data.progress[benchPriority.id]!.splice(1, 1);
+
+    const html = render(data);
+
+    expect(html).not.toContain('Whole body');
+    expect(html).not.toContain('data-testid="goal-priority-index"');
+  });
+
+  it('keeps the section when a sessions goal exists', () => {
+    const html = render(baseData().data);
+
+    expect(html).toContain('Whole body');
+    expect(html).toContain('aria-label="Training days goal"');
+    expect(html).toContain('data-testid="goal-priority-index"');
+    expect(html).toContain('Bench press');
+  });
+
+  it('titles the whole-body cards on the page background, in the grid the lift cards use', () => {
+    const html = render(baseData().data);
+    const sections = [...html.matchAll(/<section[^>]*>(.*?)<\/section>/gs)].map((m) => m[1]!);
+    const wholeBody = sections.find((section) => section.includes('Whole body')) ?? '';
+
+    expect(wholeBody).toMatch(/text-transform:uppercase[^>]*>Whole body</);
+    expect(wholeBody).toContain('repeat(auto-fill, minmax(420px, 1fr))');
   });
 });
 
@@ -296,15 +380,29 @@ describe('GoalsView phone layout (VW-356)', () => {
     try {
       const html = render(baseData().data);
       expect(html).not.toContain('auto-fill');
-      expect(html.match(/grid-template-columns:1fr/g)?.length).toBe(2); // lift grid + muscle grid
+      // Lift grid, muscle grid and whole-body grid. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the column
+      // at the card's min-content, which held it wider than a phone (VW-454). Only the
+      // captures prove the card then fits; this pins the rule that lets it.
+      expect(html.match(/grid-template-columns:minmax\(0, 1fr\)/g)?.length).toBe(3);
+      expect(html).not.toContain('grid-template-columns:1fr');
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
     }
   });
 
+  it('titles the per-lift cards on the page background, not inside a panel (VW-435)', () => {
+    const html = render(baseData().data);
+    const section = /<section[^>]*>(.*?)<\/section>/s.exec(html)?.[1] ?? '';
+
+    expect(section).toContain('Per-lift');
+    expect(section).toContain('display:grid');
+    // All caps by style, like the full card's heading, never by rewriting the string.
+    expect(section).toMatch(/text-transform:uppercase[^>]*>Per-lift</);
+  });
+
   it('lays the wall grids out as auto-fill columns', () => {
     const html = render(baseData().data);
-    expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(2);
+    expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(3);
   });
 });
 
@@ -338,7 +436,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
   const SENTENCE =
     'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.';
 
-  it('says it once, under the compact card; the full card states the wait in its chart', () => {
+  it('states a calibrating lead lift only in its chart, since the lead is not repeated in Per-lift', () => {
     const { data, benchPriority } = baseData();
     const benchTarget = data.priorities[0]!.targets[0]!;
     const cold = view(
@@ -347,6 +445,25 @@ describe('a goal accepted while calibrating (VW-444)', () => {
       [actual(3, 174)],
     );
     data.progress[benchPriority.id] = [cold];
+
+    const html = render(data);
+
+    expect(cold.status).toBe('calibrating');
+    expect(primaryTarget(data)?.view.target.id).toBe('tgt-bench');
+    expect(html).not.toContain(SENTENCE);
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
+  });
+
+  it('says it once, under the compact card, for a calibrating lift that is not the lead', () => {
+    const { data } = baseData();
+    const arms = data.priorities[1]!;
+    const hammerTarget = arms.targets[1]!;
+    const cold = view(
+      arms.priority,
+      { ...hammerTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 29)],
+    );
+    data.progress[arms.priority.id] = [data.progress[arms.priority.id]![0]!, cold];
 
     const html = render(data);
 
@@ -368,7 +485,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     );
     const calibrated = data.progress[benchPriority.id]![0]!;
 
-    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session to calibrate.');
     expect(cardChart(calibrated)).not.toHaveProperty('calibratingNote');
   });
 });
@@ -392,14 +509,83 @@ describe('a calibrated starting ramp (VW-444 part 2)', () => {
     return data;
   }
 
-  it('says a target based on the lifts is ready under both cards', () => {
+  it('says a target based on the lifts is ready under the lead card', () => {
     const line =
       'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
-    // The full card keeps it: its chart has no in-plot note once the lift has calibrated.
-    expect(render(rampData(false)).split(line)).toHaveLength(3);
+    // Once: the lead card keeps it (its chart has no note once calibrated), and the lead
+    // is not repeated in Per-lift.
+    expect(render(rampData(false)).split(line)).toHaveLength(2);
   });
 
   it('shows no line at all once the lifter declined', () => {
     expect(render(rampData(true))).not.toContain('Calibrated');
+  });
+});
+
+describe('the goals page says when history is withheld (VW-514)', () => {
+  function withUnreviewed(unreviewedDays: number | undefined): GoalsPageData {
+    return { ...baseData().data, unreviewedDays };
+  }
+
+  it('names the count of days left out, above the lead card', () => {
+    const html = render(withUnreviewed(3));
+
+    const line = html.indexOf(
+      'These numbers leave out 3 days you haven&#x27;t marked as training or test yet.',
+    );
+    expect(line).toBeGreaterThan(-1);
+    expect(line).toBeLessThan(html.indexOf('data-testid="goal-card-title"'));
+  });
+
+  it('says one day in the singular', () => {
+    const html = render(withUnreviewed(1));
+
+    expect(html).toContain('These numbers leave out 1 day you haven&#x27;t marked');
+    expect(html).not.toContain('1 days');
+  });
+
+  it('renders the same DOM as before when nothing is withheld or the field is absent', () => {
+    const { data } = baseData();
+    const before = render(data);
+
+    expect(render(withUnreviewed(0))).toBe(before);
+    expect(render(withUnreviewed(undefined))).toBe(before);
+    expect(before).not.toContain('These numbers leave out');
+  });
+});
+
+describe('the goals page in the wall’s kg display unit (VW-934)', () => {
+  function renderIn(displayUnit: 'lbs' | 'kg'): string {
+    return renderToStaticMarkup(createElement(GoalsView, { data: baseData().data, displayUnit }));
+  }
+
+  /** Rendered text with markup and React's text-joining comments removed. */
+  function visibleText(html: string): string {
+    return html.replace(/<[^>]*>/g, '');
+  }
+
+  it('prints the lift cards’ gap, target and best in whole kg', () => {
+    const curl = visibleText(cardMarkup(renderIn('kg'), 'CURL goal, Behind'));
+
+    expect(curl).toContain('2 kg'); // 4 lb short of goal
+    expect(curl).toContain('to goal');
+    expect(curl).toContain('8 x 23 kg'); // 50 lb committed
+    expect(curl).toContain('8 x 21 kg'); // 46 lb best
+  });
+
+  it('prints the muscle card’s lift rows in kg', () => {
+    const html = renderIn('kg');
+    const muscles = visibleText(html.slice(html.indexOf('Muscle priorities')));
+
+    expect(muscles).toContain('CURL8 x 81 kg'); // the shared band's 177.5 lb waypoint
+  });
+
+  it('leaves no pound reading anywhere on the page', () => {
+    expect(visibleText(renderIn('kg'))).not.toMatch(/\d\s*lbs?\b/);
+    expect(visibleText(renderIn('lbs'))).toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(renderIn('lbs')).toBe(render(baseData().data));
   });
 });

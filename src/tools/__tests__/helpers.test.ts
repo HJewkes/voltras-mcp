@@ -97,7 +97,7 @@ describe('wrapHandler', () => {
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toEqual({
       code: 'CONNECTION_LOST',
-      message: 'disconnected mid-command',
+      message: 'The connection to the device dropped. Call device.connect, then retry.',
     });
   });
 
@@ -110,10 +110,9 @@ describe('wrapHandler', () => {
     const result = await handler({ name: 'alex' });
 
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text)).toEqual({
-      code: 'UNKNOWN',
-      message: 'something broke',
-    });
+    const body = JSON.parse(result.content[0].text);
+    expect(body.code).toBe('UNKNOWN');
+    expect(body.message).not.toContain('something broke');
   });
 
   it('never throws — bad input resolves rather than rejects', async () => {

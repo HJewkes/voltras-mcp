@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BaselineKey, Phase } from '@voltras/workout-analytics';
 
 import { checkDriftGuard } from '../drift-guard.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -77,7 +78,7 @@ function makeSet(
 }
 
 describe('checkDriftGuard', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   const check = async (): Promise<ReturnType<typeof checkDriftGuard>> =>
@@ -88,7 +89,7 @@ describe('checkDriftGuard', () => {
     });
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
@@ -107,6 +108,43 @@ describe('checkDriftGuard', () => {
     expect(verdict.flagged).toBe(false);
     expect(verdict.tempoDriftPct).toBe(0);
     expect(verdict.romDriftPct).toBe(0);
+  });
+
+  it("keeps a guest's sets inside an owner session out of the verdict (VW-717)", async () => {
+    // Arrange: the owner repeats the same work; a guest works in at a third less ROM
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }));
+    const ownerOnly = await check();
+    for (const id of ['guest-1', 'guest-2']) {
+      await store.putSet(makeSet({ id, sessionId: 'sess-2', lifter: 'Guest' }, { romM: 0.3 }));
+    }
+
+    // Act
+    const withGuest = await check();
+
+    // Assert
+    expect(ownerOnly.flagged).toBe(false);
+    expect(withGuest).toEqual(ownerOnly);
+  });
+
+  it("reads only the named guest's sets when a lifter is passed (VW-717)", async () => {
+    // Arrange: the owner repeats the work; the guest cut ROM by a third
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }));
+    await store.putSet(makeSet({ id: 'g1', sessionId: 'sess-1', lifter: 'Guest' }, { romM: 0.6 }));
+    await store.putSet(makeSet({ id: 'g2', sessionId: 'sess-2', lifter: 'Guest' }, { romM: 0.4 }));
+
+    // Act
+    const verdict = await checkDriftGuard(store, {
+      key,
+      baselineSessionId: 'sess-1',
+      currentSessionId: 'sess-2',
+      lifter: 'Guest',
+    });
+
+    // Assert
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.romDriftPct).toBeCloseTo(-33.33, 1);
   });
 
   it('refuses the comparison when the current session cut ROM by a third', async () => {

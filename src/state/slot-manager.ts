@@ -20,6 +20,7 @@
 // primary slot. Slots allocated through `createSlot` after that point pick up
 // the wiring inline, no extra step needed.
 
+import { UserFacingError } from '../user-facing-error.js';
 import { VoltraClient } from '@voltras/node-sdk';
 
 import { LiveState, type DeviceSnapshot } from './live-state.js';
@@ -44,7 +45,7 @@ import { isPhysicalSide, type SlotBindingUpdate } from './slot-bindings.js';
  */
 export function createSlot(state: ServerState, slotId: string, client: VoltraClient): SlotState {
   if (state.slots.has(slotId)) {
-    throw new Error(`Slot \`${slotId}\` already exists.`);
+    throw new UserFacingError(`Slot \`${slotId}\` already exists.`);
   }
   // The cap counts slots whose client is actually connected — the
   // bootstrap-only primary slot (parameter-less VoltraClient, never wired
@@ -54,7 +55,7 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
   // no explicit slot arg), primary's client.isConnected flips true and it
   // joins the count.
   if (countConnectedSlots(state) >= MAX_SLOTS) {
-    throw new Error(`Maximum of ${MAX_SLOTS} slots supported in this release.`);
+    throw new UserFacingError(`Maximum of ${MAX_SLOTS} slots supported in this release.`);
   }
   const slot: SlotState = {
     slotId,
@@ -81,11 +82,11 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
  */
 export function removeSlot(state: ServerState, slotId: string): void {
   if (slotId === PRIMARY_SLOT) {
-    throw new Error(`Cannot remove the primary slot — use resetPrimarySlot instead.`);
+    throw new UserFacingError(`Cannot remove the primary slot — use resetPrimarySlot instead.`);
   }
   const slot = state.slots.get(slotId);
   if (!slot) {
-    throw new Error(`Unknown slot: ${slotId}`);
+    throw new UserFacingError(`Unknown slot: ${slotId}`);
   }
   slot.unwireBridge?.();
   // Defensive dispose: even if the BLE-level disconnect path didn't reach
@@ -120,7 +121,7 @@ export function removeSlot(state: ServerState, slotId: string): void {
 export function resetPrimarySlot(state: ServerState): void {
   const slot = state.slots.get(PRIMARY_SLOT);
   if (!slot) {
-    throw new Error(`Primary slot is missing — bootstrap was never run.`);
+    throw new UserFacingError(`Primary slot is missing — bootstrap was never run.`);
   }
   slot.unwireBridge?.();
   // Defensive dispose of the outgoing client before swapping in the fresh
@@ -321,8 +322,8 @@ function currentBindings(state: ServerState, updates: SlotBindingUpdate[]): Slot
  * unchanged when it appears on a thrown error, surfacing it as the tool
  * response's structured error code.
  */
-function makeCodedError(code: string, message: string): Error {
-  const err = new Error(message) as Error & { code: string };
+function makeCodedError(code: string, message: string): UserFacingError {
+  const err = new UserFacingError(message) as UserFacingError & { code: string };
   err.code = code;
   return err;
 }

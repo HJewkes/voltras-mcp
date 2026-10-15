@@ -7,7 +7,7 @@
 // releases a transient write lock so that concurrent processes contesting
 // the same `VMCP_DB_PATH` are detected up-front (R8); the resulting error
 // surfaces the env-var name and "already in use" hint expected by the
-// README's concurrency note.
+// concurrency note in site/start/launch-options.md.
 //
 // The `Rep` type from `@voltras/workout-analytics` carries nested `Phase`
 // objects with sample arrays, so each rep is persisted as a JSON-serialised
@@ -18,6 +18,8 @@
 // set row and replaces the entire rep array, so retries (e.g. force-end on
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
+import { UserFacingError } from '../user-facing-error.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
@@ -29,6 +31,7 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
+import { resistanceFamilyOf } from '../analytics/resistance-family.js';
 import {
   fitRirVelocityModel,
   RIR_VELOCITY_MODEL_VERSION,
@@ -80,6 +83,9 @@ import {
   UI_ACTION_ACTORS,
   UI_ACTION_STATUSES,
   UI_ACTION_SURFACES,
+  type AdvisoryAnswer,
+  type AdvisoryAnswerRetire,
+  type ListActivityFilter,
   type ClaimUiActionInput,
   type ClaimUiActionOutcome,
   type CompleteUiActionInput,
@@ -101,6 +107,9 @@ import {
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
   type RirVelocityRefitCounts,
+  type GoalTargetAcceptance,
+  type GoalTargetAcceptOutcome,
+  type GoalTargetOfferClaim,
   type GoalTargetSelector,
   type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
@@ -109,11 +118,16 @@ import {
   type ListPrioritiesOptions,
   type MarkExerciseChapterInput,
   type PutAdvisoryDecisionInput,
+  type AdvisoryDerivation,
+  type AdvisoryDerived,
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
   type SessionReviewKindFilter,
   type SessionReviewRow,
+  type SessionKindWrite,
+  type ImportWeeksInput,
+  type ImportWeeksResult,
   type SessionListFilter,
   type SessionPatch,
   type SessionStore,
@@ -168,7 +182,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 41;
+export const SCHEMA_VERSION = 44;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -434,14 +448,16 @@ const UI_ACTION_DEVICE_INDEX_SQL = `
     ON ui_actions(device_id, created_at DESC);`;
 
 /**
- * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * The v39 shape of the trigger, frozen: the v39 step runs it against a table that has no
+ * `reason`, `summary_json` or `session_id` yet, and the v42 step replaces it. The one legal
+ * update: `pending` -> `ok` or `error`, with every column that records WHO
  * submitted and WHAT they submitted held fixed.
  *
  * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
  * migrated from v36 already carries the v36 trigger, which would otherwise survive and
  * leave `device_id` the one column an out-of-band UPDATE could rewrite.
  */
-const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+const UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
     BEFORE UPDATE ON ui_actions
     WHEN NOT (
@@ -457,8 +473,83 @@ const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
     )
     BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
 
-const UI_ACTIONS_DDL = `
-  CREATE TABLE IF NOT EXISTS ui_actions (
+/**
+ * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * submitted and WHAT they submitted held fixed.
+ *
+ * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
+ * migrated from v36 already carries the v36 trigger, which would otherwise survive and
+ * leave `device_id` the one column an out-of-band UPDATE could rewrite. The v42 step does the
+ * same to hold `reason`, `summary_json` and `session_id` fixed, and the v43 step to hold the
+ * hidden `rowid` fixed: an `UPDATE OR REPLACE` that moves a row onto another row's rowid
+ * deletes that row without firing `ui_actions_no_delete` (VW-903).
+ */
+const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.rowid = OLD.rowid
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.device_id IS OLD.device_id
+      AND NEW.reason IS OLD.reason
+      AND NEW.summary_json IS OLD.summary_json
+      AND NEW.session_id IS OLD.session_id
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
+
+/** Owned by the v42 step, not `SCHEMA_SQL`: it names `session_id`, absent from a v41 table. */
+const UI_ACTION_SESSION_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_session
+    ON ui_actions(session_id, created_at DESC);`;
+
+/**
+ * The insert half of the audit trail's no-delete guarantee (VW-903). `REPLACE INTO` and
+ * `INSERT OR REPLACE` remove a conflicting row without firing `ui_actions_no_delete`, because
+ * SQLite runs no DELETE trigger for a REPLACE unless `recursive_triggers` is on, and a pragma on
+ * this process's connection would not cover any other connection. A BEFORE INSERT trigger fires
+ * before the conflict is resolved, so it refuses any insert whose id is already taken, however
+ * it resolves conflicts. That includes `ON CONFLICT DO NOTHING`, so `claimUiAction` reads first.
+ *
+ * The table has a second unique key, the hidden `rowid`, and an insert that names one can
+ * REPLACE the row holding it, so the trigger checks that too. In a BEFORE INSERT trigger an
+ * auto-assigned rowid reads as -1, which is why -1 is skipped; the AFTER INSERT trigger keeps
+ * every rowid at 1 or above, so no row can sit at -1 for a named one to replace.
+ *
+ * Owned by the v43 step, not `SCHEMA_SQL`: an older binary claims with `DO NOTHING`, and the
+ * version bump is what keeps one from opening a store whose trigger would refuse its replays.
+ */
+const UI_ACTIONS_NO_REPLACE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_no_replace
+    BEFORE INSERT ON ui_actions
+    WHEN EXISTS (
+      SELECT 1 FROM ui_actions
+       WHERE action_id = NEW.action_id OR (NEW.rowid <> -1 AND rowid = NEW.rowid)
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;
+  CREATE TRIGGER IF NOT EXISTS ui_actions_positive_rowid
+    AFTER INSERT ON ui_actions
+    WHEN NEW.rowid < 1
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never replaced'); END;`;
+
+/**
+ * The activity feed's keyset order (VW-910). `listActivity` sorts on `created_at DESC, action_id
+ * DESC` and pages from a cursor over the same pair; with only `idx_ui_actions_created` the
+ * tiebreak forced a temp B-tree over every matching row, about 0.4 s a page at 1.5M rows. Owned
+ * by the v44 step so the index exists on a migrated and a fresh store alike.
+ */
+const UI_ACTIONS_ACTIVITY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_activity
+    ON ui_actions(created_at DESC, action_id DESC);`;
+
+const uiActionsTableSql = (name: string): string => `
+  CREATE TABLE IF NOT EXISTS ${name} (
     action_id TEXT PRIMARY KEY,
     action_name TEXT NOT NULL,
     actor TEXT NOT NULL CHECK (actor IN (${sqlList(UI_ACTION_ACTORS)})),
@@ -466,13 +557,18 @@ const UI_ACTIONS_DDL = `
     device_id TEXT,
     flow_id TEXT,
     flow_step TEXT,
+    reason TEXT,
+    summary_json TEXT,
+    session_id TEXT,
     input_hash TEXT NOT NULL,
     result_status TEXT NOT NULL CHECK (result_status IN (${sqlList(UI_ACTION_STATUSES)})),
     result_code TEXT,
     result_json TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT
-  );
+  );`;
+
+const UI_ACTIONS_DDL = `${uiActionsTableSql('ui_actions')}
   CREATE INDEX IF NOT EXISTS idx_ui_actions_created
     ON ui_actions(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ui_actions_flow
@@ -2186,7 +2282,7 @@ function migrateV38ToV39(db: DatabaseSync): void {
     addColumnIfMissing(db, 'ui_actions', 'device_id', 'TEXT');
     db.exec(UI_ACTION_DEVICE_INDEX_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
-    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -2235,6 +2331,106 @@ function migrateV40ToV41(db: DatabaseSync): void {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+/**
+ * v41 -> v42: the audit table learns the agent (VW-849 S1). `surface` gains `mcp`, and three
+ * nullable columns arrive: `reason`, `summary_json`, `session_id`.
+ *
+ * A REBUILD, because SQLite cannot alter a CHECK. Inside one transaction: create
+ * `ui_actions_v42`, copy every row column for column (the new columns NULL), assert the
+ * copied count equals the source count, drop the old table, rename, then recreate the
+ * indexes and both triggers. `DROP TABLE` fires no DELETE trigger, so the audit trail's
+ * delete refusal survives the swap and is recreated, not relied on.
+ *
+ * NO BACK-FILL: a row written before this step never recorded a reason, summary or session,
+ * and NULL says exactly that (same stance as v39).
+ *
+ * GUARDED BY SHAPE. The rebuild runs only when the stored table lacks `mcp` or `reason`, so a
+ * fresh store (whose `SCHEMA_SQL` already holds the new DDL) and a second open skip it. The
+ * index and triggers are recreated either way, which is idempotent. A failure rolls back and
+ * leaves the v41 shape.
+ */
+function migrateV41ToV42(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    if (uiActionsNeedsRebuild(db)) rebuildUiActions(db);
+    db.exec(UI_ACTION_SESSION_INDEX_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v42 -> v43: refuse a REPLACE on the audit trail (VW-903). Triggers only, no rows touched;
+ * see `UI_ACTIONS_NO_REPLACE_TRIGGER_SQL`. Complete-once is dropped and recreated to pin the
+ * rowid. Runs on a fresh store too, which is where a fresh store gets them.
+ *
+ * The step stamps 43 inside its own transaction: a v42 binary's replay would throw on these
+ * triggers, so a file that has them must never read as 42, even after a kill mid-open.
+ */
+function migrateV42ToV43(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('PRAGMA user_version = 43');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * v43 -> v44: index the activity keyset (VW-910). An index only, no rows or triggers touched, so
+ * `ui_actions_no_replace` and the rowid pin carry over. The stamp sits inside the transaction: a
+ * kill mid-step leaves the file at 43 with no index, and the next open builds it again.
+ */
+function migrateV43ToV44(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(UI_ACTIONS_ACTIVITY_INDEX_SQL);
+    db.exec('PRAGMA user_version = 44');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ui_actions'`)
+    .get() as { sql: string } | undefined;
+  if (row === undefined) return false;
+  return !row.sql.includes("'mcp'") || !row.sql.includes('reason');
+}
+
+const UI_ACTIONS_V41_COLUMNS =
+  'action_id, action_name, actor, surface, device_id, flow_id, flow_step, input_hash, ' +
+  'result_status, result_code, result_json, created_at, completed_at';
+
+function rebuildUiActions(db: DatabaseSync): void {
+  db.exec(uiActionsTableSql('ui_actions_v42'));
+  db.exec(
+    `INSERT INTO ui_actions_v42 (${UI_ACTIONS_V41_COLUMNS})
+       SELECT ${UI_ACTIONS_V41_COLUMNS} FROM ui_actions`,
+  );
+  const count = (table: string): number =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+  if (count('ui_actions_v42') !== count('ui_actions')) {
+    throw new Error('ui_actions v42 rebuild: copied row count differs from the source');
+  }
+  db.exec('DROP TABLE ui_actions');
+  db.exec('ALTER TABLE ui_actions_v42 RENAME TO ui_actions');
+  db.exec(UI_ACTIONS_DDL);
+  db.exec(UI_ACTION_DEVICE_INDEX_SQL);
 }
 
 function assertNoDuplicateAssignments(db: DatabaseSync): void {
@@ -2352,6 +2548,9 @@ interface UiActionRow {
   device_id: string | null;
   flow_id: string | null;
   flow_step: string | null;
+  reason: string | null;
+  summary_json: string | null;
+  session_id: string | null;
   input_hash: string;
   result_status: string;
   result_code: string | null;
@@ -2369,6 +2568,9 @@ function rowToUiAction(row: UiActionRow): StoredUiAction {
     ...(row.device_id === null ? {} : { deviceId: row.device_id }),
     ...(row.flow_id === null ? {} : { flowId: row.flow_id }),
     ...(row.flow_step === null ? {} : { flowStep: row.flow_step }),
+    ...(row.reason === null ? {} : { reason: row.reason }),
+    ...(row.summary_json === null ? {} : { summaryJson: row.summary_json }),
+    ...(row.session_id === null ? {} : { sessionId: row.session_id }),
     inputHash: row.input_hash,
     resultStatus: row.result_status as UiActionStatus,
     ...(row.result_code === null ? {} : { resultCode: row.result_code }),
@@ -2725,10 +2927,71 @@ function sameCommitmentContent(latest: StoredCommitment, input: DeclareCommitmen
   );
 }
 
+function weeksExist(blockId: string): Error {
+  const err = new UserFacingError(
+    `block ${blockId} already has week rows; scaffoldWeeks only builds an empty block.`,
+  );
+  (err as Error & { code: string }).code = 'WEEKS_EXIST';
+  return err;
+}
+
 function blockScheduleInvalid(blockId: string, problem: string): Error {
-  const err = new Error(`block ${blockId}: ${problem}.`);
+  const err = new UserFacingError(`block ${blockId}: ${problem}.`);
   (err as Error & { code: string }).code = 'BLOCK_SCHEDULE_INVALID';
   return err;
+}
+
+function isThenable(value: unknown): boolean {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function asyncTransactionRefused(): Error {
+  const err = new UserFacingError(
+    'A store transaction callback returned a promise; store transactions must stay synchronous.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_ASYNC';
+  return err;
+}
+
+function nestedTransactionOverlap(): Error {
+  const err = new UserFacingError(
+    'A nested store transaction was opened beside another one still open; nest them in sequence.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_OVERLAP';
+  return err;
+}
+
+/** How long a caller transaction may stay open before it logs that it is holding the store. */
+export const TRANSACTION_STALL_WARN_MS = 30_000;
+
+/** The owner of the open caller transaction, and the level its code runs at. */
+interface TransactionFrame {
+  readonly owner: object;
+  readonly depth: number;
+}
+
+function transactionBusy(): Error {
+  const err = new UserFacingError(
+    'The store is inside a caller-owned transaction, and this call came from outside it.',
+  );
+  (err as Error & { code: string }).code = 'STORE_TRANSACTION_BUSY';
+  return err;
+}
+
+/** Opens one transaction level: the transaction itself at depth 0, a numbered savepoint above it. */
+function enterTransactionLevel(db: DatabaseSync, depth: number): void {
+  db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT vmcp_sp_${depth}`);
+}
+
+/** Closes the level `enterTransactionLevel` opened at `depth`, keeping or discarding its writes. */
+function leaveTransactionLevel(db: DatabaseSync, depth: number, keep: boolean): void {
+  const savepoint = `vmcp_sp_${depth}`;
+  if (keep) db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+  else db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
 }
 
 interface GoalTargetRow {
@@ -2987,8 +3250,26 @@ const EMPTY_RIR_VELOCITY_FIT: RirVelocityFit = {
   reason: 'no recorded set carries both a load and a rep, so there is no reference 1RM',
 };
 
+/** A stored set's resistance settings, as the family classifier reads them. */
+function isConstantLoadAnchor(row: FailureAnchorJoinRow): boolean {
+  return (
+    resistanceFamilyOf({
+      trainingMode: row.training_mode ?? undefined,
+      chainsLbs: row.chains_lbs ?? undefined,
+      inverseChainsLbs: row.inverse_chains_lbs ?? undefined,
+      eccentricPct: row.eccentric_pct ?? undefined,
+      damperLevel: row.damper_level ?? undefined,
+    }) === 'constant'
+  );
+}
+
 /** `failure_anchors` joined to its set row for the session bucket. */
 interface FailureAnchorJoinRow {
+  training_mode: string | null;
+  chains_lbs: number | null;
+  inverse_chains_lbs: number | null;
+  eccentric_pct: number | null;
+  damper_level: number | null;
   session_id: string | null;
   observed_at: string;
   terminal_velocity_mps: number | null;
@@ -3095,13 +3376,142 @@ interface ProgramAssignmentRow {
   assigned_at: string;
 }
 
+/** The session upsert; the last parameter is the phase covering the start, stamped only on an unlabelled stored row. */
+const PUT_SESSION_SQL = `
+  INSERT INTO sessions
+    (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
+     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    started_at = excluded.started_at,
+    ended_at = excluded.ended_at,
+    exercise_id = excluded.exercise_id,
+    exercise_name = excluded.exercise_name,
+    notes = excluded.notes,
+    diet_phase = CASE WHEN sessions.lifter IS NULL THEN ? END`;
+
+/** The `AND ...` tail that keeps named sessions and later sets out of a recency read (VW-642). */
+function recencyExclusionClause(filter: {
+  excludeSessionIds?: readonly string[];
+  startedBefore?: string;
+}): { sql: string; params: string[] } {
+  const excluded = filter.excludeSessionIds ?? [];
+  const params = [...excluded];
+  let sql =
+    excluded.length === 0 ? '' : ` AND session_id NOT IN (${excluded.map(() => '?').join(', ')})`;
+  if (filter.startedBefore !== undefined) {
+    sql += ' AND started_at < ?';
+    params.push(filter.startedBefore);
+  }
+  return { sql, params };
+}
+
 /** SQLite-backed implementation of `SessionStore`. */
 export class SqliteSessionStore implements SessionStore {
-  private readonly db: DatabaseSync;
+  private readonly connection: DatabaseSync;
   private closed = false;
+  private transactionDepth = 0;
+  private readonly transactionFrame = new AsyncLocalStorage<TransactionFrame>();
+  private openOwner: object | undefined;
+  private transactionQueue: Promise<void> = Promise.resolve();
 
   private constructor(db: DatabaseSync) {
-    this.db = db;
+    this.connection = db;
+  }
+
+  /** Every statement goes through here, so a foreign context cannot join an open caller transaction. */
+  private get db(): DatabaseSync {
+    if (this.openOwner !== undefined && !this.insideOpenTransaction()) throw transactionBusy();
+    return this.connection;
+  }
+
+  private insideOpenTransaction(): boolean {
+    return this.transactionFrame.getStore()?.owner === this.openOwner;
+  }
+
+  /**
+   * The one way a store method opens a transaction (VW-512). At depth 0 it takes
+   * the write lock up front (BEGIN IMMEDIATE); inside an open one it is a depth-numbered savepoint, so
+   * an inner throw undoes only the inner writes and the caller decides the rest.
+   * Synchronous by construction: a callback that returns a thenable is refused.
+   */
+  private atomically<T>(fn: () => T): T {
+    const depth = this.transactionDepth;
+    enterTransactionLevel(this.db, depth);
+    this.transactionDepth = depth + 1;
+    try {
+      const result = fn();
+      if (isThenable(result)) throw asyncTransactionRefused();
+      leaveTransactionLevel(this.connection, depth, true);
+      return result;
+    } catch (err) {
+      leaveTransactionLevel(this.connection, depth, false);
+      throw err;
+    } finally {
+      this.transactionDepth = depth;
+    }
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.openOwner !== undefined && this.insideOpenTransaction()) {
+      return this.nestedTransaction(fn);
+    }
+    const previous = this.transactionQueue;
+    let releaseTurn!: () => void;
+    this.transactionQueue = new Promise<void>((resolve) => (releaseTurn = resolve));
+    await previous;
+    try {
+      return await this.ownedTransaction(fn);
+    } finally {
+      releaseTurn();
+    }
+  }
+
+  private async ownedTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    enterTransactionLevel(this.db, 0);
+    this.transactionDepth = 1;
+    const owner = {};
+    this.openOwner = owner;
+    const yieldSentinel = setImmediate(() =>
+      log.warn('store.transaction spanned an event-loop turn; foreign store calls during it throw'),
+    );
+    const stallSentinel = setTimeout(() => {
+      log.warn(
+        `store.transaction still open after ${TRANSACTION_STALL_WARN_MS} ms; the store is held`,
+      );
+    }, TRANSACTION_STALL_WARN_MS);
+    stallSentinel.unref();
+    try {
+      const result = await this.transactionFrame.run({ owner, depth: 1 }, fn);
+      leaveTransactionLevel(this.connection, 0, true);
+      return result;
+    } catch (err) {
+      leaveTransactionLevel(this.connection, 0, false);
+      throw err;
+    } finally {
+      clearImmediate(yieldSentinel);
+      clearTimeout(stallSentinel);
+      this.openOwner = undefined;
+      this.transactionDepth = 0;
+    }
+  }
+
+  private async nestedTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    const depth = this.transactionDepth;
+    const frame = this.transactionFrame.getStore()!;
+    if (frame.depth !== depth) throw nestedTransactionOverlap();
+    enterTransactionLevel(this.connection, depth);
+    this.transactionDepth = depth + 1;
+    try {
+      const result = await this.transactionFrame.run({ owner: frame.owner, depth: depth + 1 }, fn);
+      leaveTransactionLevel(this.connection, depth, true);
+      return result;
+    } catch (err) {
+      leaveTransactionLevel(this.connection, depth, false);
+      throw err;
+    } finally {
+      this.transactionDepth = depth;
+    }
   }
 
   /**
@@ -3160,59 +3570,50 @@ export class SqliteSessionStore implements SessionStore {
     // a NULL kind reads as unreviewed, and unreviewed is excluded from every
     // lifter-facing read, so the workout that just finished would vanish from
     // training days, tier, goals, reports and calibration the moment it ended
-    // (VW-489). `setSessionKind` is the one path that changes an existing row's
-    // kind, which is what makes marking auditable.
-    this.db
-      .prepare(
-        `INSERT INTO sessions
-           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           started_at = excluded.started_at,
-           ended_at = excluded.ended_at,
-           exercise_id = excluded.exercise_id,
-           exercise_name = excluded.exercise_name,
-           notes = excluded.notes,
-           lifter = excluded.lifter,
-           diet_phase = excluded.diet_phase,
-           pre_session_carbs_level = excluded.pre_session_carbs_level,
-           pre_session_carbs_hours_since_meal = excluded.pre_session_carbs_hours_since_meal`,
-      )
-      .run(
-        s.id,
-        s.startedAt,
-        s.endedAt ?? null,
-        s.exerciseId ?? null,
-        s.exerciseName ?? null,
-        s.notes ?? null,
-        s.lifter ?? null,
-        // Derived here, never taken from the caller: the stamp's whole job is
-        // to agree with the table for a session written now, and a tool that
-        // could pass its own value would be a second, disagreeing writer.
-        this.stampableDietPhase(s),
-        s.preSessionCarbs?.level ?? null,
-        s.preSessionCarbs?.hoursSinceLastMeal ?? null,
-        s.catalogVersion ?? null,
-        s.kind ?? null,
-      );
+    // (VW-489). `setSessionKind` and `setSessionKindWhere` are the only paths
+    // that change an existing row's kind, which is what makes marking auditable.
+    //
+    // lifter and the carb columns are held out for the same reason (VW-584):
+    // `patchSession` owns them after start, and a re-put from one process's live
+    // state would revert a patch another process made. The diet-phase stamp
+    // therefore follows the STORED label, the one that survives the re-put.
+    this.atomically(() => {
+      // Derived here, never taken from the caller: the stamp's whole job is
+      // to agree with the table for a session written now, and a tool that
+      // could pass its own value would be a second, disagreeing writer.
+      const phase = this.dietPhaseCovering(s.startedAt);
+      this.db
+        .prepare(PUT_SESSION_SQL)
+        .run(
+          s.id,
+          s.startedAt,
+          s.endedAt ?? null,
+          s.exerciseId ?? null,
+          s.exerciseName ?? null,
+          s.notes ?? null,
+          s.lifter ?? null,
+          s.lifter === undefined ? phase : null,
+          s.preSessionCarbs?.level ?? null,
+          s.preSessionCarbs?.hoursSinceLastMeal ?? null,
+          s.catalogVersion ?? null,
+          s.kind ?? null,
+          phase,
+        );
+    });
     return Promise.resolve();
   }
 
   async patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
-        | SessionRow
-        | undefined;
-      const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
-      if (next !== undefined) this.writeSessionPatch(next);
-      this.db.exec('COMMIT');
-      return Promise.resolve(next);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
+          | SessionRow
+          | undefined;
+        const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
+        if (next !== undefined) this.writeSessionPatch(next);
+        return next;
+      }),
+    );
   }
 
   /** The patchable columns only; the rest of the row stays as another writer left it. */
@@ -3232,14 +3633,19 @@ export class SqliteSessionStore implements SessionStore {
       );
   }
 
+  /** The phase to stamp on `s`, or `null`: a labelled session is a guest's and never carries the owner's phase. */
+  private stampableDietPhase(s: StoredSession): string | null {
+    if (s.lifter !== undefined) return null;
+    return this.dietPhaseCovering(s.startedAt);
+  }
+
   /**
-   * The phase to stamp on `s`, or `null`. Both `session.start` and
+   * The owner's phase covering `startedAt`, or `null`. Both `session.start` and
    * `session.end` re-put the row, so this is recomputed on each — a
    * correction declared mid-session is picked up rather than frozen.
    */
-  private stampableDietPhase(s: StoredSession): string | null {
-    if (s.lifter !== undefined) return null;
-    return this.findDietPhaseCovering(LOCAL_USER_ID, s.startedAt, s.startedAt)?.phase ?? null;
+  private dietPhaseCovering(startedAt: string): string | null {
+    return this.findDietPhaseCovering(LOCAL_USER_ID, startedAt, startedAt)?.phase ?? null;
   }
 
   /**
@@ -3264,6 +3670,10 @@ export class SqliteSessionStore implements SessionStore {
     // which is invisible until a force-end/re-end retry writes the wrong value.
     // `is_warmup` is absent by design — it is a generated column as of v6 and
     // SQLite rejects writes to it; `set_purpose` is the stored value.
+    // Two deliberate exceptions (VW-583): `lifter` is written on insert only,
+    // because `patchSetLifter` owns a stored set's label, and a re-put carrying
+    // no group keeps the one `patchSetBilateralGroup` stamped. A re-put comes
+    // from a live snapshot that sees neither write.
     const upsertSet = this.db.prepare(
       `INSERT INTO sets
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
@@ -3300,7 +3710,6 @@ export class SqliteSessionStore implements SessionStore {
          velocity_units = excluded.velocity_units,
          auto_created_by = excluded.auto_created_by,
          upgraded = excluded.upgraded,
-         lifter = excluded.lifter,
          kind = excluded.kind,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
@@ -3308,8 +3717,9 @@ export class SqliteSessionStore implements SessionStore {
          firmware_peak_force_lbs = excluded.firmware_peak_force_lbs,
          firmware_peak_power = excluded.firmware_peak_power,
          firmware_reps_json = excluded.firmware_reps_json,
-         bilateral_group_id = excluded.bilateral_group_id,
-         group_source = excluded.group_source,
+         bilateral_group_id = coalesce(excluded.bilateral_group_id, sets.bilateral_group_id),
+         group_source = CASE WHEN excluded.bilateral_group_id IS NULL
+                             THEN sets.group_source ELSE excluded.group_source END,
          chains_lbs = excluded.chains_lbs,
          damper_level = excluded.damper_level,
          eccentric_pct = excluded.eccentric_pct,
@@ -3325,8 +3735,7 @@ export class SqliteSessionStore implements SessionStore {
       `INSERT INTO reps (id, set_id, rep_index, payload) VALUES (?, ?, ?, ?)`,
     );
 
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       upsertSet.run(
         s.id,
         s.sessionId,
@@ -3385,11 +3794,7 @@ export class SqliteSessionStore implements SessionStore {
           serializeRepPayload(rep, `SqliteSessionStore.putSet: rep ${rep.id}`),
         );
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve();
   }
 
@@ -3409,18 +3814,32 @@ export class SqliteSessionStore implements SessionStore {
 
   async patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined> {
     // One column, never a `putSet` round-trip: that re-inserts the reps it read (VW-536).
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = this.db
-        .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
-        .get(lifter, setId) as SetRow | undefined;
-      const patched = row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
-      this.db.exec('COMMIT');
-      return Promise.resolve(patched);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db
+          .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
+          .get(lifter, setId) as SetRow | undefined;
+        return row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      }),
+    );
+  }
+
+  async patchSetBilateralGroup(
+    setId: string,
+    groupId: string,
+    source: 'live' | 'inferred',
+  ): Promise<StoredSet | undefined> {
+    // Two columns, never a `putSet` round-trip: that re-inserts the reps it read (VW-583).
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db
+          .prepare(
+            `UPDATE sets SET bilateral_group_id = ?, group_source = ? WHERE id = ? RETURNING *`,
+          )
+          .get(groupId, source, setId) as SetRow | undefined;
+        return row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      }),
+    );
   }
 
   async listSessions(filter: SessionListFilter): Promise<StoredSession[]> {
@@ -3473,6 +3892,27 @@ export class SqliteSessionStore implements SessionStore {
       ` ORDER BY started_at ${direction} LIMIT ? OFFSET ?`;
     const rows = this.db.prepare(sql).all(...params, limit, offset) as unknown as SessionRow[];
     return Promise.resolve(rows.map(rowToSession));
+  }
+
+  async listOpenSessions(): Promise<StoredSession[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at ASC`)
+      .all() as unknown as SessionRow[];
+    return Promise.resolve(rows.map(rowToSession));
+  }
+
+  async getLastRepAt(sessionId: string): Promise<string | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(at) AS at FROM (
+           SELECT MAX(observed_at) AS at FROM idle_reps WHERE session_id = ?
+           UNION ALL
+           SELECT MAX(ended_at) AS at FROM sets
+            WHERE session_id = ? AND id IN (SELECT set_id FROM reps)
+         )`,
+      )
+      .get(sessionId, sessionId) as { at: string | null } | undefined;
+    return Promise.resolve(row?.at ?? undefined);
   }
 
   async countSessions(filter: SessionCountFilter = {}): Promise<number> {
@@ -3554,23 +3994,59 @@ export class SqliteSessionStore implements SessionStore {
   async setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number> {
     if (sessionIds.length === 0) return Promise.resolve(0);
     const placeholders = sessionIds.map(() => '?').join(', ');
-    this.db.exec('BEGIN');
-    try {
-      // One transaction over both tables. `sets.kind` is denormalised from the
-      // session, so a partial write would leave the set-level readers and the
-      // session-level ones disagreeing about the same bout.
-      const sessions = this.db
-        .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
-        .run(kind, ...sessionIds);
-      this.db
-        .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
-        .run(kind, ...sessionIds);
-      this.db.exec('COMMIT');
-      return Promise.resolve(Number(sessions.changes));
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        // One transaction over both tables. `sets.kind` is denormalised from the
+        // session, so a partial write would leave the set-level readers and the
+        // session-level ones disagreeing about the same bout.
+        const sessions = this.db
+          .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+          .run(kind, ...sessionIds);
+        this.db
+          .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+          .run(kind, ...sessionIds);
+        return Number(sessions.changes);
+      }),
+    );
+  }
+
+  async setSessionKindWhere(
+    sessionIds: readonly string[],
+    kind: SessionKind,
+    opts: { mayReclassify: boolean },
+  ): Promise<SessionKindWrite> {
+    if (sessionIds.length === 0) return Promise.resolve({ rows: [], setsChanged: 0 });
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    return Promise.resolve(
+      this.atomically(() => {
+        // Judged on the rows as they stand under the write lock, not as a caller last read them.
+        const found = this.db
+          .prepare(`SELECT id, kind FROM sessions WHERE lifter IS NULL AND id IN (${placeholders})`)
+          .all(...sessionIds) as { id: string; kind: string | null }[];
+        const byId = new Map(found.map((row) => [row.id, row.kind]));
+        const rows = sessionIds.flatMap((sessionId) => {
+          const prior = byId.get(sessionId);
+          if (prior === undefined) return [];
+          const written = prior === null || (opts.mayReclassify && prior !== kind);
+          return [kindWriteRow(sessionId, prior, written)];
+        });
+        const toWrite = rows.filter((row) => row.written).map((row) => row.sessionId);
+        return { rows, setsChanged: this.writeSessionKind(toWrite, kind) };
+      }),
+    );
+  }
+
+  /** The session rows and their sets, re-marked; returns the number of set rows changed. */
+  private writeSessionKind(sessionIds: readonly string[], kind: SessionKind): number {
+    if (sessionIds.length === 0) return 0;
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    this.db
+      .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+      .run(kind, ...sessionIds);
+    const sets = this.db
+      .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+      .run(kind, ...sessionIds);
+    return Number(sets.changes);
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -3673,6 +4149,8 @@ export class SqliteSessionStore implements SessionStore {
     exerciseId: string;
     lifter?: string;
     kind?: SessionKindFilter;
+    excludeSessionIds?: readonly string[];
+    startedBefore?: string;
   }): Promise<string | null> {
     // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
     // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
@@ -3692,10 +4170,12 @@ export class SqliteSessionStore implements SessionStore {
     const kind = sessionKindPredicate(filter.kind);
     const kindClause = kind === undefined ? '' : ` AND ${kind.where}`;
     if (kind !== undefined) params.push(...kind.params);
+    const recency = recencyExclusionClause(filter);
+    params.push(...recency.params);
     const row = this.db
       .prepare(
         `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause}` +
-          `${kindClause} ORDER BY started_at DESC LIMIT 1`,
+          `${kindClause}${recency.sql} ORDER BY started_at DESC LIMIT 1`,
       )
       .get(...params) as { session_id: string } | undefined;
     return Promise.resolve(row?.session_id ?? null);
@@ -3884,8 +4364,7 @@ export class SqliteSessionStore implements SessionStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       upsertMeasurement.run(
         m.id,
         m.measuredAt,
@@ -3919,11 +4398,7 @@ export class SqliteSessionStore implements SessionStore {
           );
         }
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve();
   }
 
@@ -4036,16 +4511,12 @@ export class SqliteSessionStore implements SessionStore {
   ): Promise<StoredBlockSchedule> {
     const problem = scheduleProblem(schedule);
     if (problem !== null) throw blockScheduleInvalid(schedule.blockId, problem);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.writeTrainingBlock(b);
-      const row = this.insertBlockSchedule(schedule);
-      this.db.exec('COMMIT');
-      return Promise.resolve(row);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        this.writeTrainingBlock(b);
+        return this.insertBlockSchedule(schedule);
+      }),
+    );
   }
 
   private writeTrainingBlock(b: StoredTrainingBlock): void {
@@ -4080,6 +4551,11 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putTrainingWeek(w: StoredTrainingWeek): Promise<void> {
+    this.writeTrainingWeek(w);
+    return Promise.resolve();
+  }
+
+  private writeTrainingWeek(w: StoredTrainingWeek): void {
     this.db
       .prepare(
         `INSERT INTO training_weeks
@@ -4102,7 +4578,6 @@ export class SqliteSessionStore implements SessionStore {
         w.isDeload ? 1 : 0,
         w.weekIndex ?? null,
       );
-    return Promise.resolve();
   }
 
   async getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined> {
@@ -4113,10 +4588,93 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]> {
+    return Promise.resolve(this.weeksOfBlock(blockId));
+  }
+
+  private weeksOfBlock(blockId: string): StoredTrainingWeek[] {
     const rows = this.db
       .prepare(`SELECT * FROM training_weeks WHERE block_id = ? ORDER BY order_index ASC`)
       .all(blockId) as unknown as TrainingWeekRow[];
-    return Promise.resolve(rows.map(rowToTrainingWeek));
+    return rows.map(rowToTrainingWeek);
+  }
+
+  async ensureImportWeeks(
+    input: ImportWeeksInput,
+    schedule: (
+      world: readonly ScheduledBlock[],
+      block: StoredTrainingBlock,
+      labels: readonly string[],
+    ) => AppendBlockScheduleInput | null,
+  ): Promise<ImportWeeksResult> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const found = this.blockNamed(input.programId, input.blockName);
+        const existing = found === undefined ? [] : this.weeksOfBlock(found.id);
+        const labels = input.span(existing.flatMap((week) => week.name ?? []));
+        const block = this.writeImportBlock(input, found, labels.length);
+        const row = schedule(this.scheduledBlocks(), block, labels);
+        const problem = row === null ? null : scheduleProblem(row);
+        if (row !== null && problem !== null) throw blockScheduleInvalid(row.blockId, problem);
+        const written = row === null ? null : this.insertBlockSchedule(row);
+        const weekIds = this.writeImportWeeks(block.id, existing, labels);
+        return { block, weekIds, schedule: written };
+      }),
+    );
+  }
+
+  private blockNamed(programId: string, name: string): StoredTrainingBlock | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM training_blocks WHERE program_id = ? AND name = ?
+          ORDER BY order_index ASC LIMIT 1`,
+      )
+      .get(programId, name) as TrainingBlockRow | undefined;
+    return row === undefined ? undefined : rowToTrainingBlock(row);
+  }
+
+  /** The import block with `weeks_count` raised in place to cover `weekCount`, created when missing. */
+  private writeImportBlock(
+    input: ImportWeeksInput,
+    found: StoredTrainingBlock | undefined,
+    weekCount: number,
+  ): StoredTrainingBlock {
+    if (found !== undefined) {
+      if (weekCount <= found.weeksCount) return found;
+      this.db
+        .prepare(`UPDATE training_blocks SET weeks_count = ? WHERE id = ?`)
+        .run(weekCount, found.id);
+      return { ...found, weeksCount: weekCount };
+    }
+    const siblings = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM training_blocks WHERE program_id = ?`)
+      .get(input.programId) as { n: number };
+    const block: StoredTrainingBlock = {
+      id: randomUUID(),
+      programId: input.programId,
+      orderIndex: siblings.n,
+      name: input.blockName,
+      weeksCount: Math.max(1, weekCount),
+      ...input.blockDefaults,
+    };
+    this.writeTrainingBlock(block);
+    return block;
+  }
+
+  /** One week per label in label order; an existing week keeps its row and moves in place. */
+  private writeImportWeeks(
+    blockId: string,
+    existing: readonly StoredTrainingWeek[],
+    labels: readonly string[],
+  ): Map<string, string> {
+    const byName = new Map(existing.map((week) => [week.name, week]));
+    const weekIds = new Map<string, string>();
+    for (const [orderIndex, name] of labels.entries()) {
+      const prior = byName.get(name);
+      const week = prior ?? { id: randomUUID(), blockId, name, isDeload: false, orderIndex };
+      this.writeTrainingWeek({ ...week, orderIndex });
+      weekIds.set(name, week.id);
+    }
+    return weekIds;
   }
 
   async putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void> {
@@ -4148,7 +4706,35 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToWorkoutTemplate));
   }
 
+  async scaffoldTrainingWeeks(
+    block: StoredTrainingBlock,
+    weeks: readonly StoredTrainingWeek[],
+    schedule?: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule | null> {
+    const problem = schedule === undefined ? null : scheduleProblem(schedule);
+    if (schedule !== undefined && problem !== null) {
+      throw blockScheduleInvalid(schedule.blockId, problem);
+    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const existing = this.db
+          .prepare(`SELECT 1 FROM training_weeks WHERE block_id = ? LIMIT 1`)
+          .get(block.id);
+        if (existing !== undefined) throw weeksExist(block.id);
+        this.writeTrainingBlock(block);
+        const written = schedule === undefined ? null : this.insertBlockSchedule(schedule);
+        for (const week of weeks) this.writeTrainingWeek(week);
+        return written;
+      }),
+    );
+  }
+
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
+    this.writePlannedExercise(e);
+    return Promise.resolve();
+  }
+
+  private writePlannedExercise(e: StoredPlannedExercise): void {
     this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL).run(
       e.id,
       e.workoutTemplateId,
@@ -4169,7 +4755,23 @@ export class SqliteSessionStore implements SessionStore {
       e.restLearning === false ? 0 : 1,
       e.externalId ?? null,
     );
-    return Promise.resolve();
+  }
+
+  async patchPlannedExercise(
+    id: string,
+    apply: (live: StoredPlannedExercise) => StoredPlannedExercise,
+  ): Promise<StoredPlannedExercise | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const row = this.db.prepare(`SELECT * FROM planned_exercises WHERE id = ?`).get(id) as
+          | PlannedExerciseRow
+          | undefined;
+        if (row === undefined) return undefined;
+        const updated = apply(rowToPlannedExercise(row));
+        this.writePlannedExercise(updated);
+        return updated;
+      }),
+    );
   }
 
   async getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined> {
@@ -4216,19 +4818,14 @@ export class SqliteSessionStore implements SessionStore {
     const result = emptyPlanImportResult();
     const upsertTemplate = this.db.prepare(WORKOUT_TEMPLATE_UPSERT_SQL);
     const upsertExercise = this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL);
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       for (const template of templates) {
         const id = this.#applyImportTemplate(template, upsertTemplate, result);
         for (const exercise of template.exercises) {
           this.#applyImportExercise(exercise, id, upsertExercise, result);
         }
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve(result);
   }
 
@@ -4338,16 +4935,13 @@ export class SqliteSessionStore implements SessionStore {
   async putProgramAssignmentIfAbsent(
     a: StoredProgramAssignment,
   ): Promise<{ assignment: StoredProgramAssignment; created: boolean }> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const existing = this.assignmentFor(a);
-      if (existing === undefined) this.writeProgramAssignment(a);
-      this.db.exec('COMMIT');
-      return Promise.resolve({ assignment: existing ?? a, created: existing === undefined });
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const existing = this.assignmentFor(a);
+        if (existing === undefined) this.writeProgramAssignment(a);
+        return { assignment: existing ?? a, created: existing === undefined };
+      }),
+    );
   }
 
   /** The session's earliest link to the same planned lift, or else the same template. */
@@ -4502,8 +5096,7 @@ export class SqliteSessionStore implements SessionStore {
     // One transaction, three statements. Halfway through, the timeline either
     // has two open ranges or a hole — both are states a reader would report
     // as fact, so the window in which they exist must not be observable.
-    this.db.exec('BEGIN');
-    try {
+    this.atomically(() => {
       // Fully superseded by the new open range, so a DELETE rather than a
       // truncation: shortening them to zero length would leave rows that
       // cover no instant and answer no question.
@@ -4530,11 +5123,7 @@ export class SqliteSessionStore implements SessionStore {
           declared.declaredAt,
           declared.recompMode ?? null,
         );
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     return Promise.resolve(declared);
   }
 
@@ -4550,15 +5139,9 @@ export class SqliteSessionStore implements SessionStore {
       const problem = scheduleProblem(input);
       if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
     }
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const rows = inputs.map((input) => this.insertBlockSchedule(input));
-      this.db.exec('COMMIT');
-      return Promise.resolve(rows);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => inputs.map((input) => this.insertBlockSchedule(input))),
+    );
   }
 
   private insertBlockSchedule(input: AppendBlockScheduleInput): StoredBlockSchedule {
@@ -4580,21 +5163,18 @@ export class SqliteSessionStore implements SessionStore {
   async deriveBlockSchedules<T>(
     derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
   ): Promise<{ rows: StoredBlockSchedule[]; result: T }> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const derived = derive(this.scheduledBlocks());
-      for (const input of derived.rows) {
-        const problem = scheduleProblem(input);
-        if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
-      }
-      if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
-      const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
-      this.db.exec('COMMIT');
-      return Promise.resolve({ rows, result: derived.result });
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => {
+        const derived = derive(this.scheduledBlocks());
+        for (const input of derived.rows) {
+          const problem = scheduleProblem(input);
+          if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+        }
+        if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
+        const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
+        return { rows, result: derived.result };
+      }),
+    );
   }
 
   /** Every block in program order, with its live row and whether its program is archived. */
@@ -4637,19 +5217,14 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
-      const declared =
-        latest !== undefined && sameCommitmentContent(latest, input)
+    return Promise.resolve(
+      this.atomically(() => {
+        const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
+        return latest !== undefined && sameCommitmentContent(latest, input)
           ? { commitment: latest, unchanged: true }
           : { commitment: this.insertCommitmentRevision(input, latest), unchanged: false };
-      this.db.exec('COMMIT');
-      return Promise.resolve(declared);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+      }),
+    );
   }
 
   private latestCommitmentRevision(userId: string, weekOf: string): StoredCommitment | undefined {
@@ -4773,6 +5348,10 @@ export class SqliteSessionStore implements SessionStore {
    * clause has anything to do here.
    */
   markExerciseChapter(input: MarkExerciseChapterInput): Promise<StoredExerciseChapter> {
+    return Promise.resolve(this.insertExerciseChapter(input));
+  }
+
+  private insertExerciseChapter(input: MarkExerciseChapterInput): StoredExerciseChapter {
     const id = randomUUID();
     this.db
       .prepare(
@@ -4788,7 +5367,7 @@ export class SqliteSessionStore implements SessionStore {
         input.declaredAt,
         input.reason ?? null,
       );
-    return Promise.resolve(this.readExerciseChapter(id) as StoredExerciseChapter);
+    return this.readExerciseChapter(id) as StoredExerciseChapter;
   }
 
   retireExerciseChapter(id: string, retiredAt: string): Promise<StoredExerciseChapter | undefined> {
@@ -4908,27 +5487,45 @@ export class SqliteSessionStore implements SessionStore {
    * second identity the way `body_metrics` owns its instant.
    */
   async putAdvisoryDecision(input: PutAdvisoryDecisionInput): Promise<StoredAdvisoryDecision> {
+    return Promise.resolve(this.writeAdvisoryDecision(input));
+  }
+
+  private writeAdvisoryDecision(input: PutAdvisoryDecisionInput): StoredAdvisoryDecision {
     const id = input.id ?? randomUUID();
     this.db.prepare(PUT_ADVISORY_DECISION_SQL).run(id, ...advisoryDecisionBindings(input));
     const row = this.db
       .prepare(`SELECT * FROM advisory_decisions WHERE id = ?`)
       .get(id) as unknown as AdvisoryDecisionRow;
-    return Promise.resolve(rowToAdvisoryDecision(row));
+    return rowToAdvisoryDecision(row);
   }
 
   /**
-   * Insert the row, or report the existing one. `INSERT ... ON CONFLICT DO
-   * NOTHING` then re-read: the primary key decides the race, not this process,
-   * so two servers over one file would arbitrate correctly too.
+   * Insert the row, or report the existing one. Read first: the no-replace
+   * trigger refuses an insert on a taken id however it resolves conflicts, so
+   * `ON CONFLICT DO NOTHING` would throw rather than skip (VW-903). The
+   * database still decides a race between two servers over one file: the
+   * loser's insert throws, and it reports the row the winner wrote.
    */
   async claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome> {
-    const inserted = this.db
+    const existing = this.readUiAction(input.actionId);
+    if (existing !== undefined) return Promise.resolve({ kind: 'taken', existing });
+    try {
+      this.insertPendingUiAction(input);
+    } catch (err) {
+      const winner = this.readUiAction(input.actionId);
+      if (winner === undefined) throw err;
+      return Promise.resolve({ kind: 'taken', existing: winner });
+    }
+    return Promise.resolve({ kind: 'claimed' });
+  }
+
+  private insertPendingUiAction(input: ClaimUiActionInput): void {
+    this.db
       .prepare(
         `INSERT INTO ui_actions (
            action_id, action_name, actor, surface, device_id, flow_id, flow_step,
-           input_hash, result_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-         ON CONFLICT(action_id) DO NOTHING`,
+           reason, summary_json, session_id, input_hash, result_status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       )
       .run(
         input.actionId,
@@ -4938,18 +5535,12 @@ export class SqliteSessionStore implements SessionStore {
         input.deviceId ?? null,
         input.flowId ?? null,
         input.flowStep ?? null,
+        input.reason ?? null,
+        input.summaryJson ?? null,
+        input.sessionId ?? null,
         input.inputHash,
         input.createdAt,
       );
-    if (inserted.changes > 0) return Promise.resolve({ kind: 'claimed' });
-    const existing = this.readUiAction(input.actionId);
-    if (existing === undefined) {
-      // The row lost the insert race and then vanished. `ui_actions` refuses
-      // deletes, so this cannot happen against this schema; it is reported
-      // rather than silently retried because a retry could double-run.
-      throw new Error(`ui_actions: claim lost on ${input.actionId} but no row exists`);
-    }
-    return Promise.resolve({ kind: 'taken', existing });
   }
 
   async completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction> {
@@ -5008,6 +5599,42 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToUiAction));
   }
 
+  listActivity(filter?: ListActivityFilter): Promise<StoredUiAction[]> {
+    const clauses: string[] = [];
+    const bindings: (string | number)[] = [];
+    const equals: [string, string | undefined][] = [
+      ['session_id', filter?.sessionId],
+      ['flow_id', filter?.flowId],
+      ['actor', filter?.actor],
+      ['result_status', filter?.status],
+    ];
+    for (const [column, value] of equals) {
+      if (value === undefined) continue;
+      clauses.push(`${column} = ?`);
+      bindings.push(value);
+    }
+    if (filter?.since !== undefined) {
+      clauses.push('created_at >= ?');
+      bindings.push(filter.since);
+    }
+    if (filter?.until !== undefined) {
+      clauses.push('created_at <= ?');
+      bindings.push(filter.until);
+    }
+    if (filter?.after !== undefined) {
+      // A row-value compare lets the planner seek into `idx_ui_actions_activity`; the OR form
+      // scanned from the newest row down to the cursor (VW-910).
+      clauses.push('(created_at, action_id) < (?, ?)');
+      bindings.push(filter.after.createdAt, filter.after.actionId);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    bindings.push(filter?.limit ?? 50);
+    const rows = this.db
+      .prepare(`SELECT * FROM ui_actions ${where} ORDER BY created_at DESC, action_id DESC LIMIT ?`)
+      .all(...bindings) as unknown as UiActionRow[];
+    return Promise.resolve(rows.map(rowToUiAction));
+  }
+
   private readUiAction(actionId: string): StoredUiAction | undefined {
     const row = this.db.prepare(`SELECT * FROM ui_actions WHERE action_id = ?`).get(actionId) as
       | UiActionRow
@@ -5019,6 +5646,13 @@ export class SqliteSessionStore implements SessionStore {
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]> {
+    return Promise.resolve(this.advisoryDecisions(userId, filter));
+  }
+
+  private advisoryDecisions(
+    userId: string,
+    filter?: ListAdvisoryDecisionsFilter,
+  ): StoredAdvisoryDecision[] {
     const clauses = ['user_id = ?'];
     const bindings: string[] = [userId];
     if (filter?.code !== undefined) {
@@ -5035,7 +5669,79 @@ export class SqliteSessionStore implements SessionStore {
          ORDER BY issued_at DESC, id ASC`,
       )
       .all(...bindings) as unknown as AdvisoryDecisionRow[];
-    return Promise.resolve(rows.map(rowToAdvisoryDecision));
+    return rows.map(rowToAdvisoryDecision);
+  }
+
+  /**
+   * `WHERE user_response IS NULL` is the whole arbitration (VW-587): the first
+   * answer to reach the row is the one recorded, and the retire rides only on it.
+   */
+  async answerAdvisoryIfOpen(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): Promise<StoredAdvisoryDecision | undefined> {
+    const won = this.atomically(() => this.claimAdvisory(decisionId, answer, retire));
+    return Promise.resolve(won === undefined ? undefined : rowToAdvisoryDecision(won));
+  }
+
+  private claimAdvisory(
+    decisionId: string,
+    answer: AdvisoryAnswer,
+    retire?: AdvisoryAnswerRetire,
+  ): AdvisoryDecisionRow | undefined {
+    const row = this.db
+      .prepare(ANSWER_ADVISORY_IF_OPEN_SQL)
+      .get(
+        answer.userResponse,
+        answer.respondedAt,
+        answer.inputs === undefined ? null : JSON.stringify(answer.inputs),
+        decisionId,
+      ) as AdvisoryDecisionRow | undefined;
+    if (row !== undefined && retire !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE goal_targets SET retired_at = ?, outcome = ?
+             WHERE id = ? AND retired_at IS NULL`,
+        )
+        .run(answer.respondedAt, retire.outcome, retire.goalTargetId);
+    }
+    return row;
+  }
+
+  async putAdvisoryDerived<T>(
+    userId: string,
+    code: string,
+    derive: (live: readonly StoredAdvisoryDecision[]) => AdvisoryDerivation<T>,
+    options?: { whileTargetLive?: string },
+  ): Promise<AdvisoryDerived<T> | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        const guard = options?.whileTargetLive;
+        if (guard !== undefined && !this.isGoalTargetLive(guard)) return undefined;
+        const derived = derive(this.advisoryDecisions(userId, { code }));
+        return {
+          result: derived.result,
+          ...(derived.goalTarget === undefined
+            ? {}
+            : { goalTarget: this.writeGoalTarget(derived.goalTarget) }),
+          ...(derived.decision === undefined
+            ? {}
+            : { decision: this.writeAdvisoryDecision(derived.decision) }),
+        };
+      }),
+    );
+  }
+
+  private isGoalTargetLive(id: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM goal_targets JOIN priorities ON priorities.id = goal_targets.priority_id
+          WHERE goal_targets.id = ? AND goal_targets.retired_at IS NULL
+            AND priorities.retired_at IS NULL`,
+      )
+      .get(id);
+    return row !== undefined;
   }
 
   // --- Priorities and goal targets (VW-349) ---
@@ -5064,15 +5770,9 @@ export class SqliteSessionStore implements SessionStore {
     userId: string,
     derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
   ): Promise<StoredPriority[]> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const written = derive(this.priorities(userId)).map((row) => this.writePriority(row));
-      this.db.exec('COMMIT');
-      return Promise.resolve(written);
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+    return Promise.resolve(
+      this.atomically(() => derive(this.priorities(userId)).map((row) => this.writePriority(row))),
+    );
   }
 
   async listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]> {
@@ -5099,23 +5799,22 @@ export class SqliteSessionStore implements SessionStore {
    * `WHERE retired_at IS NULL` on both statements is what makes a second call a
    * no-op instead of a rewrite of when this ended.
    */
-  async retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined> {
-    this.db.exec('BEGIN');
-    try {
+  async retirePriority(
+    id: string,
+    retiredAt: string,
+    outcome: StoredGoalTargetOutcome = 'abandoned',
+  ): Promise<StoredPriority | undefined> {
+    this.atomically(() => {
       this.db
         .prepare(`UPDATE priorities SET retired_at = ? WHERE id = ? AND retired_at IS NULL`)
         .run(retiredAt, id);
       this.db
         .prepare(
-          `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
+          `UPDATE goal_targets SET retired_at = ?, outcome = ?
              WHERE priority_id = ? AND retired_at IS NULL`,
         )
-        .run(retiredAt, id);
-      this.db.exec('COMMIT');
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+        .run(retiredAt, outcome, id);
+    });
     const row = this.db.prepare(`SELECT * FROM priorities WHERE id = ?`).get(id) as
       | PriorityRow
       | undefined;
@@ -5132,6 +5831,10 @@ export class SqliteSessionStore implements SessionStore {
    * band to a declaration that never earned it.
    */
   async putGoalTarget(target: StoredGoalTarget): Promise<StoredGoalTarget> {
+    return Promise.resolve(this.writeGoalTarget(target));
+  }
+
+  private writeGoalTarget(target: StoredGoalTarget): StoredGoalTarget {
     const existing = this.db.prepare(`SELECT * FROM goal_targets WHERE id = ?`).get(target.id) as
       | GoalTargetRow
       | undefined;
@@ -5140,13 +5843,20 @@ export class SqliteSessionStore implements SessionStore {
     const row = this.db
       .prepare(`SELECT * FROM goal_targets WHERE id = ?`)
       .get(target.id) as unknown as GoalTargetRow;
-    return Promise.resolve(rowToGoalTarget(row));
+    return rowToGoalTarget(row);
   }
 
   async listGoalTargets(
     selector: GoalTargetSelector,
     options?: ListGoalTargetsOptions,
   ): Promise<StoredGoalTarget[]> {
+    return Promise.resolve(this.goalTargets(selector, options));
+  }
+
+  private goalTargets(
+    selector: GoalTargetSelector,
+    options?: ListGoalTargetsOptions,
+  ): StoredGoalTarget[] {
     const retiredClause =
       options?.includeRetired === true ? '' : 'AND goal_targets.retired_at IS NULL';
     const rows =
@@ -5166,7 +5876,7 @@ export class SqliteSessionStore implements SessionStore {
                  ORDER BY derived_at DESC, goal_targets.id ASC`,
             )
             .all(selector.userId) as unknown as GoalTargetRow[]);
-    return Promise.resolve(rows.map(rowToGoalTarget));
+    return rows.map(rowToGoalTarget);
   }
 
   async retireGoalTarget(
@@ -5193,6 +5903,94 @@ export class SqliteSessionStore implements SessionStore {
       | GoalTargetRow
       | undefined;
     return row === undefined ? undefined : rowToGoalTarget(row);
+  }
+
+  // --- Atomic goal target writes (VW-589) ---
+
+  /** The claim goes first, so a lost claim returns before anything is written. */
+  async acceptGoalTarget(
+    targetId: string,
+    acceptance: GoalTargetAcceptance,
+    expected: { derivedAt: string },
+    claim?: GoalTargetOfferClaim,
+  ): Promise<GoalTargetAcceptOutcome> {
+    return Promise.resolve(
+      this.atomically((): GoalTargetAcceptOutcome => {
+        if (claim !== undefined) {
+          const won = this.claimAdvisory(claim.decisionId, claim.answer, claim.retire);
+          if (won === undefined) return { kind: 'offer_answered' };
+        }
+        const row = this.db
+          .prepare(ACCEPT_GOAL_TARGET_SQL)
+          .get(...acceptanceBindings(acceptance), targetId, expected.derivedAt) as
+          | GoalTargetRow
+          | undefined;
+        if (row === undefined) throw createChangedTargetError(targetId);
+        return { kind: 'accepted', target: rowToGoalTarget(row) };
+      }),
+    );
+  }
+
+  async putGoalTargetsDerived(
+    priorityId: string,
+    derive: (live: readonly StoredGoalTarget[]) => readonly StoredGoalTarget[],
+  ): Promise<StoredGoalTarget[]> {
+    return Promise.resolve(
+      this.atomically(() => {
+        this.assertPriorityLive(priorityId);
+        const live = this.goalTargets({ priorityId }, { includeRetired: true });
+        return derive(live).map((row) => {
+          this.assertGoalTargetOpen(row.id);
+          return this.writeGoalTarget(row);
+        });
+      }),
+    );
+  }
+
+  private assertPriorityLive(id: string): void {
+    const row = this.db.prepare(`SELECT retired_at FROM priorities WHERE id = ?`).get(id) as
+      | { retired_at: string | null }
+      | undefined;
+    if (row === undefined) {
+      throw codedError('NOT_FOUND', `No priority with id "${id}" exists.`);
+    }
+    if (row.retired_at !== null) {
+      throw codedError(
+        'PRIORITY_RETIRED',
+        `priority ${id} was retired on ${row.retired_at}; declare it again to track it.`,
+      );
+    }
+  }
+
+  /** A derivation re-writes proposals only: an accepted or retired row is never overwritten. */
+  private assertGoalTargetOpen(id: string): void {
+    const row = this.db
+      .prepare(`SELECT accepted_by, retired_at FROM goal_targets WHERE id = ?`)
+      .get(id) as { accepted_by: string | null; retired_at: string | null } | undefined;
+    if (row === undefined || (row.accepted_by === null && row.retired_at === null)) return;
+    throw createChangedTargetError(id);
+  }
+
+  /** The stamp is the latest live chapter, as `chapterStartedAt` reads it, not the one just written. */
+  async startGoalChapter(
+    targetId: string,
+    chapter: MarkExerciseChapterInput,
+  ): Promise<{ target: StoredGoalTarget; chapter: StoredExerciseChapter } | undefined> {
+    return Promise.resolve(
+      this.atomically(() => {
+        if (this.findGoalTarget(targetId) === undefined) return undefined;
+        const written = this.insertExerciseChapter(chapter);
+        this.db
+          .prepare(
+            `UPDATE goal_targets SET new_chapter_at = (
+               SELECT max(started_at) FROM exercise_chapters
+                 WHERE user_id = ? AND exercise_id = ? AND retired_at IS NULL)
+             WHERE id = ?`,
+          )
+          .run(chapter.userId, chapter.exerciseId, targetId);
+        return { target: this.findGoalTarget(targetId) as StoredGoalTarget, chapter: written };
+      }),
+    );
   }
 
   /**
@@ -5339,7 +6137,9 @@ export class SqliteSessionStore implements SessionStore {
     };
     // VW-299: the MVT fit reads the same working sets the state machine does,
     // so the threshold and the confidence behind it describe one corpus.
-    const fit = fitOptimalMvt(toMvtObservations(sets, this.failureSetIds(key)));
+    const constantIds = new Set(constantLoadSets(sets).map((set) => set.id));
+    const failureIds = [...this.failureSetIds(key)].filter((id) => constantIds.has(id));
+    const fit = fitOptimalMvt(toMvtObservations(sets, new Set(failureIds)));
     const now = new Date();
     const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString(), fit);
     this.upsertBaseline(row);
@@ -5390,7 +6190,8 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(`SELECT 1 AS present FROM exercise_setups WHERE id = ?`)
       .get(key.setupId);
     if (row === undefined) {
-      throw new Error(
+      throw codedError(
+        'UNKNOWN_SETUP',
         `unknown setup ${JSON.stringify(key.setupId)}: no such row in exercise_setups. ` +
           'Setup ids come from the ROM clustering — run baselines.recalc { inferSetups: true } first.',
       );
@@ -5432,6 +6233,11 @@ export class SqliteSessionStore implements SessionStore {
     // pooled key therefore keeps counting the whole pool, and preference by
     // setup happens after the fetch.
     //
+    // VW-541: an anchor counts only when its set met constant load, read from
+    // the set's own settings now rather than stored beside the verdict. A
+    // chains or eccentric-overload stall is real velocity loss, but the
+    // baseline reads it as a constant-load terminal velocity.
+    //
     // VW-489: `s.kind = 'training'` also makes the LEFT JOIN below effectively
     // inner. An anchor whose set row is gone can no longer be SHOWN to be
     // training, and an unprovable anchor must not calibrate a baseline.
@@ -5448,7 +6254,8 @@ export class SqliteSessionStore implements SessionStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT s.session_id AS session_id, fa.observed_at AS observed_at,
+        `SELECT s.training_mode, s.chains_lbs, s.inverse_chains_lbs, s.eccentric_pct,
+                s.damper_level, s.session_id AS session_id, fa.observed_at AS observed_at,
                 fa.terminal_velocity_mps AS terminal_velocity_mps,
                 fa.setup_id AS setup_id
            FROM failure_anchors fa
@@ -5459,7 +6266,7 @@ export class SqliteSessionStore implements SessionStore {
       .all(...params) as unknown as FailureAnchorJoinRow[];
     return selectSetupAnchors(
       key.setupId,
-      rows.map((row) => {
+      rows.filter(isConstantLoadAnchor).map((row) => {
         const out: AnchorObservation = {
           sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
           observedAt: row.observed_at,
@@ -5810,7 +6617,7 @@ export class SqliteSessionStore implements SessionStore {
     if (this.closed) return Promise.resolve();
     this.closed = true;
     try {
-      this.db.close();
+      this.connection.close();
     } catch (err) {
       log.warn('SqliteSessionStore.close() failed', err);
     }
@@ -6046,6 +6853,15 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 40) {
     migrateV40ToV41(db);
   }
+  if (current <= 41) {
+    migrateV41ToV42(db);
+  }
+  if (current <= 42) {
+    migrateV42ToV43(db);
+  }
+  if (current <= 43) {
+    migrateV43ToV44(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -6094,8 +6910,8 @@ function createSchemaIncompatibleError(path: string, found: number): Error {
     `SQLite schema at ${path} has user_version=${found}; ` +
     `expected ${SCHEMA_VERSION}. Automatic migration is not supported in v1. ` +
     `Move or delete the file and let voltras-mcp recreate it.`;
-  const err = new Error(message);
-  (err as Error & { code: string }).code = 'SCHEMA_INCOMPATIBLE';
+  const err = new UserFacingError(message);
+  (err as UserFacingError & { code: string }).code = 'SCHEMA_INCOMPATIBLE';
   return err;
 }
 
@@ -6122,6 +6938,16 @@ interface SessionReviewSqlRow {
   last_set_ended_at: string | null;
   last_working_set_ended_at: string | null;
   planned: number;
+}
+
+function kindWriteRow(
+  sessionId: string,
+  prior: string | null,
+  written: boolean,
+): SessionKindWrite['rows'][number] {
+  const row: SessionKindWrite['rows'][number] = { sessionId, written };
+  if (prior !== null && isSessionKind(prior)) row.priorKind = prior;
+  return row;
 }
 
 function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
@@ -6303,6 +7129,13 @@ const PUT_ADVISORY_DECISION_SQL = `
     responded_at = excluded.responded_at
 `;
 
+const ANSWER_ADVISORY_IF_OPEN_SQL = `
+  UPDATE advisory_decisions
+    SET user_response = ?, responded_at = ?, inputs_json = coalesce(?, inputs_json)
+    WHERE id = ? AND user_response IS NULL
+  RETURNING *
+`;
+
 function advisoryDecisionBindings(input: PutAdvisoryDecisionInput): (string | null)[] {
   return [
     input.userId,
@@ -6457,11 +7290,52 @@ function assertGoalTargetMovable(
  * a SQLite failure, because it is a rule being enforced rather than a fault.
  */
 function createFixedTargetError(id: string, field: 'committedValue' | 'stretchValue'): Error {
-  const err = new Error(
+  const err = new UserFacingError(
     `goal target ${id} was already accepted; ${field} cannot change. ` +
       `Retire it with an outcome, or stamp a new chapter, and derive a new target.`,
   );
   (err as Error & { code: string }).code = 'GOAL_TARGET_FIXED';
+  return err;
+}
+
+/** `derived_at` is the proposal's version: a re-derivation moves it, so a stale accept misses. */
+const ACCEPT_GOAL_TARGET_SQL = `
+  UPDATE goal_targets SET
+    committed_value = ?,
+    stretch_value = ?,
+    accepted_by = ?,
+    acknowledged_stretch = ?,
+    anchor_load = coalesce(?, anchor_load),
+    block_id = coalesce(?, block_id),
+    ends_at = coalesce(?, ends_at)
+  WHERE id = ? AND accepted_by IS NULL AND retired_at IS NULL AND derived_at = ?
+  RETURNING *
+`;
+
+function acceptanceBindings(a: GoalTargetAcceptance): (string | number | null)[] {
+  return [
+    a.committedValue,
+    a.stretchValue,
+    a.acceptedBy,
+    a.acknowledgedStretch ? 1 : 0,
+    a.anchorLoad ?? null,
+    a.blockId ?? null,
+    a.endsAt ?? null,
+  ];
+}
+
+/** The target moved between the caller's read and its write; a rule, not a SQLite fault. */
+function createChangedTargetError(id: string): Error {
+  return codedError(
+    'GOAL_TARGET_CHANGED',
+    `goal target ${id} was accepted, retired or re-derived since it was read; ` +
+      're-read it and accept again.',
+  );
+}
+
+function codedError(code: string, message: string): UserFacingError {
+  const err = new UserFacingError(message);
+  (err as Error & { code: string }).code = code;
   return err;
 }
 

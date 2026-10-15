@@ -55,8 +55,8 @@
 //   node scripts/dashboard-plan-drive.mjs --pinned-reps=5 # deterministic sets
 //   HOLD=0 node scripts/dashboard-plan-drive.mjs          # exit after the workout
 //
-// Open http://127.0.0.1:<port>/app BEFORE/DURING the run — the set log
-// accumulates client-side across polls.
+// Open http://127.0.0.1:<port>/app BEFORE/DURING the run — while the session is open
+// the snapshot carries its finished sets, so a late page rebuilds its set log.
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -351,6 +351,8 @@ async function runPlannedExercise(exerciseIndex, templateId) {
     if (s < SETS_PER_EXERCISE) await sleep(REST_MS);
   }
   await callTool('session.end', {});
+  // VW-489: a mock session is stored as a test, which history and the summary skip.
+  await callTool('session.mark_kind', { sessionId, kind: 'training' });
   if (exerciseIndex < PLANNED.length - 1) await sleep(REST_MS);
 }
 
@@ -373,6 +375,7 @@ async function handshake() {
     'set.end',
     'plan.exercise.create',
     'plan.attach_to_session',
+    'session.mark_kind',
   ];
   for (const need of needed) {
     if (!tools.includes(need)) throw new Error(`missing tool ${need}`);

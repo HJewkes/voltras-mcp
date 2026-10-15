@@ -3,12 +3,14 @@
  * structured `calibration` fields (VW-444) and never parsed out of `statusBasis`.
  *
  * Two strings, one source: `sentence` is the page's plain line, and `chartNote`
- * is the short first line titan's `GoalTrajectoryChart` takes as its
- * `calibratingNote` prop (titan #262), whose own lines below it already say
- * the band arrives with history. `chartNote` names the count or the blocker
- * only, never the joined clause, so it fits one line at phone width. A baseline blocker names what it waits on and
- * never a count, because the baseline has no count the view can promise.
+ * is what titan's `GoalTrajectoryChart` puts first in its calibrating info tip
+ * (`calibratingNote`): the wait alone, since the tip's own lines already say the
+ * line is the planned ramp. A baseline blocker names what it waits on and never
+ * a count, because the baseline has no count the view can promise. The wording
+ * and its source live in `coach-copy/dashboard.ts`.
  */
+import { CALIBRATION_FRAGMENTS as LINES } from '../../../coach-copy/dashboard.js';
+import { fillSlots } from '../../../coach-copy/fill.js';
 import type { GoalCalibrationView, GoalProgressView } from '../../read-models/index.js';
 
 export interface CalibrationCopy {
@@ -16,46 +18,33 @@ export interface CalibrationCopy {
   chartNote: string;
 }
 
-const STARTING_RAMP = 'Starting ramp, not yet based on your lifts.';
-
-/** Longest in-plot note that fits one line of the phone chart (170 px of plot at 360 wide). */
-export const CHART_NOTE_MAX_CHARS = 30;
-
 export function calibrationCopy(calibration: GoalCalibrationView): CalibrationCopy {
   const wait = waitClause(calibration);
-  const prefix = calibration.targetInfoLevel === 'cold' ? `${STARTING_RAMP} ` : '';
-  return { sentence: `${prefix}${wait.sentence}`, chartNote: wait.chartNote };
+  const prefix = calibration.targetInfoLevel === 'cold' ? `${LINES.startingRamp.text} ` : '';
+  return { sentence: `${prefix}${wait}`, chartNote: wait };
 }
 
-function waitClause(calibration: GoalCalibrationView): CalibrationCopy {
-  const needed = calibration.sessionsNeeded;
-  const sessions = sessionCount(needed);
+function waitClause(calibration: GoalCalibrationView): string {
+  const sessions = sessionCount(calibration.sessionsNeeded);
   const baseline = baselineNeed(calibration.baselineState);
-  const shortBaseline = shortBaselineNeed(calibration.baselineState);
   switch (calibration.blockedBy) {
     case 'sessions':
-      return { sentence: `${sessions} to calibrate.`, chartNote: sessions };
+      return fillSlots(LINES.waitSessions.text, { sessions });
     case 'baseline':
-      return { sentence: `Calibrates after ${baseline}.`, chartNote: `Needs ${shortBaseline}` };
+      return fillSlots(LINES.waitBaseline.text, { baseline });
     case 'both':
-      return {
-        sentence: `Calibrates after ${sessions} and ${baseline}.`,
-        chartNote: `${needed} ${plural(needed, 'session')}, ${shortBaseline}`,
-      };
+      return fillSlots(LINES.waitBoth.text, { sessions, baseline });
   }
 }
 
 function sessionCount(needed: number): string {
-  return `${needed} more comparable ${plural(needed, 'session')}`;
-}
-
-function plural(n: number, word: string): string {
-  return n === 1 ? word : `${word}s`;
+  const line = needed === 1 ? LINES.sessionCountOne : LINES.sessionCountMany;
+  return fillSlots(line.text, { needed: String(needed) });
 }
 
 /** COLD waits on enough working sets to read the lift's rep pattern; SHAPE_ONLY waits on a set near failure. */
 function baselineNeed(state: GoalCalibrationView['baselineState']): string {
-  return state === 'COLD' ? 'more working sets of this lift' : 'a set taken near failure';
+  return state === 'COLD' ? LINES.baselineCold.text : LINES.baselineShapeOnly.text;
 }
 
 /**
@@ -63,17 +52,11 @@ function baselineNeed(state: GoalCalibrationView['baselineState']): string {
  * stands (VW-444 part 2). A declined offer gets no line: the decline is recorded
  * and suppresses the offer, and the card says nothing more (human, review round 2).
  */
-export const RECALIBRATION_OFFERED_LINE =
-  'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
+export const RECALIBRATION_OFFERED_LINE = LINES.recalibrationOffered.text;
 
 /** The one line a card carries about calibration, or `null` when it has nothing to say. */
 export function calibrationLine(view: GoalProgressView): string | null {
   if (view.calibration !== undefined) return calibrationCopy(view.calibration).sentence;
   if (view.recalibration?.state === 'offered') return RECALIBRATION_OFFERED_LINE;
   return null;
-}
-
-/** The in-plot form: the chart's note must fit one line at phone width ({@link CHART_NOTE_MAX_CHARS}). */
-function shortBaselineNeed(state: GoalCalibrationView['baselineState']): string {
-  return state === 'COLD' ? 'more working sets' : 'a set near failure';
 }

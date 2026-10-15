@@ -52,7 +52,9 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'own fitted slope. A cold lift target also carries `startingRamp` (`sessionsNeeded`, ' +
   '`blockedBy`, `baselineState`, `reProposeAfterCalibration`, `note`): its number is the generic ' +
   'starting ramp, so tell the lifter so, and re-propose a data-based target once calibration ' +
-  'ends. A metric whose proposal was declined is never re-offered. ' +
+  'ends. A metric whose proposal was declined is never re-offered. A retired priority, ' +
+  'including one retired while the bands were derived, is refused with `PRIORITY_RETIRED` and ' +
+  'nothing is proposed. ' +
   'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
   'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
   '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
@@ -83,7 +85,11 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'new chapter once calibrated, never edited in place. Accepting a recalibration offer ' +
   '(`offerTargetId`) retires the starting ramp it replaces and returns `recalibration` ' +
   '(`decisionId`, `supersededTargetId`); an offer whose lift is no longer calibrated is refused ' +
-  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays. A proposal written before targets ' +
+  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays. An offer another call answered ' +
+  'first is refused with `ADVISORY_ALREADY_ANSWERED`, naming the answer that stands, and ' +
+  'nothing is accepted. A target accepted, retired or re-proposed after it was read is refused ' +
+  'with `GOAL_TARGET_CHANGED` and nothing is accepted, the offer answer included: re-read it ' +
+  'and accept again. A proposal written before targets ' +
   'carried a block is set for one here, the way a new proposal would be (VW-477).';
 
 export const GOAL_LIST_DESCRIPTION =
@@ -104,7 +110,8 @@ export const GOAL_RETIRE_DESCRIPTION =
   'recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns ' +
   '`declinedOffer: true`; the starting ramp stays accepted. Retiring the starting ramp itself ' +
   'withdraws its open offer. Returns `priority`, `targets` and ' +
-  '`cascaded`.';
+  '`cascaded`, plus `offerAlreadyAnswered: true` when another call answered the offer first, so ' +
+  'no decline was recorded.';
 
 export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'The Sunday sitting’s bodyweight-rate review: what the scale did this week against the ' +
@@ -128,6 +135,7 @@ export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'never written, and the declared diet phase is never written at all — this is a proposal ' +
   'beside the committed line, not an edit of it (B55). ' +
   'Answer the proposal by calling again with `response`: `accepted`, `declined` or `ignored`. ' +
+  'The first answer stands: a second is refused with `ADVISORY_ALREADY_ANSWERED`. ' +
   'A DECLINED PROPOSAL IS NEVER RAISED AGAIN for the same observation, defined as the same week ' +
   'anchor at the same urgency; it can return next week, or sooner if the signal widens. ' +
   'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +

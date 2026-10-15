@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import type * as VoltraSdk from '@voltras/node-sdk';
+import { log } from '../logger.js';
 
 // Stub the SDK so we don't pull in optional native peers (noble etc.) at
 // unit-test time. We only need a `VoltraSDKError` class shaped like the real
@@ -16,13 +18,51 @@ vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: FakeVoltraSDKError,
 }));
 
-const { mapSdkError } = await import('../errors.js');
+const { mapSdkError, UserFacingError } = await import('../errors.js');
+const { ErrorCode } = await vi.importActual<typeof VoltraSdk>('@voltras/node-sdk');
+
+const SAFE_SDK_CODES = ['NOT_CONNECTED', 'ALREADY_CONNECTED'];
+const INNER_DETAIL = 'inner detail 0042';
+
+describe('mapSdkError on every SDK error code', () => {
+  const unsafeCodes = Object.values(ErrorCode).filter((code) => !SAFE_SDK_CODES.includes(code));
+
+  it('reads the codes from the SDK itself', () => {
+    expect(unsafeCodes.length).toBeGreaterThan(SAFE_SDK_CODES.length);
+  });
+
+  it.each(unsafeCodes)('%s keeps its code and never echoes the SDK message', (code) => {
+    const result = mapSdkError(new FakeVoltraSDKError(`Failed: ${INNER_DETAIL}`, code));
+    expect(result.code).toBe(code);
+    expect(result.message).not.toContain(INNER_DETAIL);
+    expect(result.message).not.toMatch(/\d/);
+  });
+
+  it.each(SAFE_SDK_CODES)('%s passes its fixed SDK message through', (code) => {
+    const result = mapSdkError(new FakeVoltraSDKError('Device is not connected', code));
+    expect(result).toEqual({ code, message: 'Device is not connected' });
+  });
+
+  it('words a code the SDK adds later generically, keeping the code', () => {
+    const result = mapSdkError(new FakeVoltraSDKError(INNER_DETAIL, 'SOME_FUTURE_CODE'));
+    expect(result.code).toBe('SOME_FUTURE_CODE');
+    expect(result.message).toMatch(/^The device reported an error/);
+  });
+
+  it('sends the raw SDK message to the debug log only', () => {
+    const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
+    mapSdkError(new FakeVoltraSDKError(INNER_DETAIL, 'AUTH_FAILED'));
+    expect(debug).toHaveBeenCalledWith('sdk error', 'AUTH_FAILED', INNER_DETAIL);
+    debug.mockRestore();
+  });
+});
 
 describe('mapSdkError', () => {
-  it('maps a VoltraSDKError to its code and message verbatim', () => {
+  it('maps a VoltraSDKError to its code with its own wording', () => {
     const err = new FakeVoltraSDKError('lost link', 'CONNECTION_LOST');
     const result = mapSdkError(err);
-    expect(result).toEqual({ code: 'CONNECTION_LOST', message: 'lost link' });
+    expect(result.code).toBe('CONNECTION_LOST');
+    expect(result.message).toMatch(/connection to the device dropped/);
   });
 
   it('words a device-state-unknown refusal itself, keeping the code', () => {
@@ -50,22 +90,21 @@ describe('mapSdkError', () => {
       code: 'ALREADY_CONNECTED',
     });
     const result = mapSdkError(err);
-    expect(result).toEqual({
-      code: 'ALREADY_CONNECTED',
-      message: 'already paired',
-    });
+    expect(result.code).toBe('ALREADY_CONNECTED');
+    expect(result.message).not.toContain('already paired');
   });
 
   it('returns code "UNKNOWN" when an Error has no `code` field', () => {
     const result = mapSdkError(new Error('boom'));
-    expect(result).toEqual({ code: 'UNKNOWN', message: 'boom' });
+    expect(result.code).toBe('UNKNOWN');
+    expect(result.message).not.toContain('boom');
   });
 
   it('treats a non-string `code` field as missing and falls back to "UNKNOWN"', () => {
     const err = Object.assign(new Error('weird'), { code: 42 });
     const result = mapSdkError(err);
     expect(result.code).toBe('UNKNOWN');
-    expect(result.message).toBe('weird');
+    expect(result.message).not.toContain('weird');
   });
 
   it('maps a non-Error throw (string) to UNKNOWN with stringified message', () => {
@@ -86,7 +125,32 @@ describe('mapSdkError', () => {
     // Force a stack containing a recognizable frame marker.
     err.stack = 'Error: noisy\n    at someFn (file.ts:1:1)';
     const result = mapSdkError(err);
-    expect(result.message).toBe('noisy');
     expect(result.message).not.toContain('at ');
+  });
+});
+
+describe('mapSdkError plain and user-facing errors (VW-878)', () => {
+  it('words a plain Error by fixed text, not its message', () => {
+    const mapped = mapSdkError(new Error('peripheral AA:BB:CC:DD:EE:FF dropped'));
+    expect(mapped.code).toBe('UNKNOWN');
+    expect(mapped.message).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
+  it('words a plain Error that carries a code the same way, keeping the code', () => {
+    const err = Object.assign(new Error('peripheral AA:BB:CC:DD:EE:FF dropped'), { code: 'EIO' });
+    expect(mapSdkError(err).code).toBe('EIO');
+    expect(mapSdkError(err).message).not.toContain('AA:BB:CC:DD:EE:FF');
+  });
+
+  it('keeps the code, field and message of our own UserFacingError', () => {
+    class OwnError extends UserFacingError {
+      readonly code = 'INVALID_INPUT';
+      readonly field = 'weightLbs';
+    }
+    expect(mapSdkError(new OwnError('weightLbs must be positive'))).toEqual({
+      code: 'INVALID_INPUT',
+      message: 'weightLbs must be positive',
+      field: 'weightLbs',
+    });
   });
 });

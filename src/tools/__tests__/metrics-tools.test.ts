@@ -16,6 +16,7 @@ import * as analytics from '@voltras/workout-analytics';
 import { detectBounce, detectHesitation } from '../../analytics/rep-faults.js';
 import { readRomIntegrity } from '../../analytics/rom-integrity.js';
 import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
+import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
 
 // Stub the SDK so the static import chain (helpers -> errors -> SDK)
 // does not pull in optional native peers.
@@ -649,6 +650,12 @@ describe('metrics.compute — session.volume', () => {
     // B47 (VMCP-06.05) wrapped the bare number; `tonnageLbs` is still exactly
     // what `computeVolume` returned, untransformed.
     expect(parsePayload(result)).toMatchObject({ tonnageLbs: 1234, model: 'target-only' });
+    // VW-661: an unknown exercise has no dose row, and the lighter set reads as a warm-up.
+    expect(parsePayload(result)).toMatchObject({
+      setsByMuscle: { unknown: 1 },
+      doseSetsByMuscle: {},
+      muscleMapVersion: MUSCLE_MAP_VERSION,
+    });
   });
 
   it('EC-07: empty session set list → NOT_FOUND, computeVolume NOT called', async () => {

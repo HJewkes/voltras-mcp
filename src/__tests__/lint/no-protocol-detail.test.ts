@@ -6,12 +6,16 @@
 // The rule is off for this directory (it is a test path, deferred to w5-13), so
 // the fixtures below do not trip it on their way past.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
+import { ESLint, Linter } from 'eslint';
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — the rule ships as plain ESM so `eslint.config.mjs` can load it.
-import { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
+import protocolPlugin, { findProtocolDetail } from '../../../eslint-rules/no-protocol-detail.mjs';
+// @ts-expect-error — plain ESM, no declarations.
+import { isScanned } from '../../../scripts/lib/text-confidentiality.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -77,8 +81,116 @@ describe('what the guard does not fire on', () => {
     ['ordinary prose', '// A read-only, best-effort back-fill of the self-report.'],
     ['a snake_case identifier', 'const set_weight_lbs = 1;'],
     ['a snake_case event name', "const name = 'on_per_rep';"],
+    ['a multi-line source citation', '// see `scripts/drive.mjs:28-45,94`'],
   ])('lets %s through', (_label, text) => {
     expect(find(text)).toEqual([]);
+  });
+});
+
+// VW-224: a value split across a `+` chain of string literals. Every hex-shaped
+// token is assembled here at runtime, so no fixture below spells one.
+describe('a value split across a concatenation (VW-224)', () => {
+  const PAIR = 'a1';
+  const OTHER = 'b2';
+  const [THIRD, FOURTH, FIFTH] = ['c', 'd', 'e'].map((letter, i) => `${letter}${i + 3}`);
+  const prefix = ['0', 'x'].join('');
+
+  function messagesFor(code: string) {
+    const linter = new Linter({ configType: 'flat' });
+    return linter.verify(code, {
+      plugins: { voltras: protocolPlugin },
+      rules: { 'voltras/no-protocol-detail': 'error' },
+    });
+  }
+
+  it.each([
+    ['a hex literal split after its prefix', `const v = '${prefix}' + '${PAIR}';`],
+    ['a hex literal split out of a template', `const v = \`${prefix}\` + '${PAIR}';`],
+    ['a spaced byte sequence split in two', `const v = '${PAIR} ${PAIR}' + ' ${PAIR} ${PAIR}';`],
+    ['an underscored byte sequence split in two', `const v = '${PAIR}_${PAIR}' + '_${PAIR}';`],
+    ['a bare hex run split in two', `const v = '${PAIR}' + '${OTHER}';`],
+    ['a run of literals behind an identifier', `const v = label + '${prefix}' + '${PAIR}';`],
+    ['a nested chain', `const v = '${PAIR}' + ('${OTHER}' + '${PAIR}');`],
+  ])('flags %s, once', (_label, code) => {
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
+  it('reports a chain holding two split values once, at its start', () => {
+    const code = `const v = '${prefix}' + '${PAIR}' + ' ' + '${prefix}' + '${OTHER}';`;
+    const messages = messagesFor(code);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].column).toBe(code.indexOf(`'${prefix}'`) + 1);
+  });
+
+  it('does not report a value inside one piece a second time', () => {
+    expect(messagesFor(`const v = '${prefix}${PAIR}' + ' units';`)).toHaveLength(1);
+  });
+
+  it('does not report a value a second time when the join extends it', () => {
+    expect(messagesFor(`const v = '${prefix}${PAIR}' + '${OTHER}';`)).toHaveLength(1);
+  });
+
+  it('reports a new value across the join beside a hit already in the first piece', () => {
+    const code = `const v = '${prefix}${PAIR} ${OTHER}' + '${THIRD}';`;
+    expect(messagesFor(code)).toHaveLength(2);
+  });
+
+  it('reports a new value across the join beside a hit in a middle piece', () => {
+    const middle = `${OTHER} ${prefix}${THIRD} ${FOURTH}`;
+    const code = `const v = '${PAIR}' + '${middle}' + '${FIFTH}';`;
+    expect(messagesFor(code)).toHaveLength(2);
+  });
+
+  const escapedZero = `\\x${'0'.charCodeAt(0).toString(16)}`;
+
+  it('reports a split value whose first piece is spelled in an escape', () => {
+    const code = `const v = '${escapedZero}x' + '${PAIR}';`;
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
+  it('reports an escaped piece that decodes to a hit, extended across the join', () => {
+    const code = `const v = '${escapedZero}x${PAIR}' + '${OTHER}';`;
+    expect(messagesFor(code).map((m) => m.ruleId)).toEqual(['voltras/no-protocol-detail']);
+  });
+
+  it.each([
+    ['a snake_case name built in pieces', "const v = 'max_' + 'force_' + 'lbs';"],
+    ['ordinary words', "const v = 'Set ' + 'complete' + ', rest ' + 'now';"],
+    ['a prefix joined to an identifier', `const v = '${prefix}' + digits;`],
+    ['a prefix joined to a call', `const v = '${prefix}' + pad(value);`],
+    ['a prefix joined to an expression template', `const v = '${prefix}' + \`\${value}\`;`],
+    ['numeric addition', 'const v = 1 + 2 + 3;'],
+  ])('lets %s through', (_label, code) => {
+    expect(messagesFor(code)).toEqual([]);
+  });
+});
+
+// scripts/ was outside the ESLint target (`eslint src tools/truecoach-retro`), so a
+// command code sitting in a script's header comment was invisible to this rule even
+// though the rule itself scans comments fine (VW-497). This runs the real config the
+// widened `npm run lint:scripts-confidentiality` uses, against a synthetic fixture, to
+// prove the scripts/ glob is actually wired up rather than asserting on the detector
+// in isolation again.
+describe('the scripts/ scan (VW-497)', () => {
+  const CONFIG = join(REPO_ROOT, 'eslint.scripts-confidentiality.config.mjs');
+  const FIXTURE_PATH = join(REPO_ROOT, 'scripts/__synthetic-fixture-not-a-real-file__.mjs');
+
+  async function lint(code: string) {
+    const eslint = new ESLint({ cwd: REPO_ROOT, overrideConfigFile: CONFIG });
+    const [result] = await eslint.lintText(code, { filePath: FIXTURE_PATH });
+    return result.messages;
+  }
+
+  it('fails on a synthetic forbidden token planted in a script header comment', async () => {
+    const messages = await lint(
+      '#!/usr/bin/env node\n// driver header: observed 0x1f on the wire\n',
+    );
+    expect(messages.some((m) => m.ruleId === 'voltras/no-protocol-detail')).toBe(true);
+  });
+
+  it('lets an ordinary script header comment through', async () => {
+    const messages = await lint('#!/usr/bin/env node\n// driver header: nothing notable here\n');
+    expect(messages.some((m) => m.ruleId === 'voltras/no-protocol-detail')).toBe(false);
   });
 });
 
@@ -99,24 +211,42 @@ describe('the exemption list', () => {
   const DIRECTIVE =
     /eslint-disable(?:-next-line|-line)?\s+voltras\/no-protocol-detail\s+--\s+([^\n]*)/g;
 
-  function sourceFiles(dir: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) sourceFiles(path, out);
-      else if (/\.(ts|tsx|cjs)$/.test(path)) out.push(path);
-    }
-    return out;
+  // Every path either pass reads: the text pass's own predicate, plus what ESLint parses.
+  // A directive in any file type the text pass scans exempts a line (VW-497).
+  const isPinned = (path: string): boolean =>
+    isScanned(path) || /\.(ts|tsx|cjs|mjs|md)$/.test(path);
+
+  function trackedFiles(): string[] {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter((path) => path !== '' && isPinned(path));
   }
 
-  it('is exactly the hex-encoding helper, and nothing else', () => {
+  function exemptionSites(files: string[], read: (file: string) => string): string[] {
     const sites: string[] = [];
-    for (const file of sourceFiles(join(REPO_ROOT, 'src'))) {
-      const text = readFileSync(file, 'utf8');
-      for (const match of text.matchAll(DIRECTIVE)) {
-        sites.push(`${relative(REPO_ROOT, file)} — ${match[1].trim()}`);
+    for (const file of files.filter(isPinned)) {
+      for (const match of read(file).matchAll(DIRECTIVE)) {
+        sites.push(`${file} — ${match[1].replace(/\s*-->$/, '').trim()}`);
       }
     }
+    return sites;
+  }
+
+  it.each(['ci.yml', 'run.sh', 'app.js', 'view.vue', 'data.json', 'page.html'])(
+    'catches a directive planted in a scanned %s file',
+    (name) => {
+      const planted = ['eslint-disable-next-line', 'voltras/no-protocol-detail', '-- planted'];
+      const sites = exemptionSites([`fixtures/${name}`], () => `# ${planted.join(' ')}\nx\n`);
+      expect(sites).toEqual([`fixtures/${name} — planted`]);
+    },
+  );
+
+  it('is exactly these four sites, and nothing else', () => {
+    const sites = exemptionSites(trackedFiles(), (file) =>
+      readFileSync(join(REPO_ROOT, file), 'utf8'),
+    );
     expect(sites).toEqual([
+      'WISHLIST.md — a commit sha, not a device value (VW-497)',
       'src/tools/device-tools.ts — the hex alphabet, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',
       'src/tools/device-tools.ts — a nibble mask, not a device value (VW-213)',

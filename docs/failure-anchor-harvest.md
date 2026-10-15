@@ -23,7 +23,7 @@ Two consequences that are accepted deliberately:
 Do not gamify a harvested anchor. No streaks, no badges, no "you hit failure again" — an anchor is
 a measurement, and celebrating it converts a passive read into an incentive.
 
-## The criterion, version `failure-harvest@1.0.0`
+## The criterion, version `failure-harvest@1.1.0`
 
 Implemented in `src/store/failure-harvest.ts`, pure, with every threshold in one exported const
 block. Velocities are normalised to m/s first (`normaliseVelocityToMps`), so pre-VW-160
@@ -31,7 +31,10 @@ device-native rows and current rows produce the same verdict.
 
 A set is a **candidate** when its final rep's concentric mean velocity is at or below
 `stallFraction` (0.70) of the fastest non-first rep, and the set has at least `minReps` (4) reps.
-Warm-ups and shorter sets are `not_candidate` and nothing is written for them.
+Warm-ups and shorter sets are `not_candidate` and nothing is written for them. So are damper and
+isokinetic sets (VW-541): their velocity carries no failure signal. Chains and eccentric-overload
+sets keep their verdict, but baseline derivation and the fitted velocity threshold read constant-load
+anchors only, joining each anchor to its set's resistance family at read time.
 
 A candidate is a **failure** only when BOTH hold:
 

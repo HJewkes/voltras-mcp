@@ -8,8 +8,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { PutAdvisoryDecisionInput } from '../types.js';
+import { openTestStore } from './open-test-store.js';
 
 function decision(overrides: Partial<PutAdvisoryDecisionInput> = {}): PutAdvisoryDecisionInput {
   return {
@@ -26,7 +27,7 @@ function decision(overrides: Partial<PutAdvisoryDecisionInput> = {}): PutAdvisor
 
 describe('advisory decisions', () => {
   it('round-trips the inputs and thresholds it fired on', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     const written = await store.putAdvisoryDecision(decision());
     expect(written.inputs).toEqual({ ref: 'chest', dietPhase: 'fat-loss' });
     expect(written.thresholds).toEqual({ fatLossSpecializeCap: 0 });
@@ -35,7 +36,7 @@ describe('advisory decisions', () => {
   });
 
   it('records an answer on the row that fired, not beside it', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     const issued = await store.putAdvisoryDecision(decision());
     const answered = await store.putAdvisoryDecision({
       ...decision({ id: issued.id }),
@@ -48,7 +49,7 @@ describe('advisory decisions', () => {
   });
 
   it('narrows by code and by response', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putAdvisoryDecision(decision({ userResponse: 'declined' }));
     await store.putAdvisoryDecision(decision({ userResponse: 'accepted' }));
     await store.putAdvisoryDecision(decision({ code: 'other_advisory' }));
@@ -64,7 +65,7 @@ describe('advisory decisions', () => {
   });
 
   it('keeps one user’s advisories out of another’s', async () => {
-    const store = SqliteSessionStore.open(':memory:');
+    const store = openTestStore();
     await store.putAdvisoryDecision(decision());
     expect(await store.listAdvisoryDecisions('someone-else')).toEqual([]);
   });

@@ -12,9 +12,9 @@ Probe once per session if you have not seen a tag: `debug.push_test_channel`, re
 
 ## `meta.slot` — always present
 
-`primary` for single-device flows, `left` / `right` on a bilateral rig or a single device connected via a persisted binding. Bilateral streams interleave; filter on it. Events that are cross-slot by nature (`bilateral_divergence`, `deterministic_stop_unavailable` with several slots) carry `slot_id` / `partner_slot_id` instead.
+`primary` for single-device flows, `left` / `right` on a bilateral rig or a single device connected via a persisted binding. Bilateral streams interleave; filter on it. `deterministic_stop_unavailable` with several slots evaluated carries no `slot`; its content lists them.
 
-`setting_coerced` and `weight_implied_mismatch` also carry `slot_id`, the originating slot, alongside the publisher's `slot`.
+`bilateral_divergence` carries `slot` for the side whose close fired it and `partner_slot_id` for the other side. `setting_coerced`, `weight_implied_mismatch` and `bilateral_divergence` also carry `slot_id`, which equals `slot`.
 
 ## Resources
 

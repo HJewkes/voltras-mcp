@@ -1,0 +1,14 @@
+{
+  "mock.configure": {
+    "status": "coming-soon",
+    "note": "Registered but does nothing yet: every call returns an error, whatever the input.",
+    "link": "/roadmap#registered-but-does-nothing",
+    "linkText": "the roadmap"
+  },
+  "mock.inject_error": {
+    "status": "coming-soon",
+    "note": "Registered but does nothing yet: every call returns an error, whatever the input.",
+    "link": "/roadmap#registered-but-does-nothing",
+    "linkText": "the roadmap"
+  }
+}

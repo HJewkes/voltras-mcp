@@ -12,6 +12,7 @@
 // There is no delete tool. `block_schedules` refuses to lose a block that has history (FK
 // RESTRICT), and un-dating is `plan.block.schedule` with `startsOn: null`, which keeps it.
 
+import { UserFacingError } from '../errors.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -19,14 +20,14 @@ import { localDate, todayLocal } from '../analytics/training-days.js';
 import {
   addDays,
   blockCalendar,
-  isIsoDate,
-  isMonday,
+  assertMonday,
   planWeeksOf,
   scheduleRange,
   type BlockCalendar,
   type CalendarWeek,
+  type MondayProblem,
 } from '../plan/block-calendar.js';
-import { mondaysAround, placementConflict, type PlacedBlock } from '../plan/block-placement.js';
+import { placementConflict, type PlacedBlock } from '../plan/block-placement.js';
 import { scheduleHistory as historyOf, type ScheduleHistory } from '../plan/schedule-history.js';
 import { lintMesoLengthGrewMidBlock, type PlanWarning } from '../plan/lint-plan.js';
 import {
@@ -49,7 +50,7 @@ import {
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -217,13 +218,12 @@ function stateOn(row: DatedRow, today: string): BlockCalendar['state'] {
   return blockCalendar(row, [], today).state;
 }
 
-export function assertMonday(date: string): void {
-  if (!isIsoDate(date)) {
-    throw new ToolError('INVALID_DATE', `startsOn ${date} is not a calendar date.`);
+function notABlockStart(problem: MondayProblem): ToolError {
+  if (problem.kind === 'not-a-date') {
+    return new ToolError('INVALID_DATE', `startsOn ${problem.date} is not a calendar date.`);
   }
-  if (isMonday(date)) return;
-  const { before, after } = mondaysAround(date);
-  throw new ToolError(
+  const { date, before, after } = problem;
+  return new ToolError(
     'NOT_A_MONDAY',
     `A block starts on a Monday; ${date} is not one. The Mondays either side are ${before} and ${after}.`,
   );
@@ -404,7 +404,7 @@ function datingRowIn(
   today: string,
   reason: string | undefined,
 ): AppendBlockScheduleInput {
-  assertMonday(startsOn);
+  assertMonday(startsOn, notABlockStart);
   const row = newRow(block.id, {
     startsOn,
     weeksCount: block.weeksCount,
@@ -623,7 +623,7 @@ function moveChanges(
   input: z.infer<typeof PlanBlockScheduleInput> & { startsOn: string },
   today: string,
 ): ScheduleChange[] {
-  assertMonday(input.startsOn);
+  assertMonday(input.startsOn, notABlockStart);
   const shiftDays = Math.round((Date.parse(input.startsOn) - Date.parse(live.startsOn)) / DAY_MS);
   const later = input.cascade === 'later_blocks' ? laterDatedBlocks(world, block) : [];
   const moves = [{ block, live }, ...later];

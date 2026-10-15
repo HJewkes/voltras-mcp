@@ -86,6 +86,7 @@ import {
   expectationAt,
   isCorridor,
   goalReachOf,
+  readsTwoSided,
   mesoMilestoneOf,
   weekOutcomesOf,
   type BlockReading,
@@ -538,7 +539,7 @@ function read(input: GoalProgressInput): Reading {
   const matched = input.actuals.filter((actual) => actual.matched);
   const latest = matched[matched.length - 1];
   const mid = (expected.low + expected.high) / 2;
-  const slope = slopeOf(matched, input.band.direction, mid);
+  const slope = slopeOf(matched, input.band, mid);
   const deviationPct = latest === undefined ? 0 : deviationOf(expected, latest.value, input.band);
   const verdict = dietPhaseTolerance(dietPhaseStateOf(input.dietState), deviationPct, slope);
   const inBlock = blockReadingsOf(weekOneOf(input), input.weeks, matched);
@@ -614,8 +615,8 @@ function dietPhaseStateOf(state: GoalDietState): DietPhaseState {
  * Distance from the band's midline, scaled so the band edge lands exactly on
  * `SMALL_DEVIATION_PCT`: inside the band is always a `small` deviation, one
  * band-width past it is `moderate`. Negative is behind, positive is ahead, as
- * `DeviationPct` requires. A `hold` goal has no ahead side — any departure from
- * the corridor's middle is a departure — so its deviation is never positive.
+ * `DeviationPct` requires. A two-sided `hold` goal has no ahead side — any departure
+ * from the corridor's middle is a departure — so its deviation is never positive.
  *
  * A zero-width band (the cold execution ramp, a session count) has no corridor
  * to scale against and falls back to the raw percent of expected.
@@ -623,32 +624,26 @@ function dietPhaseStateOf(state: GoalDietState): DietPhaseState {
 function deviationOf(expected: GoalBandExpectation, value: number, band: GoalBand): number {
   const mid = (expected.low + expected.high) / 2;
   const halfSpan = Math.abs(expected.high - expected.low) / 2;
-  const displacement =
-    band.direction === 'hold' ? -Math.abs(value - mid) : (value - mid) * signOf(band.direction);
+  const displacement = readsTwoSided(band) ? -Math.abs(value - mid) : (value - mid) * signOf(band);
   if (halfSpan > 0) return (displacement / halfSpan) * SMALL_DEVIATION_PCT;
   return mid === 0 ? 0 : (displacement / Math.abs(mid)) * 100;
 }
 
-function signOf(direction: GoalBand['direction']): number {
-  return direction === 'down' ? -1 : 1;
+function signOf(band: GoalBand): number {
+  return band.direction === 'down' ? -1 : 1;
 }
 
 /**
- * The trend of the matched readings, in the lifter's favour. A `hold` goal
- * trends on distance from the corridor's middle: closing on it is improving.
+ * The trend of the matched readings, in the lifter's favour. A two-sided `hold`
+ * goal trends on distance from the corridor's middle: closing on it is improving.
  */
-function slopeOf(
-  matched: readonly GoalActual[],
-  direction: GoalBand['direction'],
-  mid: number,
-): TrendSlope {
+function slopeOf(matched: readonly GoalActual[], band: GoalBand, mid: number): TrendSlope {
   if (matched.length < 2) return 'flat';
   const first = matched[0];
   const last = matched[matched.length - 1];
-  const [from, to] =
-    direction === 'hold'
-      ? [-Math.abs(first.value - mid), -Math.abs(last.value - mid)]
-      : [first.value * signOf(direction), last.value * signOf(direction)];
+  const [from, to] = readsTwoSided(band)
+    ? [-Math.abs(first.value - mid), -Math.abs(last.value - mid)]
+    : [first.value * signOf(band), last.value * signOf(band)];
   const scale = Math.abs(first.value);
   if (scale === 0) return 'flat';
   const pctPerStep = (((to - from) / scale) * 100) / (matched.length - 1);
@@ -1112,7 +1107,7 @@ const STATUS_RANK: Record<GoalProgressStatus, number> = {
   stalled: 6,
 };
 
-const STATUS_LABEL: Record<GoalProgressStatus, string> = {
+export const STATUS_LABEL: Record<GoalProgressStatus, string> = {
   beyond_goal: 'beyond goal',
   goal_met: 'goal met',
   ahead: 'ahead',

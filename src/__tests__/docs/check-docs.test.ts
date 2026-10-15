@@ -8,16 +8,20 @@
 // Every protocol-shaped fixture below is SYNTHETIC — invented for this file,
 // matching no value this device uses. A guard whose test fixtures are real
 // values publishes the thing it exists to keep unpublished.
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  checkPageFrontmatter,
   checkPathCitations,
   checkProtocolLeakage,
   checkToolCoverage,
   checkToolNames,
   extractPathCitations,
 } from '../../../scripts/lib/docs-checks.mjs';
+import { documentedFiles, historical } from '../../../scripts/lib/docs-pages.mjs';
 import { findEncodedValues } from '../../docs/protocol-guard.js';
 import { ANALYTICS_PIPELINE_IDS } from '../../docs/public-vocabulary.js';
 
@@ -181,6 +185,46 @@ describe('checkProtocolLeakage', () => {
   });
 });
 
+describe('documentedFiles', () => {
+  it('scans a changelog fragment, so a value in one fails before the release fold', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vw704-docs-'));
+    try {
+      mkdirSync(join(root, 'changelog.d'));
+      writeFileSync(
+        join(root, 'changelog.d', 'VW-1.md'),
+        '---\nsection: Fixed\n---\n\n- The frame now reads `de ad be ef` (VW-1).\n',
+      );
+
+      const findings = documentedFiles(root).flatMap((file: string) => {
+        const path = relative(root, file);
+        const text = readFileSync(file, 'utf8');
+        return checkProtocolLeakage(text, {
+          path,
+          findEncodedValues,
+          allowed: new Set<string>(),
+        }).map((finding: object) => ({ path, ...finding }));
+      });
+
+      expect(findings).toEqual([
+        {
+          path: 'changelog.d/VW-1.md',
+          line: 5,
+          check: 'protocol',
+          message: 'byte-sequence shaped token on a published page',
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a fragment as history, like the CHANGELOG.md it folds into', () => {
+    expect(historical('changelog.d/VW-1.md')).toBe(true);
+    expect(historical('CHANGELOG.md')).toBe(true);
+    expect(historical('docs/a.md')).toBe(false);
+  });
+});
+
 describe('checkToolCoverage', () => {
   const coverage = (texts: string[], ignored = new Set<string>()): string[] =>
     checkToolCoverage(texts, REGISTRY, ignored).map((finding) => finding.message);
@@ -216,5 +260,122 @@ describe('ANALYTICS_PIPELINE_IDS', () => {
       (match) => match[1],
     );
     expect([...ANALYTICS_PIPELINE_IDS].sort()).toEqual([...new Set(dispatched)].sort());
+  });
+});
+
+describe('checkPageFrontmatter', () => {
+  const EXISTING = new Set(['src/server.ts', 'README.md']);
+  const VALID = {
+    diataxis: 'how-to',
+    audience: '[lifter, coach]',
+    status: 'available',
+    sources: '\n  - src/server.ts\n  - README.md',
+    lastVerified: '2026-09-27',
+  };
+
+  function page(fields: Record<string, string | undefined>): string {
+    const lines = Object.entries({ ...VALID, ...fields })
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .map(([key, value]) => `${key}:${value.startsWith('\n') ? '' : ' '}${value}`);
+    return `---\n${lines.join('\n')}\n---\n\n# A scratch page\n`;
+  }
+
+  const NOW = new Date('2026-09-30T12:00:00Z');
+
+  function messages(text: string): string[] {
+    return checkPageFrontmatter(text, (path: string) => EXISTING.has(path), NOW).map(
+      (finding: { message: string }) => finding.message,
+    );
+  }
+
+  it('passes a complete available page', () => {
+    expect(messages(page({}))).toEqual([]);
+  });
+
+  it('passes a coming-soon page that carries a note and a tracking link', () => {
+    const text = page({
+      status: 'coming-soon',
+      statusNote: 'The tool is registered but does nothing yet.',
+      tracking: 'https://github.com/HJewkes/voltras-mcp/issues/1',
+    });
+    expect(messages(text)).toEqual([]);
+  });
+
+  it('names status when a page has no frontmatter at all', () => {
+    expect(messages('# A scratch page\n')).toContain('status: missing');
+  });
+
+  it('names status when the field is missing', () => {
+    expect(messages(page({ status: undefined }))).toEqual(['status: missing']);
+  });
+
+  it('names status when the value is outside the enum', () => {
+    expect(messages(page({ status: 'beta' }))).toEqual([
+      'status: "beta" is not one of available, experimental, coming-soon',
+    ]);
+  });
+
+  it('names statusNote on an experimental page without one', () => {
+    expect(messages(page({ status: 'experimental' }))).toEqual([
+      'statusNote: required when status is experimental',
+    ]);
+  });
+
+  it('names tracking on a coming-soon page without one', () => {
+    expect(messages(page({ status: 'coming-soon', statusNote: 'Not wired yet.' }))).toEqual([
+      'tracking: required when status is coming-soon',
+    ]);
+  });
+
+  it('names each sources path that does not exist', () => {
+    expect(messages(page({ sources: '\n  - src/server.ts\n  - src/gone.ts' }))).toEqual([
+      'sources: no such path: src/gone.ts',
+    ]);
+  });
+
+  it('names lastVerified when it is not a real calendar date', () => {
+    expect(messages(page({ lastVerified: '2026-02-30' }))).toEqual([
+      'lastVerified: "2026-02-30" is not a YYYY-MM-DD date',
+    ]);
+    expect(messages(page({ lastVerified: 'yesterday' }))).toEqual([
+      'lastVerified: "yesterday" is not a YYYY-MM-DD date',
+    ]);
+  });
+
+  it('passes a page marked with the date of its per-claim sourcing pass', () => {
+    expect(messages(page({ sourced: '2026-09-30' }))).toEqual([]);
+  });
+
+  it('names sourced when it is not a real calendar date', () => {
+    expect(messages(page({ sourced: 'yes' }))).toEqual(['sourced: "yes" is not a YYYY-MM-DD date']);
+  });
+
+  it('names a sourced or lastVerified date that is in the future', () => {
+    expect(messages(page({ sourced: '2099-01-01' }))).toEqual([
+      'sourced: "2099-01-01" is in the future',
+    ]);
+    expect(messages(page({ lastVerified: '2026-10-02' }))).toEqual([
+      'lastVerified: "2026-10-02" is in the future',
+    ]);
+  });
+
+  it('accepts tomorrow, the date an author east of UTC may already be on', () => {
+    expect(messages(page({ sourced: '2026-10-01', lastVerified: '2026-10-01' }))).toEqual([]);
+  });
+
+  it('names an audience outside the enum', () => {
+    expect(messages(page({ audience: '[lifter, investor]' }))).toEqual([
+      'audience: "investor" is not one of lifter, coach, developer',
+    ]);
+  });
+
+  it('reports the line the offending field sits on', () => {
+    const [finding] = checkPageFrontmatter(page({ status: 'beta' }), () => true);
+    expect(finding.line).toBe(4);
+  });
+
+  it('ignores a nested map such as the home page hero', () => {
+    const text = page({}).replace('---\n', '---\nhero:\n  name: voltras-mcp\n  text: A title\n');
+    expect(messages(text)).toEqual([]);
   });
 });

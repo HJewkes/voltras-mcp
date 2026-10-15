@@ -22,6 +22,7 @@
 // re-proposal is a NEW proposal beside it, never an edit of it (methodology
 // §4; plan v2 §1.7, B55).
 
+import { UserFacingError } from '../errors.js';
 import { todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock, type PlanningRead } from '../plan/current-block.js';
 import type { z } from 'zod';
@@ -42,12 +43,15 @@ import type { ServerState } from '../state/server-state.js';
 import type { DietPhase, RecompMode } from '../store/diet-phase.js';
 import {
   LOCAL_USER_ID,
+  type AdvisoryDerivation,
   type SessionStore,
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
   type StoredGoalTarget,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
+import { alreadyAnsweredError, answerIfOpen } from './advisory-answer.js';
+import { localMidnightIso } from '../analytics/training-days.js';
 import { mostRecentSundayIso, readWeeklyCheckin, type WeeklyCheckin } from './profile-tools.js';
 
 /** The advisory this tool issues, in `advisory_decisions.code`. */
@@ -56,9 +60,7 @@ export const BODYWEIGHT_RATE_ADVISORY_CODE = 'bodyweight_rate_reproposal';
 /** Bumped when the loop below changes, so old answers stay re-scorable. */
 export const BODYWEIGHT_RATE_ADVISORY_VERSION = 'bodyweight-rate-advisory@1.0.0';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-class ToolError extends Error {
+class ToolError extends UserFacingError {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
@@ -160,13 +162,20 @@ export async function runWeeklyReview(
   return { ...(await review(state, context, response)), planning };
 }
 
+/** The instant the local week that starts on `weekOf` ends: the next local Sunday's midnight. */
+function localWeekEndIso(weekOf: string): string {
+  const nextSunday = new Date(`${weekOf}T00:00:00.000Z`);
+  nextSunday.setUTCDate(nextSunday.getUTCDate() + 7);
+  return localMidnightIso(nextSunday.toISOString().slice(0, 10));
+}
+
 /**
  * The instant the trend is computed as of: now, or the end of `weekOf` when a
  * past week is being reviewed. A back-dated review must not read a series the
  * week it is judging had not produced yet.
  */
 function reviewInstant(weekOf: string, now: Date): string {
-  const weekEnd = Date.parse(`${weekOf}T00:00:00.000Z`) + 7 * DAY_MS;
+  const weekEnd = Date.parse(localWeekEndIso(weekOf));
   return new Date(Math.min(now.getTime(), weekEnd)).toISOString();
 }
 
@@ -334,7 +343,7 @@ async function lastProposalBefore(
   weekOf: string,
 ): Promise<string | null> {
   const rows = await listDecisions(state);
-  const anchor = `${weekOf}T00:00:00.000Z`;
+  const anchor = localMidnightIso(weekOf);
   return rows.find((row) => row.issuedAt < anchor)?.issuedAt ?? null;
 }
 
@@ -366,64 +375,81 @@ interface EmitResult {
 /**
  * Record the proposal, unless there is none to record or the lifter already
  * declined this observation. A vetoed week emits no text and so writes
- * nothing: a proposal nobody made is not a row.
+ * nothing: a proposal nobody made is not a row. The dedupe and the decline
+ * check run against the live rows at the write (VW-588), so two reviews of one
+ * week cannot both miss the other's row.
  */
 async function emit(
   state: ServerState,
   context: ReviewContext,
   advisory: BodyweightRateAdvisory,
 ): Promise<EmitResult> {
-  if (advisory.advisory === null) return { proposal: null, suppressedByDecline: false, notes: [] };
+  if (advisory.advisory === null) return { proposal: null, ...blank() };
   const key = observationKey(context.weekOf, advisory.urgencyRank);
-  const existing = (await listDecisions(state)).filter((row) => row.inputs.observationKey === key);
-  const declined = existing.find((row) => row.userResponse === 'declined');
-  if (declined !== undefined) {
-    return {
-      proposal: null,
-      suppressedByDecline: true,
-      notes: [
-        'You already declined this week’s rate proposal at this urgency, so it is not raised ' +
-          'again. It can return next week, or sooner if the signal crosses into a wider band.',
-      ],
-    };
-  }
-  return { proposal: await write(state, context, advisory, existing[0], key), ...blank() };
+  const written = await state.store.putAdvisoryDerived(
+    LOCAL_USER_ID,
+    BODYWEIGHT_RATE_ADVISORY_CODE,
+    (live) => proposalDerivation(live, context, advisory, key),
+    { whileTargetLive: context.target.id },
+  );
+  if (written === undefined) return { proposal: null, ...blank() };
+  if (written.decision === undefined) return declinedResult();
+  return { proposal: proposalOf(written.decision), ...blank() };
 }
 
 function blank(): { suppressedByDecline: boolean; notes: string[] } {
   return { suppressedByDecline: false, notes: [] };
 }
 
+function declinedResult(): EmitResult {
+  return {
+    proposal: null,
+    suppressedByDecline: true,
+    notes: [
+      'You already declined this week’s rate proposal at this urgency, so it is not raised ' +
+        'again. It can return next week, or sooner if the signal crosses into a wider band.',
+    ],
+  };
+}
+
 /**
  * One row per observation: a repeat of the same week at the same urgency
  * updates the row that fired rather than adding a second one, and keeps the
- * answer already on it.
+ * answer the live row carries, never the one read before the derivation.
  */
-async function write(
-  state: ServerState,
+function proposalDerivation(
+  live: readonly StoredAdvisoryDecision[],
   context: ReviewContext,
   advisory: BodyweightRateAdvisory,
-  existing: StoredAdvisoryDecision | undefined,
   key: string,
-): Promise<WeeklyReviewProposal> {
-  const saved = await state.store.putAdvisoryDecision({
-    ...(existing !== undefined ? { id: existing.id } : {}),
-    userId: LOCAL_USER_ID,
-    code: BODYWEIGHT_RATE_ADVISORY_CODE,
-    issuedAt: existing?.issuedAt ?? context.reviewedAt,
-    inputs: {
-      ...advisory.inputs,
-      weekOf: context.weekOf,
-      observationKey: key,
-      targetId: context.target.id,
-      committedValue: context.target.committedValue,
+): AdvisoryDerivation<null> {
+  const existing = live.filter((row) => row.inputs.observationKey === key);
+  if (existing.some((row) => row.userResponse === 'declined')) return { result: null };
+  const [current] = existing;
+  return {
+    decision: {
+      ...(current !== undefined ? { id: current.id } : {}),
+      userId: LOCAL_USER_ID,
+      code: BODYWEIGHT_RATE_ADVISORY_CODE,
+      issuedAt: current?.issuedAt ?? context.reviewedAt,
+      inputs: {
+        ...advisory.inputs,
+        weekOf: context.weekOf,
+        observationKey: key,
+        targetId: context.target.id,
+        committedValue: context.target.committedValue,
+      },
+      thresholds: advisory.thresholds,
+      algorithmVersion: BODYWEIGHT_RATE_ADVISORY_VERSION,
+      verdict: advisory.outcome,
+      ...(current?.userResponse !== undefined ? { userResponse: current.userResponse } : {}),
+      ...(current?.respondedAt !== undefined ? { respondedAt: current.respondedAt } : {}),
     },
-    thresholds: advisory.thresholds,
-    algorithmVersion: BODYWEIGHT_RATE_ADVISORY_VERSION,
-    verdict: advisory.outcome,
-    ...(existing?.userResponse !== undefined ? { userResponse: existing.userResponse } : {}),
-    ...(existing?.respondedAt !== undefined ? { respondedAt: existing.respondedAt } : {}),
-  });
+    result: null,
+  };
+}
+
+function proposalOf(saved: StoredAdvisoryDecision): WeeklyReviewProposal {
   return {
     decisionId: saved.id,
     issuedAt: saved.issuedAt,
@@ -455,15 +481,20 @@ async function recordResponse(
         'proposal it answers, never on its own.',
     );
   }
-  const saved = await state.store.putAdvisoryDecision({
-    ...open,
+  const answered = await answerIfOpen(state.store, open, {
     userResponse: response,
     respondedAt: at,
   });
+  if (answered.kind === 'already_answered') {
+    throw alreadyAnsweredError(
+      `The bodyweight-rate proposal for the week of ${weekOf}`,
+      answered.standing,
+    );
+  }
   return {
-    decisionId: saved.id,
+    decisionId: answered.decision.id,
     userResponse: response,
-    respondedAt: saved.respondedAt ?? at,
+    respondedAt: answered.decision.respondedAt ?? at,
   };
 }
 

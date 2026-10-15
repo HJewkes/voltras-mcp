@@ -31,8 +31,15 @@ import { randomUUID } from 'node:crypto';
 import { GOAL_BAND_CONSTANTS, calibrationGapOf, isStartingRamp } from '../analytics/goal-band.js';
 import type { ServerState } from '../state/server-state.js';
 import {
+  alreadyAnsweredError,
+  answerIfOpen,
+  type AdvisoryAnswerOutcome,
+} from './advisory-answer.js';
+import {
   LOCAL_USER_ID,
+  type AdvisoryDerivation,
   type BaselineState,
+  type GoalTargetOfferClaim,
   type StoredAdvisoryDecision,
   type StoredGoalTarget,
 } from '../store/types.js';
@@ -153,7 +160,7 @@ async function reconcileOne(
     if (open !== undefined) await withdrawOffer(state, open, now);
     return undefined;
   }
-  return writeOffer(state, inFrame, target, framed, open, now);
+  return writeOffer(state, inFrame, target, framed, now);
 }
 
 function gapOf(evidence: CalibrationEvidence): ReturnType<typeof calibrationGapOf> {
@@ -174,35 +181,58 @@ async function readEvidence(
 /**
  * The offer is the band re-derived inside the ramp's own frame (VW-449's
  * `deriveTargetInFrame`): its start value on week 1 of its block, today's info
- * level and, where earned, today's fitted slope.
+ * level and, where earned, today's fitted slope. Only the band is derived out
+ * here; whether to offer is decided against the live offers at the write (VW-588).
  */
 async function writeOffer(
   state: ServerState,
   context: GoalDerivationContext,
   target: StoredGoalTarget,
   derived: DerivedTarget,
-  open: StoredAdvisoryDecision | undefined,
   now: string,
-): Promise<RecalibrationOffer> {
+): Promise<RecalibrationOffer | undefined> {
+  const written = await state.store.putAdvisoryDerived(
+    LOCAL_USER_ID,
+    RECALIBRATION_OFFER_CODE,
+    (live) => offerDerivation(live, context, target, derived, now),
+    { whileTargetLive: target.id },
+  );
+  if (written?.decision === undefined || written.goalTarget === undefined) return undefined;
+  return offerOf(written.decision, target, written.goalTarget, derived);
+}
+
+/** A declined ramp gets nothing; an open offer is refreshed in place; otherwise one is minted. */
+function offerDerivation(
+  live: readonly StoredAdvisoryDecision[],
+  context: GoalDerivationContext,
+  target: StoredGoalTarget,
+  derived: DerivedTarget,
+  now: string,
+): AdvisoryDerivation<null> {
+  const mine = live.filter((decision) => offerInputsOf(decision).targetId === target.id);
+  if (mine.some((decision) => decision.userResponse === 'declined')) return { result: null };
+  const open = mine.find((decision) => decision.userResponse === undefined);
   const offerTargetId = open === undefined ? randomUUID() : offerInputsOf(open).offerTargetId;
-  const row = await state.store.putGoalTarget(framedRow(target, derived, context, offerTargetId));
   const inputs: RecalibrationOfferInputs = {
     targetId: target.id,
     offerTargetId,
-    committedValue: row.committedValue,
-    stretchValue: row.stretchValue,
+    committedValue: derived.band.committedValue,
+    stretchValue: derived.band.stretchValue,
   };
-  const decision = await state.store.putAdvisoryDecision({
-    ...(open === undefined ? {} : { id: open.id }),
-    userId: LOCAL_USER_ID,
-    code: RECALIBRATION_OFFER_CODE,
-    issuedAt: open?.issuedAt ?? now,
-    inputs: { ...inputs },
-    thresholds: { minMatchedSessionsForRamp: GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp },
-    algorithmVersion: RECALIBRATION_OFFER_VERSION,
-    verdict: 'recalibrated_target_offered',
-  });
-  return offerOf(decision, target, row, derived);
+  return {
+    goalTarget: framedRow(target, derived, context, offerTargetId),
+    decision: {
+      ...(open === undefined ? {} : { id: open.id }),
+      userId: LOCAL_USER_ID,
+      code: RECALIBRATION_OFFER_CODE,
+      issuedAt: open?.issuedAt ?? now,
+      inputs: { ...inputs },
+      thresholds: { minMatchedSessionsForRamp: GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp },
+      algorithmVersion: RECALIBRATION_OFFER_VERSION,
+      verdict: 'recalibrated_target_offered',
+    },
+    result: null,
+  };
 }
 
 /** The offer row: the accepted target's frame, the fresh band's numbers. */
@@ -262,20 +292,23 @@ function offerOf(
   };
 }
 
-/** Evidence went backwards: the unanswered offer is taken off the table, never left to be accepted. */
+/**
+ * Evidence went backwards: the unanswered offer is taken off the table, never
+ * left to be accepted. Its row is retired only if the withdrawal is the answer
+ * recorded, since a lost withdrawal's row may be the target just accepted.
+ */
 async function withdrawOffer(
   state: ServerState,
   open: StoredAdvisoryDecision,
   now: string,
-): Promise<void> {
+): Promise<AdvisoryAnswerOutcome> {
   const inputs = offerInputsOf(open);
-  await state.store.retireGoalTarget(inputs.offerTargetId, 'abandoned', now);
-  await state.store.putAdvisoryDecision({
-    ...open,
-    inputs: { ...inputs, withdrawnAt: now },
-    userResponse: 'ignored',
-    respondedAt: now,
-  });
+  return answerIfOpen(
+    state.store,
+    open,
+    { userResponse: 'ignored', respondedAt: now, inputs: { ...inputs, withdrawnAt: now } },
+    { goalTargetId: inputs.offerTargetId, outcome: 'abandoned' },
+  );
 }
 
 /** The unanswered offer whose proposal row is `offerTargetId`, if there is one. */
@@ -303,8 +336,7 @@ export async function checkOffer(
   const stored = await state.store.listGoalTargets({ priorityId: offerRow.priorityId });
   const accepted = stored.find((target) => target.id === inputs.targetId);
   if (accepted === undefined || !isOfferCandidate(accepted, now)) {
-    await answerOffer(state, open, 'ignored', now);
-    return 'orphaned';
+    return settled(open, await answerOffer(state, open, 'ignored', now), 'orphaned');
   }
   const priority = (await state.store.listPriorities(LOCAL_USER_ID)).find(
     (row) => row.id === accepted.priorityId,
@@ -317,43 +349,60 @@ export async function checkOffer(
   ) {
     return 'live';
   }
-  await withdrawOffer(state, open, now);
-  return 'withdrawn';
+  return settled(open, await withdrawOffer(state, open, now), 'withdrawn');
 }
 
-/** Acceptance: retire the starting ramp the offer replaces, and record which row replaced it. */
-export async function completeOffer(
-  state: ServerState,
+/** A check that had to answer the offer and lost: the answer another call recorded stands. */
+function settled(
+  open: StoredAdvisoryDecision,
+  outcome: AdvisoryAnswerOutcome,
+  check: OfferCheck,
+): OfferCheck {
+  if (outcome.kind === 'answered') return check;
+  const subject = `The recalibration offer ${offerInputsOf(open).offerTargetId}`;
+  throw alreadyAnsweredError(subject, outcome.standing);
+}
+
+/**
+ * Acceptance: record which row replaced the starting ramp, and retire the ramp
+ * only if this acceptance is the answer recorded. The acceptance's own write claims it.
+ */
+export function offerClaim(
   open: StoredAdvisoryDecision,
   newTargetId: string,
-): Promise<string> {
-  const now = new Date().toISOString();
+): GoalTargetOfferClaim {
   const inputs = offerInputsOf(open);
-  await state.store.retireGoalTarget(inputs.targetId, 'abandoned', now);
-  await state.store.putAdvisoryDecision({
-    ...open,
-    inputs: { ...inputs, newTargetId },
-    userResponse: 'accepted',
-    respondedAt: now,
-  });
-  return inputs.targetId;
+  return {
+    decisionId: open.id,
+    answer: {
+      userResponse: 'accepted',
+      respondedAt: new Date().toISOString(),
+      inputs: { ...inputs, newTargetId },
+    },
+    retire: { goalTargetId: inputs.targetId, outcome: 'abandoned' },
+  };
 }
 
-/** Retiring an offer's row is the lifter declining it; the answer is recorded against the offer. */
-export async function declineOfferFor(state: ServerState, offerTargetId: string): Promise<boolean> {
+/**
+ * Retiring an offer's row is the lifter declining it; the answer is recorded
+ * against the offer. `undefined` when no offer was open on that row.
+ */
+export async function declineOfferFor(
+  state: ServerState,
+  offerTargetId: string,
+): Promise<AdvisoryAnswerOutcome | undefined> {
   const open = await findOpenOffer(state, offerTargetId);
-  if (open === undefined) return false;
-  await answerOffer(state, open, 'declined', new Date().toISOString());
-  return true;
+  if (open === undefined) return undefined;
+  return answerOffer(state, open, 'declined', new Date().toISOString());
 }
 
-async function answerOffer(
+function answerOffer(
   state: ServerState,
   open: StoredAdvisoryDecision,
   response: 'declined' | 'ignored',
   now: string,
-): Promise<void> {
-  await state.store.putAdvisoryDecision({ ...open, userResponse: response, respondedAt: now });
+): Promise<AdvisoryAnswerOutcome> {
+  return answerIfOpen(state.store, open, { userResponse: response, respondedAt: now });
 }
 
 /**

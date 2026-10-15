@@ -1,4 +1,4 @@
-// Check 3: weekly work sets per primary muscle against MEV, MAV and MRV, and systemic weeks.
+// Check 3: weekly work sets per target muscle against MEV, MAV and MRV, the dose column, and systemic weeks.
 
 import {
   POPULATION_VOLUME_LANDMARKS,
@@ -10,7 +10,7 @@ import type { Context } from '../context.js';
 import { isoWeekStart } from '../dates.js';
 import { comparisonBlock, num, pct, section, table, type Figure } from '../markdown.js';
 import { underperformanceRuns } from '../underperformance.js';
-import { volumeStatus, weeklySetsByMuscle } from '../weekly.js';
+import { volumeStatus, weeklyDoseByMuscle, weeklySetsByMuscle } from '../weekly.js';
 
 import { muscleVerdicts } from './missed.js';
 
@@ -24,27 +24,55 @@ const ALL_MUSCLES = Object.keys(POPULATION_VOLUME_LANDMARKS) as TitanMuscleGroup
 
 type WeekSets = Map<string, Map<TitanMuscleGroup, number>>;
 
-/** A muscle trained as a primary in at least this share of weeks is read as regularly trained. */
+/** A muscle trained as a target in at least this share of weeks is read as regularly trained. */
 export const REGULAR_SHARE = 0.5;
 
 interface MuscleRead {
   muscle: TitanMuscleGroup;
-  counts: Record<VolumeStatus, number>;
+  /** Weeks per band; `null` where the landmark is unverified and no verdict is drawn (R8c). */
+  counts: Record<VolumeStatus, number> | null;
   median: number;
   trained: number;
+  /** The dose read's median: a comparison column, never banded. */
+  doseMedian: number;
 }
 
-function muscleRead(muscle: TitanMuscleGroup, weeks: WeekSets): MuscleRead {
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
+function bandCounts(muscle: TitanMuscleGroup, sets: readonly number[]) {
   const counts: Record<VolumeStatus, number> = { under: 0, maintenance: 0, productive: 0, over: 0 };
+  for (const n of sets) {
+    const status = volumeStatus(muscle, n);
+    if (status === null) return null;
+    counts[status] += 1;
+  }
+  return counts;
+}
+
+function muscleRead(muscle: TitanMuscleGroup, weeks: WeekSets, dose: WeekSets): MuscleRead {
   const sets = [...weeks.values()].map((muscles) => muscles.get(muscle) ?? 0);
-  for (const n of sets) counts[volumeStatus(muscle, n)] += 1;
-  const sorted = [...sets].sort((a, b) => a - b);
+  const doses = [...weeks.keys()].map((week) => dose.get(week)?.get(muscle) ?? 0);
   return {
     muscle,
-    counts,
-    median: sorted[Math.floor(sorted.length / 2)] ?? 0,
+    counts: bandCounts(muscle, sets),
+    median: median(sets),
     trained: sets.filter((n) => n > 0).length,
+    doseMedian: median(doses),
   };
+}
+
+/** Every muscle with a set in either read, in taxonomy order. */
+function muscleReads(ctx: Context): { weeks: WeekSets; reads: MuscleRead[] } {
+  const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
+  const dose = weeklyDoseByMuscle(ctx.rows, ctx.lookup);
+  const dosed = new Set([...dose.values()].flatMap((muscles) => [...muscles.keys()]));
+  const reads = ALL_MUSCLES.map((m) => muscleRead(m, weeks, dose)).filter(
+    (r) => r.trained > 0 || dosed.has(r.muscle),
+  );
+  return { weeks, reads };
 }
 
 /** Weeks where two or more unrelated muscles each had a flagged (second-or-later) missed session. */
@@ -73,7 +101,8 @@ function overMrvWeeks(ctx: Context, weeks: WeekSets): number {
 }
 
 function mostWeeks(reads: readonly MuscleRead[], status: VolumeStatus): string {
-  const top = [...reads].sort((a, b) => b.counts[status] - a.counts[status])[0];
+  const banded = reads.flatMap((r) => (r.counts === null ? [] : [{ ...r, counts: r.counts }]));
+  const top = banded.sort((a, b) => b.counts[status] - a.counts[status])[0];
   return top === undefined ? 'no muscle' : `${top.muscle} (${top.counts[status]} weeks)`;
 }
 
@@ -83,12 +112,15 @@ function findings(
   weeks: WeekSets,
   systemic: number,
 ): string[] {
-  const regular = reads.filter((r) => r.trained >= weeks.size * REGULAR_SHARE);
-  const rare = reads.filter((r) => !regular.includes(r)).map((r) => r.muscle);
-  const untrained = ALL_MUSCLES.filter((m) => !reads.some((r) => r.muscle === m));
+  const targeted = reads.filter((r) => r.trained > 0);
+  const regular = targeted.filter((r) => r.trained >= weeks.size * REGULAR_SHARE);
+  const rare = targeted.filter((r) => !regular.includes(r)).map((r) => r.muscle);
+  const untrained = ALL_MUSCLES.filter((m) => !targeted.some((r) => r.muscle === m));
+  const withheld = reads.filter((r) => r.counts === null).map((r) => r.muscle);
   return [
     `Across ${weeks.size} weeks with training, among muscles trained in at least half of them, ${mostWeeks(regular, 'under')} sat below MEV most often and ${mostWeeks(regular, 'over')} at or above MRV most often.`,
-    `Trained in under half the weeks: ${rare.join(', ') || 'none'}. Never a primary muscle: ${untrained.join(', ') || 'none'}.`,
+    `Trained in under half the weeks: ${rare.join(', ') || 'none'}. Never a target muscle: ${untrained.join(', ') || 'none'}.`,
+    `No landmark verdict (the landmark is unverified): ${withheld.join(', ') || 'none'}.`,
     `${systemic} systemic weeks (two or more unrelated muscles flagged by the two-session rule); ${overMrvWeeks(ctx, weeks)} weeks had two or more unrelated muscles at or above MRV.`,
   ];
 }
@@ -102,30 +134,52 @@ const HEADERS = [
   'MEV to MAV',
   'MAV to MRV',
   'at or above MRV',
+  'median dose sets/wk (fractional; not compared with landmarks)',
 ];
 
-function readRow({ muscle, counts, median, trained }: MuscleRead): (string | number)[] {
-  const l = POPULATION_VOLUME_LANDMARKS[muscle];
+const NO_VERDICT = 'no verdict';
+const NOT_A_TARGET = 'not a target';
+
+type Bands =
+  | { kind: 'none'; reason: string }
+  | { kind: 'counts'; counts: Record<VolumeStatus, number> };
+
+/** A muscle's band counts, or why it has none: an unverified landmark, or no target set in any week. */
+function bandsOf(read: MuscleRead): Bands {
+  if (read.counts === null) return { kind: 'none', reason: NO_VERDICT };
+  if (read.trained === 0) return { kind: 'none', reason: NOT_A_TARGET };
+  return { kind: 'counts', counts: read.counts };
+}
+
+function readRow(read: MuscleRead): (string | number)[] {
+  const l = POPULATION_VOLUME_LANDMARKS[read.muscle];
+  const bands = bandsOf(read);
+  const cells =
+    bands.kind === 'none'
+      ? Array<string>(4).fill(bands.reason)
+      : [bands.counts.under, bands.counts.maintenance, bands.counts.productive, bands.counts.over];
   return [
-    muscle,
-    `${l.mev}/${l.mav}/${l.mrv}`,
-    trained,
-    num(median, 0),
-    counts.under,
-    counts.maintenance,
-    counts.productive,
-    counts.over,
+    read.muscle,
+    read.counts === null ? 'unverified' : `${l.mev}/${l.mav}/${l.mrv}`,
+    read.trained,
+    num(read.median, 0),
+    ...cells,
+    num(read.doseMedian, 1),
   ];
+}
+
+function belowMevCell(read: MuscleRead, weeks: number): string {
+  const bands = bandsOf(read);
+  return bands.kind === 'none' ? bands.reason : pct(bands.counts.under, weeks);
 }
 
 /** The figures check 3 compares between all weeks and regular weeks. */
 export function volumeFigures(ctx: Context): Figure[] {
-  const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
-  const reads = ALL_MUSCLES.map((m) => muscleRead(m, weeks)).filter((r) => r.trained > 0);
+  const { weeks, reads } = muscleReads(ctx);
   const perMuscle = reads.map(
     (r): Figure => [
-      `${r.muscle}: median sets/wk, weeks below MEV`,
-      `${num(r.median, 0)}, ${pct(r.counts.under, weeks.size)}`,
+      `${r.muscle}: median sets/wk, weeks below MEV, median dose sets/wk`,
+      `${num(r.median, 0)}, ${belowMevCell(r, weeks.size)}, ${num(r.doseMedian, 1)}`,
     ],
   );
   return [
@@ -137,11 +191,10 @@ export function volumeFigures(ctx: Context): Figure[] {
 }
 
 export function volumeSection(ctx: Context, regular: Context | null = null): string {
-  const weeks = weeklySetsByMuscle(ctx.rows, ctx.lookup);
-  const reads = ALL_MUSCLES.map((m) => muscleRead(m, weeks)).filter((r) => r.trained > 0);
+  const { weeks, reads } = muscleReads(ctx);
   const systemic = systemicWeeks(ctx);
   const body = [
-    'Weeks counted are weeks with at least one training day. Sets are non-warm-up rows summed by their `sets` field, target-only: a `shoulders` primary counts toward all three delt groups and `back` toward lats and upper back, as muscle-map.ts maps them.',
+    "Weeks counted are weeks with at least one training day. Sets are non-warm-up rows summed by their `sets` field. The bands read the landmark read (B47): a set counts 1 toward each target muscle of its map entry and nothing else. The last column is the dose read (Pelland et al. 2025): each set adds its entry's weight (1, 0.5 or 0) per muscle. It is a comparison only and is never banded against a landmark. Glutes, lats and upper back carry no band until RP's glute and back landmarks are verified.",
     '',
     table(HEADERS, reads.map(readRow)),
     '',

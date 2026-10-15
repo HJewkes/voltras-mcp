@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  ActionRefusedError,
   forgetWriteToken,
   IndeterminateWriteError,
   postAction,
@@ -230,5 +231,61 @@ describe('postAction', () => {
     expect(write?.url).toBe('/api/actions/profile.log_bodyweight');
     expect(write?.body).toMatchObject({ input: { weightLbs: 180 }, flowId: 'sunday-1' });
     expect(typeof write?.body?.actionId).toBe('string');
+  });
+
+  it('surfaces a tool refusal with its code, result and status', async () => {
+    const { fetch } = fakeFetch([
+      { status: 200, body: { token: 'tok-1' } },
+      {
+        status: 400,
+        body: { ok: false, error: 'NO_OPEN_ADVISORY', result: { detail: 'none open' } },
+      },
+    ]);
+    vi.stubGlobal('fetch', fetch);
+    const error = (await postAction('goal.weekly_review', {}).catch(
+      (e: unknown) => e,
+    )) as ActionRefusedError;
+    expect(error).toBeInstanceOf(ActionRefusedError);
+    expect(error.code).toBe('NO_OPEN_ADVISORY');
+    expect(error.message).toBe('NO_OPEN_ADVISORY');
+    expect(error.status).toBe(400);
+    expect(error.result).toEqual({ detail: 'none open' });
+  });
+
+  it('keeps a transport failure a plain error, not a refusal', async () => {
+    const { fetch } = fakeFetch([
+      { status: 200, body: { token: 'tok-1' } },
+      { status: 501, body: { error: 'actions_unavailable', message: 'no actions' } },
+    ]);
+    vi.stubGlobal('fetch', fetch);
+    const error = await postAction('goal.weekly_review', {}).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(ActionRefusedError);
+    expect((error as Error).message).toBe('no actions');
+  });
+
+  it('sends a caller-supplied action id, so a retry of unchanged input reuses it', async () => {
+    const { calls, fetch } = fakeFetch([
+      { status: 200, body: { token: 'tok-1' } },
+      { status: 200, body: { ok: true, replayed: false, result: {} } },
+      { status: 200, body: { ok: true, replayed: true, result: {} } },
+    ]);
+    vi.stubGlobal('fetch', fetch);
+    await postAction('profile.log_bodyweight', { bodyweightLbs: 180 }, { actionId: 'attempt-1' });
+    await postAction('profile.log_bodyweight', { bodyweightLbs: 180 }, { actionId: 'attempt-1' });
+    const writes = calls.filter((c) => c.method === 'POST');
+    expect(writes.map((c) => c.body?.actionId)).toEqual(['attempt-1', 'attempt-1']);
+  });
+
+  it('mints a fresh id per call when no id is supplied', async () => {
+    const { calls, fetch } = fakeFetch([
+      { status: 200, body: { token: 'tok-1' } },
+      { status: 200, body: { ok: true } },
+      { status: 200, body: { ok: true } },
+    ]);
+    vi.stubGlobal('fetch', fetch);
+    await postAction('profile.log_bodyweight', { bodyweightLbs: 180 });
+    await postAction('profile.log_bodyweight', { bodyweightLbs: 181 });
+    const ids = calls.filter((c) => c.method === 'POST').map((c) => c.body?.actionId);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 });

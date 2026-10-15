@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BaselineKey, Phase } from '@voltras/workout-analytics';
 
 import { checkMrvGuard, checkMrvUnderperformance } from '../mrv-guard.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { LOCAL_USER_ID } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { openTestStore, type SessionStore } from './open-test-store.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -90,7 +91,7 @@ function makeSet(
 }
 
 describe('checkMrvUnderperformance', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   const check = async (): Promise<ReturnType<typeof checkMrvUnderperformance>> =>
@@ -101,7 +102,7 @@ describe('checkMrvUnderperformance', () => {
     });
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
@@ -286,11 +287,11 @@ describe('checkMrvUnderperformance', () => {
 });
 
 describe('checkMrvGuard', () => {
-  let store: SqliteSessionStore;
+  let store: SessionStore;
   const key: BaselineKey = { userId: LOCAL_USER_ID, exerciseId: 'bench-press' };
 
   beforeEach(async () => {
-    store = SqliteSessionStore.open(':memory:');
+    store = openTestStore();
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
       await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
@@ -336,6 +337,27 @@ describe('checkMrvGuard', () => {
     expect(result.currentPair.underperformed).toBe(false);
     expect(result.guard.mrvFlagged).toBe(false);
     expect(result.guard.reasoning).toContain('only one of the two sessions underperformed');
+  });
+
+  it("keeps a guest's sets inside owner sessions out of the verdict (VW-717)", async () => {
+    // Arrange: the owner declines 6 -> 4 -> 3; a guest works in with 12-rep sets
+    const input = { key, session1Id: 'sess-1', session2Id: 'sess-2', session3Id: 'sess-3' };
+    await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
+    await store.putSet(makeSet({ id: 'b', sessionId: 'sess-2' }, { repCount: 4 }));
+    await store.putSet(makeSet({ id: 'c', sessionId: 'sess-3' }, { repCount: 3 }));
+    const ownerOnly = await checkMrvGuard(store, input);
+    for (const sessionId of ['sess-2', 'sess-3']) {
+      await store.putSet(
+        makeSet({ id: `guest-${sessionId}`, sessionId, lifter: 'Guest' }, { repCount: 12 }),
+      );
+    }
+
+    // Act
+    const withGuest = await checkMrvGuard(store, input);
+
+    // Assert
+    expect(ownerOnly.guard.mrvFlagged).toBe(true);
+    expect(withGuest).toEqual(ownerOnly);
   });
 
   it('stays inconclusive rather than flagged when a pair could not be evaluated', async () => {

@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLANNING_PROMPT } from '../../plan/current-block.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { ServerState } from '../../state/server-state.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
+import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -28,7 +29,7 @@ const { CORE_TOOL_NAMES } = await import('../../tool-registry.js');
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 type Body = Record<string, unknown>;
 
-let store: SqliteSessionStore;
+let store: SessionStore;
 let callbacks: Map<string, Callback>;
 
 function at(iso: string): void {
@@ -38,7 +39,7 @@ function at(iso: string): void {
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   at('2026-09-19T12:00:00.000Z');
-  store = SqliteSessionStore.open(':memory:');
+  store = openTestStore();
   await seedOwnerShapedPlan(store);
   const state = {
     config: { adapter: 'node' },

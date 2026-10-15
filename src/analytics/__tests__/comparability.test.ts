@@ -8,8 +8,17 @@
 // `comparable === true` on every row on purpose. A claim clause that starts
 // blocking is a regression, not a stricter predicate.
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { setCatalog } from '@voltras/workout-analytics';
 
+vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: class extends Error {} }));
+
+const { targetMusclesOf } = await import('../../tools/metrics-tools.js');
+const { ExerciseService } = await import('../../exercises/exercise-service.js');
+
+import { deriveCorroboratingExerciseCount } from '../comparability-subject.js';
+import { HISTORY_SEED_EXERCISES } from '../../exercises/history-seed-catalog.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import {
   chooseComparisonPartner,
   CORROBORATING_EXERCISES,
@@ -535,5 +544,39 @@ describe('chooseComparisonPartner', () => {
   it('reports no valid comparison without a nearest when there is no candidate', () => {
     const report = chooseComparisonPartner(makeSubject(), [makeSubject()]);
     expect(report).toEqual({ noValidComparison: true });
+  });
+});
+
+// VW-664: B16 (d) counts exercises sharing ANY landmark target slug, read from
+// the real seed catalogs so a catalog change cannot silently flip these pins.
+describe('corroboration on target slugs (VW-664)', () => {
+  beforeAll(() => setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]));
+
+  const catalogState = { exercises: new ExerciseService() };
+  const count = (target: string, history: readonly (string | undefined)[]) =>
+    deriveCorroboratingExerciseCount(target, history, (id) => targetMusclesOf(catalogState, id));
+
+  it('does not let a lateral raise corroborate an overhead press (front vs side delts)', () => {
+    expect(count('cable-shoulder-press', ['cable-lateral-raise'])).toBe(1);
+    expect(count('cable-lateral-raise', ['cable-shoulder-press'])).toBe(1);
+  });
+
+  it('lets a lat pulldown corroborate a cable row through the lats they share', () => {
+    expect(count('cable-row', ['cable-lat-pulldown'])).toBe(2);
+    expect(count('cable-lat-pulldown', ['cable-row'])).toBe(2);
+  });
+
+  it('counts two presses that both target the front delts as corroborating', () => {
+    expect(count('cable-shoulder-press', ['barbell-overhead-press', 'cable-lateral-raise'])).toBe(
+      2,
+    );
+  });
+
+  it('never lets an exercise with no target muscle corroborate another', () => {
+    expect(count('cable-row', ['not-in-catalog', undefined])).toBe(1);
+  });
+
+  it('leaves the count unrecorded when the exercise itself has no target muscle', () => {
+    expect(count('not-in-catalog', ['cable-row', 'not-in-catalog'])).toBeUndefined();
   });
 });

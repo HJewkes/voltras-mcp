@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assumedVelocityLossSpec,
   resolveVelocityLossSpec,
   VELOCITY_LOSS_DEFAULT_PCT,
   VELOCITY_LOSS_RANGE_PCT,
@@ -77,6 +78,14 @@ describe('resolveVelocityLossSpec', () => {
     expect(resolveVelocityLossSpec(VL, undefined)).toBeUndefined();
   });
 
+  it('labels the assumed stop as a default with no intent behind it (VW-719)', () => {
+    expect(assumedVelocityLossSpec()).toEqual({
+      type: 'velocity_loss_exceeded',
+      pct: 30,
+      thresholdSource: 'default',
+    });
+  });
+
   it('every default sits inside its own published band', () => {
     for (const [intent, pct] of Object.entries(VELOCITY_LOSS_DEFAULT_PCT)) {
       const [low, high] = VELOCITY_LOSS_RANGE_PCT[intent as keyof typeof VELOCITY_LOSS_RANGE_PCT];
@@ -134,6 +143,12 @@ describe('fatigueStopForSet (VW-440)', () => {
       intent: null,
       source: 'default',
     });
+  });
+
+  // VW-719: the assumed watch and the wall's fallback colouring must agree.
+  it('keeps the default provenance of an assumed watch, at the number the wall colours against', () => {
+    const watch = { notifyOn: [assumedVelocityLossSpec()] };
+    expect(fatigueStopForSet(watch, planStop)).toEqual(exerciseFatigueStop(undefined));
   });
 });
 

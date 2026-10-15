@@ -8,29 +8,20 @@
 // with the target started at the first seeded week.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { seedGoalPreview, type GoalPreviewState } from '../../docs/preview-seeds.js';
-import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { LOCAL_USER_ID } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
+import { openTestStore, removeTestStoreDirs } from '../../store/__tests__/open-test-store.js';
 
-const scratchDirs: string[] = [];
-afterEach(() => {
-  while (scratchDirs.length > 0) {
-    rmSync(scratchDirs.pop()!, { recursive: true, force: true });
-  }
-});
+afterEach(removeTestStoreDirs);
 
 async function viewFor(
   weeklyLoadsLbs: number[],
   extra: Partial<GoalPreviewState> = {},
 ): Promise<GoalProgressView> {
-  const dir = mkdtempSync(join(tmpdir(), 'vmcp-plateau-ramp-'));
-  scratchDirs.push(dir);
-  const store = SqliteSessionStore.open(join(dir, 'goal.sqlite'));
+  const store = openTestStore({ tempPrefix: 'vmcp-plateau-ramp-' });
   try {
     const now = new Date();
     const state: GoalPreviewState = {
@@ -57,8 +48,8 @@ describe('the plateau rule on the goal card (VW-452)', () => {
     expect(view.status).toBe('on_track');
   });
 
-  it('reads a lifter on the full ramp, short of the goal, on_track', async () => {
-    const view = await viewFor([100, 102.5, 105, 107.5]);
+  it('reads a lifter climbing 2 lb a week, short of the goal, on_track', async () => {
+    const view = await viewFor([100, 102, 104, 106]);
 
     expect(view.status).toBe('on_track');
   });
@@ -97,7 +88,7 @@ describe('the plateau rule on the goal card (VW-452)', () => {
   });
 
   it('does not let one light week inside a climb read as stalled', async () => {
-    const view = await viewFor([100, 102.5, 105, 96, 107.5]);
+    const view = await viewFor([100, 102, 104, 96, 106]);
 
     expect(view.status).toBe('on_track');
   });

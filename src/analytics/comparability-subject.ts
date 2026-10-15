@@ -82,20 +82,21 @@ export function deriveTrackedTrainingMonths(
 }
 
 /**
- * B16 (d): distinct exercises sharing `targetExerciseId`'s primary muscle
- * across `lifterSessionExerciseIds`, counting `targetExerciseId` itself.
+ * B16 (d): distinct exercises sharing any of `targetExerciseId`'s target
+ * muscles across `lifterSessionExerciseIds`, counting `targetExerciseId`
+ * itself. An exercise with no target muscle corroborates nothing.
  */
 export function deriveCorroboratingExerciseCount(
   targetExerciseId: string | undefined,
   lifterSessionExerciseIds: readonly (string | undefined)[],
-  primaryMuscleOf: (exerciseId: string) => string | undefined,
+  targetMusclesOf: (exerciseId: string) => readonly string[],
 ): number | undefined {
   if (targetExerciseId === undefined) return undefined;
-  const targetMuscle = primaryMuscleOf(targetExerciseId);
-  if (targetMuscle === undefined) return undefined;
+  const targets = new Set(targetMusclesOf(targetExerciseId));
+  if (targets.size === 0) return undefined;
   const distinct = new Set<string>([targetExerciseId]);
   for (const exerciseId of lifterSessionExerciseIds) {
-    if (exerciseId !== undefined && primaryMuscleOf(exerciseId) === targetMuscle) {
+    if (exerciseId !== undefined && targetMusclesOf(exerciseId).some((m) => targets.has(m))) {
       distinct.add(exerciseId);
     }
   }
@@ -107,7 +108,7 @@ interface ComparabilitySubjectContext {
   allSetsForExercise: readonly StoredSet[];
   firstSessionStartedAt: string | null;
   lifterSessionExerciseIds: readonly (string | undefined)[];
-  primaryMuscleOf: (exerciseId: string) => string | undefined;
+  targetMusclesOf: (exerciseId: string) => readonly string[];
   /** VW-380: the declared chapter boundary for this exercise, or `null` when none is declared. */
   chapterStartedAt: string | null;
 }
@@ -127,7 +128,7 @@ function toComparabilityEnrichedSet(
     corroboratingExerciseCount: deriveCorroboratingExerciseCount(
       set.exerciseId,
       ctx.lifterSessionExerciseIds,
-      ctx.primaryMuscleOf,
+      ctx.targetMusclesOf,
     ),
     chapterStartedAt: ctx.chapterStartedAt ?? undefined,
   };
@@ -146,7 +147,7 @@ export interface ComparabilitySubjectFetchers {
   getLifterSessionExerciseIds: (
     lifter: string | undefined,
   ) => Promise<readonly (string | undefined)[]>;
-  primaryMuscleOf: (exerciseId: string) => string | undefined;
+  targetMusclesOf: (exerciseId: string) => readonly string[];
   /**
    * The OBSERVED diet phase covering one session, or `undefined` when none is
    * declared over it (VW-150). Resolving "which phase" is the store's job —
@@ -216,7 +217,7 @@ export async function buildComparabilitySubjectGroups(
         allSetsForExercise,
         firstSessionStartedAt,
         lifterSessionExerciseIds,
-        primaryMuscleOf: fetchers.primaryMuscleOf,
+        targetMusclesOf: fetchers.targetMusclesOf,
         chapterStartedAt,
       };
     })();

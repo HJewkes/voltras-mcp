@@ -2,11 +2,13 @@
 
 # `mock.*`
 
-2 tools in the `mock` namespace.
+2 tools in the `mock` namespace. Mock adapter only (`VOLTRA_ADAPTER=mock`): the server registers these tools only when it runs against the mock adapter.
 
 ## `mock.configure`
 
-<Badge type="tip" text="mock adapter only" />
+<Badge type="tip" text="mock adapter only" /> <Badge type="info" text="coming soon" />
+
+> **Coming soon.** Registered but does nothing yet: every call returns an error, whatever the input. See [the roadmap](/roadmap#registered-but-does-nothing).
 
 Only registered when VOLTRA_ADAPTER=mock.
 
@@ -25,7 +27,9 @@ Currently ALWAYS returns NOT_IMPLEMENTED — @voltras/node-sdk 0.3.x does not ye
 
 ## `mock.inject_error`
 
-<Badge type="tip" text="mock adapter only" />
+<Badge type="tip" text="mock adapter only" /> <Badge type="info" text="coming soon" />
+
+> **Coming soon.** Registered but does nothing yet: every call returns an error, whatever the input. See [the roadmap](/roadmap#registered-but-does-nothing).
 
 Only registered when VOLTRA_ADAPTER=mock.
 

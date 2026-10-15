@@ -8,23 +8,23 @@ Capability gaps surfaced during real use. Not prioritized; not a roadmap. Add ne
 
 **Use case:** Bilateral routing smoke test against `feat/dual-voltras-slots` build. Two Voltras devices paired:
 
-- `slot: 'left'` → VTR-212006 (`C4A88FC8-...`)
-- `slot: 'right'` → VTR-097082 (`621A7B7D-...`)
+- `slot: 'left'` → the left unit
+- `slot: 'right'` → the right unit
 
-`device.connect({slot: 'left', deviceId: VTR-212006})` and `device.connect({slot: 'right', deviceId: VTR-097082})` both returned `{ok: true}`. `device.get_state({slot})` correctly returned each slot's distinct deviceId. **Slot bookkeeping in voltras-mcp is correct.**
+`device.connect({slot: 'left', deviceId: leftUnitId})` and `device.connect({slot: 'right', deviceId: rightUnitId})` both returned `{ok: true}`. `device.get_state({slot})` correctly returned each slot's distinct deviceId. **Slot bookkeeping in voltras-mcp is correct.**
 
-Then `device.set_weight({slot: 'left', lbs: 35})` and `device.set_weight({slot: 'right', lbs: 35})` both returned `{ok: true}`. Subsequent `device.get_state` for each slot reported `weightLbs: 35` consistently. **But on the physical units:** the right-slot device (VTR-097082) updated to 35 lbs as expected; the left-slot device (VTR-212006) stayed at 55 lbs (the value left over from the prior single-device session) and was inactive.
+Then `device.set_weight({slot: 'left', lbs: 35})` and `device.set_weight({slot: 'right', lbs: 35})` both returned `{ok: true}`. Subsequent `device.get_state` for each slot reported `weightLbs: 35` consistently. **But on the physical units:** the right-slot device updated to 35 lbs as expected; the left-slot device stayed at 55 lbs (the value left over from the prior single-device session) and was inactive.
 
-**Diagnosis (empirically confirmed via A/B test):** in a follow-up experiment we connected the devices in reverse order (right=VTR-097082 first, left=VTR-212006 second/most-recent), then sent four parallel writes with distinguishing values:
+**Diagnosis (empirically confirmed via A/B test):** in a follow-up experiment we connected the devices in reverse order (right first, left second/most-recent), then sent four parallel writes with distinguishing values:
 
 | Command                                            | Expected target | Actual physical result                     |
 | -------------------------------------------------- | --------------- | ------------------------------------------ |
-| `set_weight({slot: 'left', lbs: 30})`              | VTR-212006      | VTR-212006 ended at 30 lbs ✓               |
-| `set_weight({slot: 'right', lbs: 40})`             | VTR-097082      | VTR-097082 unchanged (no write reached it) |
-| `set_mode({slot: 'left', mode: 'ResistanceBand'})` | VTR-212006      | VTR-212006 ended in Damper mode ✗          |
-| `set_mode({slot: 'right', mode: 'Damper'})`        | VTR-097082      | VTR-097082 unchanged (no write reached it) |
+| `set_weight({slot: 'left', lbs: 30})`              | left unit       | left unit ended at 30 lbs ✓                |
+| `set_weight({slot: 'right', lbs: 40})`             | right unit      | right unit unchanged (no write reached it) |
+| `set_mode({slot: 'left', mode: 'ResistanceBand'})` | left unit       | left unit ended in Damper mode ✗           |
+| `set_mode({slot: 'right', mode: 'Damper'})`        | right unit      | right unit unchanged (no write reached it) |
 
-Decoded: **all four writes landed on the most-recently-connected peripheral (VTR-212006).** Last-write-wins per characteristic (the two weight writes hit left in some order; final value reflects whichever resolved last). VTR-097082 received zero commands.
+Decoded: **all four writes landed on the most-recently-connected peripheral (the left unit).** Last-write-wins per characteristic (the two weight writes hit left in some order; final value reflects whichever resolved last). The right unit received zero commands.
 
 The per-slot `weightLbs`/`trainingMode` cache in voltras-mcp's `LiveState` updates locally on every successful tool call regardless, masking the failure at the get_state read path.
 
@@ -56,7 +56,7 @@ The per-slot `weightLbs`/`trainingMode` cache in voltras-mcp's `LiveState` updat
 
 ## 2026-05-05 — `device.scan` returns only one device per call even when multiple are advertising
 
-**Use case:** Same bilateral test session. Both VTR-212006 and VTR-097082 were powered and advertising. Two consecutive `device.scan({timeoutMs: 15000})` calls each returned a single-element array — alternating between the two devices on each call. The schema returns a `devices: []` array, implying batch discovery, but the implementation appears to return only the first peripheral found.
+**Use case:** Same bilateral test session. Both units were powered and advertising. Two consecutive `device.scan({timeoutMs: 15000})` calls each returned a single-element array — alternating between the two devices on each call. The schema returns a `devices: []` array, implying batch discovery, but the implementation appears to return only the first peripheral found.
 
 **Workable for now** by calling scan repeatedly until the desired count is collected, or by scanning, connecting, scanning again. But the schema/implementation mismatch is a footgun and impacts UX (the tool description should be honest about per-call limits, or the scan should accumulate over its full timeout).
 
@@ -64,7 +64,7 @@ The per-slot `weightLbs`/`trainingMode` cache in voltras-mcp's `LiveState` updat
 
 ## 2026-05-05 — CRITICAL: SDK loses the active set after exactly 2 rep_boundary events (real-hardware blocker)
 
-> **Status (2026-05-05):** Path forward identified. The `RepBoundary` BLE message is a stateless 4-byte type header (no rep counter in the payload), and the SDK has no client-side state machine to derive rep count from frames — it relies on the device firmware to count, but the firmware emits an under-specified tick. The fix path is **not** to crack the existing protocol; it's to land voltra-private's in-flight `vendor-message-rep-set-telemetry` PR (PR #7 of a 7-PR stack) which adds a per-frame vendor message carrying authoritative `motionPhase`, `setCounter`, and `repCount` (uint16 BE). Once that stack merges and the SDK's `protocol-data.generated.ts` is regenerated, refactor the SDK's notification dispatcher to count from the vendor frame instead of trusting the stateless boundary signal. Bug is gated on the private-repo stack landing — no firmware doc spelunking needed.
+> **Status (2026-05-05):** Path forward identified. The device firmware counts reps and the SDK keeps no client-side rep state, so when the firmware's signal falls short the SDK has nothing to recover the count from. The fix path is **not** to crack the existing protocol; it is private-side work that gives the SDK an authoritative rep count, followed by an SDK change to count from that instead of the current signal. Bug is gated on that private-side work landing.
 
 **Use case:** Left-arm bridge validation. Two sets (35 lb warmup, 55 lb working). On both sets the user did 5–8 reps; the system registered exactly 2. The bug is reproducible across loads and is **upstream of voltras-mcp** — the bridge faithfully relays what the SDK emits.
 
@@ -325,6 +325,7 @@ PT Claude registers, the MCP watches the telemetry stream, and when a trigger fi
 
 `notifications/claude/channel` (Claude Code experimental capability) is the delivery mechanism. Server declares `experimental: { 'claude/channel': {} }`; events go out via `mcp.notification({ method: 'notifications/claude/channel', params: { content, meta } })` and arrive in the live conversation as `<channel source="..." ...>` tags. `notifications/resource_updated` was ruled out — Claude Code consumes those for client-side cache only, never delivers to the model.
 
+<!-- eslint-disable-next-line voltras/no-protocol-detail -- a commit sha, not a device value (VW-497) -->
 Foundation already built (commit `1b238ae`, plus rep-index off-by-one fix follow-up): capability declaration, `McpChannelPublisher`, per-rep + set-lifecycle emissions, smoke-test tool. Launch with `claude --dangerously-load-development-channels server:voltras`.
 
 What's left: the trigger DSL above (filter what gets pushed), the `timer.wait → timer.start({ onComplete })` upgrade, and (later) plugin-wrapping for marketplace distribution. The blocking `set.wait_for_event` fallback is no longer needed — channels carry the same UX without burning tool turns.
