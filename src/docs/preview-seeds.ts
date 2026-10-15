@@ -27,7 +27,7 @@
 // Confidentiality: exercise ids, loads, rep counts and velocities only —
 // derived fitness metadata, no protocol data of any kind (NF-07).
 
-import { EMPTY_PHASE, setCatalog } from '@voltras/workout-analytics';
+import { setCatalog } from '@voltras/workout-analytics';
 
 import {
   GOAL_BAND_CONSTANTS,
@@ -63,6 +63,7 @@ import {
   RECALIBRATION_OFFER_VERSION,
 } from '../tools/goal-recalibration.js';
 import type { CaptureScenarioName } from './capture-shots.js';
+import { rep } from './personas/rep.js';
 
 /** The pages `npm run dashboard:preview -- <page>` can open. */
 export type PreviewPageName = 'goals' | 'body' | 'plan';
@@ -567,30 +568,6 @@ function grindingReps(setId: string, count: number): StoredRep[] {
     const velocity = Number((fastestMps * (1 - (decay * index) / (count - 1))).toFixed(3));
     return rep(setId, index, velocity);
   });
-}
-
-/** Rep `index`, three seconds long, at `velocityMps` over a fixed range of motion. */
-function rep(setId: string, index: number, velocityMps: number): StoredRep {
-  const durationMs = 3_000;
-  const startTime = index * durationMs;
-  return {
-    id: `${setId}-rep-${index}`,
-    setId,
-    index,
-    repNumber: index + 1,
-    concentric: {
-      ...EMPTY_PHASE,
-      startTime,
-      endTime: startTime + durationMs,
-      startPosition: 0,
-      endPosition: 0.5,
-      _totalVelocity: velocityMps,
-      _movementSampleCount: 1,
-      _lastMovementVelocity: velocityMps,
-      peakVelocity: velocityMps,
-    },
-    eccentric: { ...EMPTY_PHASE },
-  };
 }
 
 function priorityRow(now: Date, lift: SeededLift): Parameters<GoalPreviewStore['putPriority']>[0] {
