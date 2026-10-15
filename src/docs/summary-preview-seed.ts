@@ -211,12 +211,21 @@ function recordedSet(
     slot: 'primary',
     setPurpose: set.purpose,
     setIndexInSession: index + 1,
-    ...(set.weightLbs === undefined
-      ? { trainingMode: 'Damper' as const, damperLevel: lift.damperLevel }
-      : { trainingMode: 'Weight Training' as const, weightLbs: set.weightLbs }),
+    ...loadOf(lift, set),
     source: 'local',
     reps: decayingReps(id, set),
   };
+}
+
+/** A weight-stack load, or the damper setting on the lift with none. */
+function loadOf(
+  lift: SummaryPreviewExercise,
+  set: SummaryPreviewSet,
+): Pick<StoredSet, 'trainingMode' | 'weightLbs' | 'damperLevel'> {
+  if (set.weightLbs !== undefined)
+    return { trainingMode: 'Weight Training', weightLbs: set.weightLbs };
+  if (lift.damperLevel === undefined) return { trainingMode: 'Damper' };
+  return { trainingMode: 'Damper', damperLevel: lift.damperLevel };
 }
 
 /** Velocities falling evenly from the set's best to `lossPct` below it by the last rep. */
