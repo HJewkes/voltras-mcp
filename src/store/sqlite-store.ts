@@ -7,7 +7,7 @@
 // releases a transient write lock so that concurrent processes contesting
 // the same `VMCP_DB_PATH` are detected up-front (R8); the resulting error
 // surfaces the env-var name and "already in use" hint expected by the
-// README's concurrency note.
+// concurrency note in site/start/launch-options.md.
 //
 // The `Rep` type from `@voltras/workout-analytics` carries nested `Phase`
 // objects with sample arrays, so each rep is persisted as a JSON-serialised
