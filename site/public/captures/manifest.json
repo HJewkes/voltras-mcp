@@ -1,5 +1,5 @@
 {
-  "definitionHash": "a5550c529b255d2ea92156b80cd0c8f363f9a2d5beff57501cd8330c741f347d",
+  "definitionHash": "6782ffaac688ca34b537129e0aa082e35c51b035574616446b677a2be2557edc",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -21,6 +21,46 @@
       "height": 900,
       "bytes": 44604,
       "sha256": "9d8199315d46ecfcdd006198a6e6463be6308775e450ec766ad78dbbc92cd877"
+    },
+    {
+      "name": "checkin",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page on its first step, bodyweight, with the four steps above it.",
+      "file": "checkin.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": [
+        "Bodyweight",
+        "Check-in",
+        "Review",
+        "Done",
+        "Note (optional)",
+        "Next",
+        "Skip"
+      ],
+      "assertedValues": ["Bodyweight (lbs)"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 36884,
+      "sha256": "aa5934688618e740de8d9cd7b16355772312356b06afe75d884c7e47d0e7a912"
+    },
+    {
+      "name": "checkin-phone",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page at phone width, one step at a time.",
+      "file": "checkin-phone.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": ["Bodyweight", "Note (optional)", "Next", "Skip"],
+      "assertedValues": ["Step 1 of 4", "Bodyweight (lbs)"],
+      "width": 390,
+      "height": 844,
+      "bytes": 24942,
+      "sha256": "13fb9316246fdfeac4c25fe147eb5fd39e2f4f51c8d772dd8273c9c13212bf62"
     },
     {
       "name": "live-mid-set",

@@ -83,6 +83,20 @@ verdict, and a rest ring.
 
 ![The plan builder, showing a seeded workout template and the exercise catalog.](/captures/plan-builder.png)
 
+### Weekly check-in
+
+The check-in page walks the week one step at a time: bodyweight, three ratings for the week,
+the weekly bodyweight review, then done. The first two steps have **Skip**, and **Next** writes
+the step before moving on. The review step is answered with **Accept**, **Decline** or **Not
+now** when it proposes a change (`src/dashboard/spa/checkin/CheckinPage.tsx`,
+`src/dashboard/spa/checkin/CheckinSteps.tsx`).
+
+![The weekly check-in page on its first step, bodyweight, with the four steps above it.](/captures/checkin.png)
+
+At phone width the stepper becomes a step count and the buttons stack:
+
+![The weekly check-in page at phone width, one step at a time.](/captures/checkin-phone.png)
+
 ## Open it
 
 [Set it up and open it](/guides/dashboard-setup) covers the build step, the launch that
