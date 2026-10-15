@@ -81,6 +81,14 @@ export async function readJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** {@link readJson}, except a 404 is an answer — nothing there — rather than a failure. */
+export async function readJsonOrAbsent<T>(url: string): Promise<T | null> {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error((await failureOf(res)).message);
+  return (await res.json()) as T;
+}
+
 /**
  * Thrown when the server cannot say whether a write took effect (VW-502). The
  * caller must re-read state and show the human what is actually stored. It must

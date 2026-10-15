@@ -46,6 +46,7 @@ import { VELOCITY_LOSS_DEFAULT_PCT } from '../../state/velocity-loss-intent.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../../store/set-scope.js';
 import { selectWorkingSets } from '../../store/working-sets.js';
+import type { SessionKindFilter } from '../../store/session-kind.js';
 import {
   checkLoadDrift,
   loadMatchesPrescription,
@@ -88,6 +89,8 @@ export interface DashboardSessionStore extends LoadDriftStore {
     /** Inclusive/exclusive ISO bounds — the muscle-plan route's calendar-week scope (VW-331). */
     from?: string;
     to?: string;
+    /** Absent means `'training'` (VW-489); the summary's `'latest'` asks for `'any'`. */
+    kind?: SessionKindFilter;
   }): Promise<StoredSession[]>;
   /** This lifter's cross-session sets for one exercise — feeds `expectedRepRange` (VW-301). */
   getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
@@ -125,6 +128,10 @@ const LATEST_SCAN_LIMIT = 20;
  * The fallback when NOTHING has ended yet is the most recently started session:
  * mid-first-exercise, an in-progress card is the only truthful answer, and the
  * page already renders "Session in progress" for it.
+ *
+ * Every kind counts (VW-931): the summary reviews what just happened, the same
+ * entitlement `session.get` has. The training-only default left a mock-mode or
+ * unreviewed session with no summary at all.
  */
 export async function resolveSummarySessionId(
   store: DashboardSessionStore,
@@ -137,6 +144,7 @@ export async function resolveSummarySessionId(
     sort: 'startedAt:desc',
     limit: LATEST_SCAN_LIMIT,
     offset: 0,
+    kind: 'any',
   });
   const ended = recent
     .filter((s): s is StoredSession & { endedAt: string } => s.endedAt !== undefined)

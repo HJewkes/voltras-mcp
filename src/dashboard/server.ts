@@ -253,6 +253,7 @@ import {
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
+import type { SessionKindFilter } from '../store/session-kind.js';
 import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
@@ -324,6 +325,7 @@ export interface DashboardServerState {
       /** Inclusive/exclusive ISO bounds — the muscle-plan route's calendar-week scope (VW-331). */
       from?: string;
       to?: string;
+      kind?: SessionKindFilter;
     }): Promise<StoredSession[]>;
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     /** Plan assignments attached to a session — feeds the active-exercise prescription. */
