@@ -62,7 +62,8 @@ through each way the dashboard fails to open.
 
 ### Nothing works and the error mentions node:sqlite
 
-Your Node is older than 22.5.0. Upgrade Node and restart the server.
+Your Node is older than 22.13.0, the first 22.x release that loads `node:sqlite` without a flag.
+Upgrade Node and restart the server.
 
 ### Voice input hears nothing
 

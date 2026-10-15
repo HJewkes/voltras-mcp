@@ -40,6 +40,10 @@ The tool surface is the same as on real hardware, plus two mock-only tools,
 (`MOCK_TOOL_NAMES` in `src/tool-registry.ts`). With the mock adapter registered, you can
 follow [your first session](/start/first-session) from start to finish.
 
+A mock session is stored as a test session and never counts toward your history, so after a
+mock workout the Goals page still reads "No priorities declared" and the Body page stays
+empty. To see those pages full, use [`npm run dashboard:preview`](#browse-the-other-wall-pages).
+
 `just sim` is a one-line alternative. It starts the launcher with the mock adapter and a
 throwaway database under `/tmp`. It sets `VMCP_DASHBOARD_PORT=0`, which turns the dashboard
 off (`justfile`, `src/server.ts`), so use a driver below to watch a workout.

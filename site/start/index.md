@@ -23,7 +23,7 @@ copy (`src/server.ts`).
 
 - **A Voltra, or the mock adapter.** `VOLTRA_ADAPTER=mock` replaces the device with an
   in-process one, so you can try the whole tool surface without hardware.
-- **Node 22.5.0 or later** (`engines` in `package.json`).
+- **Node 22.13.0 or later** (`engines` in `package.json`).
 - **Claude Code**, as the MCP client.
 
 ## Read in this order

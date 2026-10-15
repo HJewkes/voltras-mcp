@@ -17,7 +17,7 @@
     "scripts/lib/whisper-paths.mjs"
   ],
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run typecheck:spa",

@@ -30,6 +30,11 @@ stay out of your own history.
 You're talking to Claude in English throughout; the tool calls below are what it issues
 underneath, named so you can recognize them if you ask Claude to show its work.
 
+::: warning The Voltra's own controls are your stop
+Voice stop is a convenience, off unless you turn it on, and it cannot hear you while anything
+is being spoken. See [the spoken stop, and its blind spot](/concepts/how-coaching-works#the-spoken-stop-and-its-blind-spot).
+:::
+
 ## Option A: with a Voltra
 
 Power the device on and wake its screen. The README advises this because a sleeping unit
@@ -96,6 +101,9 @@ happens — it's the same tool pipeline rendered live.
 `VOLTRA_ADAPTER=mock` replaces BLE with an in-process device that streams synthetic
 telemetry through the same pipeline a real unit uses. The tool surface is identical
 (plus `mock.configure` and `mock.inject_error`), so the flow above runs unchanged.
+A mock session is stored as a test session and never counts toward your history, so after a
+mock workout the Goals page still reads "No priorities declared" and the Body page stays
+empty. To browse those pages full, use [`npm run dashboard:preview`](/start/try-without-a-device#browse-the-other-wall-pages).
 
 `node scripts/dashboard-mock-drive.mjs` boots the real MCP server in mock mode and
 drives it through the real tools — this is what this guide's claims about the mock path
