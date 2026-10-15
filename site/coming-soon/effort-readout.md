@@ -24,10 +24,10 @@ dashboard's live fatigue card and session summary. The rest of the fatigue card 
 ## What works today
 
 **The server can estimate reps in reserve for any recorded set.** Ask `metrics.compute` for the
-`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:316`,
+`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:317-322`,
 `src/tools/metrics-tools.ts:2250-2262`). If you have a fitted curve for that lift, the estimate
 comes from it. If you do not, it comes from a general model, is marked as such, and is always
-rated low confidence (`src/tools/rir-velocity-tools.ts:216-239`).
+rated low confidence (`src/tools/rir-velocity-tools.ts:216-240`).
 
 **A velocity target for a given RIR needs your own curve.** `rir_velocity.target` returns no
 target, with a caveat, until `rir_velocity.fit` has fitted a curve for that lift

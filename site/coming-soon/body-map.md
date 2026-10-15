@@ -27,43 +27,43 @@ sourced: 2026-09-30
 
 The body map is the `#/body` page of the wall dashboard. It shows how many working sets each
 muscle got this week, which lifts are getting stronger, and what your plan still owes. The
-page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/DashboardChrome.tsx:38`).
+page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/DashboardChrome.tsx:44-52`).
 
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for four things every 2 seconds, all at once, and shows three of
-them (`src/dashboard/spa/body/BodyPage.tsx:27-37`). The fourth, recovery, appears only in the muscle side sheet, described
+them (`src/dashboard/spa/body/BodyPage.tsx:30-38`). The fourth, recovery, appears only in the muscle side sheet, described
 [below](#recovery-the-last-trained-line).
 
 - **This week.** Working sets per muscle, set against volume landmarks, from
-  `/api/muscle-week` (`src/dashboard/spa/body/BodyView.tsx:246`).
+  `/api/muscle-week` (`src/dashboard/spa/body/body-client.ts:32-34`, `src/dashboard/spa/body/BodyView.tsx:290-316`).
 - **Recent PRs.** Each lift's best estimated one-rep max over 12 weeks and its trend, from
-  `/api/muscle-strength` (`src/dashboard/spa/body/BodyView.tsx:219`). Left and right sides
+  `/api/muscle-strength` (`src/dashboard/spa/body/body-client.ts:36-38`, `src/dashboard/spa/body/BodyView.tsx:262-287`). Left and right sides
   get separate trends, never an average (`src/dashboard/muscle-strength-api.ts:14-18`).
 - **Next up.** The planned sets your current program week still owes, from `/api/muscle-plan`
-  (`src/dashboard/spa/body/BodyView.tsx:190`).
+  (`src/dashboard/spa/body/BodyView.tsx:233-259`).
 
 ## Why it is not ready yet <Badge type="warning" text="Coming soon" />
 
 Every picture of this page so far comes from seeded data. The published screenshot below is
 made by writing a plausible training week straight into the store, not by lifting
-(`scripts/dashboard-body-seed.mjs:1-18`, `src/docs/capture-shots.ts:166-174`). Nobody has yet
+(`scripts/dashboard-body-seed.mjs:1-17`, `src/docs/capture-shots.ts:182-195`). Nobody has yet
 checked the page after a real session on a real Voltra.
 
 The mock adapter cannot fill this page either. Only your own working sets count: a set is left
 out when it has a guest lifter, came from the mock adapter, is not a working set, or has no reps
-(`src/dashboard/read-models/muscle-set-scope.ts:58-64`). So with `VOLTRA_ADAPTER=mock` the page
+(`src/dashboard/read-models/muscle-set-scope.ts:59-63`). So with `VOLTRA_ADAPTER=mock` the page
 stays empty, on purpose.
 
 Three more things can leave the page empty after real training:
 
 - A set only counts toward a muscle when the set is tied to a known exercise
-  (`src/dashboard/read-models/muscle-set-scope.ts:66-89`). Name the exercise with
+  (`src/dashboard/read-models/muscle-set-scope.ts:81-89`). Name the exercise with
   `session.set_exercise` before you lift.
 - The page always shows the current week (`src/dashboard/spa/body/body-client.ts:32-34`,
-  `src/dashboard/server.ts:924-928`). If you have not trained this week, the figure is blank.
+  `src/dashboard/server.ts:961-967`). If you have not trained this week, the figure is blank.
 - Next up is empty unless a program week is active today
-  (`src/dashboard/server.ts:849-853`, `src/dashboard/spa/body/body-client.ts:45-54`).
+  (`src/dashboard/server.ts:886-890`, `src/dashboard/spa/body/body-client.ts:45-54`).
 
 <CaptureCallouts
   shot="body-week"
@@ -91,12 +91,12 @@ npm run dashboard:preview -- body
 The command starts a server on a scratch store, seeds it with the same training week as the
 screenshot above, and prints the page address. Open that address in a browser. Press Ctrl-C
 to stop; that also deletes the scratch store. Your real store at `~/.voltras/vmcp.sqlite` is
-never opened (`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:34-37`,
-`scripts/dashboard-preview.mjs:164-176`, `src/docs/preview-seeds.ts:89-94`).
+never opened (`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:40-42`,
+`scripts/dashboard-preview.mjs:160-161`, `scripts/dashboard-preview.mjs:183-191`, `src/docs/preview-seeds.ts:89-94`).
 
 The preview can fill this page only because it writes recorded sets into the store. Mock sets
 never count on this page, so a mock-adapter workout leaves it empty
-(`src/dashboard/read-models/muscle-set-scope.ts:58-64`).
+(`src/dashboard/read-models/muscle-set-scope.ts:59-63`).
 
 ## Landmarks are population defaults <Badge type="warning" text="Coming soon" />
 
@@ -104,8 +104,8 @@ The landmarks on this page are weekly set counts: the fewest sets that still hel
 grow, the range that helps most, and the most you can recover from. They are the same numbers
 for everyone. They are copied reference values, not numbers
 learned from your training (`src/dashboard/read-models/muscle-week.ts:17-21`,
-`src/dashboard/read-models/muscle-week.ts:61-77`). The page says so under This week
-(`src/dashboard/spa/body/BodyView.tsx:257`). Read a muscle's colour as "how this week compares
+`src/dashboard/read-models/muscle-week.ts:61-78`). The page says so under This week
+(`src/dashboard/spa/body/BodyView.tsx:309-312`). Read a muscle's colour as "how this week compares
 to a typical lifter," not as "how this week compares to what you can recover from."
 
 Landmarks fitted to you do not exist yet. That is a known limitation (VW-146), not something
@@ -114,9 +114,9 @@ this page is waiting on.
 ## Recovery: the last-trained line <Badge type="warning" text="Coming soon" />
 
 Tapping a muscle opens a side sheet over the figures
-(`src/dashboard/spa/body/BodyView.tsx:164-168`, `src/dashboard/spa/body/BodyView.tsx:216-227`).
+(`src/dashboard/spa/body/BodyView.tsx:166-168`, `src/dashboard/spa/body/BodyView.tsx:216-227`).
 Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
-(`src/dashboard/server.ts:666-669`, `src/dashboard/spa/body/body-sheet-model.ts:107`). The line
+(`src/dashboard/server.ts:690-693`, `src/dashboard/spa/body/body-sheet-model.ts:107`). The line
 states what happened, when you last trained the muscle and how that session went against the
 one before, and never a recovery verdict or a countdown
 (`src/dashboard/spa/body/body-sheet-model.ts:66-68`). It does not say how long a muscle needs
