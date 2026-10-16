@@ -24,16 +24,18 @@ describe('VMCP-05.13: mid-set VBT summary excludes the in-flight rep', () => {
   };
 
   it('reads the last COMPLETED rep as last_rep_v, not the partial one', () => {
-    // Before the fix this read 0.821 — the in-flight rep's partial peak.
-    expect(summarizeSetForTrigger(midSet, benchDevice).vbt_summary.last_rep_v).toBe(2.071);
+    // Before the fix this read the in-flight rep. The value is rep 5's MEAN
+    // concentric velocity (VW-484), which this fixture shapes as 0.767 of its
+    // 2.071 m/s peak.
+    expect(summarizeSetForTrigger(midSet, benchDevice).vbt_summary.last_rep_v).toBe(1.588);
   });
 
   it('does not report velocity loss on a set that is still accelerating', () => {
     const { vbt_summary } = summarizeSetForTrigger(midSet, benchDevice);
     // Before the fix this read 60.4%.
     expect(vbt_summary.velocity_loss_pct).toBe(0);
-    expect(vbt_summary.peak_rep_v).toBe(2.071);
-    expect(vbt_summary.peak_rep_number).toBe(5);
+    expect(vbt_summary.baseline_rep_v).toBe(1.588);
+    expect(vbt_summary.baseline_rep_number).toBe(5);
   });
 
   it('omits the in-flight rep from the mid-set rep array', () => {
