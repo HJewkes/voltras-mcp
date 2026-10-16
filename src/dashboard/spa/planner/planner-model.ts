@@ -49,20 +49,52 @@ export function flattenTemplates(tree: PlanTreeView | null): FlatTemplate[] {
 }
 
 /**
- * Keep the caller's selected workout selected across polls, falling back to the
- * one being trained right now, then to the first. Without this, every 2 s poll
- * would bounce the editor back to workout #1 mid-edit.
+ * The workout the builder opens on: the one being trained right now, else the
+ * next due one (`nextTemplateId`, the server's `plan.next_workout` answer), else
+ * the most recently trained, else the first. Opening on the first was opening a
+ * lifter with history on their oldest finished workout (VW-949).
+ */
+export function defaultTemplateId(
+  templates: readonly FlatTemplate[],
+  activeTemplateId: string | null,
+  nextTemplateId: string | null,
+): string | null {
+  const present = (id: string | null): id is string =>
+    id !== null && templates.some((t) => t.template.id === id);
+  if (present(activeTemplateId)) return activeTemplateId;
+  if (present(nextTemplateId)) return nextTemplateId;
+  const lastTrained = [...templates].reverse().find((t) => t.template.completed);
+  return lastTrained?.template.id ?? templates[0]?.template.id ?? null;
+}
+
+/**
+ * Keep the caller's selected workout selected across polls, falling back to
+ * {@link defaultTemplateId}. Without this, every 2 s poll would bounce the
+ * editor back to the default mid-edit.
  */
 export function resolveSelectedTemplateId(
   templates: readonly FlatTemplate[],
   selected: string | null,
-  activeTemplateId: string | null,
+  defaultId: string | null,
 ): string | null {
   if (selected !== null && templates.some((t) => t.template.id === selected)) return selected;
-  if (activeTemplateId !== null && templates.some((t) => t.template.id === activeTemplateId)) {
-    return activeTemplateId;
-  }
-  return templates[0]?.template.id ?? null;
+  return defaultId;
+}
+
+/**
+ * Split the list at the default workout: the rows before it start collapsed, so
+ * the workout the page opened on is the first row a lifter with months of
+ * finished workouts sees. No default, or the default first, hides nothing.
+ */
+export function splitAtDefault(
+  templates: readonly FlatTemplate[],
+  defaultId: string | null,
+): { earlier: FlatTemplate[]; fromDefault: FlatTemplate[] } {
+  const at = Math.max(
+    0,
+    templates.findIndex((t) => t.template.id === defaultId),
+  );
+  return { earlier: templates.slice(0, at), fromDefault: templates.slice(at) };
 }
 
 /**
