@@ -13,7 +13,9 @@
  * adds over MCP (`plan.exercise.create`) appear here without a reload — see
  * `planner-client.ts` for why this is a poll and not an SSE subscription.
  * `resolveSelectedTemplateId` keeps the operator's selection pinned across those
- * polls so a refresh never yanks the editor out from under an edit.
+ * polls so a refresh never yanks the editor out from under an edit. With no
+ * selection the page opens on the next due workout, and the workouts before it
+ * start collapsed (VW-949).
  *
  * ── Styling ────────────────────────────────────────────────────────────────
  * Built from `@titan-design/react-ui` primitives, same as the live page — the
@@ -69,9 +71,11 @@ import {
   PLANNER_POLL_INTERVAL_MS,
 } from './planner-client';
 import {
+  defaultTemplateId,
   flattenTemplates,
   prescriptionLine,
   resolveSelectedTemplateId,
+  splitAtDefault,
   type FlatTemplate,
 } from './planner-model';
 import { useIsNarrowViewport } from '../use-viewport';
@@ -154,7 +158,12 @@ export function PlanBuilderPage(): React.JSX.Element {
 
   const templates = flattenTemplates(planTree);
   const activeTemplateId = planTree?.activeTemplateId ?? null;
-  const templateId = resolveSelectedTemplateId(templates, selectedTemplateId, activeTemplateId);
+  const defaultId = defaultTemplateId(
+    templates,
+    activeTemplateId,
+    planTree?.nextTemplateId ?? null,
+  );
+  const templateId = resolveSelectedTemplateId(templates, selectedTemplateId, defaultId);
   const selected = templates.find((t) => t.template.id === templateId) ?? null;
 
   /**
@@ -198,6 +207,7 @@ export function PlanBuilderPage(): React.JSX.Element {
       <WorkoutList
         templates={templates}
         selectedId={templateId}
+        defaultId={defaultId}
         activeId={activeTemplateId}
         busy={busy}
         onSelect={setSelectedTemplateId}
@@ -447,6 +457,8 @@ function CatalogRow(props: {
 function WorkoutList(props: {
   templates: readonly FlatTemplate[];
   selectedId: string | null;
+  /** The workout the page opens on; the rows before it start collapsed. */
+  defaultId: string | null;
   activeId: string | null;
   busy: boolean;
   onSelect: (id: string) => void;
@@ -454,6 +466,17 @@ function WorkoutList(props: {
   onCreate: ((name: string) => void) | null;
 }): React.JSX.Element {
   const [name, setName] = useState('');
+  const [showEarlier, setShowEarlier] = useState(false);
+  const { earlier, fromDefault } = splitAtDefault(props.templates, props.defaultId);
+  const row = (flat: FlatTemplate): React.JSX.Element => (
+    <WorkoutRow
+      key={flat.template.id}
+      flat={flat}
+      selected={flat.template.id === props.selectedId}
+      active={flat.template.id === props.activeId}
+      onSelect={props.onSelect}
+    />
+  );
   return (
     <PanelCard title="Workouts">
       {props.templates.length === 0 ? (
@@ -463,46 +486,17 @@ function WorkoutList(props: {
           description="Create a program, then add a workout to plan into."
         />
       ) : (
-        props.templates.map(({ template, blockName, weekName }) => (
-          <div
-            key={template.id}
-            style={{
-              display: 'flex',
-              gap: SPACE.xs,
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              paddingTop: SPACE.xxs,
-              paddingBottom: SPACE.xxs,
-            }}
-          >
-            <Button
-              size="sm"
-              variant={template.id === props.selectedId ? 'solid' : 'ghost'}
-              style={{ height: CONTROL_HEIGHT }}
-              aria-label={`Edit workout ${template.name}`}
-              onPress={() => props.onSelect(template.id)}
-            >
-              <ButtonLabel tone={template.id === props.selectedId ? 'on-solid' : 'on-surface'}>
-                {template.name}
-              </ButtonLabel>
-            </Button>
-            <div style={{ flex: '1 1 120px', minWidth: 0 }}>
-              <Caption color="tertiary">
-                {blockName} · {weekName} · {template.exercises.length} exercises
-              </Caption>
-            </div>
-            {template.id === props.activeId && (
-              <Badge color="success" variant="subtle" dot>
-                training now
-              </Badge>
-            )}
-            {template.completed && (
-              <Badge color="default" variant="subtle">
-                completed
-              </Badge>
-            )}
-          </div>
-        ))
+        <>
+          {earlier.length > 0 && (
+            <EarlierToggle
+              count={earlier.length}
+              shown={showEarlier}
+              onToggle={() => setShowEarlier((v) => !v)}
+            />
+          )}
+          {showEarlier && earlier.map(row)}
+          {fromDefault.map(row)}
+        </>
       )}
       {props.onCreate !== null && (
         <div
@@ -541,6 +535,72 @@ function WorkoutList(props: {
         </div>
       )}
     </PanelCard>
+  );
+}
+
+function EarlierToggle(props: {
+  count: number;
+  shown: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  const label = props.shown
+    ? 'Hide earlier workouts'
+    : `Show ${props.count} earlier ${props.count === 1 ? 'workout' : 'workouts'}`;
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      style={{ height: CONTROL_HEIGHT, alignSelf: 'flex-start' }}
+      onPress={props.onToggle}
+    >
+      <ButtonLabel tone="on-surface">{label}</ButtonLabel>
+    </Button>
+  );
+}
+
+function WorkoutRow(props: {
+  flat: FlatTemplate;
+  selected: boolean;
+  active: boolean;
+  onSelect: (id: string) => void;
+}): React.JSX.Element {
+  const { template, blockName, weekName } = props.flat;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: SPACE.xs,
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        paddingTop: SPACE.xxs,
+        paddingBottom: SPACE.xxs,
+      }}
+    >
+      <Button
+        size="sm"
+        variant={props.selected ? 'solid' : 'ghost'}
+        style={{ height: CONTROL_HEIGHT }}
+        aria-label={`Edit workout ${template.name}`}
+        onPress={() => props.onSelect(template.id)}
+      >
+        <ButtonLabel tone={props.selected ? 'on-solid' : 'on-surface'}>{template.name}</ButtonLabel>
+      </Button>
+      <div style={{ flex: '1 1 120px', minWidth: 0 }}>
+        <Caption color="tertiary">
+          {blockName} · {weekName} · {template.exercises.length} exercises
+        </Caption>
+      </div>
+      {props.active && (
+        <Badge color="success" variant="subtle" dot>
+          training now
+        </Badge>
+      )}
+      {template.completed && (
+        <Badge color="default" variant="subtle">
+          completed
+        </Badge>
+      )}
+    </div>
   );
 }
 

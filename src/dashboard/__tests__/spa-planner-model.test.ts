@@ -13,9 +13,11 @@ import {
   nextTargetWeightLbs,
   prescriptionLine,
   repRange,
+  defaultTemplateId,
   resolveSelectedTemplateId,
   sessionRollup,
   setLoad,
+  splitAtDefault,
   visibleSets,
   type FlatTemplate,
 } from '../spa/planner/planner-model.js';
@@ -43,6 +45,7 @@ function tree(templateIds: string[]): PlanTreeView {
     programs: [],
     activeTemplateId: null,
     activeExerciseId: null,
+    nextTemplateId: null,
     program: {
       id: 'prog-1',
       name: 'P',
@@ -144,6 +147,57 @@ describe('flattenTemplates', () => {
   });
 });
 
+/**
+ * A steady lifter's program: two blocks of four weeks, Upper A and Lower A each
+ * week, with the first `trained` workouts in program order already finished.
+ */
+function steadyProgram(trained: number): FlatTemplate[] {
+  const out: FlatTemplate[] = [];
+  for (const blockName of ['Block 1', 'Block 2']) {
+    for (let week = 1; week <= 4; week++) {
+      for (const name of ['Upper A', 'Lower A']) {
+        const id = `${blockName}-w${week}-${name}`;
+        const template = {
+          id,
+          name,
+          orderIndex: 0,
+          exercises: [],
+          completed: out.length < trained,
+        };
+        out.push({ template, blockName, weekName: `Week ${week}` });
+      }
+    }
+  }
+  return out;
+}
+
+describe('defaultTemplateId', () => {
+  it('opens a lifter with history on the next due workout, not the oldest', () => {
+    const templates = steadyProgram(11);
+    const due = templates[11]?.template.id ?? null;
+
+    expect(defaultTemplateId(templates, null, due)).toBe('Block 2-w2-Lower A');
+  });
+
+  it('prefers the workout being trained right now over the next due one', () => {
+    const templates = steadyProgram(11);
+
+    expect(defaultTemplateId(templates, 'Block 2-w2-Upper A', 'Block 2-w2-Lower A')).toBe(
+      'Block 2-w2-Upper A',
+    );
+  });
+
+  it('falls back to the most recently trained workout when nothing is due', () => {
+    expect(defaultTemplateId(steadyProgram(16), null, null)).toBe('Block 2-w4-Lower A');
+    expect(defaultTemplateId(steadyProgram(5), null, 'deleted')).toBe('Block 1-w3-Upper A');
+  });
+
+  it('falls back to the first workout when none is due or trained', () => {
+    expect(defaultTemplateId(flat(['tpl-1', 'tpl-2']), null, null)).toBe('tpl-1');
+    expect(defaultTemplateId([], null, null)).toBeNull();
+  });
+});
+
 describe('resolveSelectedTemplateId', () => {
   const templates = flat(['tpl-1', 'tpl-2']);
 
@@ -151,13 +205,24 @@ describe('resolveSelectedTemplateId', () => {
     expect(resolveSelectedTemplateId(templates, 'tpl-2', 'tpl-1')).toBe('tpl-2');
   });
 
-  it('falls back to the live session’s template when the selection is gone', () => {
+  it('falls back to the default when the selection is gone or never made', () => {
     expect(resolveSelectedTemplateId(templates, 'deleted', 'tpl-2')).toBe('tpl-2');
+    expect(resolveSelectedTemplateId(templates, null, 'tpl-2')).toBe('tpl-2');
+  });
+});
+
+describe('splitAtDefault', () => {
+  it('collapses the finished workouts before the next due one', () => {
+    const { earlier, fromDefault } = splitAtDefault(steadyProgram(11), 'Block 2-w2-Lower A');
+
+    expect(earlier).toHaveLength(11);
+    expect(fromDefault[0]?.template.id).toBe('Block 2-w2-Lower A');
+    expect(fromDefault).toHaveLength(5);
   });
 
-  it('falls back to the first workout when nothing else resolves', () => {
-    expect(resolveSelectedTemplateId(templates, null, null)).toBe('tpl-1');
-    expect(resolveSelectedTemplateId([], null, null)).toBeNull();
+  it('hides nothing when there is no default or it is first', () => {
+    expect(splitAtDefault(steadyProgram(0), null).earlier).toEqual([]);
+    expect(splitAtDefault(steadyProgram(0), 'Block 1-w1-Upper A').earlier).toEqual([]);
   });
 });
 
