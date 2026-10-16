@@ -19,8 +19,8 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 45925,
-      "sha256": "ff3e1f0adfc1a584117fdf56e0205aef690a056da165f2000f5bbc8ba88ba2f4"
+      "bytes": 45937,
+      "sha256": "d24211c1385a2315a0673f6f839e6403a29a7833de32d3f9f728feed49243dc7"
     },
     {
       "name": "checkin",
@@ -133,8 +133,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 69808,
-      "sha256": "52ba1c1b509dce2abb08f9cc87ad5ba83f8119d55d6e43d41957b2eaa8573a1a"
+      "bytes": 75676,
+      "sha256": "5c93384f580796ffe96c724e19fcfb3c0e1c0d5198bcc23b21ebd74526fdc557"
     },
     {
       "name": "plan-builder",
