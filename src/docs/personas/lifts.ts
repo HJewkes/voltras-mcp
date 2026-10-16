@@ -1,14 +1,12 @@
 // The lifts personas train, and the one synthetic lifter shape behind them.
 
 import type { LifterParams } from './fatigue.js';
-import type { PersonaLift } from './types.js';
+import type { LiftShape, PersonaHardSets, PersonaLift } from './types.js';
 
-/** A lifter working near an eight-rep max: rep 8 lands close to the failure velocity. */
-function nearEightRepMax(v0: number, vFail: number): LifterParams {
+function liftShape(v0: number, vFail: number): LiftShape {
   return {
     v0,
     vFail,
-    n0: 9,
     tauSec: 90,
     fatigueCost: 0.3,
     repsPenalty: 0.3,
@@ -17,13 +15,37 @@ function nearEightRepMax(v0: number, vFail: number): LifterParams {
   };
 }
 
+/** A typical hypertrophy stop, with a few points of headroom for rep noise to read as 20 or so. */
+export const TYPICAL_STOP_VELOCITY_LOSS_PCT = 18;
+
+/** A last set taken near failure once a month: enough for a lift's baseline to calibrate. */
+export const MONTHLY_HARD_SETS: PersonaHardSets = { everyWeeks: 4, velocityLossPct: 36 };
+
+/**
+ * The lifter at a load where a fresh set of `targetReps` ends `velocityLossPct`
+ * below its opening velocity, with no noise.
+ *
+ * The reps to failure this solves for run high (about 25 for eight reps at 18%),
+ * because the model's velocity falls in a straight line all the way to failure
+ * where a real set's loss is slow early and steep at the end. Solving for the
+ * loss rather than for reps in reserve keeps what the pages read believable.
+ */
+export function lifterAt(
+  shape: LiftShape,
+  targetReps: number,
+  velocityLossPct: number,
+): LifterParams {
+  const fullLoss = 1 - shape.vFail / shape.v0;
+  return { ...shape, n0: 1 + ((targetReps - 1) * fullLoss) / (velocityLossPct / 100) };
+}
+
 export function lift(exerciseId: string, name: string, startLoadLbs: number): PersonaLift {
   const lower = /squat|deadlift|pull-through|kickback/.test(exerciseId);
   return {
     exerciseId,
     name,
     startLoadLbs,
-    lifter: lower ? nearEightRepMax(0.65, 0.28) : nearEightRepMax(0.6, 0.22),
+    lifter: lower ? liftShape(0.65, 0.28) : liftShape(0.6, 0.22),
   };
 }
 

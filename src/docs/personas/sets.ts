@@ -4,6 +4,7 @@
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../../store/types.js';
 import { roundLoad, weekLoadLbs, weekSlot } from './calendar.js';
 import { afterRest, performSet } from './fatigue.js';
+import { lifterAt } from './lifts.js';
 import { derivedVbt, rep } from './rep.js';
 import type { Rng } from './rng.js';
 import type { PersonaLift, PersonaMode, PersonaTraining, PersonaWorkout } from './types.js';
@@ -35,22 +36,39 @@ export function sessionSets(
   rng: Rng,
 ): StoredSet[] {
   const deload = weekSlot(training, slot.week)?.deload === true;
+  const { targetReps, restSec } = training;
   const sets: StoredSet[] = [];
   let clockMs = startedAt.getTime();
   for (const lift of slot.workout.lifts) {
     const loadLbs = weekLoadLbs(training, lift, slot.week);
+    const setCount = setsFor(training, lift, deload);
     let fatigue = 0;
-    for (let n = 0; n < setsFor(training, lift, deload); n++) {
-      const done = performSet(lift.lifter, fatigue, { targetReps: training.targetReps }, rng);
+    for (let n = 0; n < setCount; n++) {
+      const effort = effortPct(training, slot.week, deload || n < setCount - 1);
+      const lifter = lifterAt(lift.lifter, targetReps, effort);
+      const done = performSet(lifter, fatigue, { targetReps }, rng);
       const at = { sessionId, lift, loadLbs, startMs: clockMs, order: sets.length };
       const rows = liftRows(training, at, done.velocities);
-      if (n > 0) for (const row of rows) row.restBeforeSec = training.restSec;
+      if (n > 0) for (const row of rows) row.restBeforeSec = restSec;
       sets.push(...rows);
-      clockMs = Date.parse(rows[0]!.endedAt) + training.restSec * 1000;
-      fatigue = afterRest(lift.lifter, done.fatigueAfter, training.restSec);
+      clockMs = Date.parse(rows[0]!.endedAt) + restSec * 1000;
+      fatigue = afterRest(lifter, done.fatigueAfter, restSec);
     }
   }
   return sets;
+}
+
+/**
+ * The velocity loss one set is taken to: the training's usual stop, or the hard
+ * set's on a lift's last set in a hard week. Hard weeks count back from the
+ * newest, which is never one, so the latest session reads like an ordinary day.
+ */
+function effortPct(training: PersonaTraining, week: number, ordinary: boolean): number {
+  const { hardSets } = training;
+  if (hardSets === undefined || ordinary) return training.targetRepVelocityLossPct;
+  const weeksBack = training.weeks - 1 - week;
+  const hard = weeksBack % hardSets.everyWeeks === hardSets.everyWeeks - 1;
+  return hard ? hardSets.velocityLossPct : training.targetRepVelocityLossPct;
 }
 
 export interface SetPlacement {
