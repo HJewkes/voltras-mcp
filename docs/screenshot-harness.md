@@ -488,7 +488,9 @@ The checks (all in `scripts/lib/sweep-checks.mjs`, tested in `src/__tests__/swee
 no 5xx, a 404 only where the persona's `EXPECTATIONS` entry allows one, no `NaN`, `undefined`,
 `Infinity`, `[object Object]`, `Invalid Date` or bare `null` in page or tool text, the
 persona's must-show and must-not-show copy, no pound reading on a kg page outside the unit
-toggle, "Week of" on the pinned week's Monday, and no console error at all.
+toggle, "Week of" on the pinned week's Monday, no console error at all, and no detail panel
+(`DETAIL_PANEL_TEST_IDS`) with its left or right edge outside the viewport. That last one is
+measured, not read: a panel drawn off screen still carries all its text (VW-947).
 
 **The clock.** A persona's history ends the Sunday before its seed clock's week, so a page
 read at that clock shows an empty current week. Each persona is therefore seeded at a Monday
