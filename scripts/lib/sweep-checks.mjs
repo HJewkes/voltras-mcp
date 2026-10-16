@@ -373,6 +373,34 @@ export function checkToolResult({ persona, tool, isError, text }) {
   return findings;
 }
 
+// ── geometry ───────────────────────────────────────────────────────────────
+
+/**
+ * The test ids of the detail panels a drill opens over a page. Each must sit
+ * across the viewport, never off either side: a panel drawn off screen still
+ * carries all its text, so no text check can see it (VW-947).
+ */
+export const DETAIL_PANEL_TEST_IDS = ['body-map-detail-panel'];
+
+/** A sub-pixel overhang is rounding, not a panel off screen. */
+const EDGE_TOLERANCE_PX = 1;
+
+/**
+ * Every detail panel box whose left or right edge falls outside the viewport.
+ * Only the horizontal edges: the wall's side sheet runs as tall as the page and
+ * scrolls with it, so its bottom edge passing the fold is by design.
+ */
+export function findOffscreenPanels(boxes, viewport) {
+  return boxes
+    .filter(
+      ({ x, width }) => x < -EDGE_TOLERANCE_PX || x + width > viewport.width + EDGE_TOLERANCE_PX,
+    )
+    .map(({ testId, x, width }) => ({
+      kind: 'offscreen',
+      detail: `${testId} spans x ${Math.round(x)} to ${Math.round(x + width)} on a ${viewport.width} px viewport`,
+    }));
+}
+
 /** The findings for one captured page, in the order a reader wants them. */
 export function checkPage({ persona, route, unit, text, expectedMonday }, table = EXPECTATIONS) {
   return [

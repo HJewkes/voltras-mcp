@@ -37,11 +37,13 @@ import { scenarioDbPath, startScenario } from './lib/dashboard-launch.mjs';
 import { createClient, unwrap } from './lib/mcp-stdio-client.mjs';
 import { pixelDiff } from './lib/pixel-diff.mjs';
 import {
+  DETAIL_PANEL_TEST_IDS,
   READ_TOOLS,
   checkHttpStatus,
   checkPage,
   checkToolResult,
   findBadTokensInPayload,
+  findOffscreenPanels,
   isDomainRefusal,
   localMondayOf,
 } from './lib/sweep-checks.mjs';
@@ -297,6 +299,18 @@ async function finishClockDrivenAnimations(page, viewNow) {
   await settlePaint(page);
 }
 
+/** The box of every detail panel on the page, for the geometry check. */
+async function detailPanelBoxes(page) {
+  return page.evaluate((testIds) => {
+    return testIds.flatMap((testId) =>
+      [...document.querySelectorAll(`[data-testid="${testId}"]`)].map((el) => {
+        const { x, y, width, height } = el.getBoundingClientRect();
+        return { testId, x, y, width, height };
+      }),
+    );
+  }, DETAIL_PANEL_TEST_IDS);
+}
+
 async function captureCell(context, origin, cell, runDir) {
   const page = await context.newPage();
   const errors = watchPage(page);
@@ -307,9 +321,11 @@ async function captureCell(context, origin, cell, runDir) {
     const png = path.join(cell.persona, `${columnKey(cell)}.png`);
     await page.screenshot({ path: path.join(runDir, png), fullPage: true });
     const text = await pageText(page);
+    const boxes = await detailPanelBoxes(page);
     const findings = [
       ...(settled ? [] : [{ kind: 'unsettled', detail: 'page text never stopped changing' }]),
       ...checkPage({ ...cell, text, expectedMonday: cell.expectedMonday }),
+      ...findOffscreenPanels(boxes, page.viewportSize()),
       ...errors,
     ];
     return { ...cell, png, findings };

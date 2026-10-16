@@ -9,11 +9,18 @@
 // `spa-goals-page.test.ts`. The chrome half asserts the two route-level
 // done_whens: the nav rail carries `body`, and a set running while the page is
 // open shows on the LIVE item rather than anywhere on the body page.
+//
+// `useIsNarrowViewport` is mocked, as in `spa-goals-page.test.ts`: the suite has
+// no `window`, so the real hook would always report wide.
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
+
+vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
+
+import { useIsNarrowViewport } from '../spa/use-viewport.js';
 
 import { BodyView, type BodyViewProps } from '../spa/body/BodyView.js';
 import {
@@ -465,6 +472,40 @@ describe('the body page drill', () => {
     expect(markup(pageData({ week: noChest }), { stack: chestOpen })).not.toContain(
       'volume details',
     );
+  });
+});
+
+describe('the body page sheet on a phone (VW-947)', () => {
+  const chestOpen = initialBodyStack('chest');
+  const narrow = vi.mocked(useIsNarrowViewport);
+
+  afterEach(() => {
+    narrow.mockReturnValue(false);
+  });
+
+  /** The opening tag of the element carrying a test id. */
+  function tagWithTestId(html: string, testId: string): string | undefined {
+    return html.match(new RegExp(`<[^>]*data-testid="${testId}"[^>]*>`))?.[0];
+  }
+
+  it('docks the sheet at the bottom of a viewport-sized, unscrollable frame', () => {
+    narrow.mockReturnValue(true);
+
+    const html = markup(pageData(), { stack: chestOpen });
+
+    expect(html).toContain('data-testid="body-map-detail-panel-handle"');
+    const host = tagWithTestId(html, 'body-phone-sheet-host');
+    expect(host).toContain('position:fixed');
+    expect(host).toContain('overflow:clip');
+    expect(host).toMatch(/inset:0(px)?[;"]/);
+  });
+
+  it('keeps the wall on the right side-sheet over the page', () => {
+    const html = markup(pageData(), { stack: chestOpen });
+
+    expect(html).toContain('aria-label="Chest volume details"');
+    expect(html).not.toContain('body-map-detail-panel-handle');
+    expect(html).not.toContain('body-phone-sheet-host');
   });
 });
 

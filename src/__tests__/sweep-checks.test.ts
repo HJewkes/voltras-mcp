@@ -12,6 +12,7 @@ import {
   findBadTokens,
   findBadTokensInPayload,
   findLbLeaks,
+  findOffscreenPanels,
   findWeekOfMismatch,
   localMondayOf,
 } from '../../scripts/lib/sweep-checks.mjs';
@@ -147,5 +148,42 @@ describe('the read-tool allowlist', () => {
     const where = { persona: 'fresh', tool: 'plan.next_workout', isError: true };
     expect(checkToolResult({ ...where, text: refusal })).toEqual([]);
     expect(checkToolResult({ ...where, text: 'Cannot read properties' })).toHaveLength(1);
+  });
+});
+
+describe('the detail panel geometry check (VW-947)', () => {
+  const phone = { width: 390, height: 844 };
+  const panel = (x: number, width: number) => ({
+    testId: 'body-map-detail-panel',
+    x,
+    y: 46,
+    width,
+    height: 500,
+  });
+
+  it('flags a panel pushed off the left edge', () => {
+    // Mutation caught: the phone sheet scrolled sideways out of view.
+    const findings = findOffscreenPanels([panel(-309, 320)], phone);
+
+    expect(findings).toEqual([
+      {
+        kind: 'offscreen',
+        detail: 'body-map-detail-panel spans x -309 to 11 on a 390 px viewport',
+      },
+    ]);
+  });
+
+  it('flags a panel running past the right edge', () => {
+    expect(findOffscreenPanels([panel(200, 320)], phone)).toHaveLength(1);
+  });
+
+  it('passes a full-width sheet and forgives sub-pixel rounding', () => {
+    expect(findOffscreenPanels([panel(0, 390), panel(-0.5, 390.8)], phone)).toEqual([]);
+  });
+
+  it('passes a sheet taller than the viewport, which scrolls with the page', () => {
+    expect(
+      findOffscreenPanels([{ ...panel(1500, 420), height: 1554 }], { width: 1920, height: 1080 }),
+    ).toEqual([]);
   });
 });
