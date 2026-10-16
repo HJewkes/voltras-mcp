@@ -51,10 +51,16 @@ const DISAGREEMENT_COPY: Record<Disagreement, { label: string; tip: string }> = 
 type ColumnProps = { exercise: SessionSummaryExercise; displayUnit: MassUnit };
 
 /** Next session's load and step, the rep evidence it scored, and any caveat beside it. */
-export function NextTimeColumn(props: ColumnProps): React.JSX.Element {
+export function NextTimeColumn(props: ColumnProps & { narrow: boolean }): React.JSX.Element {
   const { progression } = props.exercise;
   return (
-    <div style={{ width: NEXT_TIME_COLUMN_WIDTH, display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{
+        width: props.narrow ? '100%' : NEXT_TIME_COLUMN_WIDTH,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <Overline color="secondary">{LINES.nextTimeKickerLabel.text}</Overline>
       {progression === null ? (
         <TipLabel

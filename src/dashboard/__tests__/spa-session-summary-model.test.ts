@@ -36,6 +36,10 @@ function withRepCounts(exercise: SessionSummaryExercise, counts: number[]): Sess
   return { ...exercise, sets: exercise.sets.map((set, i) => ({ ...set, repCount: counts[i] })) };
 }
 
+function withDelta(exercise: SessionSummaryExercise, delta: number): SessionSummaryExercise {
+  return { ...exercise, progression: { ...exercise.progression!, delta } };
+}
+
 describe('next load', () => {
   it('moves from the top working load, not from the planned load', () => {
     const exercise = chestFly();
@@ -124,6 +128,20 @@ describe('disagreement', () => {
 
   it('names a load step taken while form broke down', () => {
     expect(disagreement(formBreakdown('Cable Lat Pulldown'))).toBe('struggled-plan-adds');
+  });
+
+  it('treats a slowing verdict beside a load step as no struggle', () => {
+    const slowing = withDelta(fullSession('Cable Romanian Deadlift'), 5);
+
+    expect(slowing.verdict?.state).toBe('slowing');
+    expect(disagreement(slowing)).toBeNull();
+  });
+
+  it('names a load step taken while the bar was grinding', () => {
+    const grinding = withDelta(fullSession('Standing Cable Chest Press'), 5);
+
+    expect(grinding.verdict?.state).toBe('grinding');
+    expect(disagreement(grinding)).toBe('struggled-plan-adds');
   });
 
   it('stays quiet when the verdict and the recommendation agree', () => {
