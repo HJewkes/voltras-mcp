@@ -68,7 +68,7 @@ review them, a line at the top of the page says how many
 A page that lets you review those days so they count is VW-901.
 
 **The block week is served but not drawn.** The dashboard sends the current block week
-(`src/dashboard/server.ts:1091-1096`), and the page chrome has a slot for a header, but the
+(`src/dashboard/server.ts:1093-1098`), and the page chrome has a slot for a header, but the
 goals route passes none (`src/dashboard/spa/goals/GoalsRoute.tsx:14-20`). So the page cannot
 yet tell you which block week you are in as a header. Each goal card already shows its own
 week cells. The header is VW-655.

@@ -58,16 +58,16 @@ their writes then fail.
 
 The server runs a small web dashboard next to itself. It listens on `127.0.0.1`, the address that
 only your own computer can reach, so a phone or another computer on your network cannot open it
-(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:266`). It sends no headers that
+(`src/dashboard/server.ts:4-11`, `src/dashboard/server.ts:267`). It sends no headers that
 would let another website read its data (`src/dashboard/server.ts:14-17`).
 
 Most of its routes only read: the live view, your history, your plan, and your goals
 (`src/dashboard/server.ts:28-85`). A small set of routes can change things: six routes that edit
 your training plan, and an action route that runs only tools on a fixed list
-(`src/dashboard/server.ts:87-104`, `src/dashboard/server.ts:1268-1276`).
+(`src/dashboard/server.ts:87-104`, `src/dashboard/server.ts:1272-1280`).
 
 Every change request passes a guard before anything else happens
-(`src/dashboard/server.ts:586-602`). The guard requires all of these
+(`src/dashboard/server.ts:587-603`). The guard requires all of these
 (`src/dashboard/write-guard.ts:12-32`):
 
 - the request is addressed to your own machine by name;
