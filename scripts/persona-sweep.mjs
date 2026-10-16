@@ -84,6 +84,8 @@ const SETTLE_SAMPLE_MS = 300;
 const SETTLE_ROUNDS = 3;
 const SETTLE_TIMEOUT_MS = 12_000;
 const TOOL_TIMEOUT_MS = 60_000;
+/** Titan's side sheet slides in over 400 ms; the margin covers a late first frame. */
+const CLOCK_ANIMATION_MS = 1_000;
 
 const log = (...args) => console.error('[sweep]', ...args);
 
@@ -275,15 +277,33 @@ function watchPage(page) {
   return errors;
 }
 
+async function settlePaint(page) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+/**
+ * Finish any entrance that reads `Date.now()` per frame, which the pinned clock
+ * would hold at its first frame forever (Body's side sheet would stay off screen):
+ * step the clock past it, let it draw, then pin the clock back. The same move as
+ * the capture harness's `finishClockDrivenAnimation`, applied to every page.
+ */
+async function finishClockDrivenAnimations(page, viewNow) {
+  await page.clock.setFixedTime(viewNow.getTime() + CLOCK_ANIMATION_MS);
+  await settlePaint(page);
+  await page.clock.setFixedTime(viewNow);
+  await settlePaint(page);
+}
+
 async function captureCell(context, origin, cell, runDir) {
   const page = await context.newPage();
   const errors = watchPage(page);
   try {
     await page.goto(`${origin}/app${cell.route}`, { waitUntil: 'domcontentloaded' });
     const settled = await settle(page);
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-    });
+    await finishClockDrivenAnimations(page, cell.viewNow);
     const png = path.join(cell.persona, `${columnKey(cell)}.png`);
     await page.screenshot({ path: path.join(runDir, png), fullPage: true });
     const text = await pageText(page);
@@ -324,7 +344,9 @@ async function sweepPages(browser, port, persona, viewNow, runDir, viewports) {
       const context = await newContext(browser, size, unit, viewNow);
       for (const route of ROUTES) {
         const cell = { persona, route, viewport, unit, expectedMonday };
-        cells.push(await captureCell(context, origin, cell, runDir));
+        const captured = await captureCell(context, origin, { ...cell, viewNow }, runDir);
+        delete captured.viewNow;
+        cells.push(captured);
       }
       await context.close();
     }
