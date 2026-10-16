@@ -62,3 +62,6 @@ site/.vitepress/cache/
 
 # Scratch build for tools/truecoach-retro (npm run retro:truecoach)
 .retro-build/
+
+# Persona sweep output: PNGs, findings.json, index.html (npm run sweep)
+sweep-out/

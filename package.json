@@ -50,6 +50,7 @@
     "docs:build": "vitepress build site",
     "docs:reference": "node scripts/gen-tool-reference.mjs",
     "docs:captures": "node scripts/capture-screens.mjs",
+    "sweep": "node scripts/persona-sweep.mjs",
     "changelog:check": "node scripts/check-changelog.mjs",
     "changelog:fold": "node scripts/fold-changelog.mjs",
     "docs:check": "node scripts/check-docs.mjs",

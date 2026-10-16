@@ -12,6 +12,7 @@ sources:
   - scripts/dashboard-preview.mjs
   - src/docs/preview-seeds.ts
   - src/docs/personas/index.ts
+  - src/docs/personas/catalog.ts
   - scripts/seed-persona.mjs
   - justfile
   - src/dashboard/spa/panels/DashboardChrome.tsx
@@ -128,10 +129,32 @@ browse matches the published images. `goals` has a seed of its own
 
 `npm run dashboard:preview -- persona <name>` fills every page at once. It seeds one synthetic
 lifter, then opens the Review page on its latest session (`#/summary`), and the rail reaches the
-rest. `--route` opens another page instead, for example `--route '#/goals'`. `steady` has twelve
-weeks of an upper/lower split, weigh-ins, check-ins and three goals on track. `first-timer` has
-one session and a goal still calibrating. `fresh` is a new install with no rows at all
-(`src/docs/personas/index.ts`). An unknown name stops the command and lists the names it knows.
+rest. `--route` opens another page instead, for example `--route '#/goals'`. The personas
+(`src/docs/personas/index.ts`, `src/docs/personas/catalog.ts`):
+
+- `fresh`: a new install, not onboarded, with no rows at all.
+- `first-timer`: one session of three sets, one weigh-in, one check-in and a goal still
+  calibrating.
+- `steady`: twelve weeks of an upper/lower split four days a week across two blocks with a
+  deload, weekly check-ins, five weigh-ins a week and three lift goals on track.
+- `returner`: sixteen weeks with a three-week and a five-week break, the load lower after each.
+- `plateau`: eight flat weeks on the main lifts, a stalled chest-press goal, and twenty curl
+  sets a week, which puts the biceps past their recoverable volume.
+- `goal-mix`: every goal status at once, with a lift behind, one on track, one ahead, a
+  bodyweight cut goal and a 28-day session goal. It declares the beginner tier.
+- `kg-lifter`: every load a whole number of kilograms, read in kg.
+- `damper-band`: damper, band and isokinetic sets only. Damper and isokinetic sets have no
+  load.
+- `messy`: four ordinary weeks plus every odd row: sets with no exercise, auto-armed, partial,
+  warm-up, probe and technique sets, a guest, unreviewed and test sessions, and one session left
+  open.
+- `bilateral`: two units, left and right paired on every set, the left side 10% lighter.
+- `night-owl`: thirty-five weeks of sessions starting between 23:00 and 01:00 local, one of
+  them across a daylight-saving change.
+- `year`: fifty-two weeks at five days a week in thirteen four-week blocks.
+- `truecoach`: six weeks trained against a plan imported from TrueCoach.
+
+An unknown name stops the command and lists the names it knows.
 To keep a persona's store, `node scripts/seed-persona.mjs <name> <db-path>` writes it to a new
 file. It refuses an existing file and any path under `.voltras`.
 
