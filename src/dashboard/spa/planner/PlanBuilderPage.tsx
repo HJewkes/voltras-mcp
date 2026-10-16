@@ -202,6 +202,7 @@ export function PlanBuilderPage(): React.JSX.Element {
       }
     />
   );
+  const catalogColumn = <div style={{ flex: '1 1 0', minWidth: 0 }}>{catalogPanel}</div>;
   const workoutColumn = (
     <>
       <WorkoutList
@@ -244,7 +245,8 @@ export function PlanBuilderPage(): React.JSX.Element {
       {error !== null && <ErrorNote message={error} />}
       {/* Below the breakpoint the two columns STACK rather than squeeze: at phone
           width the right column collapsed to ~110px and wrapped its caption one
-          character per line, which is a broken page, not a cramped one. */}
+          character per line, which is a broken page, not a cramped one. Stacked,
+          the workouts go first, so the next workout is on screen at load (VW-949). */}
       <div
         style={{
           display: 'flex',
@@ -253,7 +255,7 @@ export function PlanBuilderPage(): React.JSX.Element {
           alignItems: narrow ? 'stretch' : 'flex-start',
         }}
       >
-        <div style={{ flex: '1 1 0', minWidth: 0 }}>{catalogPanel}</div>
+        {!narrow && catalogColumn}
         <div
           style={{
             flex: '1 1 0',
@@ -265,6 +267,7 @@ export function PlanBuilderPage(): React.JSX.Element {
         >
           {workoutColumn}
         </div>
+        {narrow && catalogColumn}
       </div>
     </Surface>
   );
