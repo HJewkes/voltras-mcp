@@ -225,6 +225,8 @@ export interface SnapshotWatchTrigger {
 
 /** Client-side view of the active set in the snapshot. */
 export interface SnapshotActiveSet {
+  /** Already on the wire with the whole `ActiveSet`; tells a pair's two sides apart (VW-956). */
+  setId?: string;
   reps?: Rep[];
   /** Trigger DSL registered at set.start — carries the configured rep target. */
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
@@ -269,6 +271,10 @@ export interface SnapshotActiveExercise {
 export interface SnapshotCompletedSet {
   set: SnapshotActiveSet;
   device: SnapshotDevice | null;
+  /** Shared by the two sides of one live-paired bilateral effort (VW-956). */
+  bilateralGroupId?: string;
+  /** The limb, when the slot's device was bound to one at close. */
+  side?: 'left' | 'right';
 }
 
 /** One slot's device entry on the snapshot, with its OWN sets (VW-71). */
@@ -689,6 +695,10 @@ export interface CompletedSet {
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
   /** The set's advisory triggers, kept so its own stop threshold survives the close (VW-440). */
   watch?: SnapshotActiveSet['watch'];
+  /** Shared by the two sides of one bilateral effort (VW-956); null for a lone set. */
+  bilateralGroupId?: string | null;
+  /** The limb, when the set is one bound side; null otherwise. */
+  side?: 'left' | 'right' | null;
 }
 
 export interface AccumulatorState {
@@ -758,6 +768,41 @@ function summariseClosedSet(
   };
 }
 
+function summariseCompletedEntry(
+  entry: SnapshotCompletedSet,
+  exerciseName: string | null,
+): CompletedSet {
+  return {
+    ...summariseClosedSet(entry.set, entry.device, exerciseName),
+    bilateralGroupId: entry.bilateralGroupId ?? null,
+    side: entry.side ?? null,
+  };
+}
+
+/**
+ * The other limb's half of each bilateral pair in the session's own log (VW-956).
+ * A dual rig runs one session per slot and `sets.completed` carries only the first
+ * slot's, so a pair's partner side is read from its own slot's entry. The Live page
+ * ranks these alongside the log so a lighter side is not taken for a warm-up, and
+ * never counts them: each pair is already one row in the log.
+ */
+export function bilateralPartnerSides(snapshot: Snapshot): CompletedSet[] {
+  const own = snapshot.sets.completed ?? [];
+  const groupIds = new Set(own.flatMap((entry) => entry.bilateralGroupId ?? []));
+  if (groupIds.size === 0) return [];
+  const ownSetIds = new Set(own.map((entry) => entry.set.setId));
+  const exerciseName = snapshot.session?.exerciseName ?? null;
+  return snapshot.devices
+    .flatMap((slot) => slot.sets?.completed ?? [])
+    .filter(
+      (entry) =>
+        entry.bilateralGroupId !== undefined &&
+        groupIds.has(entry.bilateralGroupId) &&
+        !ownSetIds.has(entry.set.setId),
+    )
+    .map((entry) => summariseCompletedEntry(entry, exerciseName));
+}
+
 /**
  * Fold a new snapshot into the accumulator. Pure: returns the next state.
  * Order matches the legacy poll loop — set-log accrual (reads the previous
@@ -792,9 +837,7 @@ export function reduceSnapshot(
     // having observed the live set-close transition. Tagged with the current
     // session's exercise (all completed sets in a session belong to it).
     const exerciseName = snapshot.session?.exerciseName ?? null;
-    setLog = serverCompleted.map((entry) =>
-      summariseClosedSet(entry.set, entry.device, exerciseName),
-    );
+    setLog = serverCompleted.map((entry) => summariseCompletedEntry(entry, exerciseName));
   } else if (state.prevSetActive && !activeSet && state.lastActiveSet !== null) {
     // Legacy fallback (server without VW-70 completed-set exposure): a set just
     // closed, so push the snapshot saved at the previous tick, tagged with the

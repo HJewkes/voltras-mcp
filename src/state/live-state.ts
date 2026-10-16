@@ -41,7 +41,7 @@ import type { TrainingModeName } from '../schemas/common.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
 import type { ArmDefaults, ArmDefaultsSource } from './arm-defaults.js';
 import { setPurposeFields } from '../store/set-purpose.js';
-import type { JsonObject, SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
+import type { JsonObject, SetPurpose, StoredPreSessionCarbs, StoredSide } from '../store/types.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
@@ -598,6 +598,14 @@ const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
 export interface CompletedSetRecord {
   set: ActiveSet;
   device: DeviceSnapshot;
+  /**
+   * Shared by the two sides of one live-paired bilateral effort (VW-956), the
+   * same id the stored rows carry. Stamped after close, because a pair is only
+   * known once its second side finishes.
+   */
+  bilateralGroupId?: string;
+  /** The limb, when the slot's device was bound to one at close. */
+  side?: StoredSide;
 }
 
 /**
@@ -1367,9 +1375,23 @@ export class LiveState {
     return this.completedSets
       .filter((record) => record.set.sessionId === sessionId)
       .map((record) => ({
+        ...record,
         set: { ...record.set, reps: [...record.set.reps] },
         device: { ...record.device },
       }));
+  }
+
+  /**
+   * Attach a finished set's side and bilateral pairing (VW-956). A set that has
+   * already left the ring is a no-op: the stored row carries the same fields.
+   */
+  annotateCompletedSet(
+    setId: string,
+    pairing: Pick<CompletedSetRecord, 'bilateralGroupId' | 'side'>,
+  ): void {
+    const index = this.completedSets.findIndex((record) => record.set.setId === setId);
+    if (index === -1) return;
+    this.completedSets[index] = { ...this.completedSets[index], ...pairing };
   }
 
   /**
