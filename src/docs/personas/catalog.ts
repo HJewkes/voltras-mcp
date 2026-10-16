@@ -13,18 +13,25 @@ import {
   SHOULDER_PRESS,
   SQUAT,
   TRICEP_EXTENSION,
+  MONTHLY_HARD_SETS,
+  TYPICAL_STOP_VELOCITY_LOSS_PCT,
 } from './lifts.js';
 import { messyExtras } from './messy.js';
 import type { Persona, PersonaLift, PersonaTraining, PersonaWorkout } from './types.js';
 
 type TrainingShape = Partial<PersonaTraining> & Pick<PersonaTraining, 'weeks' | 'workouts'>;
 
-/** Off-plan, three sets of eight, two minutes' rest, a 1.25% weekly climb, evenings. */
+/**
+ * Off-plan, three sets of eight to a typical stop, two minutes' rest, a 1.25% weekly climb,
+ * evenings.
+ */
 function training(shape: TrainingShape): PersonaTraining {
   return {
     blocks: [],
     setsPerLift: 3,
     targetReps: 8,
+    targetRepVelocityLossPct: TYPICAL_STOP_VELOCITY_LOSS_PCT,
+    hardSets: MONTHLY_HARD_SETS,
     restSec: 120,
     weeklyGain: 0.0125,
     startHour: 18,
@@ -74,6 +81,8 @@ const plateau: Persona = {
     ],
     blocks: [{ name: 'Block 1 — Push', weeks: 9 }],
     weeklyGain: 0.0125,
+    // Stalled and pushing anyway: sets end close to failure.
+    targetRepVelocityLossPct: 28,
   }),
   goals: [{ exerciseId: CHEST_PRESS.exerciseId, level: 'specialize' }],
 };
@@ -136,6 +145,9 @@ const damperBand: Persona = {
   }),
 };
 
+// Harder than a typical stop, so some of its sets read as grinding.
+const MESSY_VELOCITY_LOSS_PCT = 26;
+
 const messy: Persona = {
   id: 'messy',
   summary:
@@ -145,8 +157,9 @@ const messy: Persona = {
   training: training({
     weeks: 4,
     workouts: [workout('Upper', 0, [CHEST_PRESS, ROW]), workout('Lower', 3, [SQUAT])],
+    targetRepVelocityLossPct: MESSY_VELOCITY_LOSS_PCT,
   }),
-  seedExtras: messyExtras(CHEST_PRESS),
+  seedExtras: messyExtras(CHEST_PRESS, MESSY_VELOCITY_LOSS_PCT),
 };
 
 const PAIRED = { bilateral: { leftLoadShare: 0.9 } } as const;

@@ -13,6 +13,8 @@ import {
   SHOULDER_PRESS,
   SQUAT,
   TRICEP_EXTENSION,
+  MONTHLY_HARD_SETS,
+  TYPICAL_STOP_VELOCITY_LOSS_PCT,
 } from './lifts.js';
 import type { Persona } from './types.js';
 
@@ -37,6 +39,7 @@ const firstTimer: Persona = {
     blocks: [],
     setsPerLift: 3,
     targetReps: 8,
+    targetRepVelocityLossPct: TYPICAL_STOP_VELOCITY_LOSS_PCT,
     restSec: 120,
     weeklyGain: 0,
     startHour: 18,
@@ -86,6 +89,8 @@ const steady: Persona = {
     ],
     setsPerLift: 3,
     targetReps: 8,
+    targetRepVelocityLossPct: TYPICAL_STOP_VELOCITY_LOSS_PCT,
+    hardSets: MONTHLY_HARD_SETS,
     restSec: 120,
     weeklyGain: 0.0125,
     startHour: 18,

@@ -12,6 +12,7 @@ import * as sim from '../../../scripts/sim/lifter-model.js';
 import { afterRest, performSet, type LifterParams } from '../personas/fatigue.js';
 import { makeRng, personaById, seedPersona } from '../personas/index.js';
 import { fetchGoalProgressViews } from '../../dashboard/goal-progress-api.js';
+import { buildSessionSummary } from '../../dashboard/read-models/session-summary.js';
 import { exportStore } from '../../store/portable/export.js';
 import { openTestStore } from '../../store/__tests__/open-test-store.js';
 
@@ -105,6 +106,56 @@ describe('persona goals', () => {
 
   it("reads the first-timer's one goal as calibrating", async () => {
     expect(await goalStatuses('first-timer')).toEqual(['calibrating']);
+  });
+});
+
+/** Every exercise card across the persona's sessions, as the summary read model builds it. */
+async function summaryExercises(personaId: string) {
+  const store = openTestStore();
+  await seedPersona(store, personaById(personaId), NOW, makeRng(1));
+  const sessions = await store.listSessions({});
+  const exercises = [];
+  for (const session of sessions) {
+    const summary = await buildSessionSummary({ store, nameOf: () => undefined }, session.id);
+    exercises.push(...(summary?.exercises ?? []));
+  }
+  await store.close();
+  return exercises;
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+// VW-952: steady's sets used to end one rep short of failure, so every working set
+// lost about 55% of its velocity and every exercise read as grinding.
+describe("steady's effort", () => {
+  it('stops its working sets at a typical hypertrophy velocity loss', async () => {
+    const exercises = await summaryExercises('steady');
+
+    const losses = exercises
+      .flatMap((exercise) => exercise.sets)
+      .filter((set) => set.setPurpose === 'working')
+      .map((set) => set.velocityLossPct)
+      .filter((loss): loss is number => loss !== null);
+
+    expect(losses.length).toBeGreaterThan(0);
+    expect(median(losses)).toBeGreaterThanOrEqual(10);
+    expect(median(losses)).toBeLessThanOrEqual(30);
+  });
+
+  it('reads grinding or form breakdown on at most a minority of exercises', async () => {
+    const exercises = await summaryExercises('steady');
+
+    const hard = exercises.filter(
+      (exercise) =>
+        exercise.verdict?.state === 'grinding' || exercise.verdict?.state === 'form-breakdown',
+    );
+
+    expect(exercises.length).toBeGreaterThan(0);
+    expect(hard.length).toBeLessThan(exercises.length / 2);
   });
 });
 

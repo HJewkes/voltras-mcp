@@ -15,13 +15,16 @@ export interface PersonaMode {
   readonly chainsLbs?: number;
 }
 
+/** A lift's fatigue shape. Reps to failure follow from the training's effort (`lifterAt`). */
+export type LiftShape = Omit<LifterParams, 'n0'>;
+
 /** One lift inside a workout. */
 export interface PersonaLift {
   readonly exerciseId: string;
   readonly name: string;
   /** Working load in the first seeded week, lb. */
   readonly startLoadLbs: number;
-  readonly lifter: LifterParams;
+  readonly lifter: LiftShape;
   /** Overrides the training's weekly gain, for a lift only being held. */
   readonly weeklyGain?: number;
   /** Overrides the training's sets per lift. */
@@ -62,6 +65,18 @@ export interface PersonaTraining {
   readonly blocks: readonly PersonaBlock[];
   readonly setsPerLift: number;
   readonly targetReps: number;
+  /**
+   * How hard every set is taken: the velocity loss, in percent, the last target rep
+   * reaches on a fresh set. Around 20 is a typical hypertrophy stop; 30 and up is
+   * close to failure and reads as grinding.
+   */
+  readonly targetRepVelocityLossPct: number;
+  /**
+   * Each lift's last set taken close to failure now and then, outside deloads. Those
+   * sets are what a lift's baseline calibrates from, and a goal reads as calibrating
+   * until it has some.
+   */
+  readonly hardSets?: PersonaHardSets;
   readonly restSec: number;
   /** Load added each non-deload week, as a share of the starting load. */
   readonly weeklyGain: number;
@@ -73,6 +88,12 @@ export interface PersonaTraining {
   readonly loadUnit?: 'lb' | 'kg';
   /** `truecoach` writes the plan as the TrueCoach import writes it, external ids and all. */
   readonly planSource?: 'local' | 'truecoach';
+}
+
+export interface PersonaHardSets {
+  /** One week in this many, counting back from the week before the newest. */
+  readonly everyWeeks: number;
+  readonly velocityLossPct: number;
 }
 
 export interface PersonaBreak {

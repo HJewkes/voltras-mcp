@@ -7,6 +7,7 @@
 import type { StoredSession, StoredSet } from '../../store/types.js';
 import { localAt, localMonday } from './calendar.js';
 import { performSet, type LifterParams } from './fatigue.js';
+import { lifterAt } from './lifts.js';
 import type { Rng } from './rng.js';
 import { setRow } from './sets.js';
 import type { PersonaExtrasReport, PersonaLift } from './types.js';
@@ -28,11 +29,15 @@ interface OddSession {
   readonly open?: boolean;
 }
 
-export function messyExtras(lift: PersonaLift) {
+const ODD_SET_REPS = 8;
+
+/** `velocityLossPct` is how hard each odd set is taken, as the persona's training takes its own. */
+export function messyExtras(lift: PersonaLift, velocityLossPct: number) {
+  const lifter = lifterAt(lift.lifter, ODD_SET_REPS, velocityLossPct);
   return async (store: PersonaStore, now: Date, rng: Rng): Promise<PersonaExtrasReport> => {
     let sets = 0;
     const sessions = oddSessions(now);
-    for (const odd of sessions) sets += await seedOddSession(store, odd, lift, rng);
+    for (const odd of sessions) sets += await seedOddSession(store, odd, { lift, lifter }, rng);
     return { sessions: sessions.length, sets, goals: 0 };
   };
 }
@@ -80,14 +85,14 @@ function oddSessions(now: Date): OddSession[] {
 async function seedOddSession(
   store: PersonaStore,
   odd: OddSession,
-  lift: PersonaLift,
+  { lift, lifter }: { lift: PersonaLift; lifter: LifterParams },
   rng: Rng,
 ): Promise<number> {
   const rows = odd.sets.map((tweak, order) => {
     const startMs = odd.startedAt.getTime() + order * SET_GAP_MS;
     const plain = setRow(
       { sessionId: odd.id, lift, loadLbs: lift.startLoadLbs, startMs, order },
-      freshSet(lift.lifter, rng),
+      freshSet(lifter, rng),
     );
     return withTweak(plain, tweak);
   });
@@ -110,5 +115,5 @@ function withTweak(plain: StoredSet, { noExercise, ...tweak }: OddSet): StoredSe
 }
 
 function freshSet(lifter: LifterParams, rng: Rng): readonly number[] {
-  return performSet(lifter, 0, { targetReps: 8 }, rng).velocities;
+  return performSet(lifter, 0, { targetReps: ODD_SET_REPS }, rng).velocities;
 }
