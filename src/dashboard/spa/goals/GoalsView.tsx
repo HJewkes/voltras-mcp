@@ -92,7 +92,7 @@ export function GoalsView(props: {
       {primary !== null && <PrimaryGoalCard row={primary} unit={displayUnit} />}
       <PerLiftGrid rows={liftRows(data)} narrow={narrow} unit={displayUnit} />
       <MuscleGrid rows={muscleCardRows(data, displayUnit)} narrow={narrow} />
-      <WholeBodySection data={data} narrow={narrow} />
+      <WholeBodySection data={data} narrow={narrow} unit={displayUnit} />
     </Surface>
   );
 }
@@ -118,7 +118,7 @@ function PrimaryGoalCard(props: { row: GoalTargetRow; unit: MassUnit }): React.J
         basis={view.statusBasis}
         isPR={hasPR(view)}
         milestone={cardMilestone(view, props.unit)}
-        goal={cardChart(view)}
+        goal={cardChart(view, props.unit)}
       />
     </WithCalibrationNote>
   );
@@ -212,7 +212,7 @@ function PerLiftGrid(props: {
               basis={row.view.statusBasis}
               isPR={hasPR(row.view)}
               milestone={cardMilestone(row.view, props.unit)}
-              trend={cardTrend(row.view)}
+              trend={cardTrend(row.view, props.unit)}
             />
           </WithCalibrationNote>
         ))}
@@ -256,8 +256,9 @@ function MuscleGrid(props: {
 function WholeBodySection(props: {
   data: GoalsPageData;
   narrow: boolean;
+  unit: MassUnit;
 }): React.JSX.Element | null {
-  const cards = wholeBodyCards(props.data);
+  const cards = wholeBodyCards(props.data, props.unit);
   if (cards === null) return null;
   return (
     <PageSection title="Whole body">

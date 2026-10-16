@@ -29,7 +29,7 @@ import type { GoalMesoTarget } from '../../read-models/goal-milestone.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 import type { StoredPriority } from '../../../store/types.js';
 import { mapCatalogMuscle } from '../../../exercises/muscle-map.js';
-import { formatMass, type MassUnit } from '../live-page/mass.js';
+import { convertMass, formatMass, type MassUnit } from '../live-page/mass.js';
 import { calibrationCopy } from './calibration-copy.js';
 
 /** The two fetched payloads this page renders from. */
@@ -151,29 +151,49 @@ function readingInKg(reading: GoalMilestoneReading): GoalMilestoneReading {
   return 'load' in reading ? { ...reading, load: wholeKg(reading.load) } : reading;
 }
 
-/** The next week's waypoint as the chart's hollow marker; its label becomes the marker's tip. */
-export function nextTarget(view: GoalProgressView): GoalNextTarget {
-  const { dueWeek, value, label } = view.nextMilestone;
-  return { weekIndex: dueWeek, value, label };
+/** Whether a lb view is drawn in kg; a view already in kg is left alone. */
+function chartInKg(view: GoalProgressView, unit: MassUnit): boolean {
+  return unit === 'kg' && view.nextMilestone.unit === 'lb';
+}
+
+/**
+ * A chart value in the display unit, unrounded: titan rounds every axis, rule and tip
+ * label it draws from the value, so the plot and its labels convert together.
+ */
+function chartValue(view: GoalProgressView, unit: MassUnit): (value: number) => number {
+  return chartInKg(view, unit) ? (value) => convertMass(value, 'kg') : (value) => value;
+}
+
+/**
+ * The next week's waypoint as the chart's hollow marker; its label becomes the marker's tip.
+ * In kg the tip is rebuilt with the load in whole kg, as the card's summary prints it.
+ */
+export function nextTarget(view: GoalProgressView, unit: MassUnit = 'lbs'): GoalNextTarget {
+  const { dueWeek, value, label, load, reps } = view.nextMilestone;
+  if (!chartInKg(view, unit)) return { weekIndex: dueWeek, value, label };
+  const kgLabel = `${wholeKg(load)} x ${reps} in week ${dueWeek}`;
+  return { weekIndex: dueWeek, value: convertMass(value, 'kg'), label: kgLabel };
 }
 
 /** The full card's trajectory chart, everything but the box the card measures itself. */
-export function cardChart(view: GoalProgressView): GoalCardChart {
+export function cardChart(view: GoalProgressView, unit: MassUnit = 'lbs'): GoalCardChart {
+  const shown = chartValue(view, unit);
   return {
-    expected: view.expected,
-    committed: view.committed,
-    stretch: view.stretch,
+    expected: view.expected.map((p) => ({ ...p, low: shown(p.low), high: shown(p.high) })),
+    committed: shown(view.committed),
+    stretch: shown(view.stretch),
     actuals: view.actuals.map((a) => ({
       ts: dateOnly(a.ts),
       ...(a.weekIndex === undefined ? {} : { weekIndex: a.weekIndex }),
-      value: a.value,
+      value: shown(a.value),
       isPR: a.isPR,
       matched: a.matched,
     })),
     weeks: chartWeeks(view),
     // titan has no hold direction yet, so a hold keeps the chart's default, as the milestone does.
     ...(view.direction === 'hold' ? {} : { direction: view.direction }),
-    nextTarget: nextTarget(view),
+    nextTarget: nextTarget(view, unit),
+    ...(chartInKg(view, unit) ? { unit: 'kg' } : {}),
     // Only a calibrating lift carries `calibration`; the chart's note then says what it waits on.
     ...(view.calibration === undefined
       ? {}
@@ -182,14 +202,15 @@ export function cardChart(view: GoalProgressView): GoalCardChart {
 }
 
 /** The compact card's week-column chart, running to the block's last week. */
-export function cardTrend(view: GoalProgressView): GoalCardTrend {
+export function cardTrend(view: GoalProgressView, unit: MassUnit = 'lbs'): GoalCardTrend {
+  const shown = chartValue(view, unit);
   return {
-    committed: view.committed,
-    stretch: view.stretch,
-    actuals: cardActuals(view),
+    committed: shown(view.committed),
+    stretch: shown(view.stretch),
+    actuals: cardActuals(view).map((a) => ({ ...a, value: shown(a.value) })),
     goalWeek: view.mesoMilestone.goalWeek,
-    unit: view.nextMilestone.unit,
-    nextTarget: nextTarget(view),
+    unit: chartInKg(view, unit) ? 'kg' : view.nextMilestone.unit,
+    nextTarget: nextTarget(view, unit),
   };
 }
 
