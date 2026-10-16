@@ -46,7 +46,10 @@ export async function fetchCatalog(
   return body.exercises;
 }
 
-/** `null` when there is no such session — for `'latest'`, no session at all (VW-931). */
+/**
+ * `null` when there is no such session. The route answers `'latest'` on an empty
+ * store with 200 `null` (VW-948) and an unknown id with a 404; both read as `null`.
+ */
 export function fetchSessionSummary(sessionId: string): Promise<SessionSummaryView | null> {
   return readJsonOrAbsent<SessionSummaryView>(
     `/api/session-summary/${encodeURIComponent(sessionId)}`,

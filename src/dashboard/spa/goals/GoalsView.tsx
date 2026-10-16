@@ -78,7 +78,7 @@ export function GoalsView(props: {
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
         <EmptyState
           title="No priorities declared"
-          description="Declare a priority with goal.declare_priorities to see it here."
+          description="Tell Claude which lift you want to improve to see it here."
         />
       </Surface>
     );

@@ -301,6 +301,12 @@ describe('GoalsView (VW-355)', () => {
     const html = render({ priorities: [], progress: {}, mesocycle: null });
     expect(html).toContain('No priorities declared');
   });
+
+  it('words the empty state for the lifter, naming no MCP tool (VW-948)', () => {
+    const html = render({ priorities: [], progress: {}, mesocycle: null });
+    expect(html).toContain('Tell Claude which lift you want to improve');
+    expect(html).not.toMatch(/\b[a-z]+\.[a-z]+_[a-z_]+\b/);
+  });
 });
 
 describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
