@@ -85,18 +85,24 @@ export type Disagreement =
  * beside a good verdict blames the reps only when most scored sets really fell
  * short: the technique gate, a session with no sets and the diet-phase table
  * can all back off too, and the page must not invent a miss.
+ *
+ * Keyed on the verdict state, not its tone: slowing is a typical stopping
+ * point and shares the warn tone with grinding, so only grinding or a form
+ * breakdown counts as a struggle (VW-955).
  */
 export function disagreement(exercise: SessionSummaryExercise): Disagreement | null {
   const { verdict, progression } = exercise;
   if (verdict === null || progression === null) return null;
-  if (verdict.tone === 'ok' && progression.delta < 0) {
+  if (verdict.state === 'good' && progression.delta < 0) {
     return mostSetsMissed(repMarks(exercise))
       ? 'moved-well-missed-reps'
       : 'moved-well-plan-backs-off';
   }
-  if (verdict.tone !== 'ok' && progression.delta > 0) return 'struggled-plan-adds';
+  if (STRUGGLE_STATES.has(verdict.state) && progression.delta > 0) return 'struggled-plan-adds';
   return null;
 }
+
+const STRUGGLE_STATES: ReadonlySet<string> = new Set(['grinding', 'form-breakdown']);
 
 /** The server's strict majority: a tie is not a majority. */
 function mostSetsMissed(marks: readonly RepMark[]): boolean {

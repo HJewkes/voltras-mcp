@@ -19,6 +19,10 @@ import type { SessionSummaryExercise } from '../../../read-models/session-summar
 // react-native-web's base View rules beat the row's `flex-row` class, so the row says it in style.
 const ROW = { flexDirection: 'row' } as const;
 const COLUMNS = ['Set', 'Kind', 'Reps', 'Load', 'VL', 'Best m/s', 'e1RM'] as const;
+const COLUMN_WIDTH = 96;
+const EXERCISE_COLUMN_MIN_WIDTH = 200;
+// Below this the table scrolls sideways rather than squeezing its cells to a character wide.
+const TABLE_MIN_WIDTH = EXERCISE_COLUMN_MIN_WIDTH + COLUMNS.length * COLUMN_WIDTH;
 
 /** Every set of the session, grouped by exercise: the raw record under the bands. */
 export function SetRecordTable(props: {
@@ -28,21 +32,25 @@ export function SetRecordTable(props: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SPACE.xs }}>
       <Overline color="secondary">Sets</Overline>
-      <Table density="dense">
-        <TableHeader>
-          <TableRow style={ROW} isHoverable={false}>
-            <TableHeaderCell>Exercise</TableHeaderCell>
-            {COLUMNS.map((column) => (
-              <TableHeaderCell key={column} width={96} align="right">
-                {column}
-              </TableHeaderCell>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {props.exercises.flatMap((exercise) => exerciseRows(exercise, props.displayUnit))}
-        </TableBody>
-      </Table>
+      <div data-testid="summary-set-table" style={{ overflowX: 'auto' }}>
+        <div style={{ minWidth: TABLE_MIN_WIDTH }}>
+          <Table density="dense">
+            <TableHeader>
+              <TableRow style={ROW} isHoverable={false}>
+                <TableHeaderCell>Exercise</TableHeaderCell>
+                {COLUMNS.map((column) => (
+                  <TableHeaderCell key={column} width={COLUMN_WIDTH} align="right">
+                    {column}
+                  </TableHeaderCell>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {props.exercises.flatMap((exercise) => exerciseRows(exercise, props.displayUnit))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -62,7 +70,7 @@ function exerciseRows(exercise: SessionSummaryExercise, unit: MassUnit): React.J
         formatNumber(set.bestRepVelocity),
         formatWeightLbs(e1rm.get(set.index), unit),
       ].map((value, column) => (
-        <TableCell key={COLUMNS[column]} width={96} align="right">
+        <TableCell key={COLUMNS[column]} width={COLUMN_WIDTH} align="right">
           {value}
         </TableCell>
       ))}

@@ -13,7 +13,10 @@ import type {
 
 const SET_COLUMN_WIDTH = 80;
 
-/** The two session facts, then one column per set: reps, load and velocity loss. */
+/**
+ * The two session facts, then one column per set: reps, load and velocity loss.
+ * Set columns keep their width and wrap to a new row rather than squeeze.
+ */
 export function EvidenceColumn(props: {
   exercise: SessionSummaryExercise;
   displayUnit: MassUnit;
@@ -25,7 +28,7 @@ export function EvidenceColumn(props: {
       <Typography variant="subtitle1" style={TABULAR}>
         {facts.filter((fact) => fact !== null).join('   ') || ' '}
       </Typography>
-      <div style={{ display: 'flex', gap: SPACE.xxs, marginTop: SPACE.xxs }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: SPACE.xxs, marginTop: SPACE.xxs }}>
         {visibleSets(props.exercise).map((set) => (
           <SetColumn
             key={set.id}
@@ -50,7 +53,10 @@ function SetColumn(props: {
   const load = setLoad(set, props.displayUnit);
   const loss = set.velocityLossPct === null ? '—' : `VL${Math.round(set.velocityLossPct)}%`;
   return (
-    <div style={{ width: SET_COLUMN_WIDTH, display: 'flex', flexDirection: 'column' }}>
+    <div
+      data-testid="summary-set-column"
+      style={{ width: SET_COLUMN_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column' }}
+    >
       <Caption color="secondary">
         {props.working ? setLabel(set) : `${setLabel(set)} ${setKind(set, false)}`}
       </Caption>

@@ -25,12 +25,21 @@ const ABSENT_COPY: Record<AbsentReason, { label: string; tip: string }> = {
 };
 
 /** Exercise name, the set the verdict read, and the verdict word with its three lights. */
-export function VerdictColumn(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
+export function VerdictColumn(props: {
+  exercise: SessionSummaryExercise;
+  narrow: boolean;
+}): React.JSX.Element {
   const { exercise } = props;
   const kicker = verdictKicker(exercise);
   const reason = absentReason(exercise);
   return (
-    <div style={{ width: VERDICT_COLUMN_WIDTH, display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{
+        width: props.narrow ? '100%' : VERDICT_COLUMN_WIDTH,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <ExerciseTitle exercise={exercise} />
       <Overline color="secondary">
         {[LINES.howItMovedKickerLabel.text, kicker].filter((part) => part !== null).join(' · ')}

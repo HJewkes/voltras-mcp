@@ -8,6 +8,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionSummaryView } from '../read-models/session-summary-view.js';
 import { loadSummary, type SummaryFixture } from './fixtures/session-summary/load.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +27,11 @@ vi.hoisted(() => {
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
 });
 
+// Driven by a mock, not `matchMedia`: happy-dom lays nothing out, so the test reads the
+// layout the band asks for at each width rather than measured geometry.
+vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
+
+const { useIsNarrowViewport } = await import('../spa/use-viewport.js');
 const { SessionSummaryPage } = await import('../spa/planner/SessionSummaryPage.js');
 const { dashboardStore } = await import('../spa/store.js');
 
@@ -35,12 +41,17 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   vi.unstubAllGlobals();
+  vi.mocked(useIsNarrowViewport).mockReturnValue(false);
   dashboardStore.getState().applyPlanner({ sessionSummary: null, plannerError: null });
   dashboardStore.getState().setDisplayUnit('lbs');
 });
 
-async function mountFixture(name: SummaryFixture): Promise<HTMLElement> {
-  const body = JSON.stringify(loadSummary(name));
+function mountFixture(name: SummaryFixture): Promise<HTMLElement> {
+  return mountView(loadSummary(name));
+}
+
+async function mountView(view: SessionSummaryView): Promise<HTMLElement> {
+  const body = JSON.stringify(view);
   vi.stubGlobal(
     'fetch',
     async () => new Response(body, { headers: { 'content-type': 'application/json' } }),
@@ -57,6 +68,17 @@ async function mountFixture(name: SummaryFixture): Promise<HTMLElement> {
 
 function bands(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>('[data-testid="summary-band"]')];
+}
+
+// The full session with one exercise's recommendation turned into a 5 lb step up.
+function fullSessionAdding(exercise: string): SessionSummaryView {
+  const view = loadSummary('2-full-session');
+  const exercises = view.exercises.map((e) =>
+    e.name === exercise && e.progression !== null
+      ? { ...e, progression: { ...e.progression, delta: 5 } }
+      : e,
+  );
+  return { ...view, exercises };
 }
 
 function count(text: string, needle: string): number {
@@ -96,6 +118,20 @@ describe('the session-complete ledger (VW-944)', () => {
     expect(text).not.toMatch(/Moved well ·|Struggled ·/);
   });
 
+  it('reads a slowing bar beside a load step as no struggle', async () => {
+    const text = (await mountView(fullSessionAdding('Cable Romanian Deadlift'))).textContent ?? '';
+
+    expect(text).toContain('Slowing');
+    expect(text).not.toContain('Struggled · plan adds');
+  });
+
+  it('names a load step taken while the bar was grinding', async () => {
+    const view = fullSessionAdding('Standing Cable Chest Press');
+    const text = (await mountView(view)).textContent ?? '';
+
+    expect(count(text, 'Struggled · plan adds')).toBe(1);
+  });
+
   it('paints the back-off chip and next load in no status colour', async () => {
     const chestPress = bands(await mountFixture('2-full-session'))[2]!;
     const chip = chestPress.querySelector('[aria-label="Back off 5 lb"]');
@@ -129,5 +165,45 @@ describe('the session-complete ledger (VW-944)', () => {
 
     expect(facePull.textContent).toContain('Face Pull');
     expect(facePull.textContent).not.toContain('face-pull');
+  });
+});
+
+describe('the session-complete ledger on a phone (VW-955)', () => {
+  it('reads a wall band left to right', async () => {
+    const band = bands(await mountFixture('2-full-session'))[0]!;
+
+    expect(band.style.flexDirection).toBe('row');
+  });
+
+  it('stacks verdict, evidence and next time at full width', async () => {
+    vi.mocked(useIsNarrowViewport).mockReturnValue(true);
+    const band = bands(await mountFixture('2-full-session'))[0]!;
+    const [verdict, evidence, nextTime] = [...band.children] as HTMLElement[];
+
+    expect(band.style.flexDirection).toBe('column');
+    expect(verdict?.textContent).toContain('Slowing');
+    expect(evidence?.textContent).toContain('VL 14%→23%');
+    expect(nextTime?.textContent).toContain('NEXT TIME');
+    expect([verdict?.style.width, nextTime?.style.width]).toEqual(['100%', '100%']);
+  });
+
+  it('wraps set columns at their own width rather than squeezing them', async () => {
+    vi.mocked(useIsNarrowViewport).mockReturnValue(true);
+    const container = await mountFixture('2-full-session');
+    const columns = [
+      ...container.querySelectorAll<HTMLElement>('[data-testid="summary-set-column"]'),
+    ];
+
+    expect(columns.length).toBeGreaterThan(0);
+    for (const column of columns) expect(column.style.flexShrink).toBe('0');
+    expect(columns[0]?.parentElement?.style.flexWrap).toBe('wrap');
+  });
+
+  it('scrolls the set table sideways', async () => {
+    vi.mocked(useIsNarrowViewport).mockReturnValue(true);
+    const container = await mountFixture('2-full-session');
+    const table = container.querySelector<HTMLElement>('[data-testid="summary-set-table"]');
+
+    expect(table?.style.overflowX).toBe('auto');
   });
 });
