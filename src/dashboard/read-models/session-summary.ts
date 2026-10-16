@@ -338,6 +338,8 @@ function toSetView(
     velocityLossPct: velocity.lossPct ?? null,
     bestRepVelocity: velocity.best ?? null,
     expectedRepRange: expectedRangeFor(set),
+    side: set.side ?? null,
+    bilateralGroupId: set.bilateralGroupId ?? null,
   };
 }
 

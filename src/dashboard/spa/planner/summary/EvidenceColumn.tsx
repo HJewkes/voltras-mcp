@@ -4,7 +4,7 @@ import { Caption, Typography } from '@titan-design/react-ui';
 import { selectWorkingSets } from '../../../../store/working-sets.js';
 import { type MassUnit } from '../../live-page/mass';
 import { setLoad, visibleSets } from '../planner-model';
-import { fatigueFact, setKind, strengthFact } from '../session-summary-model';
+import { fatigueFact, setKind, setLabel, strengthFact } from '../session-summary-model';
 import { SPACE, TABULAR } from '../design';
 import type {
   SessionSummaryExercise,
@@ -52,7 +52,7 @@ function SetColumn(props: {
   return (
     <div style={{ width: SET_COLUMN_WIDTH, display: 'flex', flexDirection: 'column' }}>
       <Caption color="secondary">
-        {props.working ? `#${set.index}` : `#${set.index} ${setKind(set, false)}`}
+        {props.working ? setLabel(set) : `${setLabel(set)} ${setKind(set, false)}`}
       </Caption>
       <Typography variant="h5" color={ink} style={TABULAR}>
         {set.repCount}

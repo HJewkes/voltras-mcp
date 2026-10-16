@@ -12,7 +12,7 @@ import {
 import { selectWorkingSets } from '../../../../store/working-sets.js';
 import { type MassUnit } from '../../live-page/mass';
 import { formatNumber, formatWeightLbs, setLoad, visibleSets } from '../planner-model';
-import { e1rmBySet, setKind } from '../session-summary-model';
+import { e1rmBySet, setKind, setLabel } from '../session-summary-model';
 import { SPACE } from '../design';
 import type { SessionSummaryExercise } from '../../../read-models/session-summary-view';
 
@@ -54,7 +54,7 @@ function exerciseRows(exercise: SessionSummaryExercise, unit: MassUnit): React.J
     <TableRow key={set.id} style={ROW}>
       <TableCell>{position === 0 ? exercise.name : ''}</TableCell>
       {[
-        `#${set.index}`,
+        setLabel(set),
         setKind(set, working.has(set)),
         `${set.repCount}`,
         setLoad(set, unit),
