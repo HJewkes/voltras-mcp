@@ -27,6 +27,11 @@ describe('the kg page check', () => {
     expect(findLbLeaks('1.2 kg')).toEqual([]);
   });
 
+  it('flags a field labelled in pounds', () => {
+    expect(findLbLeaks('Bodyweight (lbs)')).toHaveLength(1);
+    expect(findLbLeaks('Bodyweight (kg)')).toEqual([]);
+  });
+
   it('runs only when the page is set to kg', () => {
     const page = { persona: 'steady', route: '#/', text: 'Best 8 x 106 lb', expectedMonday: 'x' };
     expect(checkPage({ ...page, unit: 'lb' })).toEqual([]);

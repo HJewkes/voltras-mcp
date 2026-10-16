@@ -22,6 +22,9 @@ export const BAD_TOKENS = [
 /** A pound reading: a digit, an optional space, then `lb` or `lbs` as a word. */
 export const LB_READING = /\d\s?lbs?\b/gi;
 
+/** A field or axis labelled in pounds, "Bodyweight (lbs)", which carries no digit. */
+export const LB_UNIT_LABEL = /\(lbs?\)/gi;
+
 /** A raw HTTP status the SPA prints when a fetch fails (`api-client.ts`). */
 const RAW_HTTP_STATUS = /\bHTTP \d{3}\b/;
 
@@ -98,7 +101,8 @@ function collectStrings(value, out) {
 
 /** Every pound reading on a page the lifter has set to kg. */
 export function findLbLeaks(text) {
-  return [...text.matchAll(LB_READING)].map((match) => ({
+  const matches = [...text.matchAll(LB_READING), ...text.matchAll(LB_UNIT_LABEL)];
+  return matches.map((match) => ({
     kind: 'lb-in-kg',
     detail: excerpt(text, match.index, match[0].length),
   }));
