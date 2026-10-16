@@ -107,10 +107,13 @@ function withoutTransport(text) {
 }
 
 /**
- * Start a scenario and return `{ port, stop, tail }`. `driver: null` boots the
- * server directly and holds whatever state the store already carries; a driver
- * is spawned detached so stopping it signals the whole group, including the MCP
- * server it owns as a grandchild.
+ * Start a scenario and return `{ port, stop, tail, child }`. `driver: null` boots
+ * the server directly and holds whatever state the store already carries; a
+ * driver is spawned detached so stopping it signals the whole group, including
+ * the MCP server it owns as a grandchild. `options.nodeArgs` go before the
+ * server's own entry (a `--import` preload) and `options.env` over its
+ * environment; both apply to a direct boot, which is what `npm run sweep` uses
+ * to pin the server's clock.
  */
 export async function startScenario(scenario, dbDir, options = {}) {
   const log = options.log ?? (() => {});
@@ -126,6 +129,7 @@ export async function startScenario(scenario, dbDir, options = {}) {
     VOLTRA_LOG_LEVEL: 'warn',
     VMCP_DASHBOARD_PORT: String(port),
     VMCP_DB_PATH: dbPath,
+    ...options.env,
   };
 
   const child = scenario.driver
@@ -135,7 +139,11 @@ export async function startScenario(scenario, dbDir, options = {}) {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
       })
-    : spawn(process.execPath, [BIN_PATH], { cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    : spawn(process.execPath, [...(options.nodeArgs ?? []), BIN_PATH], {
+        cwd: REPO_ROOT,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
 
   let tail = '';
   for (const stream of [child.stdout, child.stderr]) {
@@ -175,5 +183,5 @@ export async function startScenario(scenario, dbDir, options = {}) {
     }
     child.kill('SIGKILL');
   };
-  return { port, stop, tail: () => tail };
+  return { port, stop, tail: () => tail, child };
 }
