@@ -39,7 +39,7 @@ plugin. When the script can find the repo root, it sources `.launch.env` from th
 file exists, builds the dashboard when `dist/spa` is missing or stale, then runs the built
 server. When it falls back to an `npm link`ed `voltras-mcp` on your `PATH`, it runs that
 directly and does neither. Plain registration from [Install](/start/install) does not use
-the script. ([README.md § Launching](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#launching))
+the script.
 
 The launcher turns the dashboard off unless something asks for it. It sets
 `VMCP_DASHBOARD_PORT=off` when that variable is unset and `VOLTRA_PT` is not `1`. The
@@ -51,11 +51,11 @@ session keeps the default port. An explicit `VMCP_DASHBOARD_PORT` always wins.
 ## The voltra-pt launcher, for push events
 
 `scripts/voltra-pt` starts Claude Code with the channel capability turned on and fills in a
-personal-trainer prompt. ([README.md § Optional: the voltra-pt launcher](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#optional-the-voltra-pt-launcher))
+personal-trainer prompt.
 
 ::: warning Not run for this page
 The plugin install and the managed-settings file were not run while writing this page,
-because they change machine-wide Claude Code settings. The steps below restate the README.
+because they change machine-wide Claude Code settings. The steps below are the documented ones.
 [docs/channel-plugin-packaging.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/channel-plugin-packaging.md) records how they were
 verified.
 :::
@@ -70,9 +70,9 @@ echo "$PWD" > ~/.voltras/mcp-home        # tells the plugin where this checkout 
 
 You also need a machine-wide managed-settings file that allowlists the plugin.
 [docs/channel-plugin-packaging.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/channel-plugin-packaging.md) has that file and
-the reasons for the packaging. ([README.md § Optional: the voltra-pt launcher](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#optional-the-voltra-pt-launcher))
+the reasons for the packaging.
 
-Then run it. The README suggests an alias:
+Then run it. An alias keeps it short:
 
 ```bash
 echo "alias lift='$PWD/scripts/voltra-pt'" >> ~/.zshrc && source ~/.zshrc
@@ -82,7 +82,7 @@ lift "let's do a back day"              # custom starting prompt
 lift --print "list my sessions today"   # non-interactive query
 ```
 
-`VOLTRA_PT_PROMPT` changes the default prompt. ([README.md § Optional: the voltra-pt launcher](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#optional-the-voltra-pt-launcher))
+`VOLTRA_PT_PROMPT` changes the default prompt.
 
 The launcher runs the server as the `voltras-channel` plugin and passes
 `--channels plugin:voltras-channel@voltras-local` to Claude Code (`scripts/voltra-pt`). It
@@ -109,13 +109,13 @@ Node that is too old, and a database newer than the build. The others print a wa
 `--dangerously-load-development-channels`. That flag needs an approval dialog. In a
 scripted session nobody answers the dialog, so the channel registers nothing and push
 events silently fall back to polling. The pre-flight warns about it for that reason.
-([docs/bench-preflight.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/bench-preflight.md), [README.md § Optional: the voltra-pt launcher](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#optional-the-voltra-pt-launcher))
+([docs/bench-preflight.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/bench-preflight.md))
 
 ## Defaults for every launch: .launch.env
 
 Copy `.launch.env.example` to `.launch.env` at the repo root. The file is gitignored. The
 launcher exports every variable it sets into the server's environment, so you do not need
-to export them in your shell. ([README.md § .launch.env](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#launchenv))
+to export them in your shell.
 
 ```bash
 cp .launch.env.example .launch.env
@@ -124,7 +124,6 @@ cp .launch.env.example .launch.env
 ## just recipes
 
 `just` is optional. Each recipe wraps commands you can run directly instead (`justfile`).
-([README.md § just recipes](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#just-recipes))
 
 | Recipe           | Plain command                                          |
 | ---------------- | ------------------------------------------------------ |
@@ -150,7 +149,6 @@ entry to the `mcpServers` map in your own `~/.claude.json`:
 
 A server registered this way can never be allowlisted for the push channel, so events fall
 back to polling. For push events, install the `voltras-channel` plugin instead.
-([README.md § Registering directly via ~/.claude.json](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#registering-directly-via-claudejson))
 
 Because `VOLTRA_PT` is not set on this route, the launcher turns the dashboard off unless
 you set `VMCP_DASHBOARD_PORT` in the `env` block or in `.launch.env`
@@ -159,7 +157,7 @@ you set `VMCP_DASHBOARD_PORT` in the `env` block or in `.launch.env`
 ## Running more than one instance
 
 Every Claude Code session starts its own `voltras-mcp` process. Two processes with default
-settings collide in two places. ([README.md § Running more than one instance](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#running-more-than-one-instance))
+settings collide in two places.
 
 - **Port 7723.** The second dashboard cannot bind it, so it binds an OS-assigned port and
   logs both. Ask [`server.health`](/reference/server) for this session's `dashboardUrl`
@@ -177,3 +175,11 @@ claude mcp add voltras-b \
   -e VMCP_DASHBOARD_PORT=7724 \
   -- node "$PWD/dist/bin.js"
 ```
+
+## Resources and subscriptions
+
+Besides tools, the server exposes [resources](/reference/resources): polling snapshots of
+the device, the active session and the active set for each slot. Subscriptions are
+supported: the server sends a resource-updated notification for the specific resource
+whose state changed (`src/state/live-state.ts`). Resources are correct to poll regardless,
+so the notification is a hint, not a requirement.

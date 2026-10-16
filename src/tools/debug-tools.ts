@@ -42,6 +42,7 @@ import {
 import { getDebugBuffers } from '../state/debug-buffer.js';
 import { getSessionRecorder } from '../state/session-recorder.js';
 import type { ServerState } from '../state/server-state.js';
+import { isDebugGatedTool } from '../tool-registry.js';
 import { wrapHandler } from './helpers.js';
 
 interface PlaceholderTools {
@@ -56,6 +57,8 @@ function install<S extends z.ZodObject>(
   description?: string,
 ): void {
   const tool = placeholders.get(name);
+  // A debug-gated tool has no placeholder by design when VMCP_DEBUG_TOOLS is off.
+  if (tool === undefined && isDebugGatedTool(name)) return;
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }

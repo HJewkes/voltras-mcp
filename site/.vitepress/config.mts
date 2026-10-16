@@ -75,6 +75,7 @@ export default defineConfig({
           { text: 'Running a planned session', link: '/guides/planned-session' },
           { text: 'Bilateral work', link: '/guides/bilateral' },
           { text: 'Isometric assessment', link: '/guides/isometric' },
+          { text: 'TrueCoach import and write-back', link: '/guides/truecoach' },
           { text: 'Troubleshooting', link: '/guides/troubleshooting' },
         ],
       },

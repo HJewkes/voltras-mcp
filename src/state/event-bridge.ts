@@ -173,6 +173,7 @@ import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
 import { autoArmSet } from './auto-arm.js';
+import { endStaleLiveSession, noteLiveRep } from './idle-session-close.js';
 import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
@@ -727,6 +728,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
+          // VW-856: a rep after a long pause must not arm into a session nobody ended.
+          // The session leaves memory now; its end persists in the background.
+          void endStaleLiveSession(state, slotId, new Date());
+          noteLiveRep(state, slotId, new Date());
           // VW-164: with a session open, an idle rep means the lifter started
           // before `set.start` could land. Open the set here and adopt this
           // rep into it rather than reporting it as lost work. VW-181: reps

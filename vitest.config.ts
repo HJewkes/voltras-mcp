@@ -29,11 +29,14 @@ const TRANSCRIPT_EXPORT_TEST_FILE = 'src/__tests__/integration/agent-transcript-
 const LOCAL_TIME_TEST_FILES = [
   'src/accountability/__tests__/commitment-week-local-time.test.ts',
   'src/dashboard/__tests__/banner-clears-via-skip.test.ts',
+  'src/docs/__tests__/personas-night-owl-tz.test.ts',
   'src/dashboard/__tests__/muscle-set-scope-local-time.test.ts',
   'src/plan/__tests__/block-calendar-local-time.test.ts',
   'src/plan/__tests__/calendar-dates-local-time.test.ts',
+  'src/store/portable/__tests__/anonymize.test.ts',
   'src/tools/__tests__/goal-targets-on-blocks.test.ts',
   'src/tools/__tests__/metrics-tools-weekly-local-week.test.ts',
+  'src/tools/__tests__/plan-progression-re-entry-local-time.test.ts',
   'src/tools/__tests__/weekly-checkin-anchor.test.ts',
 ];
 // tools/truecoach-retro imports src modules by relative path, so it rides this package's gates.
@@ -44,6 +47,8 @@ const STORE_SUITE_TEST_FILES = [
   'src/store/__tests__/**/*.test.ts',
   'src/dashboard/__tests__/preview-seeds.test.ts',
   'src/dashboard/__tests__/plateau-on-ramp.test.ts',
+  'src/docs/__tests__/personas-core.test.ts',
+  'src/docs/__tests__/personas-catalog.test.ts',
 ];
 const STORE_SUITE_TIMEOUT_MS = 15_000;
 const ALL_TESTS_GLOB = ['src/**/*.{test,spec}.ts', 'tools/truecoach-retro/**/*.test.ts'];

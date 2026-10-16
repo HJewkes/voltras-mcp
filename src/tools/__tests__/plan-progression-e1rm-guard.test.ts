@@ -200,10 +200,14 @@ describe('plan.suggest_progression — e1RM jump, end to end (VW-267)', () => {
   let store: SessionStore;
 
   beforeEach(() => {
+    // The day after both sessions: against the wall clock the basis would read stale (VW-907).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-02T12:00:00.000Z'));
     store = openTestStore();
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await store.close();
   });
 

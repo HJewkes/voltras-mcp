@@ -14,6 +14,9 @@
 //   npm run dashboard:preview -- goals --unreviewed 3
 //   npm run dashboard:preview -- body
 //   npm run dashboard:preview -- plan
+//   npm run dashboard:preview -- summary
+//   npm run dashboard:preview -- persona steady
+//   npm run dashboard:preview -- persona steady --route '#/goals'
 //
 // ── What it is NOT ─────────────────────────────────────────────────────────
 // `npm run dashboard:sim` (scripts/dashboard-sim.mjs) is the neighbouring
@@ -36,6 +39,10 @@
 // `--unreviewed <n>` adds n past days of sessions nobody has marked training or
 // test, which is what makes the page say its counts leave them out (VW-514).
 //
+// `persona <name>` seeds one synthetic lifter from `src/docs/personas/` and
+// opens `#/summary`, the latest session, on it (VW-942); `--route <hash>` opens
+// another page instead, and the rest are a click away in the rail.
+//
 // ── Isolation ──────────────────────────────────────────────────────────────
 // Each run gets its own scratch directory holding its own `VMCP_DB_PATH`,
 // removed on exit. `~/.voltras/vmcp.sqlite` is never opened, and refusing a
@@ -53,12 +60,20 @@ const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const SPA_INDEX = path.join(REPO_ROOT, 'dist/spa/index.html');
 const SEEDS = path.join(REPO_ROOT, 'dist/docs/preview-seeds.js');
 const SHOTS = path.join(REPO_ROOT, 'dist/docs/capture-shots.js');
+const SUMMARY_SEED = path.join(REPO_ROOT, 'dist/docs/summary-preview-seed.js');
+const PERSONAS = path.join(REPO_ROOT, 'dist/docs/personas/index.js');
+const PERSONA_FILE = path.join(REPO_ROOT, 'dist/docs/personas/seed-file.js');
+const PERSONA_SOURCE = 'persona';
+const PERSONA_ROUTE = '#/summary';
 
 const log = (...args) => console.error('[preview]', ...args);
 
-/** `<page> [--state <name>] [--unreviewed <n>]`, also accepting the `--flag=value` forms. */
+/**
+ * `<page> [--state <name>] [--unreviewed <n>]` or `persona <name> [--route <hash>]`, also
+ * accepting the `--flag=value` forms.
+ */
 function parseArgs(argv, pages) {
-  const args = { page: null, state: 'on_track', unreviewed: 0 };
+  const args = { page: null, persona: null, route: null, state: 'on_track', unreviewed: 0 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--state') args.state = argv[++i];
@@ -66,14 +81,51 @@ function parseArgs(argv, pages) {
     else if (arg === '--unreviewed') args.unreviewed = dayCount(argv[++i]);
     else if (arg.startsWith('--unreviewed=')) {
       args.unreviewed = dayCount(arg.slice('--unreviewed='.length));
-    } else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
+    } else if (arg === '--route') args.route = hashRoute(argv[++i]);
+    else if (arg.startsWith('--route=')) args.route = hashRoute(arg.slice('--route='.length));
+    else if (arg.startsWith('--')) throw new Error(`unknown argument: ${arg}`);
     else if (args.page === null) args.page = arg;
+    else if (args.page === PERSONA_SOURCE && args.persona === null) args.persona = arg;
     else throw new Error(`unexpected second page: ${arg}`);
   }
   if (args.page === null) {
-    throw new Error(`name a page: ${pages.map((page) => page.name).join(', ')}`);
+    throw new Error(`name a page: ${pages.map((page) => page.name).join(', ')}, persona <name>`);
+  }
+  if (args.page === PERSONA_SOURCE && args.persona === null) {
+    throw new Error('name a persona: persona <name>');
+  }
+  if (args.route !== null && args.page !== PERSONA_SOURCE) {
+    throw new Error('--route applies to persona only');
   }
   return args;
+}
+
+function hashRoute(value) {
+  if (typeof value !== 'string' || !value.startsWith('#/')) {
+    throw new Error(`--route takes a dashboard hash such as '#/goals', not ${value}`);
+  }
+  return value;
+}
+
+/** A persona is a page source of its own: its store, opened on `route`. */
+async function personaPage(personaId, route) {
+  const { personaById } = await import(PERSONAS);
+  const persona = personaById(personaId);
+  return { name: PERSONA_SOURCE, route: `/app${route}`, persona, summary: persona.summary };
+}
+
+async function seedPersonaStore(dbDir, persona) {
+  const { seedPersonaFile } = await import(PERSONA_FILE);
+  const report = await seedPersonaFile(
+    persona.id,
+    scenarioDbPath(dbDir, PERSONA_SOURCE),
+    new Date(),
+  );
+  log(
+    `seeded persona ${persona.id}: ${report.sessions} sessions, ${report.sets} sets, ` +
+      `${report.weighIns} weigh-ins, ${report.checkins} check-ins, ${report.goals} goals`,
+  );
+  return { name: PERSONA_SOURCE, driver: null, args: [] };
 }
 
 function dayCount(value) {
@@ -107,6 +159,7 @@ async function seedGoals(dbDir, stateName, unreviewedDays) {
   const { goalPreviewState, seedGoalPreview } = await import(SEEDS);
   const state = goalPreviewState(stateName);
   const store = SqliteSessionStore.open(scenarioDbPath(dbDir, 'goals'));
+  let priorityId;
   try {
     const report = await seedGoalPreview(store, state, new Date(), {
       companions: true,
@@ -120,10 +173,31 @@ async function seedGoals(dbDir, stateName, unreviewedDays) {
         `unreviewed days: ${report.unreviewedDays}`,
     );
     log(`  ${state.summary}`);
+    priorityId = report.priorityId;
   } finally {
     store.close();
   }
-  return { name: 'goals', driver: null, args: [] };
+  return { scenario: { name: 'goals', driver: null, args: [] }, priorityId };
+}
+
+/**
+ * The summary scenario: one ended four-exercise session, seeded and closed before
+ * the server opens the file, as the goals one is. The page's route already names
+ * the seeded session's id.
+ */
+async function seedSummary(dbDir) {
+  const { SqliteSessionStore } = await import(path.join(REPO_ROOT, 'dist/store/sqlite-store.js'));
+  const { seedSummaryPreview } = await import(SUMMARY_SEED);
+  const store = SqliteSessionStore.open(scenarioDbPath(dbDir, 'summary'));
+  try {
+    const report = await seedSummaryPreview(store, new Date());
+    log(
+      `seeded session ${report.sessionId}: ${report.sets} sets across ${report.exercises} exercises`,
+    );
+  } finally {
+    store.close();
+  }
+  return { name: 'summary', driver: null, args: [] };
 }
 
 /** Every other page reuses the capture scenario that already drives it. */
@@ -134,10 +208,14 @@ async function captureScenarioFor(page) {
   return found;
 }
 
-/** What the goal read model actually landed on, read back off the running server. */
-async function reportGoalStatus(port) {
+/**
+ * What the goal read model actually landed on, read back off the running server.
+ * The lead is looked up by id: the whole-body goals are declared more recently, so they
+ * list first and `priorities[0]` would print their status under every state's name (VW-921).
+ */
+async function reportGoalStatus(port, priorityId) {
   const { priorities } = await getJson(port, '/api/goals');
-  const rollup = priorities[0]?.rollup;
+  const rollup = priorities.find((entry) => entry.priority.id === priorityId)?.rollup;
   if (rollup === undefined || rollup === null) {
     log('WARNING: the seeded priority has no rollup — the page will read as empty');
     return;
@@ -155,22 +233,36 @@ async function main() {
   }
   const { PREVIEW_PAGES } = await import(SEEDS);
   const args = parseArgs(process.argv.slice(2), PREVIEW_PAGES);
-  const page = pageNamed(PREVIEW_PAGES, args.page);
+  const page =
+    args.persona === null
+      ? pageNamed(PREVIEW_PAGES, args.page)
+      : await personaPage(args.persona, args.route ?? PERSONA_ROUTE);
 
   const dbDir = makeScratchDir();
   const cleanUp = () => fs.rmSync(dbDir, { recursive: true, force: true });
   let scene = null;
+  let leadPriorityId = null;
   try {
-    const scenario =
-      page.captureScenario === null
-        ? await seedGoals(dbDir, args.state, args.unreviewed)
-        : await captureScenarioFor(page);
+    let scenario;
+    if (page.persona !== undefined) {
+      scenario = await seedPersonaStore(dbDir, page.persona);
+    } else if (page.name === 'summary') {
+      scenario = await seedSummary(dbDir);
+    } else if (page.captureScenario === null) {
+      ({ scenario, priorityId: leadPriorityId } = await seedGoals(
+        dbDir,
+        args.state,
+        args.unreviewed,
+      ));
+    } else {
+      scenario = await captureScenarioFor(page);
+    }
     scene = await startScenario(scenario, dbDir, {
       log,
       clientName: 'dashboard-preview',
       echo: scenario.driver !== null,
     });
-    if (page.captureScenario === null) await reportGoalStatus(scene.port);
+    if (page.name === 'goals') await reportGoalStatus(scene.port, leadPriorityId);
   } catch (err) {
     scene?.stop();
     cleanUp();

@@ -35,7 +35,7 @@ one yourself.
 **The lifter** owns the Voltra and the computer it connects to. They install voltras-mcp
 and talk to Claude during the workout ([Install](/start/install)). Every record
 lives in one file on their machine, `~/.voltras/vmcp.sqlite` by default (`VMCP_DB_PATH`,
-`README.md`).
+[environment variables](/reference/environment-variables)).
 
 **Claude** is the trainer inside the session. It connects to the device, sets the load,
 records each set and coaches between sets (`plugins/voltras-channel/skills/pt-session/SKILL.md`).
@@ -47,7 +47,7 @@ the device or to the lifter's records. The server talks to Claude over standard 
 output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
 machine can reach it. Its live-view routes are reads. Its write routes, which edit plans or
 run a short allowlist of store-only actions such as logging bodyweight, are further gated by
-the per-boot write guard (`src/dashboard/server.ts:561-584`, `src/actions/allowlist.ts:41-101`,
+the per-boot write guard (`src/dashboard/server.ts:587-610`, `src/actions/allowlist.ts`,
 `src/dashboard/write-guard.ts:85-95`).
 
 ## Responsibilities
@@ -57,17 +57,16 @@ The lifter:
 - Ends each session, because a report is built only from an ended session
   (`src/tools/report-tools.ts`).
 - Sends you the results, by pasting the report text or through the local outbox file
-  (`README.md`, "The outbox").
+  ([TrueCoach guide](/guides/truecoach#the-outbox)).
 - Imports your TrueCoach programming into the local plan, if you use TrueCoach
   ([Import a TrueCoach week](/coaches/import-a-truecoach-week)).
 - Tells you before the first automated post into TrueCoach, if they ever turn one on
-  (`README.md`, GATE 1).
+  ([TrueCoach guide](/guides/truecoach#write-back-unattended-gated), gate 1).
 
 Claude:
 
 - Attaches the planned workout to the session (`plan.attach_to_session`). Only then can the
-  report show a `missed:` line for a working set below your rep target (`README.md`, "Coach
-  results and the outbox").
+  report show a `missed:` line for a working set below your rep target ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)).
 - Does not turn velocity loss into an RPE or a reps-in-reserve number
   (`plugins/voltras-channel/skills/pt-session/SKILL.md:131`).
 
@@ -75,7 +74,7 @@ You:
 
 - Decide progression. Every progression line in the weekly report is labelled "suggestion
   for the coach, not applied", and nothing in the report changes a prescription
-  (`src/tools/report-tools.ts:656-667`).
+  (`src/tools/report-tools.ts:658-669`).
 
 ## The data loop
 
@@ -118,7 +117,7 @@ Text description of the diagram, step by step:
    exercise, and `report.weekly` rolls a date range up. Both read the store and make no
    network call (`src/tools/report-tools.ts`).
 3. **The lifter sends the text, and you read it.** The lifter pastes the report, or reads
-   it from the outbox file that `session.end` can write (`README.md`, "The outbox"). See
+   it from the outbox file that `session.end` can write ([TrueCoach guide](/guides/truecoach#the-outbox)). See
    [Read a session report](/coaches/read-a-session-report) and
    [Read the weekly report](/coaches/read-the-weekly-report).
 4. **You write the next week.** In TrueCoach, you assign workouts as usual. The lifter asks

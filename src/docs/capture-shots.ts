@@ -346,6 +346,31 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     holdsPageOpen: false,
   },
   {
+    name: 'checkin',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption:
+      'The weekly check-in page on its first step, bodyweight, with the four steps above it.',
+    // The stepper needs no history: its first step is a form, so the empty store is enough.
+    waitFor: { kind: 'idle' },
+    expectText: ['Bodyweight', 'Check-in', 'Review', 'Done', 'Note (optional)', 'Next', 'Skip'],
+    // The unit is filled in from the wall's display-unit setting, lbs when none is stored.
+    expectValues: ['Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
+    name: 'checkin-phone',
+    scenario: 'cold',
+    route: '/app#/checkin',
+    caption: 'The weekly check-in page at phone width, one step at a time.',
+    waitFor: { kind: 'idle' },
+    viewport: PHONE_VIEWPORT,
+    // At phone width the stepper collapses to a step count.
+    expectText: ['Bodyweight', 'Note (optional)', 'Next', 'Skip'],
+    expectValues: ['Step 1 of 4', 'Bodyweight (lbs)'],
+    holdsPageOpen: false,
+  },
+  {
     name: 'live-mid-set',
     scenario: 'planned',
     route: '/app',
@@ -402,17 +427,19 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     route: '/app#/summary',
     caption: 'The session-completion screen for the session that just ended.',
     waitFor: { kind: 'sessions-ended', minSessions: 3 },
-    expectText: ['Session complete', 'EXERCISES', 'NEXT SESSION'],
+    expectText: ['Session complete', 'RIR · Calibrating', 'NEXT TIME · REPS VS PLAN'],
     expectValues: [
-      // `DURATION` sits between `VOLUME` and its value and is deliberately not
-      // asserted: it is wall-clock, unlike everything before it.
-      'EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb',
-      // No RPE and no RIR line: withheld until a trusted fitted profile exists (VW-485).
-      'FATIGUE — RPE Good',
-      'BEST VELOCITY 0.5',
-      '12% peak-to-last within a set — set #2, the set the verdict above reads.',
-      'RECOMMENDATION -5 lb TARGET LOAD 135 lb',
-      '#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5',
+      // The duration follows the volume and is deliberately not asserted: it is
+      // wall-clock, unlike everything before it.
+      '1 exercise · 2 sets · 10 reps · 1,400 lb',
+      // A verdict word and the set it read; no RPE and no RIR figure until a
+      // trusted fitted profile exists (VW-485).
+      'Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO',
+      'VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%',
+      // Next time's load is the top load less the step, in neutral ink, with the
+      // disagreement as a short label (its sentence is the tip).
+      'NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps',
+      'Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb',
     ],
     holdsPageOpen: false,
     variesBy: 'the session start and end stamps',

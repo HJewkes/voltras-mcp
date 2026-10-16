@@ -12,12 +12,12 @@ import {
   isRealSummarySet,
   nextTargetWeightLbs,
   prescriptionLine,
-  progressionLabel,
   repRange,
+  defaultTemplateId,
   resolveSelectedTemplateId,
   sessionRollup,
-  setLine,
-  setsAgainstPlan,
+  setLoad,
+  splitAtDefault,
   visibleSets,
   type FlatTemplate,
 } from '../spa/planner/planner-model.js';
@@ -45,6 +45,7 @@ function tree(templateIds: string[]): PlanTreeView {
     programs: [],
     activeTemplateId: null,
     activeExerciseId: null,
+    nextTemplateId: null,
     program: {
       id: 'prog-1',
       name: 'P',
@@ -151,6 +152,57 @@ describe('flattenTemplates', () => {
   });
 });
 
+/**
+ * A steady lifter's program: two blocks of four weeks, Upper A and Lower A each
+ * week, with the first `trained` workouts in program order already finished.
+ */
+function steadyProgram(trained: number): FlatTemplate[] {
+  const out: FlatTemplate[] = [];
+  for (const blockName of ['Block 1', 'Block 2']) {
+    for (let week = 1; week <= 4; week++) {
+      for (const name of ['Upper A', 'Lower A']) {
+        const id = `${blockName}-w${week}-${name}`;
+        const template = {
+          id,
+          name,
+          orderIndex: 0,
+          exercises: [],
+          completed: out.length < trained,
+        };
+        out.push({ template, blockName, weekName: `Week ${week}` });
+      }
+    }
+  }
+  return out;
+}
+
+describe('defaultTemplateId', () => {
+  it('opens a lifter with history on the next due workout, not the oldest', () => {
+    const templates = steadyProgram(11);
+    const due = templates[11]?.template.id ?? null;
+
+    expect(defaultTemplateId(templates, null, due)).toBe('Block 2-w2-Lower A');
+  });
+
+  it('prefers the workout being trained right now over the next due one', () => {
+    const templates = steadyProgram(11);
+
+    expect(defaultTemplateId(templates, 'Block 2-w2-Upper A', 'Block 2-w2-Lower A')).toBe(
+      'Block 2-w2-Upper A',
+    );
+  });
+
+  it('falls back to the most recently trained workout when nothing is due', () => {
+    expect(defaultTemplateId(steadyProgram(16), null, null)).toBe('Block 2-w4-Lower A');
+    expect(defaultTemplateId(steadyProgram(5), null, 'deleted')).toBe('Block 1-w3-Upper A');
+  });
+
+  it('falls back to the first workout when none is due or trained', () => {
+    expect(defaultTemplateId(flat(['tpl-1', 'tpl-2']), null, null)).toBe('tpl-1');
+    expect(defaultTemplateId([], null, null)).toBeNull();
+  });
+});
+
 describe('resolveSelectedTemplateId', () => {
   const templates = flat(['tpl-1', 'tpl-2']);
 
@@ -158,13 +210,24 @@ describe('resolveSelectedTemplateId', () => {
     expect(resolveSelectedTemplateId(templates, 'tpl-2', 'tpl-1')).toBe('tpl-2');
   });
 
-  it('falls back to the live session’s template when the selection is gone', () => {
+  it('falls back to the default when the selection is gone or never made', () => {
     expect(resolveSelectedTemplateId(templates, 'deleted', 'tpl-2')).toBe('tpl-2');
+    expect(resolveSelectedTemplateId(templates, null, 'tpl-2')).toBe('tpl-2');
+  });
+});
+
+describe('splitAtDefault', () => {
+  it('collapses the finished workouts before the next due one', () => {
+    const { earlier, fromDefault } = splitAtDefault(steadyProgram(11), 'Block 2-w2-Lower A');
+
+    expect(earlier).toHaveLength(11);
+    expect(fromDefault[0]?.template.id).toBe('Block 2-w2-Lower A');
+    expect(fromDefault).toHaveLength(5);
   });
 
-  it('falls back to the first workout when nothing else resolves', () => {
-    expect(resolveSelectedTemplateId(templates, null, null)).toBe('tpl-1');
-    expect(resolveSelectedTemplateId([], null, null)).toBeNull();
+  it('hides nothing when there is no default or it is first', () => {
+    expect(splitAtDefault(steadyProgram(0), null).earlier).toEqual([]);
+    expect(splitAtDefault(steadyProgram(0), 'Block 1-w1-Upper A').earlier).toEqual([]);
   });
 });
 
@@ -228,19 +291,7 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
   };
 }
 
-describe('progression readouts', () => {
-  it('labels the delta with a sign, and a hold as "hold"', () => {
-    expect(progressionLabel(progression({ delta: 5 }))).toBe('+5 lb');
-    expect(progressionLabel(progression({ delta: -5 }))).toBe('-5 lb');
-    expect(progressionLabel(progression({ delta: 0 }))).toBe('hold');
-    expect(progressionLabel(null)).toBe('—');
-  });
-
-  it('converts a non-zero delta to kg with the toggle on, but hold stays hold (VW-196)', () => {
-    expect(progressionLabel(progression({ delta: 20 }), 'kg')).toBe('+9 kg');
-    expect(progressionLabel(progression({ delta: 0 }), 'kg')).toBe('hold');
-  });
-
+describe('nextTargetWeightLbs', () => {
   it('adds the delta to the load actually lifted, not the plan target', () => {
     // Top load (145) has outgrown the plan's 135 — progress from what was lifted.
     expect(nextTargetWeightLbs(summaryExercise({ topWeightLbs: 145 }))).toBe(150);
@@ -260,25 +311,6 @@ describe('progression readouts', () => {
       ),
     ).toBeNull();
     expect(nextTargetWeightLbs(summaryExercise({ progression: null }))).toBeNull();
-  });
-
-  it('reports sets against the plan when there is one', () => {
-    expect(setsAgainstPlan(summaryExercise())).toBe('3 / 3 sets');
-    expect(setsAgainstPlan(summaryExercise({ workingSetCount: 2 }))).toBe('2 / 3 sets');
-    expect(setsAgainstPlan(summaryExercise({ progression: null, workingSetCount: 1 }))).toBe(
-      '1 working set',
-    );
-  });
-
-  it('does not render an overshoot as a fraction greater than one', () => {
-    // VW-121 / F5: an extra set produced literally `3 / 2 sets` — "three out of
-    // two", which is not a sentence. The same two numbers, said truthfully.
-    const over = summaryExercise({
-      workingSetCount: 3,
-      progression: progression({ targetSets: 2 }),
-    });
-    expect(setsAgainstPlan(over)).toBe('3 sets · target 2');
-    expect(setsAgainstPlan(over)).not.toContain('/');
   });
 });
 
@@ -321,6 +353,8 @@ function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummaryS
     velocityLossPct: 12,
     bestRepVelocity: 0.8,
     expectedRepRange: null,
+    side: null,
+    bilateralGroupId: null,
     ...overrides,
   };
 }
@@ -421,25 +455,23 @@ describe('sessionRollup', () => {
   });
 });
 
-describe('setLine', () => {
-  it('renders reps × the numeric load, formatted through formatMass', () => {
-    expect(setLine(summarySet())).toBe('10 × 135 lb');
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: '—' }))).toBe('10 × —');
+describe('setLoad', () => {
+  it('renders the numeric load, formatted through formatMass', () => {
+    expect(setLoad(summarySet())).toBe('135 lb');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: '—' }))).toBe('—');
   });
 
   it('renders a Damper or Band set by its own setting, not a missing weight (VMCP-02.74)', () => {
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }))).toBe('10 × damper 6');
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'band' }))).toBe('10 × band');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'damper 6' }))).toBe('damper 6');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'band' }))).toBe('band');
   });
 
   it('converts a numeric load to kg with the toggle on (VW-196)', () => {
-    expect(setLine(summarySet({ weightLbs: 100 }), 'kg')).toBe('10 × 45 kg');
+    expect(setLoad(summarySet({ weightLbs: 100 }), 'kg')).toBe('45 kg');
   });
 
   it('never converts a label with no number, even with the toggle on (VW-196)', () => {
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }), 'kg')).toBe(
-      '10 × damper 6',
-    );
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'damper 6' }), 'kg')).toBe('damper 6');
   });
 });
 

@@ -114,7 +114,7 @@ export function classifyBreak(days: number): BreakBand {
 }
 
 /** Local dates parse as UTC midnight, so the difference is whole days with no DST drift. */
-function daysBetween(from: string, to: string): number {
+export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 }
 

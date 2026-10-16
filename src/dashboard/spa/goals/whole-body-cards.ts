@@ -16,6 +16,7 @@ import {
   type GoalBodyweightRateView,
   type GoalProgressView,
 } from '../../read-models/goal-progress.js';
+import { convertMass, type MassUnit } from '../live-page/mass.js';
 import { bodyweightTarget, sessionsTarget, type GoalsPageData } from './goals-model.js';
 
 /** The two cards the whole-body section draws; at least one is present. */
@@ -25,43 +26,52 @@ export interface WholeBodyCards {
 }
 
 /** `null` with no whole-body goal: the section is dropped (owner, "If no Whole Body goals drop the section"). */
-export function wholeBodyCards(data: GoalsPageData): WholeBodyCards | null {
+export function wholeBodyCards(data: GoalsPageData, unit: MassUnit = 'lbs'): WholeBodyCards | null {
   const bodyweight = bodyweightTarget(data);
   const sessions = sessionsTarget(data);
   if (bodyweight === null && sessions === null) return null;
   return {
-    bodyweight: bodyweight === null ? null : weightRow(bodyweight.view),
+    bodyweight: bodyweight === null ? null : weightRow(bodyweight.view, unit),
     sessions: sessions === null ? null : sessionsRow(sessions.view),
   };
 }
 
-export function weightRow(view: GoalProgressView): WholeBodyWeightRow {
+/**
+ * In kg the weigh-in and band convert unrounded: the card prints bodyweight to one decimal
+ * in whichever unit it is told, which keeps the precision a kg check-in entry carries.
+ */
+export function weightRow(view: GoalProgressView, unit: MassUnit = 'lbs'): WholeBodyWeightRow {
   const latest = view.actuals[view.actuals.length - 1];
   const diet = view.bodyweight?.dietPhase;
+  const inKg = unit === 'kg' && view.nextMilestone.unit === 'lb';
+  const shown = (value: number): number => (inKg ? convertMass(value, 'kg') : value);
   return {
     status: view.status,
     basis: view.statusBasis,
-    unit: view.nextMilestone.unit,
+    unit: inKg ? 'kg' : view.nextMilestone.unit,
     direction: view.direction,
     phase: {
       name: diet?.phase ?? 'unknown',
       ...(diet?.recompMode === 'slow-loss' ? { slowLoss: true } : {}),
     },
-    latest: latest === undefined ? null : { value: latest.value, ts: latest.ts },
-    week: currentWeek(view),
+    latest: latest === undefined ? null : { value: shown(latest.value), ts: latest.ts },
+    week: currentWeek(view, shown),
     rate: rateOf(view.bodyweight?.rate ?? null),
   };
 }
 
 /** This week of the block and its band row; week 1 when the view has no week to sit in. */
-function currentWeek(view: GoalProgressView): WholeBodyWeightRow['week'] {
+function currentWeek(
+  view: GoalProgressView,
+  shown: (value: number) => number,
+): WholeBodyWeightRow['week'] {
   const n = view.mesoWeek?.n ?? 1;
   const row = view.expected.find((point) => point.weekIndex === n) ?? view.expected[0];
   return {
     index: n,
     of: view.mesoWeek?.of ?? view.expected.length,
-    low: row?.low ?? view.committed,
-    high: row?.high ?? view.stretch,
+    low: shown(row?.low ?? view.committed),
+    high: shown(row?.high ?? view.stretch),
   };
 }
 

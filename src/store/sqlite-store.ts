@@ -7,7 +7,7 @@
 // releases a transient write lock so that concurrent processes contesting
 // the same `VMCP_DB_PATH` are detected up-front (R8); the resulting error
 // surfaces the env-var name and "already in use" hint expected by the
-// README's concurrency note.
+// concurrency note in site/start/launch-options.md.
 //
 // The `Rep` type from `@voltras/workout-analytics` carries nested `Phase`
 // objects with sample arrays, so each rep is persisted as a JSON-serialised
@@ -3892,6 +3892,27 @@ export class SqliteSessionStore implements SessionStore {
       ` ORDER BY started_at ${direction} LIMIT ? OFFSET ?`;
     const rows = this.db.prepare(sql).all(...params, limit, offset) as unknown as SessionRow[];
     return Promise.resolve(rows.map(rowToSession));
+  }
+
+  async listOpenSessions(): Promise<StoredSession[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at ASC`)
+      .all() as unknown as SessionRow[];
+    return Promise.resolve(rows.map(rowToSession));
+  }
+
+  async getLastRepAt(sessionId: string): Promise<string | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(at) AS at FROM (
+           SELECT MAX(observed_at) AS at FROM idle_reps WHERE session_id = ?
+           UNION ALL
+           SELECT MAX(ended_at) AS at FROM sets
+            WHERE session_id = ? AND id IN (SELECT set_id FROM reps)
+         )`,
+      )
+      .get(sessionId, sessionId) as { at: string | null } | undefined;
+    return Promise.resolve(row?.at ?? undefined);
   }
 
   async countSessions(filter: SessionCountFilter = {}): Promise<number> {

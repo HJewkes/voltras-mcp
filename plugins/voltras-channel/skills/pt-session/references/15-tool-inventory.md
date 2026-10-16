@@ -123,12 +123,12 @@ Key: **W** writes to the store or the device. **R** reads only. **D** is a diagn
 
 ## 7. Plan: suggestions (relay, never apply)
 
-| Tool                                |     | When                                   | The rule that matters                                                                                                                                            |
-| ----------------------------------- | --- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plan.suggest_progression`          | R   | "What next time?"                      | An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta |
-| `plan.warmup_ramp`                  | R   | Before the first working set of a lift | A population estimate, not personal. Start each rung yourself as `warmup`. Run the last rung                                                                     |
-| `progression.get_for_exercise`      | R   | "What did I hit last time?"            | If `comparability` says `noValidComparison`, say what changed. On `setup_confounded`, do not read a left/right gap as an imbalance                               |
-| `profile.get_starting_prescription` | R   | A new lifter or a new exercise         | Seeds are low on purpose. Do not round up. `assumesBeginner: true` means say so                                                                                  |
+| Tool                                |     | When                                   | The rule that matters                                                                                                                                                                                                                                                                                |
+| ----------------------------------- | --- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan.suggest_progression`          | R   | "What next time?"                      | An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta. When `lastTime` is stale, use the `loadLbs` in `reEntry` (none after a long break: use the starting prescription) and say the days |
+| `plan.warmup_ramp`                  | R   | Before the first working set of a lift | A population estimate, not personal. Start each rung yourself as `warmup`. Run the last rung                                                                                                                                                                                                         |
+| `progression.get_for_exercise`      | R   | "What did I hit last time?"            | If `comparability` says `noValidComparison`, say what changed. On `setup_confounded`, do not read a left/right gap as an imbalance                                                                                                                                                                   |
+| `profile.get_starting_prescription` | R   | A new lifter or a new exercise         | Seeds are low on purpose. Do not round up. `assumesBeginner: true` means say so                                                                                                                                                                                                                      |
 
 ## 8. Goals
 
@@ -195,15 +195,15 @@ Do not plan any of these while the mount rating is unknown (VW-274, open). Isome
 
 ## 13. Debug (on an explicit request only)
 
-| Tool                        |     | When                                                          | The rule that matters                                                                   |
-| --------------------------- | --- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `debug.recent_events`       | D   | "What just happened?"                                         | Your first debug read                                                                   |
-| `debug.recording_status`    | D   | Is the flight recorder on                                     |                                                                                         |
-| `debug.push_test_channel`   | W D | Does push reach this session                                  | A missing event means the launch flag did not register; fall back to polling            |
-| `debug.confirm_channel`     | W D | Confirm the test event arrived                                |                                                                                         |
-| `debug.compare_rep_streams` | D   | Rep counts disagree                                           | Report the split. The device counts reps                                                |
-| `debug.recent_frames`       | D   | Only when the user asks for low-level capture                 | **Never quote its content** in chat, notes, tasks or commits                            |
-| `device.send_raw`           | W   | Only on the user's explicit request, in a validation campaign | Needs `confirm: true`. It can move the motor. **Never quote what was sent or received** |
+| Tool                        |     | When                                                                                               | The rule that matters                                                                   |
+| --------------------------- | --- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `debug.recent_events`       | D   | "What just happened?"                                                                              | Your first debug read                                                                   |
+| `debug.recording_status`    | D   | Is the flight recorder on                                                                          |                                                                                         |
+| `debug.push_test_channel`   | W D | Does push reach this session                                                                       | A missing event means the launch flag did not register; fall back to polling            |
+| `debug.confirm_channel`     | W D | Confirm the test event arrived                                                                     |                                                                                         |
+| `debug.compare_rep_streams` | D   | Rep counts disagree                                                                                | Report the split. The device counts reps                                                |
+| `debug.recent_frames`       | D   | Only when the user asks for low-level capture. Absent unless `VMCP_DEBUG_TOOLS=on`                 | **Never quote its content** in chat, notes, tasks or commits                            |
+| `device.send_raw`           | W   | Only on the user's explicit request, in a validation campaign. Absent unless `VMCP_DEBUG_TOOLS=on` | Needs `confirm: true`. It can move the motor. **Never quote what was sent or received** |
 
 ## Resources and push events
 

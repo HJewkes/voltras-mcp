@@ -194,7 +194,7 @@ function feedShapedRep(
 function startSession(live: LiveStateT): void {
   live.startSession({
     sessionId: 'sess-1',
-    startedAt: '2026-09-07T00:00:00.000Z',
+    startedAt: new Date().toISOString(),
     setIds: [],
     status: 'active',
   });
@@ -264,7 +264,7 @@ describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
     });
     h.live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       exerciseId: 'ex-row',
@@ -349,6 +349,21 @@ describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
 
     expect(h.live.set).toBeUndefined();
     expect(h.live.idleRepCount).toBe(1);
+  });
+
+  // VW-856 — reps the morning after must not arm into a session nobody ended.
+  it('ends a session idle past the window instead of arming into it', () => {
+    h.live.startSession({
+      sessionId: 'sess-stale',
+      startedAt: new Date(Date.now() - 24 * 3_600_000).toISOString(),
+      setIds: [],
+      status: 'active',
+    });
+
+    feedTwoWorkingReps();
+
+    expect(h.live.session).toBeUndefined();
+    expect(h.live.set).toBeUndefined();
   });
 
   it('reports idle reps as before when no session is open', () => {
@@ -438,7 +453,7 @@ describe('the pre-first-rep header refresh for an auto-armed set (VW-182)', () =
     h.live.startSet({
       setId: 'set-explicit',
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       reps: [],
       status: 'active',
     });
@@ -578,7 +593,7 @@ describe("auto-armed sets take the plan row's watch (VW-718)", () => {
   function armOn(exerciseId: string): void {
     h.live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       exerciseId,
@@ -701,7 +716,7 @@ describe("auto-armed sets take the plan row's watch (VW-718)", () => {
     usePlanStore(STRENGTH_ROW);
     h.live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       exerciseId: 'ex-press',
@@ -772,7 +787,7 @@ describe('auto-armed sets with no plan row take the labelled default watch (VW-7
   function armOn(exerciseId: string | undefined): void {
     h.live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       ...(exerciseId === undefined ? {} : { exerciseId }),
@@ -852,7 +867,7 @@ describe('auto-armed sets with no plan row take the labelled default watch (VW-7
   it('a set that is not auto-armed gets no default', async () => {
     h.live.startSession({
       sessionId: 'sess-1',
-      startedAt: '2026-09-07T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
     });

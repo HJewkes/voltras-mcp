@@ -62,7 +62,12 @@ import {
 } from '../store/types.js';
 import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
 
-import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
+import {
+  selectSetReps,
+  type ActiveSet,
+  type DeviceSnapshot,
+  type LiveState,
+} from '../state/live-state.js';
 import {
   CURRENT_POSITION_UNITS,
   hashSettingsContext,
@@ -93,7 +98,7 @@ import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
-import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
+import type { BilateralMatch, BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
 import { cueRecordFor } from '../state/effort-cue.js';
 import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
@@ -1111,6 +1116,7 @@ export async function finalizeSet(
   if (match !== undefined) {
     await stampPartnerGroup(state, match.b.setId, match.groupId);
   }
+  annotateLiveCompletedSets(state, slot.live, stored, match);
   // INFER THE SETUP FIRST (VW-204), so the harvest inside `recalcBaselineForSet`
   // stamps this set's anchor with the setup it was performed at rather than
   // leaving it unkeyed until someone runs a reharvest.
@@ -1304,6 +1310,28 @@ async function stampPartnerGroup(
   } catch (err) {
     log.warn(`bilateral grouping: failed to stamp partner set ${partnerSetId}`, err);
   }
+}
+
+/**
+ * Mirror the side and the pairing onto the live completed-set rings the
+ * dashboard snapshot reads (VW-956), so the Live page ranks a bilateral pair as
+ * one effort the way the stored rows already do. The partner's record sits on
+ * the other slot's ring.
+ */
+function annotateLiveCompletedSets(
+  state: ServerState,
+  live: LiveState,
+  stored: StoredSet,
+  match: BilateralMatch | undefined,
+): void {
+  live.annotateCompletedSet(stored.id, {
+    ...(stored.side !== undefined ? { side: stored.side } : {}),
+    ...(match !== undefined ? { bilateralGroupId: match.groupId } : {}),
+  });
+  if (match === undefined) return;
+  state.slots
+    .get(match.b.slotId)
+    ?.live.annotateCompletedSet(match.b.setId, { bilateralGroupId: match.groupId });
 }
 
 /**

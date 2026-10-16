@@ -32,7 +32,7 @@ measurement (`src/analytics/optimal-mvt.ts:20`). Used in [the `baselines.*` refe
 **MEV, MAV, MRV.** Minimum Effective Volume, Maximum Adaptive Volume and Maximum Recoverable
 Volume: weekly working-set landmarks for one muscle group
 (`src/dashboard/read-models/muscle-week.ts:40-47`). The dashboard's landmarks are
-population defaults, not numbers learned from this lifter (`site/reference/dashboard-api.md:76-78`). Used in
+population defaults, not numbers learned from this lifter (`site/reference/dashboard-api.md:84-86`). Used in
 [the dashboard API reference](/reference/dashboard-api) and [the `mrvguard.*` reference](/reference/mrvguard).
 
 **Mesocycle.** See Block.
@@ -40,7 +40,7 @@ population defaults, not numbers learned from this lifter (`site/reference/dashb
 **Outbox.** A local folder where `session.end` drops each session's result text as a file
 when the lifter sets `VMCP_TRUECOACH_OUTBOX=on`. The server never uploads it; only the
 separate write-back tool reads it, when the lifter runs it or turns on automatic submit
-(`README.md`, "The outbox" and "TrueCoach write-back"). Used in [Read a session report](/coaches/read-a-session-report).
+([TrueCoach guide](/guides/truecoach#the-outbox) and "TrueCoach write-back"). Used in [Read a session report](/coaches/read-a-session-report).
 
 **RIR.** Reps in reserve: how many more reps the lifter could have done when the set
 stopped. 0 is the last rep of a set taken to failure (`src/analytics/rir-velocity.ts:131`).
@@ -66,5 +66,5 @@ technique set are excluded, then the sets at the top load are kept
 
 **Write-back.** A separate, experimental tool that posts a session's results into that
 day's TrueCoach workout with a local browser. It is gated by TrueCoach's terms of service
-(`README.md`, "TrueCoach write-back"). Used in
+([TrueCoach guide](/guides/truecoach#write-back-unattended-gated)). Used in
 [Consent and the data loop](/coaches/consent-and-data-loop#truecoach-write-back-experimental-and-gated).

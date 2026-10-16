@@ -38,13 +38,13 @@ it is not, start with [Set it up and open it](/guides/dashboard-setup).
 />
 
 The capture comes from a scripted run on the mock adapter, with the workout written by the
-`plan.*` tools before the shot (`src/docs/capture-shots.ts:389-403`,
+`plan.*` tools before the shot (`src/docs/capture-shots.ts:446-460`,
 `scripts/dashboard-plan-drive.mjs:248-271`).
 
 ## Open the builder
 
-Click **program** in the nav rail. It opens `#/plan`
-(`src/dashboard/spa/panels/DashboardChrome.tsx:34-39`).
+Click **plan** in the nav rail. It opens `#/plan`
+(`src/dashboard/spa/panels/DashboardChrome.tsx`).
 
 ## Pick or start a program
 

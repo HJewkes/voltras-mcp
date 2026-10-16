@@ -16,7 +16,7 @@ import { closeSync, openSync, readSync } from 'node:fs';
 export const DASHBOARD_PORT = 7723;
 
 /** Minimum Node the server supports (package.json `engines.node`). */
-export const MIN_NODE = { major: 22, minor: 5 };
+export const MIN_NODE = { major: 22, minor: 13 };
 
 /** Parse `lsof -nP -iTCP:<port> -sTCP:LISTEN` output into listener rows. */
 export function parseLsofListeners(stdout) {
@@ -123,7 +123,9 @@ function nodeGate({ nodeVersion }) {
     return {
       id: 'node',
       level: 'fail',
-      message: `Node ${nodeVersion} is below the required v${MIN_NODE.major}.${MIN_NODE.minor} (node:sqlite).`,
+      message:
+        `Node ${nodeVersion} has no node:sqlite without a flag. ` +
+        `Install Node ${MIN_NODE.major}.${MIN_NODE.minor} or later.`,
     };
   }
   return { id: 'node', level: 'ok', message: `Node ${nodeVersion}.` };

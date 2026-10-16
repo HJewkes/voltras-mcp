@@ -70,11 +70,10 @@ This set has not reached its stop line. The driver starts the set with no veloci
 (`scripts/dashboard-plan-drive.mjs:316`), so the line comes from the planned exercise's
 training intent or, failing that, the hypertrophy default. The seeded exercise states no
 intent (`scripts/dashboard-plan-drive.mjs:115-126`), so the default applies, and it is 30%
-(`src/state/velocity-loss-intent.ts:45-49`, `src/state/velocity-loss-intent.ts:113`,
-`src/state/velocity-loss-intent.ts:150-154`). The block's "Hypertrophy" focus does not set it.
+(`src/state/velocity-loss-intent.ts:45-49`, `src/state/velocity-loss-intent.ts:113`). The block's "Hypertrophy" focus does not set it.
 At 26% the card is in its approaching band, which starts at two thirds of the stop line
 (`src/dashboard/spa/live-page/fatigue-state.ts:29-37`,
-`src/state/velocity-loss-intent.ts:133-136`). At 30% it would read stop.
+`src/state/velocity-loss-intent.ts:149-152`). At 30% it would read stop.
 [When the live card says stop](/concepts/fatigue-and-pacing#when-the-live-card-says-stop)
 explains the stop line and where its number comes from. Neither the card nor the server's
 `velocity_loss_exceeded` event ends the set; [the two stop events are advice](/concepts/fatigue-and-pacing#the-two-stop-events-are-advice).
@@ -90,16 +89,16 @@ reads Good. The harness has no summary capture of a slowing session yet.
 <CaptureCallouts
   shot="session-summary"
   :callouts='[
-    {"quote": "FATIGUE — RPE Good", "text": "The exercise verdict, in the same words the live card uses. RPE is a dash here as well."},
-    {"quote": "12% peak-to-last within a set — set #2, the set the verdict above reads.", "text": "The worst velocity loss in any working set of this exercise, and which set the verdict reads."}
+    {"quote": "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO", "text": "The exercise verdict, in the same words the live card uses, and the set it read."},
+    {"quote": "RIR · Calibrating", "text": "No RPE or RIR figure yet. Hover it for why."}
   ]'
 />
 
 The summary shows no RPE or RIR for the same reason as the live card
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`). The verdict and the worst-loss
-line read the same set: the working set with the worst loss, the later one on a tie
-(`src/dashboard/read-models/session-summary.ts:258-280`,
-`src/dashboard/spa/planner/SessionSummaryPage.tsx:218-228`).
+(`src/dashboard/spa/planner/summary/SummaryHeader.tsx`). The verdict reads the working set
+with the worst loss, the later one on a tie, and the line above the word names that set and
+its loss (`src/dashboard/read-models/session-summary.ts:258-280`,
+`src/dashboard/spa/planner/session-summary-model.ts`, `verdictKicker`).
 
 ## Next
 

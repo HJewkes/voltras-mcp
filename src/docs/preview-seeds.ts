@@ -27,7 +27,7 @@
 // Confidentiality: exercise ids, loads, rep counts and velocities only —
 // derived fitness metadata, no protocol data of any kind (NF-07).
 
-import { EMPTY_PHASE, setCatalog } from '@voltras/workout-analytics';
+import { setCatalog } from '@voltras/workout-analytics';
 
 import {
   GOAL_BAND_CONSTANTS,
@@ -63,9 +63,11 @@ import {
   RECALIBRATION_OFFER_VERSION,
 } from '../tools/goal-recalibration.js';
 import type { CaptureScenarioName } from './capture-shots.js';
+import { rep } from './personas/rep.js';
+import { SUMMARY_PREVIEW_SESSION_ID } from './summary-preview-seed.js';
 
 /** The pages `npm run dashboard:preview -- <page>` can open. */
-export type PreviewPageName = 'goals' | 'body' | 'plan';
+export type PreviewPageName = 'goals' | 'body' | 'plan' | 'summary';
 
 export interface PreviewPage {
   readonly name: PreviewPageName;
@@ -73,7 +75,8 @@ export interface PreviewPage {
   readonly route: string;
   /**
    * The capture scenario whose driver and args this page reuses, or `null` for
-   * `#/goals`, which seeds the store itself (see this file's header).
+   * `#/goals` and `#/summary`, which seed the store themselves (see this file's
+   * header and `summary-preview-seed.ts`).
    */
   readonly captureScenario: CaptureScenarioName | null;
   readonly summary: string;
@@ -98,6 +101,12 @@ export const PREVIEW_PAGES: readonly PreviewPage[] = [
     captureScenario: 'planned',
     summary: 'The plan builder over a seeded workout template and the exercise catalog.',
   },
+  {
+    name: 'summary',
+    route: `/app#/summary/${SUMMARY_PREVIEW_SESSION_ID}`,
+    captureScenario: null,
+    summary: 'The session-complete page over an ended four-exercise session.',
+  },
 ];
 
 /** The lift every goal preview is declared on. A catalog id, so the page resolves a name. */
@@ -110,7 +119,7 @@ export const GOAL_PREVIEW_EXERCISE = {
  * One seeded lift: its exercise, the ids it writes under, and the history behind it.
  * The lead writes under `goal` so its rows keep the ids the page and tests know.
  */
-interface SeededLift {
+export interface SeededLift {
   readonly key: string;
   readonly exercise: { readonly id: string; readonly name: string };
   readonly level: StoredPriorityLevel;
@@ -410,7 +419,7 @@ function companionLift(
 }
 
 /** One lift's sessions, baseline, priority and accepted target, derived as the tools derive them. */
-async function seedLift(
+export async function seedLift(
   store: GoalPreviewStore,
   lift: SeededLift,
   now: Date,
@@ -569,30 +578,6 @@ function grindingReps(setId: string, count: number): StoredRep[] {
   });
 }
 
-/** Rep `index`, three seconds long, at `velocityMps` over a fixed range of motion. */
-function rep(setId: string, index: number, velocityMps: number): StoredRep {
-  const durationMs = 3_000;
-  const startTime = index * durationMs;
-  return {
-    id: `${setId}-rep-${index}`,
-    setId,
-    index,
-    repNumber: index + 1,
-    concentric: {
-      ...EMPTY_PHASE,
-      startTime,
-      endTime: startTime + durationMs,
-      startPosition: 0,
-      endPosition: 0.5,
-      _totalVelocity: velocityMps,
-      _movementSampleCount: 1,
-      _lastMovementVelocity: velocityMps,
-      peakVelocity: velocityMps,
-    },
-    eccentric: { ...EMPTY_PHASE },
-  };
-}
-
 function priorityRow(now: Date, lift: SeededLift): Parameters<GoalPreviewStore['putPriority']>[0] {
   return {
     id: `preview-${lift.key}-priority`,
@@ -742,7 +727,10 @@ export const GOAL_PREVIEW_WEIGHT = {
   lossPctPerWeek: 0.6,
 } as const;
 
-async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeBodyMetric[]> {
+export async function seedWholeBody(
+  store: GoalPreviewStore,
+  now: Date,
+): Promise<WholeBodyMetric[]> {
   await seedPreviewCut(store, now);
   const seeded: WholeBodyMetric[] = [];
   for (const metric of ['bodyweight', 'sessions_28d'] as const) {

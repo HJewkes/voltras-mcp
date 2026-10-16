@@ -13,8 +13,17 @@
 // observer session depends on stay `read`.
 
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createClientConnection } from '../client-connection.js';
+import { loadConfig } from '../config.js';
+import { bootstrapState } from '../state/server-state.js';
 import {
   CORE_TOOL_NAMES,
+  DEBUG_GATED_TOOL_NAMES,
   MOCK_TOOL_NAMES,
   TOOL_ACCESS,
   toolAccess,
@@ -99,5 +108,73 @@ describe('tool registry', () => {
     for (const name of observerSurface) {
       expect(toolAccess(name), `${name} must stay readable for observers`).toBe('read');
     }
+  });
+});
+
+/**
+ * Boot a mock server with `env` layered on, and return the tool names a client
+ * sees in `tools/list` before bootstrap finishes and after activation.
+ */
+async function listedToolNames(
+  env: Record<string, string>,
+): Promise<{ starting: string[]; active: string[] }> {
+  const dbDir = mkdtempSync(join(tmpdir(), 'vmcp-registry-gate-'));
+  const config = loadConfig({
+    ...process.env,
+    VOLTRA_ADAPTER: 'mock',
+    VMCP_DB_PATH: join(dbDir, 'gate.sqlite'),
+    VMCP_SLOT_BINDINGS_PATH: join(dbDir, 'slot-bindings.json'),
+    ...env,
+  });
+  const connection = createClientConnection(undefined, { debugTools: config.debugTools });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'registry-gate', version: '0.0.1' }, { capabilities: {} });
+  await Promise.all([client.connect(clientTransport), connection.server.connect(serverTransport)]);
+  const state = await bootstrapState(config);
+  try {
+    const names = async (): Promise<string[]> =>
+      (await client.listTools()).tools.map((tool) => tool.name);
+    const starting = await names();
+    connection.activate(state);
+    return { starting, active: await names() };
+  } finally {
+    await client.close();
+    await connection.server.close();
+    state.manager.dispose();
+    await state.store.close();
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+}
+
+describe('debug-gated tools (VW-935)', () => {
+  it('leaves the raw-device tools out of tools/list without VMCP_DEBUG_TOOLS', async () => {
+    const { starting, active } = await listedToolNames({});
+
+    for (const name of DEBUG_GATED_TOOL_NAMES) {
+      expect(starting, `${name} listed during bootstrap`).not.toContain(name);
+      expect(active, `${name} listed after activation`).not.toContain(name);
+    }
+    expect(active).toContain('debug.recent_events');
+  });
+
+  it('leaves them out for any value other than "on"', async () => {
+    const { active } = await listedToolNames({ VMCP_DEBUG_TOOLS: 'true' });
+
+    for (const name of DEBUG_GATED_TOOL_NAMES) {
+      expect(active).not.toContain(name);
+    }
+  });
+
+  it('registers both with VMCP_DEBUG_TOOLS=on', async () => {
+    const { starting, active } = await listedToolNames({ VMCP_DEBUG_TOOLS: 'on' });
+
+    for (const name of DEBUG_GATED_TOOL_NAMES) {
+      expect(starting).toContain(name);
+      expect(active).toContain(name);
+    }
+  });
+
+  it('gates exactly the raw write path and the raw frame read', () => {
+    expect([...DEBUG_GATED_TOOL_NAMES].sort()).toEqual(['debug.recent_frames', 'device.send_raw']);
   });
 });

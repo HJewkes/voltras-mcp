@@ -50,8 +50,11 @@ export interface TierView {
 export interface PrescriptionView {
   /** Where the targets come from: a plan the coach attached, or the lifter's last session of it. */
   source: 'prescribed' | 'derived';
-  /** Only on a derived view: when the session it was derived from started. */
-  derivedFrom?: { startedAt: string };
+  /**
+   * Only on a derived view: when the session it was derived from started, how many local
+   * days ago that was, and whether that is a break of 15+ days (VW-908).
+   */
+  derivedFrom?: { startedAt: string; daysAgo: number; stale: boolean };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;

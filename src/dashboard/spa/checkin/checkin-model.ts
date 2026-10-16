@@ -88,14 +88,14 @@ const GAP_OUTCOMES: ReadonlySet<string> = new Set([
 
 export type ReviewView =
   | { kind: 'gap'; notes: readonly string[] }
-  | { kind: 'no_proposal' }
+  | { kind: 'no_proposal'; notes: readonly string[] }
   | { kind: 'answered'; userResponse: string }
   | { kind: 'open'; advisory: string; levers: readonly string[] };
 
 /** Which of the four screens the review result calls for. */
 export function viewOfReview(result: ReviewResult): ReviewView {
   if (GAP_OUTCOMES.has(result.outcome)) return { kind: 'gap', notes: result.notes };
-  if (result.proposal === null) return { kind: 'no_proposal' };
+  if (result.proposal === null) return { kind: 'no_proposal', notes: result.notes };
   if (result.proposal.userResponse !== null) {
     return { kind: 'answered', userResponse: result.proposal.userResponse };
   }
@@ -134,6 +134,12 @@ export function stepErrorOf(err: unknown): StepError {
  */
 export interface AttemptIds {
   idFor(step: CheckinFlowStep, input: unknown): string;
+  /**
+   * End the attempt at `step`: the next `idFor` mints. Called once a post has a settled outcome
+   * (success or a tool refusal), because the server stores that outcome under the id and would
+   * replay it, a stale review or a refusal, for a repeat of the same input.
+   */
+  forget(step: CheckinFlowStep): void;
 }
 
 export function createAttemptIds(mint: () => string): AttemptIds {
@@ -146,6 +152,9 @@ export function createAttemptIds(mint: () => string): AttemptIds {
       const id = mint();
       held.set(step, { key, id });
       return id;
+    },
+    forget(step) {
+      held.delete(step);
     },
   };
 }

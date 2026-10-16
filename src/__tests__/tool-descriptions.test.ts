@@ -35,7 +35,8 @@ beforeAll(async () => {
   process.env.VMCP_DB_PATH = join(dbDir, 'descriptions.sqlite');
   process.env.VMCP_SLOT_BINDINGS_PATH = join(dbDir, 'slot-bindings.json');
   state = await bootstrapState(loadConfig());
-  connection = createClientConnection('client-descriptions');
+  // The debug-gated tools still ship descriptions; register them to check.
+  connection = createClientConnection('client-descriptions', { debugTools: 'on' });
   connection.activate(state);
 });
 

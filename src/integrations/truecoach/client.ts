@@ -10,8 +10,8 @@
 // TrueCoach publishes no API. The endpoints, headers and pagination shape come
 // from three independent OSS clients (see the research note §1/§4), and the
 // vendor's terms make an automated read a policy question, not just a
-// technical one — the position we are taking is documented in the README and
-// in the tool description, not decided here.
+// technical one — the position we are taking is documented in
+// site/guides/truecoach.md and in the tool description, not decided here.
 //
 // The on-disk response cache holds the RAW compound document, unmapped. That
 // is deliberate: mapping is pure, so a cached document lets the parser be

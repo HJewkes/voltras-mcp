@@ -9,11 +9,18 @@
 // `spa-goals-page.test.ts`. The chrome half asserts the two route-level
 // done_whens: the nav rail carries `body`, and a set running while the page is
 // open shows on the LIVE item rather than anywhere on the body page.
+//
+// `useIsNarrowViewport` is mocked, as in `spa-goals-page.test.ts`: the suite has
+// no `window`, so the real hook would always report wide.
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultNavItems } from '@titan-design/react-ui';
+
+vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
+
+import { useIsNarrowViewport } from '../spa/use-viewport.js';
 
 import { BodyView, type BodyViewProps } from '../spa/body/BodyView.js';
 import {
@@ -468,6 +475,40 @@ describe('the body page drill', () => {
   });
 });
 
+describe('the body page sheet on a phone (VW-947)', () => {
+  const chestOpen = initialBodyStack('chest');
+  const narrow = vi.mocked(useIsNarrowViewport);
+
+  afterEach(() => {
+    narrow.mockReturnValue(false);
+  });
+
+  /** The opening tag of the element carrying a test id. */
+  function tagWithTestId(html: string, testId: string): string | undefined {
+    return html.match(new RegExp(`<[^>]*data-testid="${testId}"[^>]*>`))?.[0];
+  }
+
+  it('docks the sheet at the bottom of a viewport-sized, unscrollable frame', () => {
+    narrow.mockReturnValue(true);
+
+    const html = markup(pageData(), { stack: chestOpen });
+
+    expect(html).toContain('data-testid="body-map-detail-panel-handle"');
+    const host = tagWithTestId(html, 'body-phone-sheet-host');
+    expect(host).toContain('position:fixed');
+    expect(host).toContain('overflow:clip');
+    expect(host).toMatch(/inset:0(px)?[;"]/);
+  });
+
+  it('keeps the wall on the right side-sheet over the page', () => {
+    const html = markup(pageData(), { stack: chestOpen });
+
+    expect(html).toContain('aria-label="Chest volume details"');
+    expect(html).not.toContain('body-map-detail-panel-handle');
+    expect(html).not.toContain('body-phone-sheet-host');
+  });
+});
+
 describe('the body drill handlers', () => {
   /** Runs handler calls through the real reducer, the way `useReducer` would. */
   function drive(start: DrillStack, act: (h: ReturnType<typeof bodyDrillHandlers>) => void) {
@@ -559,5 +600,26 @@ describe('the body drill idle heal', () => {
 
     expect(openMuscle(stack())).toBe('chest');
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the body page in the wall’s kg display unit (VW-934)', () => {
+  it('reads a PR and its gain over the prior best in whole kg', () => {
+    const row = prRows(STRENGTH)[0]!;
+
+    expect(prValueText(row, 'kg')).toBe('83 kg (+3)'); // 182.5 lb, 7.5 lb over 175
+  });
+
+  it('lists Recent PRs in kg with no pound reading on the page', () => {
+    const rendered = text(pageData(), { displayUnit: 'kg' });
+
+    expect(rendered).toContain('Chest Press');
+    expect(rendered).toContain('83 kg (+3)');
+    expect(rendered).not.toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(text(pageData(), { displayUnit: 'lbs' })).toContain('182.5 lb (+7.5)');
+    expect(markup(pageData(), { displayUnit: 'lbs' })).toBe(markup(pageData()));
   });
 });

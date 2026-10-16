@@ -509,7 +509,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.suggest_progression': {
     job: 'planSuggest',
     when: '"What next time?"',
-    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta',
+    rule: 'An estimated 1RM never moves load. An asymmetry never prescribes single-limb work. When the diet phase changed the answer, relay that clause, not the bare delta. When `lastTime` is stale, use the `loadLbs` in `reEntry` (none after a long break: use the starting prescription) and say the days',
   },
   'plan.warmup_ramp': {
     job: 'planSuggest',
@@ -749,13 +749,13 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   },
   'debug.recent_frames': {
     job: 'debug',
-    when: 'Only when the user asks for low-level capture',
+    when: 'Only when the user asks for low-level capture. Absent unless `VMCP_DEBUG_TOOLS=on`',
     rule: '**Never quote its content** in chat, notes, tasks or commits',
     diagnostic: true,
   },
   'device.send_raw': {
     job: 'debug',
-    when: "Only on the user's explicit request, in a validation campaign",
+    when: "Only on the user's explicit request, in a validation campaign. Absent unless `VMCP_DEBUG_TOOLS=on`",
     rule: 'Needs `confirm: true`. It can move the motor. **Never quote what was sent or received**',
   },
 };

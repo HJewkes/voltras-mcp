@@ -1,377 +1,122 @@
 /**
- * Session-completion / progression screen (VW-120).
+ * Session-completion page (VW-120), laid out as a ledger (VW-944).
  *
- * One card per exercise the session TOUCHED — VW-114's `session.set_exercise`
+ * One band per exercise the session TOUCHED — VW-114's `session.set_exercise`
  * means a session routinely spans several, so nothing here assumes one exercise
  * per session; the grouping is done server-side in `session-summary.ts` from each
- * set's own `exerciseId`.
+ * set's own `exerciseId`. Each band reads left to right: how it moved (the
+ * verdict and the set it read), the sets behind that, and next time's load.
+ * The raw set table sits below the bands, under the fold on the wall.
+ *
+ * Every number and choice comes from `session-summary-model.ts`; the files in
+ * `summary/` are markup. Explanations sit behind tips, per titan's design floor.
  *
  * Loads once per session id (a finished session's numbers don't move), so this
  * page does not poll.
  *
- * ── Information architecture (prior art, not invented here) ────────────────
- * The order is the one both the mobile `WorkoutSummary` screen and the archived
- * `session-debrief` lab directions converged on:
- *
- *   verdict → evidence → aggregate → prescription → raw sets
- *
- * Concretely, per exercise: titan's `VerdictHero` + `FatigueLights` carry the
- * SAME fatigue language the live page already speaks (`TONE_TOKEN` /
- * `STATE_LABEL` / the three VEL·ROM·TEMPO dots), so a completion screen reads as
- * the end of the live page rather than a different product. Then the real
- * evidence — a `StrengthTrendChart` of the exercise's within-session estimated
- * 1RM (see `e1rmSeries`) — then the aggregate tiles, then the progression
- * recommendation `plan.suggest_progression` would give, then the set table.
- *
- * `FatigueMeter` renders the exercise's worst within-set velocity loss against
- * the standard VL10/20/30 thresholds — the same gauge the mobile summary used
- * for "fatigue index", except reading a measured number instead of a label.
- *
- * ── Styling ────────────────────────────────────────────────────────────────
- * titan components throughout (the first cut was plain DOM + inline styles).
  * LAYOUT via `style`, never `className` — react-native-web silently drops
  * Tailwind layout utilities. Same rule the live page follows.
- *
- * Card planes come from `PanelCard` (`Surface level="raised"`) and spacing from
- * `design.ts`, shared with the builder page so the two operator routes are one
- * surface system rather than two — see `PanelCard.tsx` for the measurement.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
-import {
-  Caption,
-  Divider,
-  EmptyState,
-  FatigueLights,
-  FatigueMeter,
-  MetricTiles,
-  Overline,
-  PrBadge,
-  Spinner,
-  StrengthTrendChart,
-  Surface,
-  Typography,
-  VerdictHero,
-  TONE_TOKEN,
-  getSemanticColors,
-  useSurfaceMode,
-  type MetricTileData,
-} from '@titan-design/react-ui';
+import { Caption, EmptyState, Spinner, Surface } from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
-import { convertMass, type MassUnit } from '../live-page/mass';
-import { isWarmupSet } from '../../../store/working-sets.js';
 import { fetchSessionSummary } from './planner-client';
-import {
-  e1rmChangePct,
-  e1rmSeries,
-  formatNumber,
-  formatWeightLbs,
-  nextTargetWeightLbs,
-  progressionLabel,
-  sessionRollup,
-  setLine,
-  setsAgainstPlan,
-  visibleSets,
-} from './planner-model';
 import { ErrorNote, PAGE_PADDING } from './PlanBuilderPage';
-import { PANEL_GAP, PanelCard } from './PanelCard';
 import { SPACE } from './design';
-import type { SessionSummaryExercise } from '../../read-models/session-summary-view';
-
-/** Plot width for the per-exercise trend chart. `StrengthTrendChart` requires px. */
-const CHART_WIDTH = 460;
-const CHART_HEIGHT = 150;
+import { ExerciseBand } from './summary/ExerciseBand';
+import { SetRecordTable } from './summary/SetRecordTable';
+import { SummaryHeader } from './summary/SummaryHeader';
+import type { SessionSummaryView } from '../../read-models/session-summary-view';
 
 export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Element {
   const summary = useStore(dashboardStore, (s) => s.sessionSummary);
   const error = useStore(dashboardStore, (s) => s.plannerError);
-  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
+  const absent = useSummaryLoad(props.sessionId);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const loaded = await fetchSessionSummary(props.sessionId);
-        if (!cancelled) {
-          dashboardStore.getState().applyPlanner({ sessionSummary: loaded, plannerError: null });
-        }
-      } catch (err) {
-        if (!cancelled) {
-          dashboardStore
-            .getState()
-            .applyPlanner({ sessionSummary: null, plannerError: (err as Error).message });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [props.sessionId]);
-
-  if (error !== null) {
+  if (error !== null)
     return (
-      <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
+      <PagePlane>
         <ErrorNote message={error} />
-      </Surface>
+      </PagePlane>
+    );
+  if (absent) {
+    return (
+      <PagePlane>
+        {props.sessionId === 'latest' ? (
+          <EmptyState title="No sessions yet" description="Finish a session to see it here." />
+        ) : (
+          <EmptyState title="Session not found" />
+        )}
+      </PagePlane>
     );
   }
   if (summary === null) {
     return (
-      <Surface
-        level="base"
-        style={{ minHeight: '100%', padding: PAGE_PADDING, alignItems: 'center', gap: SPACE.sm }}
-      >
+      <PagePlane>
         <Spinner />
-        <Caption color="tertiary">Loading session summary…</Caption>
-      </Surface>
+        <Caption color="secondary">Loading session summary…</Caption>
+      </PagePlane>
     );
   }
+  return <Ledger summary={summary} />;
+}
 
-  const rollup = sessionRollup(summary);
-  const headline: MetricTileData[] = [
-    { label: 'Exercises', value: `${rollup.exerciseCount}` },
-    { label: 'Sets', value: `${rollup.setCount}` },
-    { label: 'Reps', value: `${rollup.totalReps}` },
-    { label: 'Volume', value: formatWeightLbs(rollup.volumeLbs, displayUnit) },
-    {
-      label: 'Duration',
-      value: rollup.durationMin === null ? 'in progress' : `${rollup.durationMin} min`,
-    },
-  ];
+/** Fetches the summary into the store; true once the route answered that there is none. */
+function useSummaryLoad(sessionId: string): boolean {
+  const [absent, setAbsent] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSessionSummary(sessionId).then(
+      (loaded) => {
+        if (cancelled) return;
+        setAbsent(loaded === null);
+        dashboardStore.getState().applyPlanner({ sessionSummary: loaded, plannerError: null });
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        dashboardStore
+          .getState()
+          .applyPlanner({ sessionSummary: null, plannerError: (err as Error).message });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+  return absent;
+}
 
+function PagePlane(props: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
-      <PanelCard
-        title={summary.session.endedAt === null ? 'Session in progress' : 'Session complete'}
-      >
-        <Caption color="tertiary">
-          {new Date(summary.session.startedAt).toLocaleString()}
-          {summary.session.endedAt !== null &&
-            ` → ${new Date(summary.session.endedAt).toLocaleTimeString()}`}
-        </Caption>
-        <div style={{ marginTop: SPACE.sm }}>
-          <MetricTiles metrics={headline} gap={2} />
-        </div>
-      </PanelCard>
-      {summary.exercises.length === 0 ? (
+    <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: SPACE.sm }}>
+      {props.children}
+    </Surface>
+  );
+}
+
+function Ledger(props: { summary: SessionSummaryView }): React.JSX.Element {
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
+  const { exercises } = props.summary;
+  return (
+    <PagePlane>
+      <SummaryHeader summary={props.summary} displayUnit={displayUnit} />
+      {exercises.length === 0 ? (
         <EmptyState
           title="No sets recorded"
           description="This session ended without a completed set."
         />
       ) : (
-        summary.exercises.map((exercise) => (
-          <ExerciseCard
+        exercises.map((exercise) => (
+          <ExerciseBand
             key={exercise.exerciseId ?? 'unattributed'}
             exercise={exercise}
             displayUnit={displayUnit}
           />
         ))
       )}
-    </Surface>
-  );
-}
-
-function ExerciseCard(props: {
-  exercise: SessionSummaryExercise;
-  displayUnit: MassUnit;
-}): React.JSX.Element {
-  const { exercise, displayUnit } = props;
-  const series = e1rmSeries(exercise);
-  const changePct = e1rmChangePct(series);
-  const tiles: MetricTileData[] = [
-    { label: 'Sets', value: setsAgainstPlan(exercise) },
-    { label: 'Reps', value: `${exercise.totalReps}` },
-    { label: 'Top load', value: formatWeightLbs(exercise.topWeightLbs, displayUnit) },
-    { label: 'Volume', value: formatWeightLbs(exercise.volumeLbs, displayUnit) },
-    { label: 'Best velocity', value: formatNumber(exercise.bestRepVelocity) },
-  ];
-
-  return (
-    <PanelCard
-      title={exercise.name}
-      // PR here means best OF THIS SESSION — the page only ever receives one
-      // session, so it cannot honestly claim an all-time PR (gap note).
-      titleRight={series.some((p) => p.isPR === true) ? <PrBadge type="e1rm" compact /> : undefined}
-    >
-      <>
-        {/* Verdict first — the same hero word + three dimension lights the live
-            page shows mid-set, so the completion screen closes that loop. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: SPACE.lg, flexWrap: 'wrap' }}>
-          {/* No RPE or RIR until a trusted fitted profile reaches the wall (VW-485). */}
-          <VerdictHero rpe={null} verdict={exercise.verdict} />
-          <FatigueLights dimensions={exercise.verdict?.dimensions ?? null} />
-        </div>
-        {/* Say WHICH set the headline read. The verdict and the gauge below now
-            share one basis (VW-121 / F4) — naming it is what lets a reader check
-            that, instead of taking two numbers on faith. */}
-        {exercise.verdictSetIndex !== null && (
-          <Caption color="tertiary">Verdict reads set #{exercise.verdictSetIndex}</Caption>
-        )}
-        <div style={{ marginTop: SPACE.md }}>
-          <MetricTiles metrics={tiles} gap={2} />
-        </div>
-        <div style={{ marginTop: SPACE.md }}>
-          <E1RMTrend series={series} changePct={changePct} displayUnit={displayUnit} />
-        </div>
-        <div style={{ marginTop: SPACE.md }}>
-          <Overline color="tertiary">Worst within-set velocity loss</Overline>
-          <FatigueMeter value={exercise.maxVelocityLossPct ?? 0} />
-          <Caption color="tertiary">
-            {exercise.maxVelocityLossPct === null
-              ? 'No velocity telemetry for this exercise.'
-              : `${formatNumber(exercise.maxVelocityLossPct)}% peak-to-last within a set` +
-                (exercise.verdictSetIndex === null
-                  ? '.'
-                  : ` — set #${exercise.verdictSetIndex}, the set the verdict above reads.`)}
-          </Caption>
-        </div>
-        <Divider />
-        <ProgressionBlock exercise={exercise} displayUnit={displayUnit} />
-        <Divider />
-        <SetTable exercise={exercise} displayUnit={displayUnit} />
-      </>
-    </PanelCard>
-  );
-}
-
-/**
- * The exercise's within-session estimated-1RM curve.
- *
- * Fewer than two points is NOT a chart — one working set has no trend, and
- * `StrengthTrendChart` would draw a lone dot that reads like a flat line. Say so
- * instead.
- *
- * `e1rmSeries` computes exact e1RM in lbs; `changePct` is a ratio and so is
- * unit-invariant, but the chart's own `data`/`unit` props (VW-196) need the
- * points rescaled via `convertMass` — never a literal factor — to the store's
- * display unit.
- */
-export function E1RMTrend(props: {
-  series: ReturnType<typeof e1rmSeries>;
-  changePct: number | null;
-  displayUnit: MassUnit;
-}): React.JSX.Element {
-  const colors = getSemanticColors(useSurfaceMode());
-  if (props.series.length < 2) {
-    return (
-      <Caption color="tertiary">
-        Not enough working sets with a recorded load to plot an e1RM trend.
-      </Caption>
-    );
-  }
-  const { changePct, displayUnit } = props;
-  const data = props.series.map((point) => ({
-    ...point,
-    e1rm: convertMass(point.e1rm, displayUnit),
-  }));
-  return (
-    <div>
-      <Overline color="tertiary">Estimated 1RM across this session</Overline>
-      <StrengthTrendChart
-        data={data}
-        width={CHART_WIDTH}
-        height={CHART_HEIGHT}
-        unit={displayUnit}
-        animateOnMount={false}
-      />
-      {changePct !== null && (
-        <Typography
-          variant="body2"
-          style={{
-            color:
-              changePct <= -5
-                ? colors[TONE_TOKEN.alarm]
-                : changePct < -1
-                  ? colors[TONE_TOKEN.warn]
-                  : colors[TONE_TOKEN.ok],
-          }}
-        >
-          {`${changePct >= 0 ? '+' : ''}${formatNumber(changePct)}% e1RM from first working set to last`}
-        </Typography>
-      )}
-    </div>
-  );
-}
-
-function ProgressionBlock(props: {
-  exercise: SessionSummaryExercise;
-  displayUnit: MassUnit;
-}): React.JSX.Element {
-  const colors = getSemanticColors(useSurfaceMode());
-  const { progression, progressionNote } = props.exercise;
-  const { displayUnit } = props;
-  if (progression === null) {
-    return (
-      <div style={{ marginTop: SPACE.sm }}>
-        <Overline color="tertiary">Next session</Overline>
-        <Caption color="tertiary">{progressionNote ?? 'No progression recommendation.'}</Caption>
-      </div>
-    );
-  }
-  const tone =
-    progression.delta > 0
-      ? colors[TONE_TOKEN.ok]
-      : progression.delta < 0
-        ? colors[TONE_TOKEN.alarm]
-        : colors[TONE_TOKEN.warn];
-  return (
-    <div style={{ marginTop: SPACE.sm }}>
-      <Overline color="tertiary">Next session</Overline>
-      <MetricTiles
-        gap={2}
-        metrics={[
-          {
-            label: 'Recommendation',
-            value: progressionLabel(progression, displayUnit),
-            valueColor: tone,
-          },
-          {
-            label: 'Target load',
-            value: formatWeightLbs(nextTargetWeightLbs(props.exercise), displayUnit),
-          },
-        ]}
-      />
-      <Caption color="tertiary">{progression.reasoning}</Caption>
-    </div>
-  );
-}
-
-function SetTable(props: {
-  exercise: SessionSummaryExercise;
-  displayUnit: MassUnit;
-}): React.JSX.Element {
-  return (
-    <div style={{ marginTop: SPACE.sm }}>
-      <Overline color="tertiary">Sets</Overline>
-      {visibleSets(props.exercise).map((set) => (
-        <div
-          key={set.id}
-          style={{
-            display: 'flex',
-            gap: SPACE.sm,
-            alignItems: 'center',
-            paddingTop: SPACE.xs,
-            paddingBottom: SPACE.xs,
-          }}
-        >
-          <div style={{ width: 36 }}>
-            <Caption color="tertiary">#{set.index}</Caption>
-          </div>
-          <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="body2">{setLine(set, props.displayUnit)}</Typography>
-          </div>
-          {isWarmupSet(set) && <Caption color="tertiary">warm-up</Caption>}
-          <div style={{ width: 110 }}>
-            <Caption color="tertiary">
-              loss {set.velocityLossPct === null ? '—' : `${formatNumber(set.velocityLossPct)}%`}
-            </Caption>
-          </div>
-          <div style={{ width: 110 }}>
-            <Caption color="tertiary">best {formatNumber(set.bestRepVelocity)}</Caption>
-          </div>
-        </div>
-      ))}
-    </div>
+      {exercises.length > 0 && <SetRecordTable exercises={exercises} displayUnit={displayUnit} />}
+    </PagePlane>
   );
 }

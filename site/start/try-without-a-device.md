@@ -11,10 +11,14 @@ sources:
   - scripts/dashboard-plan-drive.mjs
   - scripts/dashboard-preview.mjs
   - src/docs/preview-seeds.ts
+  - src/docs/personas/index.ts
+  - src/docs/personas/catalog.ts
+  - scripts/seed-persona.mjs
   - justfile
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/server.ts
-lastVerified: 2026-09-30
+  - src/dashboard/spa/goals/review-copy.ts
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -29,7 +33,6 @@ covers three ways to do that: the mock adapter, the scripted dashboard drivers, 
 
 Set `VOLTRA_ADAPTER=mock` to replace Bluetooth with an in-process device. The mock device
 streams synthetic telemetry through the same pipeline a real unit uses.
-([README.md § Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
 ```bash
 claude mcp add voltras -e VOLTRA_ADAPTER=mock -- node "$PWD/dist/bin.js"
@@ -39,6 +42,10 @@ The tool surface is the same as on real hardware, plus two mock-only tools,
 [`mock.configure`](/reference/mock) and [`mock.inject_error`](/reference/mock)
 (`MOCK_TOOL_NAMES` in `src/tool-registry.ts`). With the mock adapter registered, you can
 follow [your first session](/start/first-session) from start to finish.
+
+A mock session is stored as a test session and never counts toward your history, so after a
+mock workout the Goals page still reads "No priorities declared" and the Body page stays
+empty. To see those pages full, use [`npm run dashboard:preview`](#browse-the-other-wall-pages).
 
 `just sim` is a one-line alternative. It starts the launcher with the mock adapter and a
 throwaway database under `/tmp`. It sets `VMCP_DASHBOARD_PORT=0`, which turns the dashboard
@@ -65,7 +72,6 @@ Open `http://127.0.0.1:<port>/app` before or during the run. The two real-pipeli
 ship the open session's finished sets in the snapshot, so a page opened late rebuilds its set
 log. `dashboard:sim` does not: it builds the log only from live transitions, so open it
 before the first set.
-([README.md § Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
 Useful options, from each script's header comment:
 
@@ -93,6 +99,7 @@ npm run dashboard:preview -- body                   # #/body
 npm run dashboard:preview -- plan                   # #/plan
 npm run dashboard:preview -- goals                  # #/goals
 npm run dashboard:preview -- goals --state behind   # …with a chosen goal state
+npm run dashboard:preview -- goals --unreviewed 3   # …with 3 days waiting to be marked
 ```
 
 A `body` run on 2026-09-27 printed this (trimmed: five lines are cut, the seed line and
@@ -120,16 +127,51 @@ If `dist/` or `dist/spa/` is missing, the command stops and names the build step
 browse matches the published images. `goals` has a seed of its own
 (`src/docs/preview-seeds.ts`). Open it from **goals** in the dashboard's navigation rail.
 
+`npm run dashboard:preview -- persona <name>` fills every page at once. It seeds one synthetic
+lifter, then opens the Review page on its latest session (`#/summary`), and the rail reaches the
+rest. `--route` opens another page instead, for example `--route '#/goals'`. The personas
+(`src/docs/personas/index.ts`, `src/docs/personas/catalog.ts`):
+
+- `fresh`: a new install, not onboarded, with no rows at all.
+- `first-timer`: one session of three sets, one weigh-in, one check-in and a goal still
+  calibrating.
+- `steady`: twelve weeks of an upper/lower split four days a week across two blocks with a
+  deload, weekly check-ins, five weigh-ins a week and three lift goals on track.
+- `returner`: sixteen weeks with a three-week and a five-week break, the load lower after each.
+- `plateau`: eight flat weeks on the main lifts, a stalled chest-press goal, and twenty curl
+  sets a week, which puts the biceps past their recoverable volume.
+- `goal-mix`: every goal status at once, with a lift behind, one on track, one ahead, a
+  bodyweight cut goal and a 28-day session goal. It declares the beginner tier.
+- `kg-lifter`: every load a whole number of kilograms, read in kg.
+- `damper-band`: damper, band and isokinetic sets only. Damper and isokinetic sets have no
+  load.
+- `messy`: four ordinary weeks plus every odd row: sets with no exercise, auto-armed, partial,
+  warm-up, probe and technique sets, a guest, unreviewed and test sessions, and one session left
+  open.
+- `bilateral`: two units, left and right paired on every set, the left side 10% lighter.
+- `night-owl`: thirty-five weeks of sessions starting between 23:00 and 01:00 local, one of
+  them across a daylight-saving change.
+- `year`: fifty-two weeks at five days a week in thirteen four-week blocks.
+- `truecoach`: six weeks trained against a plan imported from TrueCoach.
+
+An unknown name stops the command and lists the names it knows.
+To keep a persona's store, `node scripts/seed-persona.mjs <name> <db-path>` writes it to a new
+file. It refuses an existing file and any path under `.voltras`.
+
 `--state` applies to `goals` only. It takes one of `calibrating`, `recalibration_offered`,
 `recalibration_declined`, `on_track`, `fast_climb`, `behind`, `stalled`, `ahead`,
 `hit_exact` or `beyond_goal`, and defaults to `on_track` (`src/docs/preview-seeds.ts`,
 `scripts/dashboard-preview.mjs`). The command prints the status the page actually reached.
 
+`--unreviewed <n>` also applies to `goals` only. It adds `n` past days of sessions that nobody
+has marked as training or test, so the page shows the line that says its numbers leave those
+days out (`scripts/dashboard-preview.mjs`, `src/dashboard/spa/goals/review-copy.ts`).
+
 ::: warning The printed status can differ from --state
-A `goals --state behind` run on 2026-09-27 printed this (trimmed to the two status lines):
+A `goals --state behind` run on 2026-10-15 printed this (trimmed to the two status lines):
 
 ```
-[preview] seeded --state behind: 15 sets across 5 session(s), top 100 lb, baseline CALIBRATED, whole body: bodyweight, sessions_28d
+[preview] seeded --state behind: 15 sets across 5 session(s), top 100 lb, baseline CALIBRATED, whole body: bodyweight, sessions_28d, unreviewed days: 0
 [preview] goal read model: status on_track
 ```
 

@@ -45,7 +45,19 @@ export interface DaysRoute {
   name: 'days';
 }
 
-export type Route = LiveRoute | PlanRoute | SummaryRoute | GoalsRoute | BodyRoute | DaysRoute;
+/** The weekly check-in stepper (VW-896): bodyweight, three answers, the weekly review. */
+export interface CheckinRoute {
+  name: 'checkin';
+}
+
+export type Route =
+  | LiveRoute
+  | PlanRoute
+  | SummaryRoute
+  | GoalsRoute
+  | BodyRoute
+  | DaysRoute
+  | CheckinRoute;
 
 /** Sentinel the server accepts in place of a real session id. */
 export const LATEST_SESSION = 'latest';
@@ -61,6 +73,7 @@ export function parseRoute(hash: string): Route {
   if (head === 'plan') return { name: 'plan' };
   if (head === 'goals') return { name: 'goals' };
   if (head === 'days') return { name: 'days' };
+  if (head === 'checkin') return { name: 'checkin' };
   if (head === 'body') return bodyRoute(rest[0]);
   if (head === 'summary') {
     const raw = rest[0];
@@ -85,6 +98,8 @@ export function routeHash(route: Route): string {
       return '#/goals';
     case 'days':
       return '#/days';
+    case 'checkin':
+      return '#/checkin';
     case 'body':
       return route.muscle === undefined ? '#/body' : `#/body/${encodeURIComponent(route.muscle)}`;
     case 'summary':

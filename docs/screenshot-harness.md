@@ -67,6 +67,8 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | Shot                | Scenario                                      | Shows                            |
 | ------------------- | --------------------------------------------- | -------------------------------- |
 | `dashboard-cold`    | bare `dist/bin.js`, nothing connected         | the empty wall view              |
+| `checkin`           | bare `dist/bin.js`, nothing connected         | the check-in page's first step   |
+| `checkin-phone`     | bare `dist/bin.js`, nothing connected         | the same step at phone width     |
 | `live-mid-set`      | `dashboard-plan-drive.mjs`                    | live page mid-set with a plan    |
 | `live-rest`         | `dashboard-plan-drive.mjs`                    | the rest stage between two sets  |
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
@@ -147,6 +149,8 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | Shot                | Server-real-time field                                                          | Byte-reproducible? |
 | ------------------- | ------------------------------------------------------------------------------- | ------------------ |
 | `dashboard-cold`    | none                                                                            | yes                |
+| `checkin`           | none                                                                            | yes                |
+| `checkin-phone`     | none                                                                            | yes                |
 | `plan-builder`      | none                                                                            | yes                |
 | `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)                    | yes                |
 | `body-week`         | none (its "Week of" date comes from a server clock pinned by `--clock`, VW-710) | yes                |
@@ -458,6 +462,53 @@ flag says.
 
 The launcher is shared rather than copied: `scripts/lib/dashboard-launch.mjs` owns the free
 port, the scratch `VMCP_DB_PATH`, the MCP handshake and the bind wait for both commands.
+
+## Sweeping every persona (VW-945)
+
+`npm run sweep` (`scripts/persona-sweep.mjs`) is the pre-ship bug sweep: every page and read
+path, over every persona in `src/docs/personas/`, before a stranger sees them.
+
+```bash
+npm run build && npm run build:dashboard
+npm run sweep                                   # every persona
+npm run sweep -- --persona steady,plateau       # some of them
+```
+
+For each persona it seeds a new store, boots it through `startScenario` with
+`scripts/fixed-clock-preload.mjs`, then:
+
+- calls every dashboard read endpoint, `/api/goal-progress` once per declared priority and
+  `/api/session-summary/` for `latest` and for every session `session.list {kind:'any'}` returns;
+- calls every MCP read tool on the allowlist in `scripts/lib/sweep-checks.mjs` (never a write,
+  never `debug.*`);
+- opens `#/`, `#/summary`, `#/plan`, `#/goals`, `#/checkin`, `#/body` and `#/body/chest` at the
+  wall and phone viewports, in lbs and in kg, screenshots each one and checks its text.
+
+The checks (all in `scripts/lib/sweep-checks.mjs`, tested in `src/__tests__/sweep-checks.test.ts`):
+no 5xx, a 404 only where the persona's `EXPECTATIONS` entry allows one, no `NaN`, `undefined`,
+`Infinity`, `[object Object]`, `Invalid Date` or bare `null` in page or tool text, the
+persona's must-show and must-not-show copy, no pound reading on a kg page outside the unit
+toggle, "Week of" on the pinned week's Monday, no console error at all, and no detail panel
+(`DETAIL_PANEL_TEST_IDS`) with its left or right edge outside the viewport. That last one is
+measured, not read: a panel drawn off screen still carries all its text (VW-947).
+
+**The clock.** A persona's history ends the Sunday before its seed clock's week, so a page
+read at that clock shows an empty current week. Each persona is therefore seeded at a Monday
+05:00 and viewed at the Sunday 23:30 before it, so the last trained week is "this week".
+`messy` is viewed at its seed clock instead, where its open session is old enough for the
+server's boot-time idle close. Both instants are fixed dates, so two runs on one machine render
+the same pages.
+
+**Output.** `sweep-out/<run>/` (gitignored) holds a PNG per page, the seeded store per persona,
+`findings.json` and `index.html`. The contact sheet has one row per persona and one column per
+route, viewport and unit. Each cell has a red or green border with its findings under it, and the
+first column lists the persona's endpoint and tool findings. "red only" and "changed since last
+run" filter it; "changed" compares each PNG with the previous run's through the same pixel diff
+`--check` uses (`scripts/lib/pixel-diff.mjs`). To review a run, filter to red or changed and
+read the thumbnails, or read `findings.json` and open only the red cells.
+
+The sweep is not a CI gate: it exits 0 whatever it finds, and fails only when the harness
+itself breaks.
 
 ## Isolation
 

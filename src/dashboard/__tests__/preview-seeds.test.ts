@@ -203,10 +203,10 @@ describe('dashboard:preview pages', () => {
     }
   });
 
-  it('names goals as the one page that seeds its own store', () => {
+  it('names goals and summary as the pages that seed their own store', () => {
     const seeded = PREVIEW_PAGES.filter((page) => page.captureScenario === null);
 
-    expect(seeded.map((page) => page.name)).toEqual(['goals']);
+    expect(seeded.map((page) => page.name)).toEqual(['goals', 'summary']);
   });
 
   it('reuses a capture scenario that still exists for every other page', () => {
@@ -217,6 +217,43 @@ describe('dashboard:preview pages', () => {
       expect(known).toContain(page.captureScenario);
     }
   });
+});
+
+// VW-921: the CLI prints the lead's rollup status, read off the page's own payload with every
+// companion and whole-body goal seeded beside it. The whole-body goals are declared most
+// recently, so they list first: reading the first row printed their status under every name.
+describe('dashboard:preview lead status as the command prints it (VW-921)', () => {
+  // Every state on a mid-week clock; on the Monday boundary only the two whose status turns
+  // on which week bucket the newest reading lands in (a falling trend, and a block's week 2).
+  const mondayStates = ['behind', 'ahead'];
+  const clocks = [
+    ['a Monday just after midnight UTC', '2026-09-14T00:00:30.000Z', mondayStates],
+    ['a Thursday midday UTC', '2026-10-15T12:00:00.000Z', GOAL_PREVIEW_STATES.map((s) => s.name)],
+  ] as const;
+
+  for (const [label, at, names] of clocks) {
+    for (const state of GOAL_PREVIEW_STATES.filter((s) => names.includes(s.name))) {
+      it(`prints ${state.expectedStatus} for --state ${state.name} on ${label}`, async () => {
+        vi.setSystemTime(new Date(at));
+        const dir = mkdtempSync(join(tmpdir(), 'vmcp-preview-seeds-'));
+        scratchDirs.push(dir);
+        const store = openTestStore({ path: join(dir, 'preview.sqlite') });
+        try {
+          const now = new Date();
+          const report = await seedGoalPreview(store, state, now, {
+            companions: true,
+            wholeBody: true,
+          });
+          const rows = await fetchGoalPriorityRows(store, now);
+          const lead = rows.find((row) => row.priority.id === report.priorityId);
+
+          expect(lead?.rollup?.status).toBe(state.expectedStatus);
+        } finally {
+          store.close();
+        }
+      }, 30_000);
+    }
+  }
 });
 
 describe('dashboard:preview companion lifts (VW-467)', () => {

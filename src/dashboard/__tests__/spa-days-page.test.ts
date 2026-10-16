@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 //
 // The `#/days` screen in a DOM (VW-847 S4). `DaysPage` is mounted with `react-dom/client` and
-// driven by clicks, at wall and phone width. The first block answers from a scripted fetch, so
-// each server outcome can be named; the second answers from `executeAction` with the
-// boot-captured handlers on a throwaway store, so a mismatch, a re-entry, a dropped connection
-// and the confirm that follows run against the real guard and the real replay of a stored id.
+// driven by clicks, at wall and phone width. Every answer comes from a faked fetch: the first
+// block scripts each server outcome so it can be named; the second keeps a small in-memory
+// range so a mismatch, a re-entry, a dropped connection and the confirm that follows play out
+// across one flow. The same flow against the real handlers and store is
+// `spa-days-flow-actions.test.ts`, in the node environment, because this file's DOM bundle
+// cannot load the store.
 //
-// Mock adapter, synthetic rows.
+// Synthetic rows.
 
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -30,12 +32,8 @@ vi.hoisted(() => {
 
 vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
 
-import { captureActionHandlers, type CapturedTools } from '../../actions/capture-handlers.js';
-import { executeAction } from '../../actions/execute.js';
 import type { ReviewDay } from '../../analytics/session-review.js';
-import { loadConfig } from '../../config.js';
-import { bootstrapState, type ServerState } from '../../state/server-state.js';
-import { readSessionReview, type SessionReviewPage } from '../session-review-api.js';
+import type { SessionReviewPage } from '../session-review-api.js';
 import { forgetWriteToken } from '../spa/api-client.js';
 import { DaysPage } from '../spa/days/DaysPage.js';
 import type { MarkResult } from '../spa/days/days-model.js';
@@ -404,65 +402,61 @@ describe.each([
   });
 });
 
-describe('the #/days page against the real action handlers', () => {
-  const savedEnv = { ...process.env };
-  let state: ServerState;
-  let tools: CapturedTools;
+describe('the #/days page over one range flow', () => {
+  let sessions: Map<string, { day: string; kind?: string }>;
   let failNext = false;
-  let clockMs = 0;
 
-  async function seed(id: string, day: string): Promise<void> {
-    const at = `${day}T12:00:00.000Z`;
-    await state.store.putSession({ id, startedAt: at, endedAt: at });
+  function seed(id: string, day: string): void {
+    sessions.set(id, { day });
   }
 
-  async function serveAction(init: RequestInit | undefined): Promise<Response> {
-    const sent = JSON.parse(init?.body as string) as SentPost;
-    posts.push(sent);
-    if (failNext) {
-      failNext = false;
-      throw new TypeError('fetch failed');
-    }
-    const outcome = await executeAction(
-      {
-        name: 'session.mark_kind',
-        actionId: sent.actionId,
-        actor: 'user',
-        surface: 'wall',
-        input: sent.input,
-        ...(sent.flowId === undefined ? {} : { flowId: sent.flowId }),
-        ...(sent.flowStep === undefined ? {} : { flowStep: sent.flowStep }),
-      },
-      { store: state.store, tools, now: () => new Date((clockMs += 1000)) },
+  function unmarkedIn(from: string, to: string): [string, string][] {
+    return [...sessions].flatMap(([id, s]) =>
+      s.kind === undefined && s.day >= from && s.day <= to ? [[id, s.day]] : [],
     );
-    return new Response(JSON.stringify(outcome.body), { status: outcome.status });
   }
 
-  beforeEach(async () => {
-    process.env.VOLTRA_ADAPTER = 'mock';
-    process.env.VMCP_DB_PATH = ':memory:';
-    process.env.VMCP_DASHBOARD_PORT = 'off';
+  function reviewPage(): SessionReviewPage {
+    const byDay = new Map<string, string[]>();
+    for (const [id, day] of unmarkedIn('', '9999')) byDay.set(day, [...(byDay.get(day) ?? []), id]);
+    const days = [...byDay.keys()].sort().reverse();
+    return {
+      days: days.map((day) => reviewDay(day, { sessionIds: byDay.get(day)! })),
+      unreviewedDays: days.length,
+    };
+  }
+
+  /** Previews count the unmarked sessions; a mark whose count went stale is refused. */
+  function serveAction(post: SentPost): Response {
+    const { from, to, kind, dryRun, expectSessions } = post.input as Record<string, string>;
+    const hits = unmarkedIn(from!, to!);
+    const result = markResult(post.input, {
+      newlyClassified: hits.map(([id]) => id),
+      days: [...new Set(hits.map(([, day]) => day))].sort(),
+    });
+    if (dryRun) return ok(result);
+    if (Number(expectSessions) !== hits.length) return refused('EXPECTED_SESSIONS_MISMATCH');
+    for (const [id] of hits) sessions.get(id)!.kind = kind;
+    return ok(result);
+  }
+
+  beforeEach(() => {
     vi.mocked(useIsNarrowViewport).mockReturnValue(false);
-    state = await bootstrapState(loadConfig());
-    tools = captureActionHandlers(state);
+    sessions = new Map();
     failNext = false;
-    clockMs = Date.parse('2026-09-16T12:00:00.000Z');
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       if (url === '/api/bootstrap') return Response.json({ token: 'tok' });
-      if (url.startsWith('/api/session-review')) {
-        return Response.json(
-          await readSessionReview(state.store, { kind: 'unreviewed', limit: 60 }),
-        );
+      if (url.startsWith('/api/session-review')) return Response.json(reviewPage());
+      const post = JSON.parse(init?.body as string) as SentPost;
+      posts.push(post);
+      if (failNext) {
+        failNext = false;
+        throw new TypeError('fetch failed');
       }
-      return serveAction(init);
+      return serveAction(post);
     });
-    await seed('s1', '2026-09-10');
-    await seed('s2', '2026-09-11');
-  });
-
-  afterEach(async () => {
-    await state.store.close();
-    process.env = { ...savedEnv };
+    seed('s1', '2026-09-10');
+    seed('s2', '2026-09-11');
   });
 
   it('runs a mismatch, a second refusal, a dropped confirm and its Retry to one saved mark', async () => {
@@ -474,12 +468,12 @@ describe('the #/days page against the real action handlers', () => {
     await click(button('Preview'));
     expect(text()).toContain('Mark 2 sessions on 2 days as training');
 
-    await seed('s3', '2026-09-11');
+    seed('s3', '2026-09-11');
     await click(button('Confirm mark'));
     expect(alertText()).toContain('The range changed since the preview');
     expect(text()).toContain('Mark 3 sessions on 2 days as training');
 
-    await seed('s4', '2026-09-10');
+    seed('s4', '2026-09-10');
     await click(button('Confirm mark'));
     expect(alertText()).toContain('The range changed since the preview');
     expect(text()).toContain('Mark 4 sessions on 2 days as training');
@@ -489,23 +483,21 @@ describe('the #/days page against the real action handlers', () => {
     expect(alertText()).toContain('Not saved: the dashboard server did not answer');
     await click(button('Retry'));
 
-    const kinds = await Promise.all(
-      ['s1', 's2', 's3', 's4'].map(async (id) => (await state.store.getSession(id))?.kind),
-    );
+    const kinds = ['s1', 's2', 's3', 's4'].map((id) => sessions.get(id)?.kind);
     expect(kinds).toEqual(['training', 'training', 'training', 'training']);
     expect(text()).toContain('Saved: 4 sessions marked training');
     expect(text()).toContain('Every day is marked');
 
-    const rows = (await state.store.listUiActions()).reverse();
-    expect(rows.map((r) => [r.flowStep, r.resultStatus])).toEqual([
-      ['range_preview', 'ok'],
-      ['range_mark', 'error'],
-      ['range_preview', 'ok'],
-      ['range_mark', 'error'],
-      ['range_preview', 'ok'],
-      ['range_mark', 'ok'],
+    expect(posts.map((p) => p.flowStep)).toEqual([
+      'range_preview',
+      'range_mark',
+      'range_preview',
+      'range_mark',
+      'range_preview',
+      'range_mark',
+      'range_mark',
     ]);
-    expect(new Set(rows.map((r) => r.actionId)).size).toBe(rows.length);
+    expect(new Set(posts.map((p) => p.actionId)).size).toBe(posts.length - 1);
     const [dropped, retried] = marks().slice(-2);
     expect(retried?.actionId).toBe(dropped?.actionId);
   });

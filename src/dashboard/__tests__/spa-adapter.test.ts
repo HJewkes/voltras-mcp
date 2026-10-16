@@ -152,6 +152,38 @@ describe('buildCurrentSet', () => {
     expect(view.velocitiesMps).toEqual([0.8, 0.7, 0.65]);
   });
 
+  it('keeps a rep still in its concentric off the velocity bars but in the rep count', () => {
+    // No eccentric samples yet: the rep's mean is a partial that changes every poll.
+    const midRep = { ...repWithMean(3, 400, 300), eccentric: { samples: [] } } as unknown as Rep;
+    const view = buildCurrentSet(
+      snapshot({
+        sessionId: 's1',
+        device: { connected: true, weightLbs: 135 },
+        activeSet: { reps: [repWithMean(1, 900, 800), repWithMean(2, 800, 700), midRep] },
+      }),
+    );
+    expect(view.velocitiesMps).toEqual([0.8, 0.7]);
+    expect(view.reps).toBe(3);
+  });
+
+  it('reads the live velocity loss off settled reps, never a rep still in its concentric (VW-922)', () => {
+    const settled = [repWithMean(1, 900, 800), repWithMean(2, 800, 700)];
+    const midRep = { ...repWithMean(3, 200, 100), eccentric: { samples: [] } } as unknown as Rep;
+    const at = (reps: Rep[]) =>
+      buildCurrentSet(
+        snapshot({
+          sessionId: 's1',
+          device: { connected: true, weightLbs: 135 },
+          activeSet: { reps },
+        }),
+      );
+    const settledView = at(settled);
+    const midRepView = at([...settled, midRep]);
+    expect(settledView.velocityLossPct).not.toBeNull();
+    expect(midRepView.velocityLossPct).toBe(settledView.velocityLossPct);
+    expect(midRepView.velocityLoss).toBe(settledView.velocityLoss);
+  });
+
   it('converts weight to kg when the display unit is kg (VW-63)', () => {
     const view = buildCurrentSet(
       snapshot({

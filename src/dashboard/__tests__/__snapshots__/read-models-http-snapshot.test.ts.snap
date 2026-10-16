@@ -87,6 +87,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
       "sets": [
         {
           "bestRepVelocity": 0.9,
+          "bilateralGroupId": null,
           "endedAt": "2026-07-30T10:02:00.000Z",
           "expectedRepRange": null,
           "id": "s0",
@@ -94,12 +95,14 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
           "loadLabel": "45 lb",
           "repCount": 5,
           "setPurpose": "warmup",
+          "side": null,
           "startedAt": "2026-07-30T10:00:00.000Z",
           "velocityLossPct": 33.333333333333336,
           "weightLbs": 45,
         },
         {
           "bestRepVelocity": 0.9,
+          "bilateralGroupId": null,
           "endedAt": "2026-07-30T10:02:00.000Z",
           "expectedRepRange": null,
           "id": "s1",
@@ -107,12 +110,14 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
           "loadLabel": "100 lb",
           "repCount": 10,
           "setPurpose": "working",
+          "side": null,
           "startedAt": "2026-07-30T10:00:00.000Z",
           "velocityLossPct": 33.333333333333336,
           "weightLbs": 100,
         },
         {
           "bestRepVelocity": 0.9,
+          "bilateralGroupId": null,
           "endedAt": "2026-07-30T10:02:00.000Z",
           "expectedRepRange": null,
           "id": "s2",
@@ -120,6 +125,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
           "loadLabel": "120 lb",
           "repCount": 8,
           "setPurpose": "working",
+          "side": null,
           "startedAt": "2026-07-30T10:00:00.000Z",
           "velocityLossPct": 33.333333333333336,
           "weightLbs": 120,
@@ -160,6 +166,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
       "sets": [
         {
           "bestRepVelocity": 0.9,
+          "bilateralGroupId": null,
           "endedAt": "2026-07-30T10:02:00.000Z",
           "expectedRepRange": null,
           "id": "s3",
@@ -167,6 +174,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
           "loadLabel": "90 lb",
           "repCount": 10,
           "setPurpose": "working",
+          "side": null,
           "startedAt": "2026-07-30T10:00:00.000Z",
           "velocityLossPct": 33.333333333333336,
           "weightLbs": 90,

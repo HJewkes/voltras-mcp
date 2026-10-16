@@ -65,6 +65,22 @@ export function repMeanVelocityMps(rep: Rep): number | null {
 }
 
 /**
+ * The reps whose mean velocity is final: an open set's reps minus the one still
+ * in its concentric. The server appends a rep at its first concentric sample, and
+ * until its eccentric starts its mean climbs from zero sample by sample — the
+ * same "no eccentric samples" rule as the server's `isTrailingRepIncomplete`.
+ * The velocity bars must not read it: each poll lands a different partial value,
+ * and the chart replays the live bar's entrance on every change, so one rep grew
+ * in two or three times. A rep with no sample arrays at all carries no evidence
+ * of being mid-rep and is kept.
+ */
+export function settledReps(reps: readonly Rep[]): readonly Rep[] {
+  const last = reps.at(-1);
+  const eccentric = last?.eccentric.samples;
+  return Array.isArray(eccentric) && eccentric.length === 0 ? reps.slice(0, -1) : reps;
+}
+
+/**
  * Peak CONCENTRIC force (lbs) for a rep. Null when the rep logged no concentric
  * force (empty phase → `peakForce` defaults to 0).
  *
@@ -140,8 +156,11 @@ export interface PrescriptionView {
    * that predate it still type.
    */
   source?: 'prescribed' | 'derived';
-  /** Only on a derived view: when the session it was derived from started. */
-  derivedFrom?: { startedAt: string };
+  /**
+   * Only on a derived view: when the session it was derived from started, and (VW-908) how
+   * many local days ago and whether that is a break. The age is absent from older payloads.
+   */
+  derivedFrom?: { startedAt: string; daysAgo?: number; stale?: boolean };
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
   sets: number;
   repsLow?: number;
@@ -206,6 +225,8 @@ export interface SnapshotWatchTrigger {
 
 /** Client-side view of the active set in the snapshot. */
 export interface SnapshotActiveSet {
+  /** Already on the wire with the whole `ActiveSet`; tells a pair's two sides apart (VW-956). */
+  setId?: string;
   reps?: Rep[];
   /** Trigger DSL registered at set.start — carries the configured rep target. */
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
@@ -250,6 +271,10 @@ export interface SnapshotActiveExercise {
 export interface SnapshotCompletedSet {
   set: SnapshotActiveSet;
   device: SnapshotDevice | null;
+  /** Shared by the two sides of one live-paired bilateral effort (VW-956). */
+  bilateralGroupId?: string;
+  /** The limb, when the slot's device was bound to one at close. */
+  side?: 'left' | 'right';
 }
 
 /** One slot's device entry on the snapshot, with its OWN sets (VW-71). */
@@ -459,8 +484,12 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   // beside them, so the visible bar-drop and the stated loss %/verdict agree
   // across the room (VW-58). Unrounded: titan bands each bar on the exact loss and
   // formats the number itself, so a bar and the aura agree at a band edge (titan 0.21.1).
+  // Settled reps only: a bar lands once, at its final value.
+  // The loss % (and the aura and stop strip it feeds) reads the same settled reps: a
+  // partial rep's climbing mean reads as a collapse until its concentric ends.
+  const settled = [...settledReps(reps)];
   const velocitiesMps: number[] = [];
-  for (const rep of reps) {
+  for (const rep of settled) {
     velocitiesMps.push(repMeanVelocityMps(rep) ?? 0);
   }
 
@@ -471,8 +500,8 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     reps: reps.length,
     repTarget,
     repsLabel: fmtRepsLabel(reps.length, repTarget),
-    velocityLoss: fmtVelocityLoss(reps),
-    velocityLossPct: computeVelocityLossPct(reps),
+    velocityLoss: fmtVelocityLoss(settled),
+    velocityLossPct: computeVelocityLossPct(settled),
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     velocitiesMps,
     autoCreatedBy: set.autoCreatedBy ?? null,
@@ -666,6 +695,10 @@ export interface CompletedSet {
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
   /** The set's advisory triggers, kept so its own stop threshold survives the close (VW-440). */
   watch?: SnapshotActiveSet['watch'];
+  /** Shared by the two sides of one bilateral effort (VW-956); null for a lone set. */
+  bilateralGroupId?: string | null;
+  /** The limb, when the set is one bound side; null otherwise. */
+  side?: 'left' | 'right' | null;
 }
 
 export interface AccumulatorState {
@@ -735,6 +768,41 @@ function summariseClosedSet(
   };
 }
 
+function summariseCompletedEntry(
+  entry: SnapshotCompletedSet,
+  exerciseName: string | null,
+): CompletedSet {
+  return {
+    ...summariseClosedSet(entry.set, entry.device, exerciseName),
+    bilateralGroupId: entry.bilateralGroupId ?? null,
+    side: entry.side ?? null,
+  };
+}
+
+/**
+ * The other limb's half of each bilateral pair in the session's own log (VW-956).
+ * A dual rig runs one session per slot and `sets.completed` carries only the first
+ * slot's, so a pair's partner side is read from its own slot's entry. The Live page
+ * ranks these alongside the log so a lighter side is not taken for a warm-up, and
+ * never counts them: each pair is already one row in the log.
+ */
+export function bilateralPartnerSides(snapshot: Snapshot): CompletedSet[] {
+  const own = snapshot.sets.completed ?? [];
+  const groupIds = new Set(own.flatMap((entry) => entry.bilateralGroupId ?? []));
+  if (groupIds.size === 0) return [];
+  const ownSetIds = new Set(own.map((entry) => entry.set.setId));
+  const exerciseName = snapshot.session?.exerciseName ?? null;
+  return snapshot.devices
+    .flatMap((slot) => slot.sets?.completed ?? [])
+    .filter(
+      (entry) =>
+        entry.bilateralGroupId !== undefined &&
+        groupIds.has(entry.bilateralGroupId) &&
+        !ownSetIds.has(entry.set.setId),
+    )
+    .map((entry) => summariseCompletedEntry(entry, exerciseName));
+}
+
 /**
  * Fold a new snapshot into the accumulator. Pure: returns the next state.
  * Order matches the legacy poll loop — set-log accrual (reads the previous
@@ -769,9 +837,7 @@ export function reduceSnapshot(
     // having observed the live set-close transition. Tagged with the current
     // session's exercise (all completed sets in a session belong to it).
     const exerciseName = snapshot.session?.exerciseName ?? null;
-    setLog = serverCompleted.map((entry) =>
-      summariseClosedSet(entry.set, entry.device, exerciseName),
-    );
+    setLog = serverCompleted.map((entry) => summariseCompletedEntry(entry, exerciseName));
   } else if (state.prevSetActive && !activeSet && state.lastActiveSet !== null) {
     // Legacy fallback (server without VW-70 completed-set exposure): a set just
     // closed, so push the snapshot saved at the previous tick, tagged with the

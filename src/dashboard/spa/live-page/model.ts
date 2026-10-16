@@ -140,6 +140,13 @@ export interface CompletedSet {
   fatigueStop: FatigueStop;
   /** WA's combined verdict (velocity, ROM, tempo) for the closed set; null under 2 reps. */
   fatigueVerdict: FatigueVerdict | null;
+  /**
+   * Shared by the two sides of one bilateral effort (VW-956), so the working-set rule
+   * ranks the pair by its heavier side. Optional so an older fixture still type-checks.
+   */
+  bilateralGroupId?: string | null;
+  /** The limb, when the set is one bound side. */
+  side?: 'left' | 'right' | null;
 }
 
 /**
@@ -199,6 +206,12 @@ export interface SessionModel {
   tempo?: [number, number, number, number];
   completedSets: CompletedSet[];
   /**
+   * The other limb's half of each bilateral pair in {@link completedSets} (VW-956), read
+   * from its own slot. Ranked with them by the working-set rule, never counted or shown:
+   * the pair is already one row there. Absent on a single-slot session.
+   */
+  partnerSides?: CompletedSet[];
+  /**
    * The session's FULL ordered planned-exercise list (VW-49), including the active
    * one (flagged). Empty when no plan is attached — the rail then shows only the
    * active exercise. Drives the rail's `upcoming` rows.
@@ -221,6 +234,8 @@ export interface SessionModel {
   prescriptionSource?: 'prescribed' | 'derived' | null;
   /** When "last time" started, an ISO instant. Absent or null unless the targets are derived. */
   derivedFromAt?: string | null;
+  /** Days since "last time" when that is a break of 15+ days (VW-908). Absent or null otherwise. */
+  derivedStaleDays?: number | null;
   /**
    * Prescribed reps per set. The lab fixture hardcoded `8` in the header; the store has
    * this for real as the active set's configured rep target, so the port reads it.
@@ -393,11 +408,12 @@ export function activeCompletedSets(session: SessionModel): CompletedSet[] {
  * and stay in `session.completedSets` for the recap and the log; they just do not advance a
  * progress figure that means "working sets done". `selectWorkingSets`' top-load heuristic is
  * scoped per exercise (VW-283) — grouping by `exerciseName` first keeps a heavy exercise from
- * ranking a lighter one's sets out of its own tally.
+ * ranking a lighter one's sets out of its own tally. A bilateral pair's partner side ranks
+ * alongside but is never returned, so the pair counts once (VW-956).
  */
 export function workingCompletedSets(session: SessionModel): CompletedSet[] {
   const groups = new Map<string | null, CompletedSet[]>();
-  for (const set of session.completedSets) {
+  for (const set of [...session.completedSets, ...(session.partnerSides ?? [])]) {
     const group = groups.get(set.exerciseName);
     if (group) group.push(set);
     else groups.set(set.exerciseName, [set]);
@@ -719,14 +735,32 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     summary: {
       // Working sets only (VW-260) — the live overlay carries no purpose of its own yet, so
       // an in-progress set still counts unconditionally, same as before.
-      sets: selectWorkingSets(done).length + (live ? 1 : 0),
+      sets:
+        workingCompletedSets(session).filter((set) => set.exerciseName === session.exerciseName)
+          .length + (live ? 1 : 0),
       reps: bestRepsSoFar(done, live) ?? NO_VALUE,
       ...summaryLoad(session.weightLbs, displayUnit),
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
-    setStates: deriveActiveSetStates(model),
+    setStates: withoutRangeLabels(deriveActiveSetStates(model)),
   };
+}
+
+/**
+ * The rail row's strip carries no rep-range label: titan's `SetStrip` draws it absolutely
+ * above the bar without reserving space, so in the compact rail row it lands on the
+ * prescription line above. The page header keeps the label. Drop this once VW-927 (the
+ * titan `SetStrip` fix) ships and the rail pins it.
+ */
+function withoutRangeLabels(
+  setStates: SessionRailExercise['setStates'],
+): SessionRailExercise['setStates'] {
+  return setStates.map((set) => {
+    if (set.status !== 'active') return set;
+    const { repsLow: _repsLow, repsHigh: _repsHigh, ...rest } = set;
+    return rest;
+  });
 }
 
 /**

@@ -53,7 +53,13 @@ import {
   type SetupSignature,
 } from '../../../analytics/setup-comparability.js';
 import { selectEligibleReps } from '../../../state/rep-eligibility.js';
-import { repMeanVelocityMps, roundMps, type Snapshot, type SnapshotDeviceEntry } from '../adapter';
+import {
+  repMeanVelocityMps,
+  roundMps,
+  settledReps,
+  type Snapshot,
+  type SnapshotDeviceEntry,
+} from '../adapter';
 import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';
 import {
@@ -416,6 +422,12 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   const reps: readonly Rep[] = isDual
     ? foldLimitingReps(limbs)
     : (limbs[0]?.reps ?? active?.reps ?? []);
+  // The verdict judges settled reps only: a rep mid-concentric has a mean that climbs
+  // from zero, so it read as a collapse on every poll until its eccentric began. Each
+  // limb drops its own partial before the fold, or a partial would win as limiting.
+  const verdictReps = isDual
+    ? foldLimitingReps(limbs.map((limb) => ({ ...limb, reps: settledReps(limb.reps) })))
+    : settledReps(reps);
   const workingStandard = workingRomMetres(reps);
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
   // tuple's index 2 — is the reference the per-rep tempo-deviation tint compares to.
@@ -432,7 +444,7 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     // The multi-dimension verdict from WA (velocity/ROM/tempo with strict precedence).
     // `null` for a cold-start set (< 2 reps) — mirrors `getSetFatigueVerdict`'s own gate
     // — which the card renders as a neutral "warming up".
-    verdict: reps.length < 2 ? null : getSetFatigueVerdict({ reps: reps as Rep[] }),
+    verdict: verdictReps.length < 2 ? null : getSetFatigueVerdict({ reps: verdictReps as Rep[] }),
     romProgression: romProgression(reps),
     // Bottom of the prescribed rep band — the same source the rail/header call
     // `targetReps` (`live-view.ts`). Left `undefined` (not 0, not the rep count) when
@@ -467,14 +479,17 @@ function buildHeroSide(
 ): DivergingHeroSide | null {
   if (entry === undefined) return null;
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
+  const settled = settledReps(reps);
   const velocities: number[] = [];
-  for (const rep of reps) {
+  // Settled reps only, like the single hero: a bar lands once, at its final value.
+  for (const rep of settled) {
     // Unrounded, like the single hero: titan bands each wing's bars on the exact loss.
     const mps = repMeanVelocityMps(rep);
     if (mps !== null) velocities.push(mps);
   }
   const best = velocities.length > 0 ? Math.max(...velocities) : null;
-  const velocityLossPct = reps.length < 2 ? null : getSetVelocityLossPct({ reps: reps as Rep[] });
+  const velocityLossPct =
+    settled.length < 2 ? null : getSetVelocityLossPct({ reps: settled as Rep[] });
   return {
     repVelocitiesMps: velocities,
     // This slot's OWN curves — never the shared card's folded stream (see the field note).
@@ -498,9 +513,9 @@ function slotEntry(snapshot: Snapshot, slotId: string): SnapshotDeviceEntry | un
   return snapshot.devices.find((d) => d.slotId === slotId);
 }
 
-/** The rep count of a slot's active set (0 when unbound / no active set). */
+/** The settled rep count of a slot's active set (0 when unbound / no active set). */
 function activeRepCount(entry: SnapshotDeviceEntry | undefined): number {
-  return entry?.sets?.active?.reps?.length ?? 0;
+  return settledReps(entry?.sets?.active?.reps ?? []).length;
 }
 
 /**
@@ -531,7 +546,7 @@ export function mapStoreToDivergingHeroModel(sources: LiveViewSources): Divergin
   const peaks = [left?.bestVelocityMps, right?.bestVelocityMps].filter(
     (v): v is number => typeof v === 'number',
   );
-  // 0-based index of the current (latest) rep across the bound limbs; null before any lands.
+  // 0-based index of the latest settled rep across the bound limbs; null before any lands.
   const maxReps = Math.max(activeRepCount(leftEntry), activeRepCount(rightEntry));
   return {
     left,

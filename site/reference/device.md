@@ -295,6 +295,10 @@ Call it after EVERY setter and after every bilateral.cascade: the setters resolv
 
 ## `device.send_raw`
 
+<Badge type="danger" text="debug only" />
+
+> **Debug only.** Registered only when `VMCP_DEBUG_TOOLS=on`; without it the tool is not in `tools/list`. See [environment variables](./environment-variables).
+
 DIAGNOSTIC ONLY.
 
 Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.

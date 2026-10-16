@@ -284,11 +284,29 @@ across two polls.
 ```ts
 {
   session: ActiveSession | null;
-  devices: Array<{ slotId: string; device: DeviceSnapshot }>;
-  sets: { active: ActiveSet | null };
+  devices: Array<{
+    slotId: string;
+    device: DeviceSnapshot;
+    sets?: { active: ActiveSet | null; completed: CompletedSet[] }; // this slot's own
+  }>;
+  sets: { active: ActiveSet | null; completed: CompletedSet[] }; // the session's slot
   activeExercise: { primaryMuscles: string[]; secondaryMuscles: string[] } | null;
 }
+
+type CompletedSet = {
+  set: ActiveSet;
+  device: DeviceSnapshot; // at close
+  effort: SetEffort | null;
+  bilateralGroupId?: string; // both sides of one live-paired effort (VW-956)
+  side?: 'left' | 'right'; // when the slot's device is bound to a limb
+};
 ```
+
+A dual rig runs one session per slot, so the top-level `sets.completed` holds
+one side of each bilateral pair. The Live page reads the other side from its
+own slot's `devices[].sets.completed` by `bilateralGroupId` and ranks the pair
+by its heavier side, the same rule `store/working-sets.ts` applies to stored
+rows, so a pair counts as one working set.
 
 **Confidentiality boundary: this is JSON only.** No protocol bytes, frames, or command
 codes ever cross into the dashboard — the snapshot is built from already-typed

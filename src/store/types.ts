@@ -2070,6 +2070,20 @@ export interface SessionStore extends ExerciseSetupStore {
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
 
   /**
+   * Every session with no `ended_at`, whoever the lifter and whatever the kind (VW-856).
+   * `listSessions` narrows to the owner's training by default; the idle-close rule has to see
+   * the guest's and the unreviewed ones too.
+   */
+  listOpenSessions(): Promise<StoredSession[]>;
+
+  /**
+   * The instant of the session's last rep (VW-856): the newest idle rep, or the end of the
+   * newest set that holds a rep. `undefined` when it has neither. A MAX over the whole
+   * session, which `listIdleReps` (oldest 100 first) cannot give.
+   */
+  getLastRepAt(sessionId: string): Promise<string | undefined>;
+
+  /**
    * Number of sessions matching `filter`. Same predicates as `listSessions`
    * plus `userId`, and it counts the whole match rather than a page — asking
    * "how many sessions have I recorded" through `listSessions` means listing

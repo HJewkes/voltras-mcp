@@ -48,10 +48,18 @@ One line each, in this order. Only the first two exit non-zero.
 | Gate             | Level | Why it is silent otherwise                                                                                                                                                                                                   |
 | ---------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `whisper`        | FAIL  | Missing `whisper-cli` (above). The model alone is only a WARN — it downloads on demand.                                                                                                                                      |
-| `node`           | FAIL  | Below v22.5 there is no `node:sqlite`, and the startup error names a module, not a version.                                                                                                                                  |
+| `node`           | FAIL  | Below v22.13 there is no `node:sqlite` without a flag, and the startup error names a module, not a version.                                                                                                                  |
 | `push-channel`   | WARN  | `VOLTRA_PT_DEV=1` selects `--dangerously-load-development-channels`, which needs an approval dialog nobody answers in a scripted session, so it registers nothing and push degrades to polling (VW-158).                     |
 | `cues`           | WARN  | An unset `VMCP_CUES` means nothing speaks. The line always prints both effective values, because `target_hit` / `slowdown` additionally need `VMCP_CUES_MIDSET=on` (or `risk`, with `VMCP_CUE_DELIVERY=on`, on a green set). |
 | `dashboard-port` | WARN  | Every session spawns its own server and the first one wins port 7723, so a dashboard opened from a second session shows another session's data or nothing.                                                                   |
 
 Inside a running session, `server.health` reports the same voice state as
 `voiceReady: { whisperCli, model }`, plus the live `cues` / `cuesMidSet` values.
+
+## Raw-device tools (VW-935)
+
+`device.send_raw` and `debug.recent_frames` are not registered by default. A hardware
+debugging session that needs them sets `VMCP_DEBUG_TOOLS=on` before the server starts, for
+example in `.launch.env`; any other value leaves them out of `tools/list`. `server.health`
+reports the setting as `debugTools`. Leave it off for coaching sessions: `device.send_raw`
+can move the motor, and `debug.recent_frames` puts raw telemetry into the transcript.

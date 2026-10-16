@@ -19,7 +19,7 @@ Each guide below is a set of steps toward one goal. For every tool a guide names
 
 ## The wall dashboard
 
-- [The wall dashboard](/guides/dashboard): what the dashboard is, its five screens, and how
+- [The wall dashboard](/guides/dashboard): what the dashboard is, its screens, and how
   it stays current.
 - [Set it up and open it](/guides/dashboard-setup): build it, launch the server so it is on,
   find its address, and what to do when it does not open.
@@ -42,13 +42,15 @@ Each guide below is a set of steps toward one goal. For every tool a guide names
   both with `bilateral.cascade`, and read per-slot events.
 - [Isometric assessment](/guides/isometric): the single-hold primitive versus the two
   blocking protocols, trial validity, and the calibration caveat on the force figures.
+- [TrueCoach import and write-back](/guides/truecoach): the read-only pull, the coach-results
+  outbox, the separate gated write-back tool, and the terms-of-service position of each.
 
 ## Planning
 
 Plans live in the [`plan.*`](/reference/plan) tools: programs, blocks, weeks, workout
 templates and the planned exercises in each template. The wall dashboard has a plan builder
 page at `/app#/plan` for browsing the exercise catalog and editing a workout by hand. See
-[the dashboard's screens](/guides/dashboard#the-five-screens) and the
+[the dashboard's screens](/guides/dashboard#the-screens) and the
 [plan builder tour](/guides/dashboard-plan-builder).
 
 ## Troubleshooting

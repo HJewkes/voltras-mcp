@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Generate the published capability reference from the tool registry.
 //
-// The README's tool table is hand-maintained, which is fine for a file people
-// edit and wrong for a published page: it reflows on every row edit (so any two
-// PRs touching it conflict) and a drifted page is worse than no page. So this
-// boots the server over stdio against the MOCK adapter and asks it — descriptions
-// taken from `tools/list` cannot drift from what a client actually sees.
+// The README no longer carries a tool table. A hand-maintained one was fine for a
+// file people edit and wrong for a published page: it reflowed on every row edit
+// (so any two PRs touching it conflicted) and a drifted page is worse than no
+// page. So this boots the server over stdio against the MOCK adapter and asks
+// it — descriptions taken from `tools/list` cannot drift from what a client
+// actually sees.
 //
 // The same boot also renders the coach skill's tool inventory (VW-503), so the
 // skill that ships beside the server cannot name a tool the server does not
@@ -85,6 +86,8 @@ function isolatedEnv(scratchDir) {
     VMCP_DB_PATH: path.join(scratchDir, 'reference.sqlite'),
     VMCP_SLOT_BINDINGS_PATH: path.join(scratchDir, 'slot-bindings.json'),
     VMCP_DASHBOARD_PORT: 'off',
+    // The reference documents the debug-gated tools too, marked as such.
+    VMCP_DEBUG_TOOLS: 'on',
   };
 }
 
@@ -206,7 +209,7 @@ async function writePages(outDir, pages, sidebar, isGeneratedPage) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   ensureBuild();
-  const { CORE_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
+  const { CORE_TOOL_NAMES, DEBUG_GATED_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
     path.join(REPO_ROOT, 'dist/tool-registry.js')
   );
   const { buildReference, isGeneratedPage, HAND_WRITTEN_REFERENCE_PAGES } = await import(
@@ -258,6 +261,7 @@ async function main() {
     environmentVariables: ENVIRONMENT_VARIABLES,
     coreToolNames: CORE_TOOL_NAMES,
     mockToolNames: MOCK_TOOL_NAMES,
+    debugToolNames: DEBUG_GATED_TOOL_NAMES,
     tools: surface.tools,
     resources: surface.resources,
     resourceTemplates: surface.resourceTemplates,

@@ -60,8 +60,8 @@
 //                          muscles: [{ muscle, plannedSetsThisWeek, doneSetsThisWeek,
 //                          plannedRemaining }] }` for the active training week (VW-331,
 //                          B4 of the body-map plan) — every titan muscle group (VW-328),
-//                          zeros included. 404 `{ error: 'not_found' }` when no training
-//                          week is currently active.
+//                          zeros included. 200 `null` when no training week is
+//                          currently active (VW-948).
 //   GET  /api/muscle-week — `{ weekStart, muscleMapVersion, landmarkBasis,
 //                          muscles: [{ muscle, sets, status, landmarks,
 //                          lastTrainedAt }] }` — weekly working sets per titan muscle
@@ -100,7 +100,8 @@
 //                          write route cannot be added unguarded. None of the
 //                          six needs the single-writer device lease: every one
 //                          is a sqlite plan write through `plan-api.ts` with
-//                          no device I/O. See `README.md` for the table.
+//                          no device I/O. The route table is in
+//                          site/reference/dashboard-api.md.
 //
 //   GET /api/bootstrap    — `{ token, version }`. The SPA's recovery path for
 //                          the write token when its page predates a restart.
@@ -110,7 +111,8 @@
 //   ── Session completion (VW-120) ─────────────────────────────────────────
 //   GET /api/session-summary/:sessionId — per-exercise VBT rollup + progression
 //                          recommendation for a finished session. `:sessionId`
-//                          may be `latest`.
+//                          may be `latest`, which answers 200 `null` on a store
+//                          with no session (VW-948); an unknown id is a 404.
 //
 //   ── Body map (VW-330) ───────────────────────────────────────────────────
 //   GET /api/muscle-strength — per titan muscle, its primary exercises with
@@ -252,6 +254,7 @@ import {
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
+import type { SessionKindFilter } from '../store/session-kind.js';
 import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
@@ -323,6 +326,7 @@ export interface DashboardServerState {
       /** Inclusive/exclusive ISO bounds — the muscle-plan route's calendar-week scope (VW-331). */
       from?: string;
       to?: string;
+      kind?: SessionKindFilter;
     }): Promise<StoredSession[]>;
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     /** Plan assignments attached to a session — feeds the active-exercise prescription. */
@@ -875,8 +879,9 @@ const MUSCLE_PLAN_SESSION_LIMIT = 200;
 /**
  * `GET /api/muscle-plan` (VW-331, B4 of the body-map plan): planned vs done
  * working sets this week per titan muscle group, plus the upcoming planned
- * exercises per muscle, for the active training week. 404s the same shape
- * `/api/session-summary` does when no training week is currently active.
+ * exercises per muscle, for the active training week. Answers 200 `null` when
+ * no training week is active: lifting without a program is a normal state, and
+ * a 404 there logs a console error on every Body page load (VW-948).
  */
 async function serveMusclePlan(res: ServerResponse, state: DashboardServerState): Promise<void> {
   if (!hasPlanStore(state.store) || !hasSessionStore(state.store)) {
@@ -885,7 +890,7 @@ async function serveMusclePlan(res: ServerResponse, state: DashboardServerState)
   }
   const active = await findActiveWeek(state.store);
   if (active === null) {
-    sendJson(res, 404, { error: 'not_found' });
+    sendJson(res, 200, null);
     return;
   }
   const { week, templates } = active;
@@ -1212,7 +1217,9 @@ async function serveSessionSummary(
   }
   const sessionId = await resolveSummarySessionId(state.store, requestedId);
   if (sessionId === undefined) {
-    sendJson(res, 404, { error: 'not_found' });
+    // No session at all is an answer for `latest` (VW-948); a named id that is gone is not.
+    if (requestedId === 'latest') sendJson(res, 200, null);
+    else sendJson(res, 404, { error: 'not_found' });
     return;
   }
   const summary = await buildSessionSummary(
@@ -2036,7 +2043,12 @@ async function fetchDerivedPrescription(
   const targets = deriveExerciseTargets(sets);
   if (targets === null) return null;
   return buildDerivedPrescriptionView(
-    { activeExerciseId: exerciseId, targets, derivedFromStartedAt: last.startedAt },
+    {
+      activeExerciseId: exerciseId,
+      targets,
+      derivedFromStartedAt: last.startedAt,
+      today: localDate(session.startedAt),
+    },
     state.exercises,
   );
 }

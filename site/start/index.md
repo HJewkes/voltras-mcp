@@ -6,6 +6,7 @@ sources:
   - README.md
   - package.json
   - src/tool-registry.ts
+  - src/server.ts
 lastVerified: 2026-09-30
 sourced: 2026-09-30
 ---
@@ -16,13 +17,13 @@ voltras-mcp is an MCP server that lets Claude drive a Voltra digital-resistance 
 connects to the device, sets the load, and records every set and rep. It runs analytics over
 your history and can coach you through a workout out loud. A local web dashboard shows the
 set as it happens. The server speaks stdio only, so each Claude Code session runs its own
-copy. ([README.md](https://github.com/HJewkes/voltras-mcp/blob/main/README.md))
+copy (`src/server.ts`).
 
 ## What you need
 
 - **A Voltra, or the mock adapter.** `VOLTRA_ADAPTER=mock` replaces the device with an
   in-process one, so you can try the whole tool surface without hardware.
-- **Node 22.5.0 or later** (`engines` in `package.json`).
+- **Node 22.13.0 or later** (`engines` in `package.json`).
 - **Claude Code**, as the MCP client.
 
 ## Read in this order

@@ -99,6 +99,7 @@ export function effortCaption(
 export interface TargetProvenance {
   prescriptionSource?: 'prescribed' | 'derived' | null;
   derivedFromAt?: string | null;
+  derivedStaleDays?: number | null;
 }
 
 /**
@@ -107,7 +108,12 @@ export interface TargetProvenance {
  */
 export function derivedTargetsCaption(session: TargetProvenance): string | null {
   if (session.prescriptionSource !== 'derived' || session.derivedFromAt == null) return null;
-  return fillSlots(LINES.derivedTargets.text, { date: localDate(session.derivedFromAt) });
+  const date = localDate(session.derivedFromAt);
+  if (session.derivedStaleDays == null) return fillSlots(LINES.derivedTargets.text, { date });
+  return fillSlots(LINES.derivedTargetsStale.text, {
+    date,
+    days: String(session.derivedStaleDays),
+  });
 }
 
 /** A "set n of m" line, marked when the set count is last time's rather than the plan's. */

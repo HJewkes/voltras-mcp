@@ -197,7 +197,7 @@ describe('auto-arm reclaim vs a published idle_rep_summary (VW-185)', () => {
     seq = 1;
     h.live.startSession({
       sessionId: 'sess-reclaim',
-      startedAt: '2026-09-08T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
     });
@@ -330,7 +330,7 @@ describe('auto-arm reclaim in verbose mode (VW-185)', () => {
     seq = 1;
     h.live.startSession({
       sessionId: 'sess-verbose',
-      startedAt: '2026-09-08T00:00:00.000Z',
+      startedAt: new Date().toISOString(),
       setIds: [],
       status: 'active',
       verboseIdleReps: true,

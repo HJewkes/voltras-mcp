@@ -34,6 +34,7 @@
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
+import { closeIdleSessionsAtBoot } from './idle-session-close.js';
 import { UserFacingError } from '../errors.js';
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
@@ -317,6 +318,12 @@ export interface ServerState {
    */
   lastSetEndedAtMs: Map<string, number>;
   /**
+   * Per-slot wall-clock ms of the newest idle rep (VW-856). With `lastSetEndedAtMs` it tells a
+   * live session that is still being trained from one nobody ended. Optional so the bridge's
+   * partial test states need not carry it.
+   */
+  lastIdleRepAtMs?: Map<string, number>;
+  /**
    * Per-set idle-timeout watchdog backing the trigger DSL's
    * `idle_timeout_ms` spec. Armed at `set.start` when the watch config
    * registers any idle thresholds (smallest threshold wins, one watchdog
@@ -458,6 +465,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
     setCatalog([...SEED_CABLE_EXERCISES, ...HISTORY_SEED_EXERCISES]);
     await refitStaleRirVelocityModels(store);
+    await closeIdleSessionsAtBoot(store);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
@@ -501,6 +509,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       timers,
       setStartDeviceSnapshots,
       lastSetEndedAtMs,
+      lastIdleRepAtMs: new Map<string, number>(),
       setWatchdog,
       restTimers,
       voice: makeVoiceHolder(),

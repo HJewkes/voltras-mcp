@@ -2,11 +2,12 @@
 diataxis: explanation
 audience: [lifter, coach]
 status: coming-soon
-statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data. The current block week and unreviewed-history notice are served but not yet shown.'
-tracking: VW-514 (internal tracker)
+statusNote: 'Goals: declared priorities with committed and stretch bands, weekly trajectory and bodyweight and attendance cards. The tools that set goals work, but the page has only been exercised on seeded data. The unreviewed-days note is shown; the current block week header is served but not yet drawn.'
+tracking: VW-655, VW-901, VW-360 (internal tracker)
 sources:
   - src/dashboard/spa/goals/GoalsPage.tsx
   - src/dashboard/spa/goals/GoalsRoute.tsx
+  - src/dashboard/spa/goals/GoalsView.tsx
   - src/dashboard/spa/goals/use-goals-poll.ts
   - src/dashboard/spa/goals/goals-client.ts
   - src/dashboard/spa/goals/calibration-copy.ts
@@ -18,7 +19,7 @@ sources:
   - scripts/dashboard-mock-drive.mjs
   - scripts/dashboard-preview.mjs
   - src/dashboard/__tests__/preview-seeds.test.ts
-lastVerified: 2026-09-30
+lastVerified: 2026-10-15
 sourced: 2026-09-30
 ---
 
@@ -28,6 +29,9 @@ The goals page is the `#/goals` page of the wall dashboard. It shows the priorit
 declared with your coach, the committed and stretch bands for each target, a week-by-week
 trajectory chart, and whole-body cards for bodyweight and training days.
 
+The page is in the dashboard's side rail as "Goals"
+(`src/dashboard/spa/panels/DashboardChrome.tsx:55-59`).
+
 The goal tools themselves work today. `goal.declare_priorities`, `goal.propose_targets` and
 `goal.accept_target` set goals, and `profile.log_bodyweight` logs a weigh-in. This page is only
 about the wall page that draws them.
@@ -35,35 +39,39 @@ about the wall page that draws them.
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for your priorities, then for each priority's progress, every
-2 seconds (`src/dashboard/spa/goals/use-goals-poll.ts:19-47`,
-`src/dashboard/spa/goals/goals-client.ts:30-55`). If one priority's progress fails to load,
+2 seconds (`src/dashboard/spa/goals/use-goals-poll.ts:26-47`,
+`src/dashboard/spa/goals/goals-client.ts:32-57`). If one priority's progress fails to load,
 only that priority shows nothing; the rest of the page still draws
-(`src/dashboard/spa/goals/goals-client.ts:44-51`).
+(`src/dashboard/spa/goals/goals-client.ts:44-55`).
 
 - **A card per lift goal**, with how far you are from the goal, your best set, and a
   trajectory chart against the planned band.
 - **Calibrating.** A new goal starts on a planned ramp, not on your own lifts, and the card
   says what it is waiting for before it calibrates
-  (`src/dashboard/spa/goals/calibration-copy.ts:16-34`).
+  (`src/dashboard/spa/goals/calibration-copy.ts:21-38`).
 - **Whole body.** Bodyweight and training-day cards. The section is left out when you have no
-  whole-body goal (`src/dashboard/spa/goals/whole-body-cards.ts:27-31`).
+  whole-body goal (`src/dashboard/spa/goals/whole-body-cards.ts:27-33`).
 
 ## Why it is not ready yet <Badge type="warning" text="Coming soon" />
 
 **It has only been exercised on seeded data.** The published screenshots come from a scripted
 run on the mock adapter. That run drives the real goal tools, but first writes a prior week's
 set straight into the store so there is something to beat
-(`scripts/dashboard-mock-drive.mjs:241-280`, `src/docs/capture-shots.ts:146-163`). The other
+(`scripts/dashboard-mock-drive.mjs:241-280`, `src/docs/capture-shots.ts:163-179`). The other
 goal states you can preview are all seeded into a scratch store
 (`src/docs/preview-seeds.ts:8-18`). Nobody has yet checked the page after declaring and
-accepting a real goal.
+accepting a real goal; that check waits on your first declared priority (VW-360).
 
-**Two things are served but not shown.** The dashboard sends the current block week and a
-count of history you have not reviewed yet (`src/dashboard/server.ts:1053-1059`). The page
-keeps the block week but does not draw it yet, and drops the review count
-(`src/dashboard/spa/goals/use-goals-poll.ts:27-31`, `src/dashboard/spa/goals/GoalsRoute.tsx:1-7`).
-So the page cannot yet tell you which block week you are in, or that some sessions are left
-out of its counts until you review them. That work is VW-514.
+**The unreviewed-days count is shown.** When some days are left out of the counts until you
+review them, a line at the top of the page says how many
+(`src/dashboard/spa/goals/GoalsView.tsx:86`, `src/dashboard/spa/goals/GoalsView.tsx:96-98`).
+A page that lets you review those days so they count is VW-901.
+
+**The block week is served but not drawn.** The dashboard sends the current block week
+(`src/dashboard/server.ts:1093-1098`), and the page chrome has a slot for a header, but the
+goals route passes none (`src/dashboard/spa/goals/GoalsRoute.tsx:14-20`). So the page cannot
+yet tell you which block week you are in as a header. Each goal card already shows its own
+week cells. The header is VW-655.
 
 ## What the screenshots show <Badge type="warning" text="Coming soon" />
 
@@ -107,11 +115,12 @@ npm run dashboard:preview -- goals
 The command starts a mock-adapter server on a scratch store, seeds it, and prints the page
 address. Open that address in a browser. Press Ctrl-C to stop; that also deletes the scratch
 store. Your real store at `~/.voltras/vmcp.sqlite` is never opened
-(`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:34-37`,
-`scripts/dashboard-preview.mjs:164-176`).
+(`scripts/dashboard-preview.mjs:1-8`, `scripts/dashboard-preview.mjs:40-42`,
+`scripts/dashboard-preview.mjs:160-161`,
+`scripts/dashboard-preview.mjs:183-191`).
 
 The preview does not replay the run behind the screenshots. It writes a history straight into
 the scratch store and lets the real goal read model work out the rest
 (`src/docs/preview-seeds.ts:8-18`). With no other arguments, it seeds a lift goal that is on
-track (`scripts/dashboard-preview.mjs:57`, `src/dashboard/__tests__/preview-seeds.test.ts:143-144`).
+track (`scripts/dashboard-preview.mjs:61`, `src/dashboard/__tests__/preview-seeds.test.ts:144-148`).
 The page you see can therefore differ from the screenshots above.

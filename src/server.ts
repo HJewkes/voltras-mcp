@@ -120,7 +120,7 @@ export async function runServer(): Promise<void> {
   const config = loadConfig();
   configureLogger(config);
 
-  const connection = createClientConnection();
+  const connection = createClientConnection(undefined, { debugTools: config.debugTools });
 
   const transport = new StdioServerTransport();
   await connection.server.connect(transport);

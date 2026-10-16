@@ -23,6 +23,7 @@ import {
   type FatigueStop,
 } from '../../../state/velocity-loss-intent.js';
 import {
+  bilateralPartnerSides,
   buildConnectionStatus,
   buildCurrentSet,
   pickRepresentativeDevice,
@@ -231,6 +232,8 @@ function mapCompletedSet(set: StoreCompletedSet, exerciseStop: FatigueStop): Com
     autoCreatedBy: set.autoCreatedBy,
     fatigueStop: fatigueStopForSet(set.watch, exerciseStop),
     fatigueVerdict: set.reps.length < 2 ? null : getSetFatigueVerdict({ reps: set.reps }),
+    bilateralGroupId: set.bilateralGroupId ?? null,
+    side: set.side ?? null,
   };
 }
 
@@ -274,14 +277,18 @@ function mapRestBasis(rest: Snapshot['rest']): RestBasisModel | null {
 /** Where the prescription came from (VW-643). A view from before `source` existed is the plan's. */
 function mapPrescriptionSource(
   prescription: PrescriptionView | null,
-): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt'> {
-  if (prescription === null) return { prescriptionSource: null, derivedFromAt: null };
+): Pick<SessionModel, 'prescriptionSource' | 'derivedFromAt' | 'derivedStaleDays'> {
+  if (prescription === null) {
+    return { prescriptionSource: null, derivedFromAt: null, derivedStaleDays: null };
+  }
   if (prescription.source !== 'derived') {
-    return { prescriptionSource: 'prescribed', derivedFromAt: null };
+    return { prescriptionSource: 'prescribed', derivedFromAt: null, derivedStaleDays: null };
   }
   return {
     prescriptionSource: 'derived',
     derivedFromAt: prescription.derivedFrom?.startedAt ?? null,
+    derivedStaleDays:
+      prescription.derivedFrom?.stale === true ? (prescription.derivedFrom.daysAgo ?? null) : null,
   };
 }
 
@@ -321,6 +328,9 @@ function mapSession(
     completedSets: setLog
       .map((set) => mapCompletedSet(set, exerciseStopOf(snapshot)))
       .filter(isRealCompletedSet),
+    partnerSides: bilateralPartnerSides(snapshot).map((set) =>
+      mapCompletedSet(set, exerciseStopOf(snapshot)),
+    ),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
     plannedExercises,
     // Resolved rest (VW-441): the plan's, else the goal default; null with no session.

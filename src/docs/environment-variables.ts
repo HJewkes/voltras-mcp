@@ -193,6 +193,16 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     source: CONFIG,
   },
   {
+    name: 'VMCP_DEBUG_TOOLS',
+    section: 'Diagnostics',
+    defaultValue: '`off`',
+    accepts: '`on`',
+    onInvalid: 'uses the default',
+    purpose:
+      'Registers `device.send_raw` and `debug.recent_frames`. Without it neither tool is in `tools/list`. `device.send_raw` writes unchecked commands and can move the motor, and `debug.recent_frames` puts raw telemetry into the transcript, so turn it on for hardware debugging only. Any value other than `on` leaves both off.',
+    source: CONFIG,
+  },
+  {
     name: 'VMCP_DEBUG_BUFFER_SIZE',
     section: 'Diagnostics',
     defaultValue: '`256`',
@@ -302,7 +312,7 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     accepts: ON_OFF,
     onInvalid: 'stops startup',
     purpose:
-      'With the outbox on, each written entry also starts one unattended submit to TrueCoach. Read the README section on TrueCoach write-back first.',
+      'With the outbox on, each written entry also starts one unattended submit to TrueCoach. Read the [TrueCoach write-back guide](/guides/truecoach#write-back-unattended-gated) first.',
     source: CONFIG,
   },
 ];

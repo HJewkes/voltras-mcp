@@ -1,5 +1,5 @@
 {
-  "definitionHash": "a5550c529b255d2ea92156b80cd0c8f363f9a2d5beff57501cd8330c741f347d",
+  "definitionHash": "0305ee095c5d78968f8c01090a7c1174ba567d28d3800d1f97d7a51afc51113e",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -19,8 +19,48 @@
       "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 44604,
-      "sha256": "9d8199315d46ecfcdd006198a6e6463be6308775e450ec766ad78dbbc92cd877"
+      "bytes": 45937,
+      "sha256": "d24211c1385a2315a0673f6f839e6403a29a7833de32d3f9f728feed49243dc7"
+    },
+    {
+      "name": "checkin",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page on its first step, bodyweight, with the four steps above it.",
+      "file": "checkin.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": [
+        "Bodyweight",
+        "Check-in",
+        "Review",
+        "Done",
+        "Note (optional)",
+        "Next",
+        "Skip"
+      ],
+      "assertedValues": ["Bodyweight (lbs)"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 37609,
+      "sha256": "bfb70f84be8c1226b1fbfd05cba1738460f87ecc28387665392162b54f51fbbc"
+    },
+    {
+      "name": "checkin-phone",
+      "scenario": "cold",
+      "route": "/app#/checkin",
+      "caption": "The weekly check-in page at phone width, one step at a time.",
+      "file": "checkin-phone.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": ["Bodyweight", "Note (optional)", "Next", "Skip"],
+      "assertedValues": ["Step 1 of 4", "Bodyweight (lbs)"],
+      "width": 390,
+      "height": 844,
+      "bytes": 25091,
+      "sha256": "42dab914fdcb5c5880fcc5d3aef53643fc4dbda6e7a3c1fd6d42206635329e7c"
     },
     {
       "name": "live-mid-set",
@@ -47,8 +87,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 826088,
-      "sha256": "981c54141493c6147672d6521272b9c426bd46a305412c81dcd9f7fd3f0ae213"
+      "bytes": 826883,
+      "sha256": "2bb3e65c215d4575a1ebb1322cb9a27289bed8538f233a46e61a9b1bc5dc5679"
     },
     {
       "name": "live-rest",
@@ -70,8 +110,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 119296,
-      "sha256": "aca387a3c3d5e187e8cf16b0cb424535aa9c9e64f281d66839702cbafbda4db9"
+      "bytes": 120492,
+      "sha256": "72141137def20f5936e8cb12ad44f15da1f4e6e2600499577818830f9592ef34"
     },
     {
       "name": "session-summary",
@@ -83,19 +123,18 @@
         "kind": "sessions-ended",
         "minSessions": 3
       },
-      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
+      "assertedText": ["Session complete", "RIR · Calibrating", "NEXT TIME · REPS VS PLAN"],
       "assertedValues": [
-        "EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb",
-        "FATIGUE — RPE Good",
-        "BEST VELOCITY 0.5",
-        "12% peak-to-last within a set — set #2, the set the verdict above reads.",
-        "RECOMMENDATION -5 lb TARGET LOAD 135 lb",
-        "#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5"
+        "1 exercise · 2 sets · 10 reps · 1,400 lb",
+        "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO",
+        "VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%",
+        "NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps",
+        "Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 66325,
-      "sha256": "80d984328b81969372d101b9c2722219d3a2a591b232980af632ddff13637de3"
+      "bytes": 75676,
+      "sha256": "5c93384f580796ffe96c724e19fcfb3c0e1c0d5198bcc23b21ebd74526fdc557"
     },
     {
       "name": "plan-builder",
@@ -117,8 +156,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 120884,
-      "sha256": "ce3a27183b751390a397c9fade1896d1bfc512b044314d72d449fbacf56e9f9f"
+      "bytes": 122021,
+      "sha256": "b357945078302ba6b59de193084e6e73278651cd3d366506cafa9111db31cf99"
     },
     {
       "name": "live-slowing",
@@ -138,8 +177,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 912638,
-      "sha256": "db791050ef7f248ae4cf9d73ee9a9a65e10594f275588473b2864d988d1ad4b5"
+      "bytes": 914409,
+      "sha256": "0fadf93390600b53148577a6d1a46abf2afac297708014d4c52ebcb1db04300a"
     },
     {
       "name": "live-dual-mid-set",
@@ -161,8 +200,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 289065,
-      "sha256": "6abc2dbfb866b3854c7b58d8237781485f309c0f5e5756f29388ab6a3a24f2f9"
+      "bytes": 293767,
+      "sha256": "6d36c19f15f569fcc8d2cf765930c5066b01f8838e05a713c01bafa7c07891d7"
     },
     {
       "name": "goals",
@@ -185,8 +224,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 1440,
       "height": 900,
-      "bytes": 90325,
-      "sha256": "4fcba0838e541043990e2fac82c83f48ccf4115bf95c1bb1077fce56c3d05e15"
+      "bytes": 91600,
+      "sha256": "b6e86c5ae185b34e517508293d50891410925bd7b746219c093f79ad5465db71"
     },
     {
       "name": "goals-phone",
@@ -209,8 +248,8 @@
       "assertedValues": ["Goal 8 x 123 lb", "Best 8 x 110 lb", "13 lb to goal"],
       "width": 390,
       "height": 844,
-      "bytes": 53152,
-      "sha256": "04cb5789bf9bff68aeb0045324299375661f16e6b3b7e384e0e91eeecea719c0"
+      "bytes": 54331,
+      "sha256": "2cd693b9c10e8a3dddda6634f4c7ef2d6e481f34e0e641c4823075986625ea31"
     },
     {
       "name": "goals-whole-body",
@@ -226,8 +265,8 @@
       "assertedValues": ["196.2"],
       "width": 1440,
       "height": 900,
-      "bytes": 100023,
-      "sha256": "6b1e3c9eb7abcadc1e343fa1609d49340e0d58f3284ae5e3f75ba24f8813037d"
+      "bytes": 101266,
+      "sha256": "360d1d9f855e792b78da2c244487ff49faeb03da5d48a691fa9734e0ab0157d0"
     },
     {
       "name": "goals-whole-body-phone",
@@ -243,8 +282,8 @@
       "assertedValues": ["196.2"],
       "width": 390,
       "height": 844,
-      "bytes": 63421,
-      "sha256": "a0efeb6fa14c38921e8c36b614627f7d9e15eb0e86d6005089c0cc06f85d7040"
+      "bytes": 64433,
+      "sha256": "4f48ba1ae4365fac64c3751341fe534b4c64fd9b81ff1955a6631559561fd710"
     },
     {
       "name": "body-week",
@@ -267,8 +306,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 196309,
-      "sha256": "dac33813732f371a6a2299136096b29694cb6bc251821f939c3e3acffd86cd4c"
+      "bytes": 197430,
+      "sha256": "d3ff076e8b2770db828e6f48a1d4c300d7ebf82a52e31c5f1055ff2f93ec2864"
     },
     {
       "name": "body-drill",
@@ -296,8 +335,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 216535,
-      "sha256": "f2f70322c7b167dbed11f98e6680f8c4de0c6dfb8da3660ea9859a348473ded9"
+      "bytes": 217739,
+      "sha256": "683dd7173875e6a05a2591e72cb34cd62bbf21554441951f8586eeb78debe19b"
     }
   ],
   "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
@@ -341,26 +380,26 @@
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.36,
-      "bytes": 623645,
+      "seconds": 33.32,
+      "bytes": 588032,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 260216,
-          "sha256": "c7b47df8ea21abf03744c28c650a5ad6a4364b07991b5dc7aa388ffabf01c71b"
+          "bytes": 211955,
+          "sha256": "5c263da00c5c2ff52e5d21c61273eb1f86649ab66ca90a7c5b12b839a318702c"
         },
         {
-          "atSeconds": 16.68,
-          "bytes": 208012,
-          "sha256": "66b43acc419cfaabff59b93ae0c10de70fcc50e5904522817483402361040cf2"
+          "atSeconds": 16.66,
+          "bytes": 238115,
+          "sha256": "25ffbbadca429addbf82d6fcca3c024e74b69ebb64eeb9c9630ff5950f2afed7"
         },
         {
-          "atSeconds": 28.36,
-          "bytes": 230831,
-          "sha256": "70643b4ee7ee58c9cadfddf0d987f22b8301f74a180943c55bc2dafbcb3ce381"
+          "atSeconds": 28.32,
+          "bytes": 228622,
+          "sha256": "c7971aa1089498d5966a00ec7e3493275c7add60ad9779a5cd13e94441811ae0"
         }
       ],
-      "sha256": "1a9e66677cccfeee863441fa6336533ce6b92454365d53e648bb39cd5321fefa"
+      "sha256": "b34af7f94106cfa072f05c916c7c2d14d9f53f43543a0ba2255186dd0c2d1d62"
     },
     {
       "name": "dual-divergence",
@@ -389,25 +428,25 @@
       "height": 800,
       "fps": 25,
       "seconds": 36.32,
-      "bytes": 575446,
+      "bytes": 512299,
       "frames": [
         {
           "atSeconds": 5.45,
-          "bytes": 195160,
-          "sha256": "0a6d11b1f6b7d69266a85dd22a1d6e9d17221cfde92d2cb82b5f639659deab10"
+          "bytes": 154581,
+          "sha256": "c13f4df5e1626ef2fc2d8b0ed4fac432567afe3b34a4b6c5e060048b3ccd70cd"
         },
         {
           "atSeconds": 18.16,
-          "bytes": 215696,
-          "sha256": "a977ff8fa3d6c06760eaad6be65eff83553c04bc39c6105f7ac6fc4df296aabb"
+          "bytes": 194407,
+          "sha256": "f09845b550f5d136f725362389496306c0e7a3d089c453ee37e6ad866e325bd8"
         },
         {
           "atSeconds": 30.87,
-          "bytes": 141638,
-          "sha256": "9e95deafb484bf1f7b6fbf285bd3137e9ef79350dac278af842e8c114f53a6fc"
+          "bytes": 142423,
+          "sha256": "5264bd0cd6b78ff211fd4c1027dcfd11348e13be74643211910d5cc6f5e9ae60"
         }
       ],
-      "sha256": "1634074ffb4ac66739e5fc967bd875d3e99ea764ef3ea4e93f1c726875048fd3"
+      "sha256": "b28f58f1b55d532518b40c26778818e33f89abdd972daab6447ca6918d1d3919"
     }
   ]
 }

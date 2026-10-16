@@ -262,6 +262,40 @@ describe('buildSessionSummary', () => {
     expect(summary?.exercises[0]?.workingSetCount).toBe(1);
   });
 
+  it('scores both sides of a bilateral pair as working, and progresses on both', async () => {
+    // Left 10% lighter and missing the band; right topping it. Scored on the
+    // right side alone, 3/3 hit 10 and the load goes up.
+    const pair = (n: number): StoredSet[] => [
+      makeSet(`s${n}L`, 'cable-row', 6, {
+        weightLbs: 90,
+        side: 'left',
+        bilateralGroupId: `pair-${n}`,
+        groupSource: 'live',
+      }),
+      makeSet(`s${n}R`, 'cable-row', 10, {
+        side: 'right',
+        bilateralGroupId: `pair-${n}`,
+        groupSource: 'live',
+      }),
+    ];
+    const store = makeStore([...pair(1), ...pair(2), ...pair(3)], [planned('cable-row')]);
+
+    const row = (await buildSessionSummary({ store, nameOf }, 'sess-1'))?.exercises[0];
+
+    expect(row?.workingSetCount).toBe(6);
+    expect(row?.sets.map((s) => s.side)).toEqual([
+      'left',
+      'right',
+      'left',
+      'right',
+      'left',
+      'right',
+    ]);
+    expect(row?.sets[0]?.bilateralGroupId).toBe('pair-1');
+    expect(row?.progression?.delta).toBe(0);
+    expect(row?.progression?.reasoning).toContain('/6 sets');
+  });
+
   it('reports totals from the sets, and the top load actually lifted', async () => {
     const store = makeStore(
       [makeSet('s1', 'cable-row', 10), makeSet('s2', 'cable-row', 8, { weightLbs: 120 })],
@@ -300,7 +334,10 @@ describe('buildSessionSummary', () => {
     const noPlan = (await buildSessionSummary({ store: notPrescribed, nameOf }, 'sess-1'))
       ?.exercises[0];
     expect(noPlan?.progression).toBeNull();
-    expect(noPlan?.progressionNote).toContain('not prescribed');
+    expect(noPlan?.progressionNote).toBe(
+      'Not in your current program, so there is no load to progress.',
+    );
+    expect(noPlan?.progressionNote).not.toContain('cable-row');
 
     const noProgram = makeStore([makeSet('s1', 'cable-row', 10)], [], { programs: [] });
     const withoutProgram = (await buildSessionSummary({ store: noProgram, nameOf }, 'sess-1'))

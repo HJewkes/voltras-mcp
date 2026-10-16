@@ -543,6 +543,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'loadFactor',
   'sourceKind',
   'sourceRef',
+  // VW-907: `plan.suggest_progression`'s age of the basis session, and the load after a break.
+  'lastTime',
+  'daysAgo',
+  'stale',
+  'loadLbs',
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
@@ -587,6 +592,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'blockBoundary.realignment',
   'history.fact',
   'recompReAsk.proposal',
+  // metrics.compute result fields whose only published source was the README's
+  // tool table, which the README trim removed.
+  'baseline.driftGuard',
+  'baseline.romVsBaselinePct',
+  'directionReason',
+  'plateau.phase',
+  'rSquared',
+  'percentChange',
+  'windowDays',
+  'slopeUnit',
 ];
 
 /**
@@ -639,6 +654,7 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'checkDriftGuard',
   'checkMrvGuard',
   'classifyWeeklyVolume',
+  'VolumeLandmarks',
   'detectPlateau',
   'e1RM',
   'evaluateE1RMPr',

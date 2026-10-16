@@ -18,6 +18,7 @@ sources:
   - src/store/mrv-guard.ts
   - src/dashboard/spa/body/BodyView.tsx
   - src/analytics/rir-velocity.ts
+  - src/analytics/comparability.ts
   - site/guides/isometric.md
 lastVerified: 2026-09-30
 sourced: 2026-09-30
@@ -32,15 +33,14 @@ worked out from those readings. This page explains which is which, and how far t
 
 The device streams readings while you move. The server groups them into reps as each lift-and-return
 cycle ends (`src/state/event-bridge.ts:24-27`). Each reading carries the cable's position, speed and
-force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:652-667`,
-`src/state/event-bridge.ts:824-827`). Per-rep
+force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:660-675`). Per-rep
 speed and range of motion are the closest thing to a measurement the server has.
 
 Almost everything else is derived. Velocity loss, the fatigue verdict, estimated 1RM (e1RM),
 readiness and reps in reserve are all calculations over recorded reps
-([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:278-321` for velocity loss,
-the fatigue verdict and RIR; `src/tools/metrics-tools.ts:514-515` for e1RM;
-`src/tools/metrics-tools.ts:407` for readiness). A derived number can be no
+([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:279-322` for velocity loss,
+the fatigue verdict and RIR; `src/tools/metrics-tools.ts:515-516` for e1RM;
+`src/tools/metrics-tools.ts:408` for readiness). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
@@ -65,7 +65,7 @@ side against right side, is a more reliable read than any single value. The
 ## Velocity units are tagged
 
 Each recorded set carries a tag that names the unit its velocities were stored in. Every new set is
-tagged as metres per second (`src/tools/set-tools.ts:1624`). Older sets keep their original scale on
+tagged as metres per second (`src/tools/set-tools.ts:1625`). Older sets keep their original scale on
 disk, and the server rescales them when it reads them (`src/store/velocity-units.ts:1-8`,
 `src/store/velocity-units.ts:48-51`). This keeps the evidence of which scale a row came from, and
 lets old and new sets be compared (VW-160).
@@ -74,7 +74,7 @@ lets old and new sets be compared (VW-160).
 
 The isometric tools report pull force in pounds. That reads like a settled physical measurement.
 Its plateau detection and inferred working weight have not been re-checked on hardware since the
-underlying force scale last changed (`src/tools/isometric-tools.ts:1463-1468`). The [isometric guide's calibration
+underlying force scale last changed (`src/tools/isometric-tools.ts:1464-1469`). The [isometric guide's calibration
 caveat](/guides/isometric#the-calibration-caveat) explains what that means for peak and plateau
 figures.
 
@@ -92,7 +92,7 @@ The landmarks the server uses are population defaults. They are copied from a sh
 library's default table, not learned from your training
 (`src/dashboard/read-models/muscle-week.ts:17-21`, `src/dashboard/read-models/muscle-week.ts:50-61`).
 Their basis is fixed as `population-default`, and the page prints that basis under the panel
-(`src/dashboard/read-models/muscle-week.ts:147`, `src/dashboard/spa/body/BodyView.tsx:257-260`).
+(`src/dashboard/read-models/muscle-week.ts:147`, `src/dashboard/spa/body/BodyView.tsx:309-312`).
 
 Your own landmarks may sit well away from the defaults. Finding them from your set history is
 tracked as VW-146. Until then, `history.weekly_volume` in [`metrics.compute`](/reference/metrics)
@@ -124,3 +124,34 @@ The strictest trust rules in the server apply to reps in reserve. A fitted effor
 trusted only when its error is 1.5 reps or less (`src/analytics/rir-velocity.ts:62-80`).
 [Velocity and effort](/concepts/velocity-and-effort) explains that rule and where the dashboard
 withholds effort numbers today.
+
+## Like-vs-like comparisons
+
+Every "you got stronger" claim is the inference _same work, different result_, and it is
+only sound while the work really was the same. One predicate answers that question about
+two stored sets (`src/analytics/comparability.ts`): same exercise, same lifter, same set
+purpose, same training mode, same device settings, same side, same load, plus a
+training-phase and a physical-setup clause.
+
+Three readings use it to choose what to compare against, and report the choice in a
+`comparability` block: [`metrics.compute`](/reference/metrics) with `session.readiness`
+(which baseline set) and `session.strength` (whether the pooled sets match the heaviest
+one), and [`progression.get_for_exercise`](/reference/progression) (which earlier session
+is a valid basis).
+
+Two rules keep it honest:
+
+- **Exact load, no invented tolerance.** The source the server follows names no load
+  tolerance for this comparison, so loads must match exactly. A percentage nobody measured
+  would sit at the centre of every progress claim.
+- **It never answers with silence.** Strict matching leaves an irregular lifter with few
+  valid pairs, so a block with no match still names the nearest candidate and the reasons
+  it failed (`noValidComparison` and `nearest`), and the reading still returns its numbers.
+  Relay those reasons rather than the headline alone.
+
+This checks the context of two sets. Whether they were _executed_ the same way (tempo and
+range-of-motion drift) is the drift guard's separate question, readable through
+[`driftguard.check`](/reference/driftguard). The drift guard reads reps; this predicate
+never does. A pair can pass one and fail the other. The two never share a field name:
+`quality.rom` reports the drift guard's verdict at `baseline.driftGuard`, and
+`comparability` always means this predicate's report.

@@ -766,11 +766,16 @@ describe('GET /api/session-summary/:sessionId', () => {
     expect((res.body as { session: { id: string } }).session.id).toBe('sess-1');
   });
 
-  it('404s an unknown session id and a `latest` with no sessions at all', async () => {
+  it('404s an unknown session id', async () => {
     const port = await start(makeState(withSession(new FakePlanStore())));
     expect((await call(port, 'GET', '/api/session-summary/ghost')).status).toBe(404);
-    const emptyPort = await start(makeState(new FakePlanStore()));
-    expect((await call(emptyPort, 'GET', '/api/session-summary/latest')).status).toBe(404);
+  });
+
+  it('answers `latest` with no sessions at all as 200 null (VW-948)', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const res = await call(port, 'GET', '/api/session-summary/latest');
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
   });
 
   it('501s without a planning store', async () => {

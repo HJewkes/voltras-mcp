@@ -17,11 +17,25 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
 
+// The cards draw their charts only after measuring themselves, which a static render never
+// does, so the chart props the page hands titan are recorded on the way through.
+const goalCardProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock('@titan-design/react-ui', async (importOriginal) => {
+  const titan = await importOriginal<typeof Titan>();
+  const GoalCard = (props: Parameters<typeof titan.GoalCard>[0]) => {
+    goalCardProps.push(props as unknown as Record<string, unknown>);
+    return createElement(titan.GoalCard, props);
+  };
+  return { ...titan, GoalCard };
+});
+
+import type * as Titan from '@titan-design/react-ui';
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
 import {
   cardChart,
   cardMilestone,
+  cardTrend,
   liftRows,
   primaryTarget,
   type GoalsPageData,
@@ -301,6 +315,12 @@ describe('GoalsView (VW-355)', () => {
     const html = render({ priorities: [], progress: {}, mesocycle: null });
     expect(html).toContain('No priorities declared');
   });
+
+  it('words the empty state for the lifter, naming no MCP tool (VW-948)', () => {
+    const html = render({ priorities: [], progress: {}, mesocycle: null });
+    expect(html).toContain('Tell Claude which lift you want to improve');
+    expect(html).not.toMatch(/\b[a-z]+\.[a-z]+_[a-z_]+\b/);
+  });
 });
 
 describe('the lead lift is not repeated in Per-lift (VW-467 ruling)', () => {
@@ -564,5 +584,117 @@ describe('the goals page says when history is withheld (VW-514)', () => {
     expect(render(withUnreviewed(0))).toBe(before);
     expect(render(withUnreviewed(undefined))).toBe(before);
     expect(before).not.toContain('These numbers leave out');
+  });
+});
+
+describe('the goals page in the wall’s kg display unit (VW-934)', () => {
+  function renderIn(displayUnit: 'lbs' | 'kg'): string {
+    return renderToStaticMarkup(createElement(GoalsView, { data: baseData().data, displayUnit }));
+  }
+
+  /** Rendered text with markup and React's text-joining comments removed. */
+  function visibleText(html: string): string {
+    return html.replace(/<[^>]*>/g, '');
+  }
+
+  it('prints the lift cards’ gap, target and best in whole kg', () => {
+    const curl = visibleText(cardMarkup(renderIn('kg'), 'CURL goal, Behind'));
+
+    expect(curl).toContain('2 kg'); // 4 lb short of goal
+    expect(curl).toContain('to goal');
+    expect(curl).toContain('8 x 23 kg'); // 50 lb committed
+    expect(curl).toContain('8 x 21 kg'); // 46 lb best
+  });
+
+  it('prints the muscle card’s lift rows in kg', () => {
+    const html = renderIn('kg');
+    const muscles = visibleText(html.slice(html.indexOf('Muscle priorities')));
+
+    expect(muscles).toContain('CURL8 x 81 kg'); // the shared band's 177.5 lb waypoint
+  });
+
+  it('leaves no pound reading anywhere on the page', () => {
+    expect(visibleText(renderIn('kg'))).not.toMatch(/\d\s*lbs?\b/);
+    expect(visibleText(renderIn('lbs'))).toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb wall exactly as it was', () => {
+    expect(renderIn('lbs')).toBe(render(baseData().data));
+  });
+});
+
+describe('the goal charts in the wall’s kg display unit (VW-946)', () => {
+  function lead(): GoalProgressView {
+    const row = primaryTarget(baseData().data);
+    if (row === null) throw new Error('fixture has a lead lift');
+    return row.view;
+  }
+
+  function curl(): GoalProgressView {
+    const row = liftRows(baseData().data).find((r) => r.view.target.id === 'tgt-curl');
+    if (row === undefined) throw new Error('fixture has a curl card');
+    return row.view;
+  }
+
+  /** The chart or trend each card was handed by a kg render of the page. */
+  function handedInKg(prop: 'goal' | 'trend'): Record<string, unknown>[] {
+    goalCardProps.length = 0;
+    renderToStaticMarkup(createElement(GoalsView, { data: baseData().data, displayUnit: 'kg' }));
+    return goalCardProps.flatMap((props) =>
+      props[prop] === undefined ? [] : [props[prop] as Record<string, unknown>],
+    );
+  }
+
+  it('draws the lead chart’s band, rules, readings and next marker in kg', () => {
+    const chart = cardChart(lead(), 'kg');
+
+    expect(chart.unit).toBe('kg');
+    expect(chart.committed).toBeCloseTo(82.78, 2); // 182.5 lb
+    expect(chart.stretch).toBeCloseTo(88.45, 2); // 195 lb
+    expect(chart.expected[0]).toMatchObject({ weekIndex: 1 });
+    expect(chart.expected[0]?.low).toBeCloseTo(77.11, 2); // 170 lb
+    expect(chart.actuals.map((a) => Math.round(a.value))).toEqual([76, 78, 79]); // 168, 171, 174 lb
+    expect(chart.nextTarget?.value).toBeCloseTo(80.51, 2); // 177.5 lb
+    expect(chart.nextTarget?.label).toBe('81 x 8 in week 4');
+  });
+
+  it('draws the compact cards’ trend in kg', () => {
+    const trend = cardTrend(curl(), 'kg');
+
+    expect(trend.unit).toBe('kg');
+    expect(trend.committed).toBeCloseTo(22.68, 2); // 50 lb
+    expect(trend.stretch).toBeCloseTo(24.95, 2); // 55 lb
+    expect(trend.actuals.map((a) => Math.round(a.value))).toEqual([20, 21]); // 44, 46 lb
+    expect(trend.nextTarget?.label).toMatch(/^\d+ x 8 in week 4$/);
+  });
+
+  it('hands the lead card its chart in kg', () => {
+    const [chart] = handedInKg('goal');
+
+    expect(chart).toMatchObject({ unit: 'kg' });
+    expect(chart?.committed).toBeCloseTo(82.78, 2);
+  });
+
+  it('hands every per-lift card its trend in kg', () => {
+    const trends = handedInKg('trend');
+
+    expect(trends).not.toHaveLength(0);
+    for (const trend of trends) expect(trend.unit).toBe('kg');
+  });
+
+  it('leaves the lb charts exactly as they were', () => {
+    const view = lead();
+    const chart = cardChart(view, 'lbs');
+
+    expect(chart).toEqual(cardChart(view));
+    expect(chart).not.toHaveProperty('unit');
+    expect(chart.committed).toBe(182.5);
+    expect(chart.nextTarget).toEqual({
+      weekIndex: view.nextMilestone.dueWeek,
+      value: view.nextMilestone.value,
+      label: view.nextMilestone.label,
+    });
+    expect(cardTrend(curl(), 'lbs')).toEqual(cardTrend(curl()));
+    expect(cardTrend(curl()).unit).toBe('lb');
   });
 });
