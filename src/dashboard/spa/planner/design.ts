@@ -18,6 +18,7 @@
  * two pages and there must not be — colour comes from `<Surface level>`,
  * `useOnSurfaceColor`, and semantic `var(--color-*)` tokens.
  */
+import type { TextStyle } from 'react-native';
 
 /** The 4px spacing scale. Every gap/padding/margin on these pages is one of these. */
 export const SPACE = {
@@ -66,3 +67,6 @@ export const QUIET_ACTION_BORDER = {
   borderWidth: 1,
   borderColor: 'var(--color-hairline-strong)',
 } as const;
+
+/** Tabular numerals, so digits in a column or a changing total line up (design floor F12). */
+export const TABULAR: TextStyle = { fontVariant: ['tabular-nums'] };

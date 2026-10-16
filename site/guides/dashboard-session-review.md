@@ -4,6 +4,8 @@ audience: [lifter, coach]
 status: available
 sources:
   - src/dashboard/spa/planner/SessionSummaryPage.tsx
+  - src/dashboard/spa/planner/summary/
+  - src/dashboard/spa/planner/session-summary-model.ts
   - src/dashboard/spa/panels/DashboardChrome.tsx
   - src/dashboard/spa/routing.ts
   - src/dashboard/read-models/session-summary.ts
@@ -11,20 +13,21 @@ sources:
   - src/tools/plan-tools.ts
   - src/docs/capture-shots.ts
   - scripts/dashboard-plan-drive.mjs
-lastVerified: 2026-09-30
-sourced: 2026-09-30
+lastVerified: 2026-10-15
+sourced: 2026-10-15
 ---
 
 # Review a session on the dashboard
 
 This tutorial walks you through the session summary page after a workout. You open it, read
-the verdict at the top of each exercise, check the set that verdict came from, and read the
-load recommendation for next time. It assumes the dashboard is already open; if it is not,
-start with [Set it up and open it](/guides/dashboard-setup).
+the verdict at the left of each exercise, check the sets behind it, and read the load for next
+time on the right. It assumes the dashboard is already open; if it is not, start with
+[Set it up and open it](/guides/dashboard-setup).
 
-The capture below comes from a scripted run on the mock adapter: two sets of Cable Chest
-Press, five reps each at 140 lb, against a plan that asks for 8 to 10 reps
-(`src/docs/capture-shots.ts:425-443`, `scripts/dashboard-plan-drive.mjs:115-123`).
+The capture below comes from a scripted run on the mock adapter. The summary shows the last
+exercise of that run: two sets of Cable Chest Fly, five reps each at 140 lb, against a plan
+that asks for 12 to 15 reps (`src/docs/capture-shots.ts:424-446`,
+`scripts/dashboard-plan-drive.mjs`).
 
 ## 1. Open the summary
 
@@ -33,84 +36,99 @@ Click **review** in the nav rail. It opens `#/summary`
 
 With no session named, the page shows the session that ended most recently, looking among the
 20 that started most recently. If none of those has ended, it shows the one that started most
-recently, and the title reads "Session in
-progress" instead of "Session complete" (`src/dashboard/read-models/session-summary.ts:114-144`,
-`src/dashboard/spa/planner/SessionSummaryPage.tsx:145-147`).
+recently, the title reads "Session in progress" instead of "Session complete", and a "Session
+still open" tag replaces the duration (`src/dashboard/read-models/session-summary.ts:114-144`,
+`src/dashboard/spa/planner/summary/SummaryHeader.tsx`).
 
 The page loads once and does not poll, because a finished session's numbers do not change
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:9-10`). If you opened it on a session in
+(`src/dashboard/spa/planner/SessionSummaryPage.tsx:14-15`). If you opened it on a session in
 progress, reload the page after [`session.end`](/reference/session) to see the final numbers.
 
 <CaptureCallouts
   shot="session-summary"
   :callouts='[
     {"quote": "Session complete", "text": "The session has ended. A session still running reads Session in progress."},
-    {"quote": "EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb", "text": "Totals for the whole session, across every exercise."},
-    {"quote": "FATIGUE — RPE Good", "text": "The verdict for this exercise. The RPE label carries no number: the effort readout is coming soon (VW-485)."},
-    {"quote": "12% peak-to-last within a set — set #2, the set the verdict above reads.", "text": "The worst velocity loss in any working set, and which set it was."},
-    {"quote": "RECOMMENDATION -5 lb TARGET LOAD 135 lb", "text": "The load change for next time, and the load it lands on."},
-    {"quote": "#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5", "text": "One row per set: reps, load, velocity loss and best rep velocity."}
+    {"quote": "1 exercise · 2 sets · 10 reps · 1,400 lb", "text": "Totals for the whole session, across every exercise, then its duration."},
+    {"quote": "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO", "text": "The verdict for this exercise, the set it read and that set’s velocity loss."},
+    {"quote": "VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%", "text": "The sets behind the verdict: velocity loss and estimated one-rep max from first set to last, then one column per set."},
+    {"quote": "NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps", "text": "The load for next time, the step that lands on it, and the reps it scored against the plan."},
+    {"quote": "Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb", "text": "One row per set: what it counted as, reps, load, velocity loss, best rep velocity and estimated one-rep max."}
   ]'
 />
 
 ## 2. Read the totals
 
-The first card counts the whole session: exercises, sets, reps, volume and duration
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:131-141`). Below it, the page draws one
-card per exercise the session touched, so a session that moved between lifts shows each one
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:4-7`).
+The header counts the whole session: exercises, sets, reps, volume and duration. Volume leaves
+out sets with no load, such as band or damper sets, and says how many it left out
+(`src/dashboard/spa/planner/session-summary-model.ts`, `headerTotals`). Below it, the page
+draws one band per exercise the session touched, so a session that moved between lifts shows
+each one (`src/dashboard/spa/planner/SessionSummaryPage.tsx:4-7`).
+
+The **LBS / KG** toggle in the header switches every load on the page. In kg, a step such as
+"Back off 3 kg" is the difference between the two loads shown, so it always adds up.
 
 ## 3. Read the verdict
 
-Each exercise card opens with the fatigue verdict: the same word and the same three lights
-the live page shows mid-set (`src/dashboard/spa/planner/SessionSummaryPage.tsx:198-204`). The
-verdict reads the exercise's worst working set, measured by velocity loss
+Each band opens on the left with the fatigue verdict: the same word and the same three lights
+the live page shows mid-set (`src/dashboard/spa/planner/summary/VerdictColumn.tsx`). The line
+above the word names the set it read and that set's velocity loss. The verdict reads the
+exercise's worst working set, measured by velocity loss
 (`src/dashboard/read-models/session-summary-view.ts:80-86`). On a tie it reads the later set
 (`src/dashboard/read-models/session-summary.ts:258-280`). What the verdict words mean is
 explained in [Fatigue and pacing](/concepts/fatigue-and-pacing).
 
-**There is no effort number yet.** The verdict has a slot for RPE, and it stays empty. The
-page shows no RPE and no reps in reserve until the lifter has a fitted effort profile the
-dashboard can trust (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`). That work is
-VW-485; see [Effort readout](/coming-soon/effort-readout).
+With no verdict, the band says why instead: no working sets to score, or no bar-speed data.
+Hover the label for the reason.
 
-A PR badge on an exercise card means the best estimated one-rep max **of this session**. The
-page only ever sees one session, so it cannot claim an all-time record
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:193-195`).
+**There is no effort number yet.** "RIR · Calibrating" in the header marks it: the page shows
+no RPE and no reps in reserve until the lifter has a fitted effort profile the dashboard can
+trust. Hover it for the reason. That work is VW-485; see
+[Effort readout](/coming-soon/effort-readout).
 
-## 4. Check the worst velocity loss
+## 4. Check the sets behind it
 
-Under the tiles, a gauge shows the exercise's worst within-set velocity loss. The caption
-under it names the set the verdict read, so you can check the two against each other
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:205-227`). In the capture both sets lost
-12%, and the verdict reads set 2.
-
-When an exercise has at least two working sets with a recorded load, the card also plots its
-estimated one-rep max across the session. With fewer, it says there is not enough to plot
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:256-261`).
+The middle of the band gives two facts and then the sets. The facts are the velocity loss of
+the first working set and the last, and the estimated one-rep max over the same sets
+(`src/dashboard/spa/planner/summary/EvidenceColumn.tsx`). Each set then gets a column: its
+number, reps, load and velocity loss. Warm-ups, and working sets the recommendation did not
+score, are greyed and labelled.
 
 ## 5. Read the recommendation
 
-The "Next session" block gives a load change and the target load it lands on. The line under
-the tiles says why (`src/dashboard/spa/planner/SessionSummaryPage.tsx:297-337`). It comes from
-the same rule that [`plan.suggest_progression`](/reference/plan) runs
-(`src/tools/plan-tools.ts:1750-1756`, `src/dashboard/read-models/session-summary.ts:410`).
+The right of the band gives next time's load in large type, and the step that lands on it:
+"Add 5 lb", "Hold" or "Back off 5 lb". The load is the heaviest working load of this session
+plus the step (`src/dashboard/spa/planner/session-summary-model.ts:32-39`). The step is never
+coloured as an alarm. Hover it for the rule's own reasoning; in kg that text keeps its lb
+numbers and says so.
+
+Under the load, the plan's sets and rep range and one chip per scored set show the reps the
+recommendation counted. A chip with an arrow up reached the top of the range; an arrow down
+fell short of it.
+
+The step comes from the same rule that [`plan.suggest_progression`](/reference/plan) runs
+(`src/tools/plan-tools.ts:1750-1756`, `src/dashboard/read-models/session-summary.ts:420`).
 The page runs that rule with a default intermediate tier and no diet phase. The tool reads
 your own tier and declared diet phase, so the two can disagree
 (`src/tools/plan-tools.ts:1127-1130`, `src/tools/plan-tools.ts:1620-1625`). By default the
 tool also reads the most recent session that trained the exercise, while the page reads the
-session on screen. When they do, ask
-Claude for the tool's answer.
+session on screen. When they do, ask Claude for the tool's answer.
 
-The recommendation needs a plan. Instead of tiles you get one line when the sets named no
+When the verdict and the step point opposite ways, a short label says so, for example "Moved
+well · missed reps" (`src/dashboard/spa/planner/session-summary-model.ts:83-99`). It also
+shows your usual rep range at this load, once your history has enough sets for one, and flags a
+load whose effort has drifted from the plan. Hover any of these for the detail.
+
+The recommendation needs a plan. The band reads "No recommendation" when the sets named no
 exercise, when there is no active training program, or when the current program does not
-prescribe the exercise (`src/dashboard/read-models/session-summary.ts:391-409`). To get one,
-build the workout first: see [Build a plan on the dashboard](/guides/dashboard-plan-builder).
+prescribe the exercise; hover it for which
+(`src/dashboard/read-models/session-summary.ts:398-419`). To get one, build the workout first:
+see [Build a plan on the dashboard](/guides/dashboard-plan-builder).
 
-## 6. Read the set rows
+## 6. Read the set table
 
-The last block lists each set with its reps, load, velocity loss and best rep velocity.
-Warm-up sets carry a "warm-up" tag (`src/dashboard/spa/planner/SessionSummaryPage.tsx:340-376`).
+Below the bands, a table lists every set of the session by exercise: what it counted as, reps,
+load, velocity loss, best rep velocity and estimated one-rep max
+(`src/dashboard/spa/planner/summary/SetRecordTable.tsx`).
 
 ## 7. Open an older session
 

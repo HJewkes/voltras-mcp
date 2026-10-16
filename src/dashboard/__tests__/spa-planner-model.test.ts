@@ -12,12 +12,10 @@ import {
   isRealSummarySet,
   nextTargetWeightLbs,
   prescriptionLine,
-  progressionLabel,
   repRange,
   resolveSelectedTemplateId,
   sessionRollup,
-  setLine,
-  setsAgainstPlan,
+  setLoad,
   visibleSets,
   type FlatTemplate,
 } from '../spa/planner/planner-model.js';
@@ -223,19 +221,7 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
   };
 }
 
-describe('progression readouts', () => {
-  it('labels the delta with a sign, and a hold as "hold"', () => {
-    expect(progressionLabel(progression({ delta: 5 }))).toBe('+5 lb');
-    expect(progressionLabel(progression({ delta: -5 }))).toBe('-5 lb');
-    expect(progressionLabel(progression({ delta: 0 }))).toBe('hold');
-    expect(progressionLabel(null)).toBe('—');
-  });
-
-  it('converts a non-zero delta to kg with the toggle on, but hold stays hold (VW-196)', () => {
-    expect(progressionLabel(progression({ delta: 20 }), 'kg')).toBe('+9 kg');
-    expect(progressionLabel(progression({ delta: 0 }), 'kg')).toBe('hold');
-  });
-
+describe('nextTargetWeightLbs', () => {
   it('adds the delta to the load actually lifted, not the plan target', () => {
     // Top load (145) has outgrown the plan's 135 — progress from what was lifted.
     expect(nextTargetWeightLbs(summaryExercise({ topWeightLbs: 145 }))).toBe(150);
@@ -255,25 +241,6 @@ describe('progression readouts', () => {
       ),
     ).toBeNull();
     expect(nextTargetWeightLbs(summaryExercise({ progression: null }))).toBeNull();
-  });
-
-  it('reports sets against the plan when there is one', () => {
-    expect(setsAgainstPlan(summaryExercise())).toBe('3 / 3 sets');
-    expect(setsAgainstPlan(summaryExercise({ workingSetCount: 2 }))).toBe('2 / 3 sets');
-    expect(setsAgainstPlan(summaryExercise({ progression: null, workingSetCount: 1 }))).toBe(
-      '1 working set',
-    );
-  });
-
-  it('does not render an overshoot as a fraction greater than one', () => {
-    // VW-121 / F5: an extra set produced literally `3 / 2 sets` — "three out of
-    // two", which is not a sentence. The same two numbers, said truthfully.
-    const over = summaryExercise({
-      workingSetCount: 3,
-      progression: progression({ targetSets: 2 }),
-    });
-    expect(setsAgainstPlan(over)).toBe('3 sets · target 2');
-    expect(setsAgainstPlan(over)).not.toContain('/');
   });
 });
 
@@ -416,25 +383,23 @@ describe('sessionRollup', () => {
   });
 });
 
-describe('setLine', () => {
-  it('renders reps × the numeric load, formatted through formatMass', () => {
-    expect(setLine(summarySet())).toBe('10 × 135 lb');
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: '—' }))).toBe('10 × —');
+describe('setLoad', () => {
+  it('renders the numeric load, formatted through formatMass', () => {
+    expect(setLoad(summarySet())).toBe('135 lb');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: '—' }))).toBe('—');
   });
 
   it('renders a Damper or Band set by its own setting, not a missing weight (VMCP-02.74)', () => {
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }))).toBe('10 × damper 6');
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'band' }))).toBe('10 × band');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'damper 6' }))).toBe('damper 6');
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'band' }))).toBe('band');
   });
 
   it('converts a numeric load to kg with the toggle on (VW-196)', () => {
-    expect(setLine(summarySet({ weightLbs: 100 }), 'kg')).toBe('10 × 45 kg');
+    expect(setLoad(summarySet({ weightLbs: 100 }), 'kg')).toBe('45 kg');
   });
 
   it('never converts a label with no number, even with the toggle on (VW-196)', () => {
-    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }), 'kg')).toBe(
-      '10 × damper 6',
-    );
+    expect(setLoad(summarySet({ weightLbs: null, loadLabel: 'damper 6' }), 'kg')).toBe('damper 6');
   });
 });
 

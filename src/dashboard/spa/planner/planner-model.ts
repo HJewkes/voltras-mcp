@@ -14,7 +14,6 @@ import { selectWorkingSets } from '../../../store/working-sets.js';
 import type { PlanExerciseView, PlanTemplateView, PlanTreeView } from '../../read-models/plan-tree';
 import type {
   SessionSummaryExercise,
-  SessionSummaryProgression,
   SessionSummarySet,
   SessionSummaryView,
 } from '../../read-models/session-summary-view';
@@ -68,7 +67,7 @@ export function resolveSelectedTemplateId(
 
 /**
  * `unit`-suffixed weight string, rounded via {@link formatMass}: `100 lb` /
- * `45 kg`. This page's own singular-`lb` convention (vs. the live page's
+ * `45 kg` / `12,040 lb`. This page's own singular-`lb` convention (vs. the live page's
  * `lbs`) is kept regardless of `formatMass`'s `unit` label. Null/undefined/NaN
  * render `'—'`, matching {@link formatNumber} (VW-196).
  */
@@ -77,7 +76,7 @@ export function formatWeightLbs(
   unit: MassUnit = 'lbs',
 ): string {
   if (valueLbs === null || valueLbs === undefined || !Number.isFinite(valueLbs)) return '—';
-  return `${formatMass(valueLbs, unit).value} ${unit === 'kg' ? 'kg' : 'lb'}`;
+  return `${formatMass(valueLbs, unit).value.toLocaleString('en-US')} ${unit === 'kg' ? 'kg' : 'lb'}`;
 }
 
 /**
@@ -104,17 +103,6 @@ export function repRange(low: number | undefined, high: number | undefined): str
   return `${low}-${high}`;
 }
 
-/** Signed delta as a label: `+5 lb`, `-5 lb`, `+2 kg`, or `hold`. */
-export function progressionLabel(
-  progression: SessionSummaryProgression | null,
-  unit: MassUnit = 'lbs',
-): string {
-  if (progression === null) return '—';
-  if (progression.delta === 0) return 'hold';
-  const { value } = formatMass(progression.delta, unit);
-  return `${value > 0 ? '+' : ''}${value} ${unit === 'kg' ? 'kg' : 'lb'}`;
-}
-
 /**
  * Next session's target load: the exercise's top working load plus the
  * recommended delta. Null when neither the session nor the plan recorded a load
@@ -124,22 +112,6 @@ export function nextTargetWeightLbs(exercise: SessionSummaryExercise): number | 
   const base = exercise.topWeightLbs ?? exercise.progression?.targetWeightLbs ?? null;
   if (base === null || exercise.progression === null) return null;
   return base + exercise.progression.delta;
-}
-
-/**
- * `2 / 3 sets` completion readout against the plan, or just the count.
- *
- * Overshoot does NOT render as a fraction (VW-121 / F5): an extra set produced
- * literally `3 / 2 sets`, which parses as "three out of two" — a fraction above
- * 1 that means nothing to a reader. Past target it becomes `3 sets · target 2`:
- * the same two numbers, said in a way that is true.
- */
-export function setsAgainstPlan(exercise: SessionSummaryExercise): string {
-  const done = exercise.workingSetCount;
-  if (exercise.progression === null) return `${done} working ${done === 1 ? 'set' : 'sets'}`;
-  const target = exercise.progression.targetSets;
-  if (done > target) return `${done} sets · target ${target}`;
-  return `${done} / ${target} sets`;
 }
 
 /** One decimal place, or `'—'` for an absent measurement. Never invents a zero. */
@@ -264,15 +236,14 @@ function sessionDurationMin(summary: SessionSummaryView): number | null {
 }
 
 /**
- * `10 × 135 lb`-style one-liner for a completed set. A numeric `weightLbs`
- * (Weight Training) formats through `formatWeightLbs` so the display toggle
- * applies; a Band/Damper/Isokinetic set carries no `weightLbs` (#271), so its
- * server-computed `loadLabel` (VMCP-02.74, `describeLoad`) passes through
- * unconverted — a label with no number in it is never a mass to convert.
+ * A completed set's load. A numeric `weightLbs` (Weight Training) formats
+ * through `formatWeightLbs` so the display toggle applies; a Band/Damper/
+ * Isokinetic set carries no `weightLbs` (#271), so its server-computed
+ * `loadLabel` (VMCP-02.74, `describeLoad`) passes through unconverted — a
+ * label with no number in it is never a mass to convert.
  */
-export function setLine(set: SessionSummarySet, unit: MassUnit = 'lbs'): string {
-  const load = set.weightLbs === null ? set.loadLabel : formatWeightLbs(set.weightLbs, unit);
-  return `${set.repCount} × ${load}`;
+export function setLoad(set: SessionSummarySet, unit: MassUnit = 'lbs'): string {
+  return set.weightLbs === null ? set.loadLabel : formatWeightLbs(set.weightLbs, unit);
 }
 
 /**

@@ -1,15 +1,8 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { useState } from 'react';
-import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Text, View, type LayoutChangeEvent } from 'react-native';
 import { useStore } from 'zustand';
-import {
-  LiveFatiguePanel,
-  SessionRail,
-  Surface,
-  alpha,
-  getSemanticColors,
-  useOnSurfaceColor,
-} from '@titan-design/react-ui';
+import { LiveFatiguePanel, SessionRail, Surface, useOnSurfaceColor } from '@titan-design/react-ui';
 import { ExerciseHeader } from './ExerciseHeader';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
@@ -33,67 +26,8 @@ import {
 } from './model';
 import { FATIGUE_PANEL_CHROME, FATIGUE_PANEL_FALLBACK_BODY } from './panel-geometry';
 import type { DivergingHeroModel, LimbAsymmetry, LiveFatigueModel } from './fatigue-model';
-import { type MassUnit } from './mass';
 import { dashboardStore } from '../store';
-
-// Semantic reads for the corner UnitToggle's own chrome — its translucent (alpha) overlay
-// ground, active-segment plane, and border. These are NOT on-surface text roles, so they come
-// from the token map rather than `useOnSurfaceColor`; the toggle's text uses the hook.
-const t = getSemanticColors('dark');
-
-/** A subtle corner segmented control toggling the wall's weight/force display unit (VW-63). */
-function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassUnit) => void }) {
-  const units: MassUnit[] = ['lbs', 'kg'];
-  const activeText = useOnSurfaceColor('primary');
-  const inactiveText = useOnSurfaceColor('tertiary');
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        bottom: 14,
-        right: 18,
-        zIndex: 10,
-        flexDirection: 'row',
-        borderRadius: 8,
-        overflow: 'hidden',
-        borderWidth: 1,
-        // `border-default` was deleted in titan 0.12.0 — solid dark borders are
-        // gone and separation is the alpha hairline family's job now. Same role,
-        // and self-normalizing, so it holds up on whatever plane this floats over.
-        borderColor: t['hairline-default'],
-        backgroundColor: alpha(t['surface-overlay'], 0.85),
-      }}
-    >
-      {units.map((u) => {
-        const active = u === unit;
-        return (
-          <Pressable
-            key={u}
-            onPress={() => onChange(u)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 5,
-              backgroundColor: active ? t['surface-raised'] : 'transparent',
-            }}
-          >
-            <Text
-              style={{
-                color: active ? activeText : inactiveText,
-                fontSize: 11,
-                fontWeight: '700',
-                letterSpacing: 1.5,
-              }}
-            >
-              {u.toUpperCase()}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
+import { UnitToggle } from '../UnitToggle';
 
 export type LivePageVariant = 'live' | 'live-dual';
 
