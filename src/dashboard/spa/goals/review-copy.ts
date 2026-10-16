@@ -8,6 +8,9 @@
 export const UNREVIEWED_LINE =
   "These numbers leave out {days} you haven't marked as training or test yet.";
 
+/** The link after the line, to the screen that marks those days (VW-847). */
+export const REVIEW_DAYS_LINK = 'Review these days';
+
 /** The line for `unreviewedDays`, or `null` when nothing is withheld. */
 export function unreviewedLine(unreviewedDays: number | undefined): string | null {
   if (unreviewedDays === undefined || unreviewedDays <= 0) return null;
