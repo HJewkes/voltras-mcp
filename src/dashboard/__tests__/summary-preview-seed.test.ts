@@ -72,7 +72,7 @@ describe('summary preview seed', () => {
 
     expect(facePull.topWeightLbs).toBeNull();
     expect(facePull.sets.map((s) => s.loadLabel)).toEqual(['damper 5', 'damper 5']);
-    expect(facePull.progressionNote).toMatch(/not prescribed/);
+    expect(facePull.progressionNote).toMatch(/Not in your current program/);
   });
 
   it('routes the summary page to the seeded session', () => {

@@ -412,7 +412,9 @@ async function resolveProgression(
   if (planned === undefined) {
     return {
       progression: null,
-      progressionNote: `"${args.exerciseId}" is not prescribed in the current program.`,
+      // The page heads the band with the exercise's display name, so the note
+      // repeats no id (VW-944: the raw catalog id used to show here in quotes).
+      progressionNote: 'Not in your current program, so there is no load to progress.',
     };
   }
   const suggestion = computeProgressionDelta(planned, args.sets, args.sessionId);

@@ -300,7 +300,10 @@ describe('buildSessionSummary', () => {
     const noPlan = (await buildSessionSummary({ store: notPrescribed, nameOf }, 'sess-1'))
       ?.exercises[0];
     expect(noPlan?.progression).toBeNull();
-    expect(noPlan?.progressionNote).toContain('not prescribed');
+    expect(noPlan?.progressionNote).toBe(
+      'Not in your current program, so there is no load to progress.',
+    );
+    expect(noPlan?.progressionNote).not.toContain('cable-row');
 
     const noProgram = makeStore([makeSet('s1', 'cable-row', 10)], [], { programs: [] });
     const withoutProgram = (await buildSessionSummary({ store: noProgram, nameOf }, 'sess-1'))

@@ -122,7 +122,7 @@ and re-run `npm run docs:captures` to change what it says
 writes its final row (`src/tools/session-tools.ts`). The summary page reads back the
 totals, runs the same fatigue verdict the live page uses on one named set, and adds a load
 recommendation that only appears here. It states no RPE or RIR
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-209`).
+(`src/dashboard/spa/planner/summary/SummaryHeader.tsx`).
 
 ![The session-completion screen for the session that just ended.](/captures/session-summary.png)
 

@@ -9,9 +9,15 @@ import {
   disagreement,
   displayDelta,
   e1rmBySet,
+  fatigueFact,
   headerTotals,
   nextLoad,
+  nextTimeChip,
   repMarks,
+  repScheme,
+  serverProse,
+  setKind,
+  strengthFact,
   usualRange,
   verdictKicker,
 } from '../spa/planner/session-summary-model.js';
@@ -212,5 +218,83 @@ describe('absent reason', () => {
     const exercise = { ...fullSession('Seated Cable Row'), verdict: null };
 
     expect(absentReason(exercise)).toBe('no-verdict');
+  });
+});
+
+describe('rep scheme', () => {
+  it('writes sets and rep band with no space around the times sign', () => {
+    expect(repScheme(fullSession('Cable Romanian Deadlift'))).toBe('3×10–12');
+  });
+
+  it('is null with nothing prescribed', () => {
+    expect(repScheme(fullSession('Face Pull'))).toBeNull();
+  });
+});
+
+describe('next-time chip', () => {
+  it('words each step from the sign of the delta', () => {
+    expect(nextTimeChip(fullSession('Seated Cable Row'), 'lbs')).toBe('Add 5 lb');
+    expect(nextTimeChip(fullSession('Cable Romanian Deadlift'), 'lbs')).toBe('Hold');
+    expect(nextTimeChip(fullSession('Standing Cable Chest Press'), 'lbs')).toBe('Back off 5 lb');
+  });
+
+  it('sizes a kg step from the two displayed loads, not the converted delta', () => {
+    // 140 to 135 lb shows as 64 to 61 kg; converting the raw 5 lb would say 2 kg.
+    expect(nextTimeChip(chestFly(), 'kg')).toBe('Back off 3 kg');
+  });
+
+  it('is null with no recommendation', () => {
+    expect(nextTimeChip(fullSession('Face Pull'), 'lbs')).toBeNull();
+  });
+});
+
+describe('server prose', () => {
+  it('passes through unchanged in lb', () => {
+    expect(serverProse('add 5 lb.', 'lbs')).toBe('add 5 lb.');
+  });
+
+  it('is tagged in kg so its lb numbers never read as kg', () => {
+    expect(serverProse('add 5 lb.', 'kg')).toBe('add 5 lb. (in lb)');
+  });
+});
+
+describe('session facts', () => {
+  it('reads velocity loss from the first working set to the last', () => {
+    expect(fatigueFact(fullSession('Cable Romanian Deadlift'))).toBe('VL 14%→23%');
+  });
+
+  it('has no fatigue fact without two readings', () => {
+    expect(fatigueFact(edges('Cable Biceps Curl'))).toBeNull();
+  });
+
+  it('reads e1RM first to last with a true minus sign', () => {
+    expect(strengthFact(fullSession('Cable Romanian Deadlift'), 'lbs')).toBe(
+      'e1RM 168→160 · \u22125%',
+    );
+  });
+
+  it('converts e1RM to the display unit', () => {
+    expect(strengthFact(fullSession('Cable Romanian Deadlift'), 'kg')).toBe(
+      'e1RM 76→73 · \u22125%',
+    );
+  });
+});
+
+describe('set kind', () => {
+  it('names a scored set working and a flagged warm-up a warm-up', () => {
+    const [warmup, , working] = fullSession('Cable Romanian Deadlift').sets;
+
+    expect(setKind(working!, true)).toBe('working');
+    expect(setKind(warmup!, false)).toBe('warm-up');
+  });
+
+  it('names a working set the scoring dropped as not scored', () => {
+    const band = edges('Cable Biceps Curl').sets[1]!;
+
+    expect(setKind(band, false)).toBe('not scored');
+  });
+
+  it('names a technique set by its purpose', () => {
+    expect(setKind(edges('Cable Lateral Raise').sets[0]!, false)).toBe('technique');
   });
 });

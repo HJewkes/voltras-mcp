@@ -176,9 +176,10 @@ passes it no value, so it shows a dash. The RPE and RIR values are withheld unti
 calculation: the analytics above already compute an estimate.
 
 The session summary works the same way. It shows each exercise's fatigue verdict and velocity
-figures, and passes no RPE or RIR to its verdict display (`src/dashboard/read-models/session-summary.ts:10-14`,
-`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`). The verdict display comes from the
-titan design library the dashboard depends on (`package.json:78`).
+figures, shows no RPE or RIR figure, and marks the gap "RIR · Calibrating"
+(`src/dashboard/read-models/session-summary.ts:10-14`,
+`src/dashboard/spa/planner/summary/SummaryHeader.tsx`). The verdict's three lights come from
+the titan design library the dashboard depends on (`package.json:83`).
 
 ## Where the maths lives
 

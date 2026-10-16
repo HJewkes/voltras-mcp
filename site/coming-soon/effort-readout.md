@@ -41,9 +41,10 @@ motion and tempo, not from an effort model (`src/dashboard/spa/panels/fatigue-vi
 
 The live card and the session summary both hold the effort number back. The live card is built
 with no RPE and no reps in reserve (`src/dashboard/spa/panels/fatigue-view.ts:428-431`), and
-the session summary does the same (`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`).
-So where the RPE number would go, you see a dash next to the word RPE
-(`site/public/captures/manifest.json:45`).
+the session summary does the same (`src/dashboard/spa/planner/summary/VerdictColumn.tsx`).
+On the live card, where the RPE number would go, you see a dash next to the word RPE
+(`site/public/captures/manifest.json:45`). The summary marks the gap "RIR · Calibrating"
+instead (`src/dashboard/spa/planner/summary/SummaryHeader.tsx`).
 
 The dashboard holds the number back on purpose. Reading an effort number straight off velocity
 loss is a conversion this project does not allow, so the wall waits for a trusted curve fitted

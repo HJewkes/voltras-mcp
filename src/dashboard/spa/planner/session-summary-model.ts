@@ -16,6 +16,8 @@ import { fillSlots } from '../../../coach-copy/fill.js';
 import { selectWorkingSets } from '../../../store/working-sets.js';
 import { formatMass, type MassUnit } from '../live-page/mass';
 import {
+  e1rmChangePct,
+  e1rmSeries,
   isRealSummarySet,
   nextTargetWeightLbs,
   sessionRollup,
@@ -195,4 +197,74 @@ export function absentReason(exercise: SessionSummaryExercise): AbsentReason | n
   if (working.length === 0) return 'not-scored';
   if (working.every((set) => set.velocityLossPct === null)) return 'no-bar-speed';
   return 'no-verdict';
+}
+
+const MINUS = '−';
+
+/** "3×10–12", unspaced per the design floor; null without a planned rep band. */
+export function repScheme(exercise: SessionSummaryExercise): string | null {
+  const progression = exercise.progression;
+  if (progression === null || progression.targetRepsLow === null) return null;
+  const { targetSets, targetRepsLow: low, targetRepsHigh: high } = progression;
+  const reps = high === null || high === low ? `${low}` : `${low}–${high}`;
+  return `${targetSets}×${reps}`;
+}
+
+/** "Add 5 lb", "Hold" or "Back off 3 kg", worded from the displayed loads. */
+export function nextTimeChip(exercise: SessionSummaryExercise, unit: MassUnit): string | null {
+  const progression = exercise.progression;
+  if (progression === null) return null;
+  if (progression.delta === 0) return 'Hold';
+  const shown = displayDelta(exercise, unit);
+  const amount = Math.abs(shown ?? formatMass(progression.delta, unit).value);
+  const label = `${amount} ${unitLabel(unit)}`;
+  return progression.delta > 0 ? `Add ${label}` : `Back off ${label}`;
+}
+
+function unitLabel(unit: MassUnit): string {
+  return unit === 'kg' ? 'kg' : 'lb';
+}
+
+/**
+ * Server prose quotes its loads in lb. Until it carries structured fields the
+ * page shows it verbatim, tagged in kg mode so its numbers never read as kg.
+ */
+export function serverProse(text: string, unit: MassUnit): string {
+  return unit === 'kg' ? `${text} (in lb)` : text;
+}
+
+/** "VL 14%→23%", first working set to last; null without two readings. */
+export function fatigueFact(exercise: SessionSummaryExercise): string | null {
+  const losses = selectWorkingSets(exercise.sets)
+    .map((set) => set.velocityLossPct)
+    .filter((loss): loss is number => loss !== null);
+  const first = losses[0];
+  const last = losses[losses.length - 1];
+  if (first === undefined || last === undefined || losses.length < 2) return null;
+  return `VL ${Math.round(first)}%→${Math.round(last)}%`;
+}
+
+/** "e1RM 168→156 · −7%" in the display unit; null without two estimates. */
+export function strengthFact(exercise: SessionSummaryExercise, unit: MassUnit): string | null {
+  const series = e1rmSeries(exercise);
+  const changePct = e1rmChangePct(series);
+  const first = series[0];
+  const last = series[series.length - 1];
+  if (changePct === null || first === undefined || last === undefined) return null;
+  const from = formatMass(first.e1rm, unit).value;
+  const to = formatMass(last.e1rm, unit).value;
+  const rounded = Math.round(changePct);
+  const sign = rounded > 0 ? '+' : rounded < 0 ? MINUS : '';
+  return ['e1RM', `${from}→${to}`, '·', `${sign}${Math.abs(rounded)}%`].join(' ');
+}
+
+/**
+ * What a set counted as. A working-purpose set the scoring dropped (lighter
+ * than the top load, or unloaded beside a loaded one) is named for what
+ * happened to it, not for the purpose it was started with.
+ */
+export function setKind(set: SessionSummarySet, scored: boolean): string {
+  if (scored) return 'working';
+  if (set.setPurpose === 'warmup') return 'warm-up';
+  return set.setPurpose === 'working' ? 'not scored' : set.setPurpose;
 }

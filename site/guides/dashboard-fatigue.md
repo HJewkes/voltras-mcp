@@ -89,16 +89,16 @@ reads Good. The harness has no summary capture of a slowing session yet.
 <CaptureCallouts
   shot="session-summary"
   :callouts='[
-    {"quote": "FATIGUE — RPE Good", "text": "The exercise verdict, in the same words the live card uses. RPE is a dash here as well."},
-    {"quote": "12% peak-to-last within a set — set #2, the set the verdict above reads.", "text": "The worst velocity loss in any working set of this exercise, and which set the verdict reads."}
+    {"quote": "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO", "text": "The exercise verdict, in the same words the live card uses, and the set it read."},
+    {"quote": "RIR · Calibrating", "text": "No RPE or RIR figure yet. Hover it for why."}
   ]'
 />
 
 The summary shows no RPE or RIR for the same reason as the live card
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:201-202`). The verdict and the worst-loss
-line read the same set: the working set with the worst loss, the later one on a tie
-(`src/dashboard/read-models/session-summary.ts:258-280`,
-`src/dashboard/spa/planner/SessionSummaryPage.tsx:218-228`).
+(`src/dashboard/spa/planner/summary/SummaryHeader.tsx`). The verdict reads the working set
+with the worst loss, the later one on a tie, and the line above the word names that set and
+its loss (`src/dashboard/read-models/session-summary.ts:258-280`,
+`src/dashboard/spa/planner/session-summary-model.ts`, `verdictKicker`).
 
 ## Next
 

@@ -1,5 +1,5 @@
 {
-  "definitionHash": "6782ffaac688ca34b537129e0aa082e35c51b035574616446b677a2be2557edc",
+  "definitionHash": "0305ee095c5d78968f8c01090a7c1174ba567d28d3800d1f97d7a51afc51113e",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -123,19 +123,18 @@
         "kind": "sessions-ended",
         "minSessions": 3
       },
-      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
+      "assertedText": ["Session complete", "RIR · Calibrating", "NEXT TIME · REPS VS PLAN"],
       "assertedValues": [
-        "EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb",
-        "FATIGUE — RPE Good",
-        "BEST VELOCITY 0.5",
-        "12% peak-to-last within a set — set #2, the set the verdict above reads.",
-        "RECOMMENDATION -5 lb TARGET LOAD 135 lb",
-        "#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5"
+        "1 exercise · 2 sets · 10 reps · 1,400 lb",
+        "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO",
+        "VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%",
+        "NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps",
+        "Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 68563,
-      "sha256": "740483859d912e71af311808e1a9d17165d374a63b323be109e908e9e15221fc"
+      "bytes": 69808,
+      "sha256": "52ba1c1b509dce2abb08f9cc87ad5ba83f8119d55d6e43d41957b2eaa8573a1a"
     },
     {
       "name": "plan-builder",
