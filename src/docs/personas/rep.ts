@@ -37,16 +37,21 @@ export function rep(setId: string, index: number, velocityMps: number): StoredRe
 
 /**
  * The derived VBT block a finalized rep carries, read off the same aggregates as
- * {@link rep}: one movement reading, so peak equals mean and nothing drops.
+ * {@link rep}: one movement reading, so peak equals mean and nothing drops. A mode
+ * with no load of its own has no power to report.
  */
-export function derivedVbt(repNumber: number, velocityMps: number, loadLbs: number): StoredRepVbt {
+export function derivedVbt(
+  repNumber: number,
+  velocityMps: number,
+  loadLbs: number | undefined,
+): StoredRepVbt {
   return {
     rep_number: repNumber,
     concentric: phaseVbt(velocityMps),
     eccentric: phaseVbt(0),
     rom_m: RANGE_OF_MOTION_M,
     impulse_lb_s: null,
-    mean_power_lb_mps: Number((loadLbs * velocityMps).toFixed(3)),
+    mean_power_lb_mps: loadLbs === undefined ? null : Number((loadLbs * velocityMps).toFixed(3)),
     tempo_ratio: 0,
     hold_top_ms: 0,
   };

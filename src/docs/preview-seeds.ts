@@ -119,7 +119,7 @@ export const GOAL_PREVIEW_EXERCISE = {
  * One seeded lift: its exercise, the ids it writes under, and the history behind it.
  * The lead writes under `goal` so its rows keep the ids the page and tests know.
  */
-interface SeededLift {
+export interface SeededLift {
   readonly key: string;
   readonly exercise: { readonly id: string; readonly name: string };
   readonly level: StoredPriorityLevel;
@@ -419,7 +419,7 @@ function companionLift(
 }
 
 /** One lift's sessions, baseline, priority and accepted target, derived as the tools derive them. */
-async function seedLift(
+export async function seedLift(
   store: GoalPreviewStore,
   lift: SeededLift,
   now: Date,
@@ -727,7 +727,10 @@ export const GOAL_PREVIEW_WEIGHT = {
   lossPctPerWeek: 0.6,
 } as const;
 
-async function seedWholeBody(store: GoalPreviewStore, now: Date): Promise<WholeBodyMetric[]> {
+export async function seedWholeBody(
+  store: GoalPreviewStore,
+  now: Date,
+): Promise<WholeBodyMetric[]> {
   await seedPreviewCut(store, now);
   const seeded: WholeBodyMetric[] = [];
   for (const metric of ['bodyweight', 'sessions_28d'] as const) {
