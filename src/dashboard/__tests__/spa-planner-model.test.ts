@@ -348,6 +348,8 @@ function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummaryS
     velocityLossPct: 12,
     bestRepVelocity: 0.8,
     expectedRepRange: null,
+    side: null,
+    bilateralGroupId: null,
     ...overrides,
   };
 }

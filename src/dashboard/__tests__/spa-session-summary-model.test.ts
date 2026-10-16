@@ -17,6 +17,7 @@ import {
   repScheme,
   serverProse,
   setKind,
+  setLabel,
   strengthFact,
   usualRange,
   verdictKicker,
@@ -273,6 +274,27 @@ describe('session facts', () => {
     );
   });
 
+  it('reads a bilateral exercise along one side, so the asymmetry is not a change', () => {
+    const exercise = fullSession('Cable Romanian Deadlift');
+    const template = exercise.sets[1]!;
+    const side = (index: number, left: boolean): SessionSummaryExercise['sets'][number] => ({
+      ...template,
+      id: `side-${index}`,
+      index,
+      setPurpose: 'working',
+      weightLbs: left ? 90 : 100,
+      repCount: 8,
+      velocityLossPct: left ? 30 : 20,
+      side: left ? 'left' : 'right',
+      bilateralGroupId: `pair-${Math.ceil(index / 2)}`,
+    });
+    const sets = [side(1, true), side(2, false), side(3, true), side(4, false)];
+    const bilateral = { ...exercise, sets };
+
+    expect(fatigueFact(bilateral)).toBe('VL 20%→20%');
+    expect(strengthFact(bilateral, 'lbs')).toMatch(/^e1RM (\d+)→\1 · 0%$/);
+  });
+
   it('converts e1RM to the display unit', () => {
     expect(strengthFact(fullSession('Cable Romanian Deadlift'), 'kg')).toBe(
       'e1RM 76→73 · \u22125%',
@@ -292,6 +314,14 @@ describe('set kind', () => {
     const band = edges('Cable Biceps Curl').sets[1]!;
 
     expect(setKind(band, false)).toBe('not scored');
+  });
+
+  it('labels each side of a bilateral pair, and leaves an unsided set bare', () => {
+    const set = edges('Cable Biceps Curl').sets[0]!;
+
+    expect(setLabel({ ...set, index: 3, side: 'left' })).toBe('#3 L');
+    expect(setLabel({ ...set, index: 4, side: 'right' })).toBe('#4 R');
+    expect(setLabel({ ...set, index: 5, side: null })).toBe('#5');
   });
 
   it('names a technique set by its purpose', () => {

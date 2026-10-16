@@ -235,7 +235,7 @@ export function serverProse(text: string, unit: MassUnit): string {
 
 /** "VL 14%→23%", first working set to last; null without two readings. */
 export function fatigueFact(exercise: SessionSummaryExercise): string | null {
-  const losses = selectWorkingSets(exercise.sets)
+  const losses = trendSets(exercise)
     .map((set) => set.velocityLossPct)
     .filter((loss): loss is number => loss !== null);
   const first = losses[0];
@@ -244,9 +244,20 @@ export function fatigueFact(exercise: SessionSummaryExercise): string | null {
   return `VL ${Math.round(first)}%→${Math.round(last)}%`;
 }
 
+/**
+ * The working sets a first-to-last fact reads: one side only when the sets are
+ * sided, the side that finished, so a left/right asymmetry never reads as a
+ * change within the session (VW-951).
+ */
+function trendSets(exercise: SessionSummaryExercise): SessionSummarySet[] {
+  const working = selectWorkingSets(exercise.sets);
+  const side = working.at(-1)?.side ?? null;
+  return side === null ? working : working.filter((set) => set.side === side);
+}
+
 /** "e1RM 168→156 · −7%" in the display unit; null without two estimates. */
 export function strengthFact(exercise: SessionSummaryExercise, unit: MassUnit): string | null {
-  const series = e1rmSeries(exercise);
+  const series = e1rmSeries({ ...exercise, sets: trendSets(exercise) });
   const changePct = e1rmChangePct(series);
   const first = series[0];
   const last = series[series.length - 1];
@@ -256,6 +267,13 @@ export function strengthFact(exercise: SessionSummaryExercise, unit: MassUnit): 
   const rounded = Math.round(changePct);
   const sign = rounded > 0 ? '+' : rounded < 0 ? MINUS : '';
   return ['e1RM', `${from}→${to}`, '·', `${sign}${Math.abs(rounded)}%`].join(' ');
+}
+
+/** `#3`, or `#3 L` / `#4 R` for one side of a bilateral pair. */
+export function setLabel(set: SessionSummarySet): string {
+  if (set.side === 'left') return `#${set.index} L`;
+  if (set.side === 'right') return `#${set.index} R`;
+  return `#${set.index}`;
 }
 
 /**
