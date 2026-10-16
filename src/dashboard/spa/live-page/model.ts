@@ -140,6 +140,13 @@ export interface CompletedSet {
   fatigueStop: FatigueStop;
   /** WA's combined verdict (velocity, ROM, tempo) for the closed set; null under 2 reps. */
   fatigueVerdict: FatigueVerdict | null;
+  /**
+   * Shared by the two sides of one bilateral effort (VW-956), so the working-set rule
+   * ranks the pair by its heavier side. Optional so an older fixture still type-checks.
+   */
+  bilateralGroupId?: string | null;
+  /** The limb, when the set is one bound side. */
+  side?: 'left' | 'right' | null;
 }
 
 /**
@@ -198,6 +205,12 @@ export interface SessionModel {
    */
   tempo?: [number, number, number, number];
   completedSets: CompletedSet[];
+  /**
+   * The other limb's half of each bilateral pair in {@link completedSets} (VW-956), read
+   * from its own slot. Ranked with them by the working-set rule, never counted or shown:
+   * the pair is already one row there. Absent on a single-slot session.
+   */
+  partnerSides?: CompletedSet[];
   /**
    * The session's FULL ordered planned-exercise list (VW-49), including the active
    * one (flagged). Empty when no plan is attached — the rail then shows only the
@@ -395,11 +408,12 @@ export function activeCompletedSets(session: SessionModel): CompletedSet[] {
  * and stay in `session.completedSets` for the recap and the log; they just do not advance a
  * progress figure that means "working sets done". `selectWorkingSets`' top-load heuristic is
  * scoped per exercise (VW-283) — grouping by `exerciseName` first keeps a heavy exercise from
- * ranking a lighter one's sets out of its own tally.
+ * ranking a lighter one's sets out of its own tally. A bilateral pair's partner side ranks
+ * alongside but is never returned, so the pair counts once (VW-956).
  */
 export function workingCompletedSets(session: SessionModel): CompletedSet[] {
   const groups = new Map<string | null, CompletedSet[]>();
-  for (const set of session.completedSets) {
+  for (const set of [...session.completedSets, ...(session.partnerSides ?? [])]) {
     const group = groups.get(set.exerciseName);
     if (group) group.push(set);
     else groups.set(set.exerciseName, [set]);
@@ -721,7 +735,9 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     summary: {
       // Working sets only (VW-260) — the live overlay carries no purpose of its own yet, so
       // an in-progress set still counts unconditionally, same as before.
-      sets: selectWorkingSets(done).length + (live ? 1 : 0),
+      sets:
+        workingCompletedSets(session).filter((set) => set.exerciseName === session.exerciseName)
+          .length + (live ? 1 : 0),
       reps: bestRepsSoFar(done, live) ?? NO_VALUE,
       ...summaryLoad(session.weightLbs, displayUnit),
     },
