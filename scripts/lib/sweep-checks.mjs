@@ -136,12 +136,11 @@ export function findWeekOfMismatch(text, expectedMonday) {
  * A route key is a dashboard hash; `*` applies to every route. A rule is a
  * string (matched as a substring) or a RegExp.
  *
- * `/api/muscle-plan`'s 404 on a store with no planned week is deliberately NOT
- * allowed anywhere: Body logs it as two console errors, and that is a finding.
+ * No persona allows a 404: an empty read answers 200 with `null` (VW-948), and
+ * a 404 logs a console error on page load, which is a finding.
  */
 export const EXPECTATIONS = {
   fresh: {
-    allow404: ['/api/session-summary/latest'],
     routes: {
       '*': { mustNotShow: [RAW_HTTP_STATUS] },
       '#/summary': { mustShow: ['No sessions yet'] },

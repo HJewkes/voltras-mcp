@@ -277,14 +277,15 @@ describe('GET /api/muscle-plan', () => {
     ]);
   });
 
-  it('404s when no training week is currently active', async () => {
+  it('answers 200 null when no training week is currently active (VW-948)', async () => {
     const store = new FakeStore();
     const port = await start(makeState(store));
-    expect((await call(port, '/api/muscle-plan')).status).toBe(404);
-    expect((await call(port, '/api/muscle-plan')).body).toEqual({ error: 'not_found' });
+    const res = await call(port, '/api/muscle-plan');
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
   });
 
-  it('404s when every template in the program has already been trained', async () => {
+  it('answers 200 null when every template in the program has already been trained', async () => {
     const store = new FakeStore();
     const { tplB } = await seedTwoTemplateWeek(store);
     store.sessions.set('sess-2', { id: 'sess-2', startedAt: '2026-07-02T10:00:00.000Z' });
@@ -295,7 +296,9 @@ describe('GET /api/muscle-plan', () => {
       assignedAt: '2026-07-02T10:05:00.000Z',
     });
     const port = await start(makeState(store));
-    expect((await call(port, '/api/muscle-plan')).status).toBe(404);
+    const res = await call(port, '/api/muscle-plan');
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
   });
 
   it('501s when the wired store carries no planning methods', async () => {

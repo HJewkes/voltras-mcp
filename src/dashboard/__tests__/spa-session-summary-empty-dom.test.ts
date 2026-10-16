@@ -2,9 +2,10 @@
 //
 // The Review page when there is no session at all (VW-931): a fresh install, or
 // Live's auto-navigate after `session.end` on a store with nothing to show. The
-// route answers 404, which the page used to print as a raw red "HTTP 404".
+// route answers `latest` with 200 null there (VW-948) and an unknown id with a
+// 404, which the page used to print as a raw red "HTTP 404".
 // `SessionSummaryPage` mounted with `react-dom/client`, `fetch` stubbed to the
-// route's 404. The route half is `session-summary-latest-route.test.ts`.
+// route's answer. The route half is `session-summary-latest-route.test.ts`.
 
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -40,13 +41,10 @@ afterEach(() => {
 
 /** Mounts the summary page with every read answered as the route answers a missing session. */
 async function mountWithNoSession(sessionId: string): Promise<HTMLElement> {
-  vi.stubGlobal(
-    'fetch',
-    async () =>
-      new Response(JSON.stringify({ error: 'not_found' }), {
-        status: 404,
-        headers: { 'content-type': 'application/json' },
-      }),
+  vi.stubGlobal('fetch', async () =>
+    sessionId === 'latest'
+      ? Response.json(null)
+      : Response.json({ error: 'not_found' }, { status: 404 }),
   );
   const container = document.createElement('div');
   document.body.append(container);
@@ -63,6 +61,13 @@ describe('the summary page with no session to show (VW-931)', () => {
     const container = await mountWithNoSession('latest');
 
     expect(container.textContent).toContain('No sessions yet');
+    expect(container.textContent).not.toContain('HTTP 404');
+  });
+
+  it('renders "Session not found" for an unknown session id', async () => {
+    const container = await mountWithNoSession('no-such-session');
+
+    expect(container.textContent).toContain('Session not found');
     expect(container.textContent).not.toContain('HTTP 404');
   });
 });

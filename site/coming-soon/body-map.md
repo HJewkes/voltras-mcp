@@ -36,9 +36,9 @@ them (`src/dashboard/spa/body/BodyPage.tsx:30-38`). The fourth, recovery, appear
 [below](#recovery-the-last-trained-line).
 
 - **This week.** Working sets per muscle, set against volume landmarks, from
-  `/api/muscle-week` (`src/dashboard/spa/body/body-client.ts:32-34`, `src/dashboard/spa/body/BodyView.tsx:290-316`).
+  `/api/muscle-week` (`src/dashboard/spa/body/body-client.ts:31-33`, `src/dashboard/spa/body/BodyView.tsx:290-316`).
 - **Recent PRs.** Each lift's best estimated one-rep max over 12 weeks and its trend, from
-  `/api/muscle-strength` (`src/dashboard/spa/body/body-client.ts:36-38`, `src/dashboard/spa/body/BodyView.tsx:262-287`). Left and right sides
+  `/api/muscle-strength` (`src/dashboard/spa/body/body-client.ts:35-37`, `src/dashboard/spa/body/BodyView.tsx:262-287`). Left and right sides
   get separate trends, never an average (`src/dashboard/muscle-strength-api.ts:14-18`).
 - **Next up.** The planned sets your current program week still owes, from `/api/muscle-plan`
   (`src/dashboard/spa/body/BodyView.tsx:233-259`).
@@ -60,10 +60,10 @@ Three more things can leave the page empty after real training:
 - A set only counts toward a muscle when the set is tied to a known exercise
   (`src/dashboard/read-models/muscle-set-scope.ts:81-89`). Name the exercise with
   `session.set_exercise` before you lift.
-- The page always shows the current week (`src/dashboard/spa/body/body-client.ts:32-34`,
-  `src/dashboard/server.ts:961-967`). If you have not trained this week, the figure is blank.
+- The page always shows the current week (`src/dashboard/spa/body/body-client.ts:31-33`,
+  `src/dashboard/server.ts:963-969`). If you have not trained this week, the figure is blank.
 - Next up is empty unless a program week is active today
-  (`src/dashboard/server.ts:886-890`, `src/dashboard/spa/body/body-client.ts:45-54`).
+  (`src/dashboard/server.ts:891-894`, `src/dashboard/spa/body/body-client.ts:44-47`).
 
 <CaptureCallouts
   shot="body-week"
@@ -116,7 +116,7 @@ this page is waiting on.
 Tapping a muscle opens a side sheet over the figures
 (`src/dashboard/spa/body/BodyView.tsx:166-168`, `src/dashboard/spa/body/BodyView.tsx:216-227`).
 Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
-(`src/dashboard/server.ts:690-693`, `src/dashboard/spa/body/body-sheet-model.ts:107`). The line
+(`src/dashboard/server.ts:691-694`, `src/dashboard/spa/body/body-sheet-model.ts:107`). The line
 states what happened, when you last trained the muscle and how that session went against the
 one before, and never a recovery verdict or a countdown
 (`src/dashboard/spa/body/body-sheet-model.ts:66-68`). It does not say how long a muscle needs
