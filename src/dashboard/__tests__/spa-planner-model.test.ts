@@ -96,6 +96,10 @@ describe('parseRoute', () => {
     expect(parseRoute('#/goals')).toEqual({ name: 'goals' });
   });
 
+  it('routes the review-days page (VW-847)', () => {
+    expect(parseRoute('#/days')).toEqual({ name: 'days' });
+  });
+
   it('routes the body-map wall page (VW-338)', () => {
     expect(parseRoute('#/body')).toEqual({ name: 'body' });
   });
@@ -123,6 +127,7 @@ describe('parseRoute', () => {
       '#/',
       '#/plan',
       '#/goals',
+      '#/days',
       '#/body',
       '#/body/lats',
       '#/summary',
