@@ -53,7 +53,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      # tool-guard's zod is a peer dependency, which the repo's legacy-peer-deps would leave uninstalled.
       - name: Merge call shapes
+        env:
+          npm_config_legacy_peer_deps: 'false'
         run: npx --yes -p @titan-design/tool-guard@0.5.3 titan-merge-lint
 
   # Lint, format, type checking
