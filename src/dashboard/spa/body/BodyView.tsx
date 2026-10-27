@@ -42,6 +42,7 @@ import {
   type VolumeStatus,
 } from '@titan-design/react-ui/bodymap';
 
+import { localDate } from '../../../analytics/training-days.js';
 import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
@@ -188,7 +189,7 @@ function FigurePanel(props: {
   const { highlighted, onMusclePress } = props;
   return (
     <div style={{ flex: '1 1 0', minWidth: 0 }}>
-      <PanelCard title={`Week of ${props.weekStart.slice(0, 10)}`}>
+      <PanelCard title={`Week of ${localDate(props.weekStart)}`}>
         <div
           style={{
             display: 'flex',
