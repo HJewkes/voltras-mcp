@@ -15,9 +15,9 @@ grows more than 5% over this table, or when a row is new.
 | Budget | Tokens |
 | --- | --: |
 | tools/list | 71644 |
-| live-workout responses | 21636 |
-| live-workout push events | 20483 |
-| live-workout total | 42119 |
+| live-workout responses | 21634 |
+| live-workout push events | 11616 |
+| live-workout total | 33250 |
 | sunday-sitting responses | 9333 |
 | sunday-sitting push events | 0 |
 | sunday-sitting total | 9333 |
@@ -175,19 +175,19 @@ grows more than 5% over this table, or when a row is new.
 | `session.end` | 1 | 11 | 6 | 6 |
 | `session.start` | 1 | 52 | 27 | 27 |
 | `set.end` | 2 | 428 | 147 | 74 |
-| `set.get` | 1 | 35824 | 18850 | 18850 |
+| `set.get` | 1 | 35820 | 18848 | 18848 |
 | `set.start` | 2 | 96 | 51 | 25 |
 
 ## live-workout: push events
 
 | Event | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
-| `rep_finalized` | 16 | 15434 | 7753 | 485 |
-| `set_ended` | 2 | 8788 | 4574 | 2287 |
+| `rep_finalized` | 16 | 4832 | 2387 | 149 |
+| `set_ended` | 2 | 2092 | 1059 | 529 |
 | `set_started` | 2 | 1807 | 867 | 462 |
-| `set_target_reached` | 2 | 6946 | 3606 | 1803 |
+| `set_target_reached` | 2 | 6959 | 3613 | 1810 |
 | `settings_update` | 3 | 1596 | 805 | 268 |
-| `velocity_loss_exceeded` | 2 | 4164 | 2127 | 1064 |
+| `velocity_loss_exceeded` | 2 | 4177 | 2134 | 1071 |
 | `weight_implied_mismatch` | 2 | 1654 | 751 | 376 |
 
 ## sunday-sitting: tool responses

@@ -87,7 +87,7 @@ Three events also carry `slot_id`, and all three carry `slot` too. Filter on `sl
 | `rep_finalized`                  | A rep boundary closes the prior rep, or the set closes and publishes its final rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                                                    | —                      |
 | `set_started`                    | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                                                                                                    | —                      |
 | `set_updated`                    | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets).                                                                                    | —                      |
-| `set_ended`                      | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.                                                                                                 | —                      |
+| `set_ended`                      | `set.end` succeeds. Carries one row per rep and the VBT summary. See [push detail](#push-detail).                                                                                               | —                      |
 | `connection_changed`             | Any connection-state transition. Disconnects include active-set context.                                                                                                                        | —                      |
 | `timer_complete`                 | A `timer.start` duration elapses.                                                                                                                                                               | —                      |
 | `set_target_reached`             | A `rep_count_reached` trigger matches.                                                                                                                                                          | No — advisory cue only |
@@ -106,6 +106,26 @@ Three events also carry `slot_id`, and all three carry `slot` too. Filter on `sl
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative inventory is `src/tools/__tests__/channel-publish-sites.test.ts`,
 which names every channel publish site under `src/` and why it does or does not carry `slot`.
+
+## Push detail
+
+`VMCP_PUSH_DETAIL` sets how much of `rep_finalized` and `set_ended` reaches the client.
+Spoken cues and the dashboard read the full payloads either way: the setting applies
+only at the client's own channel.
+
+With `compact` (the default):
+
+- `rep_finalized` keeps every `meta` attribute and its content is the `summary` line
+  alone. The `rep` and `set_context` blocks are left out.
+- `set_ended` replaces the `reps` array with a `rep_table`: a `columns` list and one row
+  per rep, in this order: `rep`, `conc_peak_mps`, `conc_mean_mps`, `ecc_peak_mps`,
+  `rom_m`, `tempo_ratio`. The `set` block drops `set_id` and `session_id` (both are on
+  `meta`), the deprecated `training_mode` alias and the always-null `active_mode`. Every
+  other block (`vbt_summary`, `rep_count_disagreement`, `load_drift`, `device_summary`,
+  `device_set_summary`) is unchanged.
+
+`full` sends both payloads exactly as they are built, with every per-rep field. Use it
+for bench work. `set.get` returns the full rep detail in either mode.
 
 ## The `device_set_summary` block on `set_ended`
 
