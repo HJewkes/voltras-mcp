@@ -47,8 +47,8 @@ the device or to the lifter's records. The server talks to Claude over standard 
 output, and its dashboard binds `127.0.0.1` only, so only a browser on the lifter's own
 machine can reach it. Its live-view routes are reads. Its write routes, which edit plans or
 run a short allowlist of store-only actions such as logging bodyweight, are further gated by
-the per-boot write guard (`src/dashboard/server.ts:587-610`, `src/actions/allowlist.ts`,
-`src/dashboard/write-guard.ts:85-95`).
+the per-boot write guard (`src/dashboard/server.ts:587-610`<!-- anchor: checkWriteRequest -->, `src/actions/allowlist.ts`,
+`src/dashboard/write-guard.ts:85-95`<!-- anchor: export function checkWriteRequest -->).
 
 ## Responsibilities
 
@@ -68,13 +68,13 @@ Claude:
 - Attaches the planned workout to the session (`plan.attach_to_session`). Only then can the
   report show a `missed:` line for a working set below your rep target ([TrueCoach guide](/guides/truecoach#coach-results-and-the-outbox)).
 - Does not turn velocity loss into an RPE or a reps-in-reserve number
-  (`plugins/voltras-channel/skills/pt-session/SKILL.md:131`).
+  (`plugins/voltras-channel/skills/pt-session/SKILL.md:131`<!-- anchor: velocity_loss_pct -->).
 
 You:
 
 - Decide progression. Every progression line in the weekly report is labelled "suggestion
   for the coach, not applied", and nothing in the report changes a prescription
-  (`src/tools/report-tools.ts:658-669`).
+  (`src/tools/report-tools.ts:658-669`<!-- anchor: function formatProgressionLine -->).
 
 ## The data loop
 

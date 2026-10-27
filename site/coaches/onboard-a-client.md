@@ -35,7 +35,7 @@ tell your coach before the first real submit ([TrueCoach guide](/guides/truecoac
 It works with a Voltra or, for a rehearsal, with the mock adapter. A server running on a
 Voltra leaves mock-adapter sets out of its reports, but a server running on the mock adapter
 reports its mock sets, so do not send a rehearsal's results to your coach
-(`src/tools/report-tools.ts:151-161`).
+(`src/tools/report-tools.ts:151-161`<!-- anchor: set.source !== 'mock' -->).
 
 ## 3. Give the lifter a plan
 

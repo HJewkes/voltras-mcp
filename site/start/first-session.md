@@ -57,18 +57,18 @@ may not show up in a scan (`README.md`).
    a channel event so Claude can tell you "that's 8" or "you're slowing down," but they
    never end the set on their own. A rep-count trigger used to force-close the set until
    a hardware run tore the cable mid-eccentric (`src/schemas/set.ts`,
-   `src/state/event-bridge.ts:1514`). In a normal session a set ends on your own call or on
+   `src/state/event-bridge.ts:1514-1517`<!-- anchor: ripped the cable mid-eccentric -->). In a normal session a set ends on your own call or on
    the device's own signal. The server also closes it as partial after 90 seconds with no
    activity, and a `watch` block can raise that limit but not lower it
-   (`src/state/event-bridge.ts:262-286`). Other paths close a set too, such as
+   (`src/state/event-bridge.ts:262-286`<!-- anchor: Math.max(SET_INACTIVITY_TIMEOUT_MS, requested) -->). Other paths close a set too, such as
    `session.end` (step 7) and an exit from guided load
-   (`src/state/guided-load-reap.ts:58`), so this list is not complete.
+   (`src/state/guided-load-reap.ts:58`<!-- anchor: finalizeSet -->), so this list is not complete.
    Lift.
    - The set's header weight tracks the unit until your first rep closes, then freezes.
      Arming before you've dialed the weight in still logs what you actually lifted, and a
      weight written mid-set can't retroactively relabel the set — changing the number on
      the unit mid-set is a firmware no-op while the cable is under tension, so the header
-     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1833-1837`).
+     would otherwise name a load nobody lifted (`src/state/event-bridge.ts:1833-1837`<!-- anchor: firmware's own no-op -->).
 5. **"Done."** → [`set.end`](/reference/set). This saves the set and its reps with their
    telemetry.
 6. Repeat 4–5 per set. For a rest timer, ask for one — Claude uses
@@ -87,9 +87,8 @@ progression, or session history. If a set already ran under the wrong name,
 (`src/tools/session-tools.ts`). On the wall dashboard, their name shows next to the exercise name for as
 long as they're set as the lifter — the header is yours by default, so a name only
 appears while someone else is actually on the cable, and it goes back to showing nothing
-extra the moment you clear it.
-
-<!-- src/dashboard/spa/live-page/ExerciseHeader.tsx:222-236 -->
+extra the moment you clear it
+(`src/dashboard/spa/live-page/ExerciseHeader.tsx:277-287`<!-- anchor: session.lifter !== null -->).
 
 Afterwards: [`session.list`](/reference/session) / `session.get` for history, `set.get`
 for one set's full rep detail, [`metrics.compute`](/reference/metrics) for the analytics

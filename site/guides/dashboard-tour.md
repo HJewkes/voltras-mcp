@@ -34,7 +34,7 @@ Every capture here is driven through the real tool pipeline against the mock ada
 (`VOLTRA_ADAPTER=mock`), never a real device, so the numbers are reproducible rather than a
 one-off recording. The planned workout is seeded by `scripts/dashboard-plan-drive.mjs`: a
 program called Mock Hypertrophy whose Push A workout holds Cable Chest Press 3 × 8–10 at
-140 lb, then two more exercises (`scripts/dashboard-plan-drive.mjs:115-126`, `:249`, `:266`).
+140 lb, then two more exercises (`scripts/dashboard-plan-drive.mjs:115-126`<!-- anchor: weightLbs: 140 -->, `:249`, `:266`).
 
 ## Before a Voltra connects
 
@@ -60,7 +60,7 @@ the prescription next to what the set is actually doing.
 />
 
 The RPE slot is always a dash for now: the server sends no RPE until a trusted fitted
-effort profile reaches the wall (`src/dashboard/spa/panels/fatigue-view.ts:428-431`). The
+effort profile reaches the wall (`src/dashboard/spa/panels/fatigue-view.ts:440-442`<!-- anchor: rpe: null -->). The
 [effort readout](/coming-soon/effort-readout) page says what is missing. The
 [fatigue tour](/guides/dashboard-fatigue) follows this card from Good to a slowing set.
 
@@ -99,7 +99,7 @@ Closing a set with [`set.end`](/reference/set) moves the live page into its rest
 The countdown ring runs down the rest the plan set for this exercise. When the plan sets
 none, it runs a default for the exercise's training intent, captioned "Default rest", with
 the intent and any added seconds when there are some
-(`src/dashboard/spa/live-page/RestView.tsx:209-242`, `src/analytics/rest-defaults.ts:145-155`,
+(`src/dashboard/spa/live-page/RestView.tsx:209-242`<!-- anchor: restBasisCaption -->, `src/analytics/rest-defaults.ts:145-155`<!-- anchor: intent_default_extended -->,
 `src/coach-copy/dashboard.ts`).
 The [pacing and form tour](/guides/dashboard-pacing-and-form) covers the ring and the pace
 footer.

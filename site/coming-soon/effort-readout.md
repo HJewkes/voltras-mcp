@@ -24,40 +24,40 @@ dashboard's live fatigue card and session summary. The rest of the fatigue card 
 ## What works today
 
 **The server can estimate reps in reserve for any recorded set.** Ask `metrics.compute` for the
-`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:317-322`,
-`src/tools/metrics-tools.ts:2250-2262`). If you have a fitted curve for that lift, the estimate
+`vbt.rir` pipeline and it returns an estimate for every rep (`src/tools/metrics-tools.ts:317-322`<!-- anchor: case 'vbt.rir' -->,
+`src/tools/metrics-tools.ts:2250-2262`<!-- anchor: interface RepRIREstimate -->). If you have a fitted curve for that lift, the estimate
 comes from it. If you do not, it comes from a general model, is marked as such, and is always
-rated low confidence (`src/tools/rir-velocity-tools.ts:216-240`).
+rated low confidence (`src/tools/rir-velocity-tools.ts:216-240`<!-- anchor: export function estimateRepRir -->).
 
 **A velocity target for a given RIR needs your own curve.** `rir_velocity.target` returns no
 target, with a caveat, until `rir_velocity.fit` has fitted a curve for that lift
-(`src/tools/rir-velocity-tools.ts:148-163`). It never falls back to the general model.
+(`src/tools/rir-velocity-tools.ts:148-163`<!-- anchor: resolveRirVelocityTarget -->). It never falls back to the general model.
 
 **The verdict words work.** The live card and the session summary show a verdict such as Good,
 Slowing, Grinding or Form breaking down. That verdict comes from velocity loss, range of
-motion and tempo, not from an effort model (`src/dashboard/spa/panels/fatigue-view.ts:432-435`).
+motion and tempo, not from an effort model (`src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: velocity/ROM/tempo -->).
 
 ## What is not shown yet
 
 The live card and the session summary both hold the effort number back. The live card is built
-with no RPE and no reps in reserve (`src/dashboard/spa/panels/fatigue-view.ts:428-431`), and
+with no RPE and no reps in reserve (`src/dashboard/spa/panels/fatigue-view.ts:440-443`<!-- anchor: repsInReserve: null -->), and
 the session summary does the same (`src/dashboard/spa/planner/summary/VerdictColumn.tsx`).
 On the live card, where the RPE number would go, you see a dash next to the word RPE
-(`site/public/captures/manifest.json:45`). The summary marks the gap "RIR · Calibrating"
+(`site/public/captures/manifest.json:85`<!-- anchor: FATIGUE — RPE -->). The summary marks the gap "RIR · Calibrating"
 instead (`src/dashboard/spa/planner/summary/SummaryHeader.tsx`).
 
 The dashboard holds the number back on purpose. Reading an effort number straight off velocity
 loss is a conversion this project does not allow, so the wall waits for a trusted curve fitted
-to you (`src/dashboard/spa/panels/fatigue-view.ts:428-429`).
+to you (`src/dashboard/spa/panels/fatigue-view.ts:440-441`<!-- anchor: conversion VW-302 forbids -->).
 
 Each live and finished set in the dashboard snapshot already carries a resolved effort (RIR
 and RPE once a fitted profile exists), and the analytics compute it
-(`src/dashboard/read-models/snapshot.ts:31-38`). The wall does not read it yet. It never shows a
+(`src/dashboard/read-models/snapshot.ts:31-38`<!-- anchor: Nothing in the SPA reads -->). The wall does not read it yet. It never shows a
 number here until a trusted curve exists.
 
 No spoken cue says an RPE or RIR number either. The cue rules only speak at the start of a set,
 at a target hit, at a velocity-loss stop and at the end of a set
-(`src/voice/cue-policy.ts:34-45`).
+(`src/voice/cue-policy.ts:34-45`<!-- anchor: case 'velocity_loss_exceeded' -->).
 
 ## What would change this
 

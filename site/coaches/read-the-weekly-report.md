@@ -54,7 +54,7 @@ Adherence: planned 2 / done 1 (trend: no-prior-data)
   `trainingDaysCompleted`). A day counts once however many sessions it holds, so a visit
   logged as one session per exercise is one training day, not twelve. A past day whose
   session nobody has marked as training or a test is left out of both counts until it is;
-  JSON `unreviewedDays` says how many (`src/tools/report-tools.ts:366-375`).
+  JSON `unreviewedDays` says how many (`src/tools/report-tools.ts:366-375`<!-- anchor: unreviewedDays -->).
 - **Last 28 days** is a separate, always-rolling count of training days in the 28 days
   before the range's end (JSON: `rolling28DayTrainingDays`), by the same one-per-day rule
   the attendance goal uses — deliberately **not a streak**. It doesn't care whether those
@@ -68,7 +68,7 @@ Adherence: planned 2 / done 1 (trend: no-prior-data)
   trained reads `done 0` instead of vanishing. A held or extended week gets its own line
   under it. With no dated block, adherence appears only when at least one session in range
   was attached to a planned workout template, and `N` is every template in the week(s) those
-  sessions touched (`src/tools/report-tools.ts:827-931`). Either way `M` is how many of those
+  sessions touched (`src/tools/report-tools.ts:827-931`<!-- anchor: async function adherenceOver -->). Either way `M` is how many of those
   templates got an ended session attached — regardless of which calendar day that session
   actually landed on. A session run on a named fallback day still counts as done; this model
   was never checking the exact day in the first place.
@@ -144,7 +144,7 @@ Three flags point at sets worth a second look:
   reps were still recorded on it, so it's worth confirming those reps are real.
 - **velocity-loss holds** — the set's velocity loss reached 30%, the default stop point for
   the hypertrophy goal. The report applies that one threshold to every set, whatever goal
-  the set was planned under (`src/tools/report-tools.ts:338`, `:729-734`).
+  the set was planned under (`src/tools/report-tools.ts:338`<!-- anchor: VELOCITY_LOSS_STOP_PCT -->, `:729-734`).
 
 **`setting_coerced` never lists any sets, on any report.** It's a live-only comparison
 between what a tool call asked the device for and what the device echoed back
@@ -184,11 +184,11 @@ input as a plain lifter note instead — and if neither exists, the whole sectio
 Only appears when the lifter has declared goal priorities. One line per accepted target
 (JSON: `goals`). A load-at-reps target is worded
 `goal: <lift> <committed load>x<reps> by <date>, <status> (wk n/of)`; other target kinds
-swap in their own value, such as `<n> training days per 28` (`src/tools/report-goals.ts:66-96`).
+swap in their own value, such as `<n> training days per 28` (`src/tools/report-goals.ts:66-96`<!-- anchor: training days per 28 -->).
 The status is the word the goals page shows for that target, read from the same model, so
 the report never re-judges it: `beyond goal`, `goal met`, `ahead`, `on track`, `behind`,
 `stalled`, `calibrating`, `deload week, no verdict`, or `behind, tolerated for the diet
-phase` (`src/dashboard/read-models/goal-progress.ts:1110-1120`). A muscle priority adds a
+phase` (`src/dashboard/read-models/goal-progress.ts:1110-1120`<!-- anchor: STATUS_LABEL -->). A muscle priority adds a
 rollup line counting how many of its lifts are on track. Proposals the lifter has not accepted
 are left out, and with no priorities the whole section is omitted. Goals belong to the owner, so
 a report scoped to a named `lifter` has none. The section reads as of the range's end: a target

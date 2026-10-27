@@ -68,7 +68,7 @@ prompts, and it never writes the token or the password to a log line or an error
 3. **Import.** Run it again without `dryRun`. The workouts land in a block named
    "TrueCoach import" in the program you name with `programId`, else the lifter's most recent
    non-archived program. The block gets one week per ISO week in the range, empty weeks
-   included, and one template per workout (`src/tools/truecoach-tools.ts:11-15`).
+   included, and one template per workout (`src/tools/truecoach-tools.ts:11-15`<!-- anchor: one week per ISO week -->).
 4. **Train.** Attach the imported workout to the session as in
    [Running a planned session](/guides/planned-session).
 
