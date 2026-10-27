@@ -29,6 +29,7 @@ import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
 import { publishCoachLine, wireEventBridge } from './state/event-bridge.js';
 import { installIsometricLiveTee } from './state/isometric-live-signal-tee.js';
+import { installPushDetail } from './state/push-detail.js';
 import { installCueLayer } from './voice/cue-delivery/install.js';
 import {
   createClientConnection,
@@ -90,7 +91,11 @@ function wireProcessState(state: ServerState, connection: ClientConnection): voi
   // conditionally would make that impossible — the tee would not be there to
   // enable. The emitter shares the same voice-listener ref as `system.speak`
   // so spoken cues duck the STT mic. Passthrough is byte-identical either way.
-  state.channels = installCueLayer(connection.channels, state, {
+  // VMCP_PUSH_DETAIL compacts only what reaches the client (VW-832): it wraps the
+  // connection's publisher innermost, so the cue layer and the isometric tee
+  // still read the full payloads.
+  const clientChannels = installPushDetail(connection.channels, state.config.pushDetail);
+  state.channels = installCueLayer(clientChannels, state, {
     settings: state.cueSettings,
     voiceListenerRef: state.voice,
     // Reads `state.channels` at call time, so a cue spoken later publishes

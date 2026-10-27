@@ -25,6 +25,7 @@ describe('loadConfig', () => {
       cueDelivery: 'off',
       autoArm: 'on',
       effortCue: 'off',
+      pushDetail: 'compact',
       debugTools: 'off',
       trueCoachOutbox: 'off',
       trueCoachOutboxDir: '/home/test/.voltras/truecoach-outbox',
@@ -132,6 +133,18 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/on/);
+  });
+
+  // VW-832 — push payloads are compact unless the bench asks for full detail.
+  it('honors VMCP_PUSH_DETAIL="full" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_PUSH_DETAIL: 'full' });
+    expect(cfg.pushDetail).toBe('full');
+  });
+
+  it('throws on invalid VMCP_PUSH_DETAIL, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_PUSH_DETAIL: 'slim' })).toThrow(/slim/);
+    expect(() => loadConfig({ VMCP_PUSH_DETAIL: 'slim' })).toThrow(/compact/);
+    expect(() => loadConfig({ VMCP_PUSH_DETAIL: 'slim' })).toThrow(/full/);
   });
 
   it('defaults the un-rack drop off and the eccentric truncation on', () => {

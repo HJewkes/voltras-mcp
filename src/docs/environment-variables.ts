@@ -143,6 +143,16 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     source: CONFIG,
   },
   {
+    name: 'VMCP_PUSH_DETAIL',
+    section: 'Recording',
+    defaultValue: '`compact`',
+    accepts: '`compact` \\| `full`',
+    onInvalid: 'stops startup',
+    purpose:
+      'How much of `rep_finalized` and `set_ended` the client receives. `compact` sends the rep summary line and one table row per rep at set close; `full` sends every per-rep field. `set.get` returns full rep detail either way.',
+    source: CONFIG,
+  },
+  {
     name: 'VMCP_REST_TIMER',
     section: 'Recording',
     defaultValue: '`off`',
