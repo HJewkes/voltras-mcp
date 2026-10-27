@@ -37,8 +37,8 @@ With no extra settings, voltras-mcp sends nothing to anyone:
 - The dashboard binds `127.0.0.1` only, so no other machine can open it. Its live-view
   routes are reads. Its write routes edit plans or run a short allowlist of store-only
   actions, such as logging bodyweight or answering a weekly check-in, each behind the write
-  guard (`src/dashboard/server.ts:267`, `src/dashboard/server.ts:587-610`,
-  `src/actions/allowlist.ts`, `src/dashboard/write-guard.ts:85-95`).
+  guard (`src/dashboard/server.ts:267`<!-- anchor: loopback only -->, `src/dashboard/server.ts:587-610`<!-- anchor: checkWriteRequest -->,
+  `src/actions/allowlist.ts`, `src/dashboard/write-guard.ts:85-95`<!-- anchor: export function checkWriteRequest -->).
 - `report.session_results` and `report.weekly` read the store and make no network call
   (`src/tools/report-tools.ts`).
 - The outbox file drop and the automated TrueCoach post are both off by default
@@ -62,7 +62,7 @@ control it.
 
 Some sets never appear in a report. A guest lifter's sets and zero-rep sets are left out, and
 an exercise with no working set is omitted. Mock-adapter sets are left out too, unless the
-server itself runs on the mock adapter (`src/tools/report-tools.ts:151-161`). A guest is whoever the lifter names with `session.set_lifter`
+server itself runs on the mock adapter (`src/tools/report-tools.ts:151-161`<!-- anchor: set.source !== 'mock' -->). A guest is whoever the lifter names with `session.set_lifter`
 before the guest's sets; the owner's baselines, progression and history then stay clean
 (`src/tools/session-tools.ts`).
 
@@ -113,7 +113,7 @@ passage).
 
 ::: warning Experimental
 The write-back tool's submit control ships marked UNVERIFIED: nobody has clicked it
-(`tools/truecoach-submit/src/selectors.js:31`). The dry run is the step that verifies it
+(`tools/truecoach-submit/src/selectors.js:31`<!-- anchor: UNVERIFIED -->). The dry run is the step that verifies it
 ([TrueCoach guide](/guides/truecoach#first-run)).
 :::
 

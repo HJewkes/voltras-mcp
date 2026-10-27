@@ -40,14 +40,14 @@ reps of this set, the slowest rep is only a little under the fastest.
 />
 
 The card needs two reps before it can compare anything. Until then it shows "warming up"
-instead of a verdict (`src/dashboard/spa/panels/fatigue-view.ts:432-435`).
+instead of a verdict (`src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: warming up -->).
 
 ## 2. Why the RPE slot shows a dash
 
 The label **RPE** sits next to the verdict with a dash under it. That is deliberate. The effort
 readout (RPE and reps in reserve) is coming soon: the dashboard withholds the number until a
 trusted fitted effort profile exists for the lifter (VW-485,
-`src/dashboard/spa/panels/fatigue-view.ts:428-431`). Read the dash as "not shown yet", not as
+`src/dashboard/spa/panels/fatigue-view.ts:440-442`<!-- anchor: rpe: null -->). Read the dash as "not shown yet", not as
 zero. [Effort readout](/coming-soon/effort-readout) says what is missing.
 
 ## 3. The same card on a slowing set
@@ -67,13 +67,13 @@ the 20% warning mark and short of the 30% alarm. [The fatigue verdict](/concepts
 lists all four words and what triggers each.
 
 This set has not reached its stop line. The driver starts the set with no velocity-loss watch
-(`scripts/dashboard-plan-drive.mjs:316`), so the line comes from the planned exercise's
+(`scripts/dashboard-plan-drive.mjs:316`<!-- anchor: callTool('set.start', {}) -->), so the line comes from the planned exercise's
 training intent or, failing that, the hypertrophy default. The seeded exercise states no
-intent (`scripts/dashboard-plan-drive.mjs:115-126`), so the default applies, and it is 30%
-(`src/state/velocity-loss-intent.ts:45-49`, `src/state/velocity-loss-intent.ts:113`). The block's "Hypertrophy" focus does not set it.
+intent (`scripts/dashboard-plan-drive.mjs:115-126`<!-- anchor: const PLANNED -->), so the default applies, and it is 30%
+(`src/state/velocity-loss-intent.ts:45-49`<!-- anchor: hypertrophy: 30 -->, `src/state/velocity-loss-intent.ts:113`<!-- anchor: DEFAULT_STOP_INTENT -->). The block's "Hypertrophy" focus does not set it.
 At 26% the card is in its approaching band, which starts at two thirds of the stop line
-(`src/dashboard/spa/live-page/fatigue-state.ts:29-37`,
-`src/state/velocity-loss-intent.ts:149-152`). At 30% it would read stop.
+(`src/dashboard/spa/live-page/fatigue-state.ts:29-37`<!-- anchor: stop.bands[1] -->,
+`src/state/velocity-loss-intent.ts:149-152`<!-- anchor: stopThirdsBands -->). At 30% it would read stop.
 [When the live card says stop](/concepts/fatigue-and-pacing#when-the-live-card-says-stop)
 explains the stop line and where its number comes from. Neither the card nor the server's
 `velocity_loss_exceeded` event ends the set; [the two stop events are advice](/concepts/fatigue-and-pacing#the-two-stop-events-are-advice).
@@ -97,7 +97,7 @@ reads Good. The harness has no summary capture of a slowing session yet.
 The summary shows no RPE or RIR for the same reason as the live card
 (`src/dashboard/spa/planner/summary/SummaryHeader.tsx`). The verdict reads the working set
 with the worst loss, the later one on a tie, and the line above the word names that set and
-its loss (`src/dashboard/read-models/session-summary.ts:258-280`,
+its loss (`src/dashboard/read-models/session-summary.ts:258-280`<!-- anchor: WORST working set -->,
 `src/dashboard/spa/planner/session-summary-model.ts`, `verdictKicker`).
 
 ## Next

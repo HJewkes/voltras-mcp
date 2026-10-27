@@ -27,12 +27,12 @@ which hold workout templates. Used in [the `plan.*` reference](/reference/plan) 
 
 **e1RM.** Estimated one-rep max: the heaviest single rep a lifter could likely complete,
 estimated rather than lifted. A fitted velocity threshold makes an e1RM less wrong, never a
-measurement (`src/analytics/optimal-mvt.ts:20`). Used in [the `baselines.*` reference](/reference/baselines).
+measurement (`src/analytics/optimal-mvt.ts:20`<!-- anchor: less wrong, never a measurement -->). Used in [the `baselines.*` reference](/reference/baselines).
 
 **MEV, MAV, MRV.** Minimum Effective Volume, Maximum Adaptive Volume and Maximum Recoverable
 Volume: weekly working-set landmarks for one muscle group
-(`src/dashboard/read-models/muscle-week.ts:40-47`). The dashboard's landmarks are
-population defaults, not numbers learned from this lifter (`site/reference/dashboard-api.md:84-86`). Used in
+(`src/dashboard/read-models/muscle-week.ts:40-47`<!-- anchor: Weekly working-set landmarks -->). The dashboard's landmarks are
+population defaults, not numbers learned from this lifter (`site/reference/dashboard-api.md:84-86`<!-- anchor: population-default -->). Used in
 [the dashboard API reference](/reference/dashboard-api) and [the `mrvguard.*` reference](/reference/mrvguard).
 
 **Mesocycle.** See Block.
@@ -43,7 +43,7 @@ separate write-back tool reads it, when the lifter runs it or turns on automatic
 ([TrueCoach guide](/guides/truecoach#the-outbox) and "TrueCoach write-back"). Used in [Read a session report](/coaches/read-a-session-report).
 
 **RIR.** Reps in reserve: how many more reps the lifter could have done when the set
-stopped. 0 is the last rep of a set taken to failure (`src/analytics/rir-velocity.ts:131`).
+stopped. 0 is the last rep of a set taken to failure (`src/analytics/rir-velocity.ts:131`<!-- anchor: 0 is the last rep of a set taken to failure -->).
 The weekly report adds an RIR line for an exercise only when the RIR-estimate baseline gate
 has enough history, and nothing converts a velocity-loss percentage straight into RIR. Used
 in [Read the weekly report](/coaches/read-the-weekly-report) and
@@ -51,17 +51,17 @@ in [Read the weekly report](/coaches/read-the-weekly-report) and
 
 **RPE.** Rating of perceived exertion: the lifter's own score of how hard a set was. A stored
 RIR-velocity curve is trusted to state RIR or RPE only when its fit error passes a gate
-(`src/analytics/rir-velocity.ts:62-80`). Used in [the `set.*` reference](/reference/set).
+(`src/analytics/rir-velocity.ts:62-80`<!-- anchor: TRUSTED_RIR_ERROR_REPS -->). Used in [the `set.*` reference](/reference/set).
 
 **Velocity loss.** How much slower the reps got across a set, as a percentage. Claude
 reports it after each set and does not convert it into an RPE or RIR
-(`plugins/voltras-channel/skills/pt-session/SKILL.md:131`). Read it as a volume dial, not
+(`plugins/voltras-channel/skills/pt-session/SKILL.md:131`<!-- anchor: velocity_loss_pct -->). Read it as a volume dial, not
 as distance from failure. Used in [Read the weekly report](/coaches/read-the-weekly-report)
 and [the `metrics.*` reference](/reference/metrics).
 
 **Working set.** A set that counts toward the report. Sets flagged as a warm-up, probe or
 technique set are excluded, then the sets at the top load are kept
-(`src/store/working-sets.ts:20-58`). Used in
+(`src/store/working-sets.ts:20-58`<!-- anchor: heaviest load -->). Used in
 [Read a session report](/coaches/read-a-session-report).
 
 **Write-back.** A separate, experimental tool that posts a session's results into that

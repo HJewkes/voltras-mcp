@@ -39,16 +39,16 @@ Three terms first.
 ## What the server measures
 
 The Voltra streams readings of the cable as you move, and the server groups them into reps
-(`src/state/event-bridge.ts:24-27`). The number this server leans on most is
+(`src/state/event-bridge.ts:24-27`<!-- anchor: detect rep cycle -->). The number this server leans on most is
 **mean concentric velocity**. That is the average speed of the lifting part of a rep, in metres
 per second. The fitted effort curve described below reads this number and no other
-(`src/analytics/rir-velocity.ts:52-60`).
+(`src/analytics/rir-velocity.ts:52-60`<!-- anchor: export function rirModelVelocity -->).
 
 **Velocity loss** is how much slower your reps have become within one set. It is a percentage.
 The per-set summary in [`metrics.compute`](/reference/metrics) reports it on mean velocity
-(`src/tools/metrics-tools.ts:2500`, `src/tools/metrics-tools.ts:2334-2335`). Some internal readings compare peak speeds instead. Those
+(`src/tools/metrics-tools.ts:2500`<!-- anchor: single-set velocity summary -->, `src/tools/metrics-tools.ts:2334-2335`<!-- anchor: PEAK-BASED -->). Some internal readings compare peak speeds instead. Those
 give a different percentage for the same set, and both are correct for their own question
-(`src/tools/metrics-tools.ts:2334-2338`).
+(`src/tools/metrics-tools.ts:2334-2338`<!-- anchor: both correct for their own question -->).
 
 ## Why slowing down tracks effort
 
@@ -60,11 +60,11 @@ The server uses velocity loss in two places.
 
 First, velocity loss is a stop signal during a set. The server treats the stopping point as a
 goal choice, not a fixed number. A strength set defaults to a 20% loss, a hypertrophy set to 30%
-and a power set to 10% (`src/state/velocity-loss-intent.ts:45-49`). Research on velocity-loss
+and a power set to 10% (`src/state/velocity-loss-intent.ts:45-49`<!-- anchor: VELOCITY_LOSS_DEFAULT_PCT -->). Research on velocity-loss
 thresholds found that loss size barely changed strength gains, while higher loss favoured muscle
-growth (`src/state/velocity-loss-intent.ts:5-10`). That research used barbell lifts, so the server
+growth (`src/state/velocity-loss-intent.ts:5-10`<!-- anchor: Pareja-Blanco -->). That research used barbell lifts, so the server
 treats these defaults as starting points on a cable device, not as fixed facts
-(`src/state/velocity-loss-intent.ts:17-20`).
+(`src/state/velocity-loss-intent.ts:17-20`<!-- anchor: POPULATION CAVEAT -->).
 
 Second, velocity is how the server spots a set that already reached failure. That process is
 described under [Where the curve comes from](#where-the-curve-comes-from).
@@ -74,30 +74,30 @@ described under [Where the curve comes from](#where-the-curve-comes-from).
 It is tempting to convert velocity loss straight into RIR with one formula for everyone. The
 server does not trust that. Its own tool description cites a 2023 study that found agreement
 between velocity loss and RIR "unacceptable at every load tested" for a general model
-(`src/tools/metrics-tools.ts:2513-2518`).
+(`src/tools/metrics-tools.ts:2513-2518`<!-- anchor: unacceptable at every load tested -->).
 
 What works better is a curve fitted to one lifter on one exercise. A 2024 study found individual
 curves predicted a later session within under two reps of error across 70% to 90% of 1RM. General
 curves failed at 70%, which is where most working sets sit
-(`src/analytics/rir-velocity.ts:5-12`, `src/tools/rir-velocity-tools.ts:8-11`).
+(`src/analytics/rir-velocity.ts:5-12`<!-- anchor: FAILED at 70% -->, `src/tools/rir-velocity-tools.ts:8-11`<!-- anchor: NEVER FALLS BACK TO A GROUP CURVE -->).
 
 So the server keeps one curve per lifter per exercise. It is a straight line: velocity against
-reps in reserve (`src/analytics/rir-velocity.ts:20-32`).
+reps in reserve (`src/analytics/rir-velocity.ts:20-32`<!-- anchor: as a straight line -->).
 
 ## Where the curve comes from
 
 [`rir_velocity.fit`](/reference/rir_velocity) builds the curve from your own recorded sets
-(`src/tools/rir-velocity-tools.ts:37-48`). A set only counts if it meets all of these:
+(`src/tools/rir-velocity-tools.ts:37-48`<!-- anchor: FIT_DESCRIPTION -->). A set only counts if it meets all of these:
 
 - It was done at a constant load, with no chains, eccentric or damper setting
-  (`src/tools/rir-velocity-tools.ts:38-39`).
-- Its load was between 70% and 90% of your estimated 1RM (`src/analytics/rir-velocity.ts:173-174`).
-- Something says how many reps you had left when it ended (`src/store/rir-velocity-candidates.ts:4-9`).
+  (`src/tools/rir-velocity-tools.ts:38-39`<!-- anchor: no chains, eccentric or damper -->).
+- Its load was between 70% and 90% of your estimated 1RM (`src/analytics/rir-velocity.ts:173-174`<!-- anchor: maxRelativeIntensity: 0.9 -->).
+- Something says how many reps you had left when it ended (`src/store/rir-velocity-candidates.ts:4-9`<!-- anchor: were LEFT when it ended -->).
 
 A fit also needs at least 3 such sets, from at least 2 sessions, giving at least 12 rep points. The
 points must span at least 3 reps of RIR, and speed must rise as RIR rises
-(`src/analytics/rir-velocity.ts:181-208`). If the fit misses a minimum, it deletes any older
-curve rather than leave a stale one readable (`src/tools/rir-velocity-tools.ts:46-47`).
+(`src/analytics/rir-velocity.ts:181-208`<!-- anchor: minSessions: 2 -->). If the fit misses a minimum, it deletes any older
+curve rather than leave a stale one readable (`src/tools/rir-velocity-tools.ts:46-47`<!-- anchor: DELETES any previously stored curve -->).
 
 How does the server know how many reps you had left? Mostly from **failure anchors**. When a set
 closes, the server checks whether it already ended in a genuine stall
@@ -105,7 +105,7 @@ closes, the server checks whether it already ended in a genuine stall
 below 70% of the speed of its fastest rep after the first. The last three reps must slow steadily,
 and the last rep's range of motion must be no more than 35% below the set's typical rep
 ([failure-anchor-harvest.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/failure-anchor-harvest.md#the-criterion-version-failure-harvest110)).
-That last rep is then RIR 0 (`src/store/rir-velocity-candidates.ts:116-126`).
+That last rep is then RIR 0 (`src/store/rir-velocity-candidates.ts:116-126`<!-- anchor: rir: 0, source: 'failure' -->).
 
 The server never asks you to train to failure. It only labels sets that stalled anyway. A
 cautious lifter may never produce an anchor, and the design accepts that
@@ -119,13 +119,13 @@ you that you had reps left when you did not
 
 A set can also count if you said how many reps you had left. The curve reader accepts that
 self-report, and a measured failure outranks it on the same set
-(`src/store/rir-velocity-candidates.ts:116-126`). A self-report anchors the curve less firmly,
+(`src/store/rir-velocity-candidates.ts:116-126`<!-- anchor: A measured failure outranks a self-report -->). A self-report anchors the curve less firmly,
 because lifters rate the same measured speed differently
-(`src/store/rir-velocity-candidates.ts:15-20`).
+(`src/store/rir-velocity-candidates.ts:15-20`<!-- anchor: Paulsen et al. -->).
 
 Today no tool records a per-set self-reported RIR. The reader exists, but nothing writes the value
 it reads (VW-499). The one place that writes an anchor row is the failure harvest, and it stores no
-self-report (`src/store/sqlite-store.ts:6363-6410`, `src/store/sqlite-store.ts:6424-6442`). So in
+self-report (`src/store/sqlite-store.ts:6363-6410`<!-- anchor: putFailureAnchor -->, `src/store/sqlite-store.ts:6424-6442`<!-- anchor: harvestFailureAnchor -->). So in
 practice every curve rests on failure anchors.
 
 ## When the server will state a number
@@ -135,49 +135,49 @@ handles effort in three layers, and each layer behaves differently.
 
 **The analytics compute an estimate.** The per-set RIR reading in
 [`metrics.compute`](/reference/metrics) returns a per-rep RIR for any recorded set with reps
-(`src/tools/metrics-tools.ts:317-322`). It always answers, and it says which curve answered. With
+(`src/tools/metrics-tools.ts:317-322`<!-- anchor: case 'vbt.rir' -->). It always answers, and it says which curve answered. With
 no fitted curve it uses a general formula, grades its model confidence low, and carries a caveat
-that the reading is not a proximity-to-failure claim (`src/tools/rir-velocity-tools.ts:216-240`,
-`src/tools/metrics-tools.ts:2513-2526`). Read that as a rough direction, not a rep count.
+that the reading is not a proximity-to-failure claim (`src/tools/rir-velocity-tools.ts:216-240`<!-- anchor: export function estimateRepRir -->,
+`src/tools/metrics-tools.ts:2513-2526`<!-- anchor: NOT a proximity-to-failure claim -->). Read that as a rough direction, not a rep count.
 
 [`report.weekly`](/reference/report) includes a final-rep RIR line only when the RIR feature's
 baseline gate allows it. The line names its basis, for example "general model, not a
-proximity-to-failure read" (`src/tools/report-tools.ts:558-608`).
+proximity-to-failure read" (`src/tools/report-tools.ts:558-608`<!-- anchor: NOT a proximity-to-failure claim -->).
 
 **The velocity target waits for a fitted curve.** [`rir_velocity.target`](/reference/rir_velocity)
 turns an RIR prescription into your own velocity target. With no fitted curve it returns no
 number. It returns a caveat instead, and says it will not substitute a group curve
-(`src/tools/rir-velocity-tools.ts:50-59`, `src/tools/rir-velocity-tools.ts:148-175`). With a
+(`src/tools/rir-velocity-tools.ts:50-59`<!-- anchor: does not substitute a group -->, `src/tools/rir-velocity-tools.ts:148-175`<!-- anchor: resolveRirVelocityTarget -->). With a
 curve, it also says whether the answer lies outside the range the curve was fitted over
-(`src/tools/rir-velocity-tools.ts:52-54`).
+(`src/tools/rir-velocity-tools.ts:52-54`<!-- anchor: withinFittedRange -->).
 
 **The dashboard waits for a trusted curve.** A curve is **trusted** only when its error is 1.5
 reps or less and it was fitted under the current model version
-(`src/analytics/rir-velocity.ts:62-80`). That limit is tighter than the study's two-rep figure on
-purpose (`src/analytics/rir-velocity.ts:62-66`). The next section covers what the dashboard shows
+(`src/analytics/rir-velocity.ts:62-80`<!-- anchor: TRUSTED_RIR_ERROR_REPS = 1.5 -->). That limit is tighter than the study's two-rep figure on
+purpose (`src/analytics/rir-velocity.ts:62-66`<!-- anchor: tighter than Jukic 2024's under-2-rep figure -->). The next section covers what the dashboard shows
 until then.
 
 The optional effort cue asks for more. It uses a curve only if it also has a failure anchor,
 predicted a held-out set within 1.5 reps, was fitted in the last 42 days, and came from
-constant-load sets (`src/analytics/rir-velocity.ts:108-124`, `src/state/effort-context.ts:253-265`).
-That cue is off by default (`src/config.ts:317`).
+constant-load sets (`src/analytics/rir-velocity.ts:108-124`<!-- anchor: firstFailedTrustGate -->, `src/state/effort-context.ts:253-265`<!-- anchor: export function profileToPin -->).
+That cue is off by default (`src/config.ts:342`<!-- anchor: 'VOLTRAS_EFFORT_CUE', 'off' -->).
 
 ## What the dashboard shows today
 
 The live fatigue card shows velocity loss against your set's stop threshold
-(`src/dashboard/spa/panels/fatigue-view.ts:477`, `src/dashboard/spa/live-page/fatigue-state.ts:1-10`).
+(`src/dashboard/spa/panels/fatigue-view.ts:491-492`<!-- anchor: getSetVelocityLossPct -->, `src/dashboard/spa/live-page/fatigue-state.ts:1-10`<!-- anchor: velocity_loss_exceeded -->).
 It also shows a verdict word: good, slowing, grinding or form breakdown. That verdict comes from
 velocity loss, range of motion and tempo, not from an RIR estimate
-(`src/dashboard/spa/panels/fatigue-view.ts:432-435`, `src/tools/metrics-tools.ts:2505-2511`).
+(`src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: velocity/ROM/tempo -->, `src/tools/metrics-tools.ts:2505-2511`<!-- anchor: fatigue.verdict -->).
 
 It shows no RPE or RIR number yet. The card has a place for an RPE number, but the dashboard
 passes it no value, so it shows a dash. The RPE and RIR values are withheld until a trusted fitted profile reaches the wall (VW-485)
-(`src/dashboard/spa/panels/fatigue-view.ts:428-431`). This is a deliberate hold, not a missing
+(`src/dashboard/spa/panels/fatigue-view.ts:440-442`<!-- anchor: rpe: null -->). This is a deliberate hold, not a missing
 calculation: the analytics above already compute an estimate.
 
 The session summary works the same way. It shows each exercise's fatigue verdict and velocity
 figures, shows no RPE or RIR figure, and marks the gap "RIR · Calibrating"
-(`src/dashboard/read-models/session-summary.ts:10-14`,
+(`src/dashboard/read-models/session-summary.ts:10-14`<!-- anchor: No RIR or RPE -->,
 `src/dashboard/spa/planner/summary/SummaryHeader.tsx`). The verdict's three lights come from
 the titan design library the dashboard depends on (`package.json:83`).
 

@@ -314,8 +314,8 @@ surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/
 same `SessionStore` methods the `plan.*` MCP tools call, not a reimplementation
 (`src/dashboard/README.md`). That surface also includes `DELETE /api/plan/exercises/:id`,
 which unplans one exercise and closes the gap it leaves in the template's order
-(`src/dashboard/server.ts:93`, `SessionStore.deletePlannedExercise`,
-`src/store/sqlite-store.ts:4900`, VW-121) — a plain delete of the planned row, not of any
+(`src/dashboard/server.ts:93`<!-- anchor: DELETE /api/plan/exercises/:id -->, `SessionStore.deletePlannedExercise`,
+`src/store/sqlite-store.ts:4904`<!-- anchor: deletePlannedExercise -->, VW-121) — a plain delete of the planned row, not of any
 session that was actually trained against it: the assignment linking a past session to that
 plan entry falls back to unlinked rather than disappearing. So: the live view is read-only;
 the plan builder and the check-in page are not.
