@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sim from '../../../scripts/sim/lifter-model.js';
 import { afterRest, performSet, type LifterParams } from '../personas/fatigue.js';
 import { makeRng, personaById, seedPersona } from '../personas/index.js';
+import { median } from '../../analytics/stats.js';
 import { fetchGoalProgressViews } from '../../dashboard/goal-progress-api.js';
 import { buildSessionSummary } from '../../dashboard/read-models/session-summary.js';
 import { exportStore } from '../../store/portable/export.js';
@@ -121,12 +122,6 @@ async function summaryExercises(personaId: string) {
   }
   await store.close();
   return exercises;
-}
-
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 // VW-952: steady's sets used to end one rep short of failure, so every working set

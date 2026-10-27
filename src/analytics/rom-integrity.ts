@@ -36,6 +36,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { selectEligibleReps } from '../state/rep-eligibility.js';
+import { median } from './stats.js';
 
 /** A classification cut together with where it comes from. */
 export interface CitedScheme<T> {
@@ -140,12 +141,12 @@ export function readRomIntegrity(
   // objects it kept, so a set with duplicate rep numbers cannot mislabel one.
   const kept = new Set(eligible);
   const roms = eligible.map(concentricRom);
-  const median = medianOf(roms);
+  const setMedian = median(roms) ?? 0;
   return {
     eligibleRepCount: eligible.length,
     perRep: reps.map((rep) => ({
       repNumber: rep.repNumber,
-      romFractionOfSetMedian: median > 0 ? concentricRom(rep) / median : null,
+      romFractionOfSetMedian: setMedian > 0 ? concentricRom(rep) / setMedian : null,
       eligible: kept.has(rep),
     })),
     decay: readDecay(roms, margins.decay),
@@ -162,8 +163,8 @@ export function readRomIntegrity(
  * `metrics-tools.ts`, which needs a numerator to divide by a baseline.
  */
 export function medianEligibleRom(reps: readonly Rep[]): number | null {
-  const median = medianOf(selectEligibleReps(reps).map(concentricRom));
-  return median > 0 ? median : null;
+  const setMedian = median(selectEligibleReps(reps).map(concentricRom)) ?? 0;
+  return setMedian > 0 ? setMedian : null;
 }
 
 /**
@@ -219,11 +220,4 @@ function isMeasured(value: number | undefined): value is number {
 
 function concentricRom(rep: Rep): number {
   return getPhaseRangeOfMotion(rep.concentric);
-}
-
-function medianOf(values: readonly number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }

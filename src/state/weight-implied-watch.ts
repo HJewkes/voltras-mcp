@@ -14,6 +14,7 @@
 // channel event when `evaluateWeightImplied` returns a flagged result.
 
 import type { Rep } from '@voltras/workout-analytics';
+import { median } from '../analytics/stats.js';
 
 /**
  * Overshoot of a plateau set's median concentric peak force (in POUNDS, after
@@ -65,12 +66,7 @@ export function medianConcentricPeakForce(reps: readonly Rep[]): number | null {
   const forces = reps
     .map((rep) => rep.concentric.peakForce)
     .filter((f): f is number => typeof f === 'number' && Number.isFinite(f));
-  if (forces.length === 0) {
-    return null;
-  }
-  const sorted = [...forces].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return median(forces) ?? null;
 }
 
 /**

@@ -37,6 +37,7 @@
 // happened. Only a measured mismatch confounds.
 
 import type { StoredSide } from '../store/types.js';
+import { median } from './stats.js';
 
 /**
  * How far apart two median ROMs may be, as a ratio in either direction, before
@@ -149,10 +150,7 @@ const TORQUE_CURVE_SENTENCE =
  * would drag a side's signature toward zero and fabricate a mismatch.
  */
 export function medianRomMetres(romsM: readonly number[]): number | undefined {
-  const usable = romsM.filter((rom) => rom > 0).sort((a, b) => a - b);
-  if (usable.length === 0) return undefined;
-  const mid = Math.floor(usable.length / 2);
-  return usable.length % 2 === 1 ? usable[mid] : (usable[mid - 1] + usable[mid]) / 2;
+  return median(romsM.filter((rom) => rom > 0));
 }
 
 /** How far apart two ROMs are, as a ratio >= 1 in either direction. */
