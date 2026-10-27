@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "the range guard compares expectSessions against the unreviewed sessions only",
+      "file": "src/tools/session-kind-tools.ts",
+      "find": "assertExpectedSessions(input, selected.length, dryRun);",
+      "replace": "assertExpectedSessions(input, selected.filter((row) => row.kind === undefined).length, dryRun);",
+      "kills": [
+        "session.mark_kind writes a mixed range when expectSessions is the sum of the four lists",
+        "session.mark_kind refuses a mixed range whose expectSessions is the newlyClassified count alone"
+      ]
+    }
+  ]
+}

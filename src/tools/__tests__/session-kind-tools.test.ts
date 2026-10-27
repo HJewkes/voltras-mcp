@@ -54,6 +54,24 @@ async function openSeeded(): Promise<SessionStore> {
   return store;
 }
 
+/** The seeded store with one session already test and one already training. */
+async function openSeededMixed(): Promise<SessionStore> {
+  const store = await openSeeded();
+  await markSessionKind(makeState(store), { kind: 'test', sessionId: 'day1-a' });
+  await markSessionKind(makeState(store), { kind: 'training', sessionId: 'day2' });
+  return store;
+}
+
+/** Every session a range matched: the sum of the four result lists. */
+function matchedCount(result: Awaited<ReturnType<typeof markSessionKind>>): number {
+  return (
+    result.newlyClassified.length +
+    result.reclassified.length +
+    result.skippedAlreadyMarked.length +
+    result.alreadyThisKind.length
+  );
+}
+
 describe('session.mark_kind', () => {
   it('marks a whole local day in one call, and the day then counts', async () => {
     const store = await openSeeded();
@@ -221,6 +239,38 @@ describe('session.mark_kind', () => {
         from: '2026-09-07',
         to: '2026-09-10',
         expectSessions: 2,
+      }),
+    ).rejects.toMatchObject({ code: 'EXPECTED_SESSIONS_MISMATCH', message: /matches 3 session/ });
+    await store.close();
+  });
+
+  // VW-904: the skill once said to pass back newlyClassified, which a mixed range refuses.
+  it('writes a mixed range when expectSessions is the sum of the four lists', async () => {
+    const store = await openSeededMixed();
+    const range = { kind: 'test', from: '2026-09-07', to: '2026-09-10' } as const;
+    const rehearsal = await markSessionKind(makeState(store), { ...range, dryRun: true });
+
+    const result = await markSessionKind(makeState(store), {
+      ...range,
+      expectSessions: matchedCount(rehearsal),
+    });
+
+    expect(matchedCount(rehearsal)).toBe(3);
+    expect(result.newlyClassified).toEqual(['day1-b']);
+    expect(result.alreadyThisKind).toEqual(['day1-a']);
+    expect(result.skippedAlreadyMarked).toEqual(['day2']);
+    await store.close();
+  });
+
+  it('refuses a mixed range whose expectSessions is the newlyClassified count alone', async () => {
+    const store = await openSeededMixed();
+    const range = { kind: 'test', from: '2026-09-07', to: '2026-09-10' } as const;
+    const rehearsal = await markSessionKind(makeState(store), { ...range, dryRun: true });
+
+    await expect(
+      markSessionKind(makeState(store), {
+        ...range,
+        expectSessions: rehearsal.newlyClassified.length,
       }),
     ).rejects.toMatchObject({ code: 'EXPECTED_SESSIONS_MISMATCH', message: /matches 3 session/ });
     await store.close();
