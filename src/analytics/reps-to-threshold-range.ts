@@ -17,6 +17,7 @@
 // here touches the store, the device, or the clock.
 
 import { repsToVelocityLossThreshold } from './rest-defaults.js';
+import { median } from './stats.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { StoredSet } from '../store/types.js';
 
@@ -64,7 +65,7 @@ export function repsToThresholdRange(history: readonly number[]): RepsToThreshol
   return {
     expectedLow: sorted[0],
     expectedHigh: sorted[sorted.length - 1],
-    median: medianOf(sorted),
+    median: median(sorted) ?? Number.NaN,
     n: sorted.length,
     basis:
       `observed range across ${String(sorted.length)} historical sets reaching this ` +
@@ -100,9 +101,4 @@ export function historicalRepsToThreshold(
     if (reps !== null) out.push(reps);
   }
   return out;
-}
-
-function medianOf(sorted: readonly number[]): number {
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }

@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "isOutlier reads an empty comparator list as a median of one",
+      "file": "src/state/rep-eligibility.ts",
+      "find": "  const reference = median(comparators) ?? 0;",
+      "replace": "  const reference = median(comparators) ?? 1;",
+      "kills": ["median callers on empty input calls nothing an outlier against no comparators"]
+    },
+    {
+      "name": "medianConcentricPeakForce drops its empty-input mapping to null",
+      "file": "src/state/weight-implied-watch.ts",
+      "find": "  return median(forces) ?? null;",
+      "replace": "  return median(forces) as number;",
+      "kills": [
+        "median callers on empty input gives no range, plateau, force median or sample rate from no data"
+      ]
+    },
+    {
+      "name": "medianRomMetres keeps non-positive ROMs",
+      "file": "src/analytics/setup-comparability.ts",
+      "find": "  return median(romsM.filter((rom) => rom > 0));",
+      "replace": "  return median(romsM);",
+      "kills": ["median callers on empty input gives no setup ROM when no ROM is positive"]
+    }
+  ]
+}
