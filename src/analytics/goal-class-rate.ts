@@ -13,7 +13,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { GOAL_BAND_CONSTANTS, type GoalLaterBlockRate, type RampClass } from './goal-band.js';
-import type { Tier } from '../tools/tier-signal.js';
+import type { Tier } from '../profile/tier.js';
 
 /**
  * Sessions and blocks a measured start-to-start class slope needs before it replaces the default.

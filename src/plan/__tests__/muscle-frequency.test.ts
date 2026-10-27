@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { Tier } from '../../tools/tier-signal.js';
+import type { Tier } from '../../profile/tier.js';
 import {
   lintMuscleFrequency,
   lintMuscleFrequencyChange,

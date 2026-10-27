@@ -25,7 +25,7 @@
 
 import type { EffortTolerance } from '../store/types.js';
 import { effortTargetFor } from './effort-target.js';
-import type { Tier, TierConfidence, TierSource } from '../tools/tier-signal.js';
+import type { Tier, TierConfidence, TierSource } from './tier.js';
 
 /** Inclusive `[lo, hi]`. `lo === hi` is a single number, not an empty range. */
 export type SeedRange = [number, number];

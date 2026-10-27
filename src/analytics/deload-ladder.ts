@@ -16,7 +16,7 @@
 // week escalation and the beginner cap arrive with VW-595; until then tier and
 // prior decisions are accepted but do not change the rung.
 
-import type { Tier, TierConfidence } from '../tools/tier-signal.js';
+import type { Tier, TierConfidence } from '../profile/tier.js';
 
 /** Bumped when a threshold or a rung rule below changes. */
 export const DELOAD_LADDER_VERSION = 'vw591.1';
