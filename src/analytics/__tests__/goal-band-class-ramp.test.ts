@@ -12,7 +12,7 @@ import {
   type GoalBandInput,
   type RampClass,
 } from '../goal-band.js';
-import type { Tier } from '../../tools/tier-signal.js';
+import type { Tier } from '../../profile/tier.js';
 
 const EIGHT_WEEKS = Array.from({ length: 8 }, (_, i) => ({ index: i + 1, isDeload: false }));
 

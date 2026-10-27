@@ -8,7 +8,7 @@
 import { resolveMuscleRef, wholeBodyRefOf } from '../analytics/goal-metrics.js';
 import { mapCatalogMuscle, type TitanMuscleGroup } from '../exercises/muscle-map.js';
 import type { StoredPriority } from '../store/types.js';
-import type { Tier, TierConfidence } from '../tools/tier-signal.js';
+import type { Tier, TierConfidence } from '../profile/tier.js';
 import { PROVISIONAL_SUFFIX, type LintPlanExercise, type PlanWarning } from './lint-plan.js';
 
 const DOUBLE_EXERCISE = 'rp-s5-prioritized-muscle-double-exercise-count';
