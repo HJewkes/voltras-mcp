@@ -27,6 +27,7 @@ import {
   TITAN_MUSCLE_GROUPS,
   type TitanMuscleGroup,
 } from '../../exercises/muscle-map.js';
+import { localDate } from '../../analytics/training-days.js';
 import type { StoredSet } from '../../store/types.js';
 import { dayFrequencyCredit, type SlugAttribution } from '../../exercises/muscle-attribution.js';
 import {
@@ -128,7 +129,7 @@ export interface MuscleWeekMuscleView {
   /** The landmark band of `sets`; `null` where the landmark is unverified (glutes, lats, upper back). */
   status: VolumeStatus | null;
   landmarks: VolumeLandmarks;
-  /** UTC days this week holding an eligible set of an exercise that targets this muscle (Q5). */
+  /** Local days this week holding an eligible set of an exercise that targets this muscle (Q5). */
   sessions: number;
   dose: MuscleWeekDose;
   /**
@@ -177,7 +178,7 @@ interface MuscleTallies {
   sets: Map<TitanMuscleGroup, number>;
   dose: Map<TitanMuscleGroup, number>;
   lastTrainedAt: Map<TitanMuscleGroup, string>;
-  /** The attribution of every exercise trained on each UTC day of the week. */
+  /** The attribution of every exercise trained on each local day of the week. */
   days: Map<string, SlugAttribution[][]>;
 }
 
@@ -189,7 +190,7 @@ function countInWeek(tallies: MuscleTallies, set: StoredSet, rows: SlugAttributi
     if (row.target) add(tallies.sets, row.muscle, 1);
     if (row.weight > 0) add(tallies.dose, row.muscle, row.weight);
   }
-  const day = set.startedAt.slice(0, 10);
+  const day = localDate(set.startedAt);
   tallies.days.set(day, [...(tallies.days.get(day) ?? []), rows]);
 }
 
