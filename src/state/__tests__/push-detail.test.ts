@@ -107,13 +107,18 @@ function recordingPublisher(): ChannelPublisher & { events: ChannelEvent[] } {
 }
 
 describe('compact rep_finalized', () => {
-  it('keeps the meta attributes and the summary line, and fits in 320 characters', () => {
+  it('keeps the meta attributes, the summary line and peak force, and fits in 320 characters', () => {
     const full = buildRepFinalizedPayload(rep(3, 0.871), 2, activeSet, device, 4);
+    const fullContent = JSON.parse(full.content);
 
     const compact = compactChannelEvent(full);
 
     expect(compact.meta).toBe(full.meta);
-    expect(JSON.parse(compact.content)).toEqual({ summary: JSON.parse(full.content).summary });
+    expect(fullContent.rep.peak_force).toBeGreaterThan(0);
+    expect(JSON.parse(compact.content)).toEqual({
+      summary: fullContent.summary,
+      peak_force: fullContent.rep.peak_force,
+    });
     expect(compact.content.length).toBeLessThanOrEqual(320);
   });
 });
@@ -205,7 +210,7 @@ describe('installPushDetail', () => {
 
     expect(transport.events).toHaveLength(1);
     expect(transport.events[0].meta.slot).toBe('left');
-    expect(Object.keys(JSON.parse(transport.events[0].content))).toEqual(['summary']);
+    expect(Object.keys(JSON.parse(transport.events[0].content))).toEqual(['summary', 'peak_force']);
   });
 
   it('leaves events it has no compact form for untouched', () => {

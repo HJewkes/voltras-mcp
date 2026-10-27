@@ -115,8 +115,9 @@ only at the client's own channel.
 
 With `compact` (the default):
 
-- `rep_finalized` keeps every `meta` attribute and its content is the `summary` line
-  alone. The `rep` and `set_context` blocks are left out.
+- `rep_finalized` keeps every `meta` attribute, and its content is the `summary` line plus
+  the rep's `peak_force` (the live signal on an isokinetic set, where speed is fixed). The
+  rest of the `rep` block and the `set_context` block are left out.
 - `set_ended` replaces the `reps` array with a `rep_table`: a `columns` list and one row
   per rep, in this order: `rep`, `conc_peak_mps`, `conc_mean_mps`, `ecc_peak_mps`,
   `rom_m`, `tempo_ratio`. The `set` block drops `set_id` and `session_id` (both are on

@@ -38,9 +38,14 @@ const DROPPED_SET_FIELDS: ReadonlySet<string> = new Set([
   'active_mode',
 ]);
 
-/** `rep_finalized` keeps its meta attributes and its one-line summary. */
+/**
+ * `rep_finalized` keeps its meta attributes, its one-line summary and the rep's
+ * peak force: on an isokinetic set the speed is fixed, so force is the live
+ * signal, and the attributes carry only velocity.
+ */
 function compactRepFinalized(full: JsonObject): JsonObject {
-  return { summary: full.summary };
+  const rep = full.rep as JsonObject | undefined;
+  return { summary: full.summary, peak_force: rep?.peak_force ?? null };
 }
 
 function repTableRow(rep: StoredRepVbt): Array<number | null> {
