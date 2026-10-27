@@ -16,8 +16,8 @@ grows more than 5% over this table, or when a row is new.
 | --- | --: |
 | tools/list | 71644 |
 | live-workout responses | 21636 |
-| live-workout push events | 20483 |
-| live-workout total | 42119 |
+| live-workout push events | 11759 |
+| live-workout total | 33395 |
 | sunday-sitting responses | 9333 |
 | sunday-sitting push events | 0 |
 | sunday-sitting total | 9333 |
@@ -182,8 +182,8 @@ grows more than 5% over this table, or when a row is new.
 
 | Event | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
-| `rep_finalized` | 16 | 15434 | 7753 | 485 |
-| `set_ended` | 2 | 8788 | 4574 | 2287 |
+| `rep_finalized` | 16 | 5130 | 2544 | 159 |
+| `set_ended` | 2 | 2092 | 1059 | 529 |
 | `set_started` | 2 | 1807 | 867 | 462 |
 | `set_target_reached` | 2 | 6946 | 3606 | 1803 |
 | `settings_update` | 3 | 1596 | 805 | 268 |
