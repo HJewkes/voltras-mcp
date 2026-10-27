@@ -47,6 +47,7 @@ import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
 import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
 import { BODY_FAT_SOURCES, isBodyFatSource } from '../analytics/body-fat-sources.js';
+import { BUSY_TIMEOUT_MS } from './busy-timeout.js';
 import { isLeannessBand, LEANNESS_BANDS } from './leanness-band.js';
 import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
@@ -3539,6 +3540,9 @@ export class SqliteSessionStore implements SessionStore {
       db.exec('PRAGMA foreign_keys = ON');
       checkSchemaVersion(db, path);
       probeWriteLock(db, path);
+      // After the probe, so a live incumbent is still rejected at once; from
+      // here on a brief overlapping lock is waited out rather than thrown.
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
       db.exec(SCHEMA_SQL);
       applyMigrations(db);
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

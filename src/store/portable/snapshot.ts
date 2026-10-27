@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
+import { BUSY_TIMEOUT_MS } from '../busy-timeout.js';
 import { encodeValue, isStringEncodedInteger, type PortableValue } from './codec.js';
 import { readInventory, selectPageSql, type TableShape } from './inventory.js';
 
@@ -22,7 +23,9 @@ export interface TableDigest {
 
 /** Opened read-only, so nothing this module does can alter the file it reads. */
 export function openReadOnly(storePath: string): DatabaseSync {
-  return new DatabaseSync(storePath, { readOnly: true });
+  const db = new DatabaseSync(storePath, { readOnly: true });
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  return db;
 }
 
 export function readSchemaVersion(db: DatabaseSync): number {
