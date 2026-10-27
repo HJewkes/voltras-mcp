@@ -27,6 +27,7 @@ import {
   TITAN_MUSCLE_GROUPS,
   type TitanMuscleGroup,
 } from '../../exercises/muscle-map.js';
+import { localDate } from '../../analytics/training-days.js';
 import type { SlugAttribution } from '../../exercises/muscle-attribution.js';
 import { plannedWeeklyFrequency, weeklyFrequency } from '../../plan/muscle-frequency.js';
 import type { StoredPlannedExercise, StoredSet, StoredTrainingWeek } from '../../store/types.js';
@@ -164,7 +165,7 @@ function plannedFrequency(rows: MusclePlanRows): Map<TitanMuscleGroup, number> {
   );
 }
 
-/** Observed training days per muscle: eligible sets grouped by the UTC day they started. */
+/** Observed training days per muscle: eligible sets grouped by the local day they started. */
 function observedFrequency(
   completedSets: readonly StoredSet[],
   weekStart: string,
@@ -174,7 +175,7 @@ function observedFrequency(
   const days = new Map<string, SlugAttribution[][]>();
   for (const set of completedSets) {
     if (set.exerciseId === undefined || !isEligibleWorkingSet(set, weekStart, weekEnd)) continue;
-    const day = set.startedAt.slice(0, 10);
+    const day = localDate(set.startedAt);
     days.set(day, [...(days.get(day) ?? []), attributionFor(set.exerciseId, catalog)]);
   }
   return weeklyFrequency(days.values());

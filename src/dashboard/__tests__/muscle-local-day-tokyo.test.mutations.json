@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "muscle-week sessions keyed by UTC date",
+      "file": "src/dashboard/read-models/muscle-week.ts",
+      "find": "  const day = localDate(set.startedAt);",
+      "replace": "  const day = set.startedAt.slice(0, 10);",
+      "kills": [
+        "muscle days east of UTC counts two sets on one local morning as one muscle-week session"
+      ]
+    },
+    {
+      "name": "muscle-plan observed days keyed by UTC date",
+      "file": "src/dashboard/read-models/muscle-plan.ts",
+      "find": "    const day = localDate(set.startedAt);",
+      "replace": "    const day = set.startedAt.slice(0, 10);",
+      "kills": [
+        "muscle days east of UTC counts two sets on one local morning as one observed plan day"
+      ]
+    },
+    {
+      "name": "BodyView week label from the UTC date",
+      "file": "src/dashboard/spa/body/BodyView.tsx",
+      "find": "${localDate(props.weekStart)}",
+      "replace": "${props.weekStart.slice(0, 10)}",
+      "kills": [
+        "muscle days east of UTC labels the body map with the local Monday, not the Sunday its instant falls on in UTC"
+      ]
+    }
+  ]
+}

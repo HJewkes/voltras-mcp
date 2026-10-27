@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "lint-plan imports its tier types from tools/tier-signal again",
+      "file": "src/plan/lint-plan.ts",
+      "find": "import type { Tier, TierConfidence } from '../profile/tier.js';",
+      "replace": "import type { Tier, TierConfidence } from '../tools/tier-signal.js';",
+      "kills": [
+        "tier-signal import boundary no non-test file in src/plan imports tools/tier-signal"
+      ]
+    },
+    {
+      "name": "goal-band imports Tier from tools/tier-signal again",
+      "file": "src/analytics/goal-band.ts",
+      "find": "import type { Tier } from '../profile/tier.js';",
+      "replace": "import type { Tier } from '../tools/tier-signal.js';",
+      "kills": [
+        "tier-signal import boundary no non-test file in src/analytics imports tools/tier-signal"
+      ]
+    }
+  ]
+}

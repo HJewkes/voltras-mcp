@@ -30,6 +30,8 @@ const LOCAL_TIME_TEST_FILES = [
   'src/accountability/__tests__/commitment-week-local-time.test.ts',
   'src/dashboard/__tests__/banner-clears-via-skip.test.ts',
   'src/docs/__tests__/personas-night-owl-tz.test.ts',
+  'src/dashboard/__tests__/muscle-local-day-denver.test.ts',
+  'src/dashboard/__tests__/muscle-local-day-tokyo.test.ts',
   'src/dashboard/__tests__/muscle-set-scope-local-time.test.ts',
   'src/plan/__tests__/block-calendar-local-time.test.ts',
   'src/plan/__tests__/calendar-dates-local-time.test.ts',
