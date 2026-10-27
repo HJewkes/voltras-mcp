@@ -9,10 +9,15 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+import { BodyView } from '../spa/body/BodyView.js';
+import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
 import {
-  bodyWeekLabel,
   chestObservedDays,
   chestSessions,
+  weekView,
   type LocalDayScenario,
 } from './muscle-local-day-scenario.js';
 
@@ -20,6 +25,18 @@ afterAll(() => {
   if (ORIGINAL_TZ === undefined) delete process.env.TZ;
   else process.env.TZ = ORIGINAL_TZ;
 });
+
+function bodyWeekLabel(scenario: LocalDayScenario): string | undefined {
+  const strength = {
+    muscleMapVersion: MUSCLE_MAP_VERSION,
+    agreementBasis: '',
+    earlyPhaseBasis: '',
+    muscles: [],
+  };
+  const data = { week: weekView(scenario), strength, plan: null, recovery: null };
+  const html = renderToStaticMarkup(createElement(BodyView, { data }));
+  return /Week of \d{4}-\d{2}-\d{2}/.exec(html)?.[0];
+}
 
 /** Wednesday 2026-10-07 at 08:00 and 10:00 local: Tuesday and Wednesday in UTC. */
 const WEDNESDAY_MORNING: LocalDayScenario = {
