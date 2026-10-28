@@ -50,7 +50,8 @@
       "find": "    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),",
       "replace": "    ended_at = sessions.ended_at,",
       "kills": [
-        "the session closer stamps the end time on the first session.end of a session nothing closed"
+        "the session closer stamps the end time on the first session.end of a session nothing closed",
+        "the session closer keeps the idle rule's end time through a later session.end re-put"
       ]
     }
   ]
