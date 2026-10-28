@@ -32,22 +32,22 @@ worked out from those readings. This page explains which is which, and how far t
 ## Measured and derived
 
 The device streams readings while you move. The server groups them into reps as each lift-and-return
-cycle ends (`src/state/event-bridge.ts:24-27`). Each reading carries the cable's position, speed and
-force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:660-675`). Per-rep
+cycle ends (`src/state/event-bridge.ts:24-27`<!-- anchor: detect rep cycle -->). Each reading carries the cable's position, speed and
+force. Range of motion is worked out from the positions (`src/state/event-bridge.ts:660-675`<!-- anchor: position: mmToM(frame.position) -->). Per-rep
 speed and range of motion are the closest thing to a measurement the server has.
 
 Almost everything else is derived. Velocity loss, the fatigue verdict, estimated 1RM (e1RM),
 readiness and reps in reserve are all calculations over recorded reps
-([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:279-322` for velocity loss,
-the fatigue verdict and RIR; `src/tools/metrics-tools.ts:515-516` for e1RM;
-`src/tools/metrics-tools.ts:408` for readiness). A derived number can be no
+([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:279-322`<!-- anchor: case 'vbt.set' --> for velocity loss,
+the fatigue verdict and RIR; `src/tools/metrics-tools.ts:515-516`<!-- anchor: case 'strength.e1rm' --> for e1RM;
+`src/tools/metrics-tools.ts:408`<!-- anchor: case 'session.readiness' --> for readiness). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
 is marked as fit for tracking a trend, never as the number that sets today's load
-(`src/tools/e1rm-band.ts:1-16`, `src/tools/e1rm-band.ts:57`). The readiness reading always carries a
+(`src/tools/e1rm-band.ts:1-16`<!-- anchor: TREND instrument -->, `src/tools/e1rm-band.ts:57`<!-- anchor: fitFor: 'trend' -->). The readiness reading always carries a
 `heuristic` basis, because no published study validates the signal it reads
-(`src/tools/metrics-tools.ts:66-73`).
+(`src/tools/metrics-tools.ts:66-73`<!-- anchor: basis: 'heuristic' -->).
 
 ## Why trends beat absolutes
 
@@ -56,7 +56,7 @@ cancel when you read one number on its own.
 
 The server's own history shows this. Sets recorded before a units fix stored velocity on a
 different scale. Absolute speeds from those sets were wrong, but velocity loss, estimates of reps in reserve
-([RIR](/concepts/velocity-and-effort#velocity-and-effort)) and fatigue verdicts were not, because they are ratios (`src/store/velocity-units.ts:10-13`).
+([RIR](/concepts/velocity-and-effort#velocity-and-effort)) and fatigue verdicts were not, because they are ratios (`src/store/velocity-units.ts:10-13`<!-- anchor: Ratio consumers -->).
 
 So when a figure is uncertain, compare it with yourself. This week against last month, or left
 side against right side, is a more reliable read than any single value. The
@@ -65,63 +65,63 @@ side against right side, is a more reliable read than any single value. The
 ## Velocity units are tagged
 
 Each recorded set carries a tag that names the unit its velocities were stored in. Every new set is
-tagged as metres per second (`src/tools/set-tools.ts:1625`). Older sets keep their original scale on
-disk, and the server rescales them when it reads them (`src/store/velocity-units.ts:1-8`,
-`src/store/velocity-units.ts:48-51`). This keeps the evidence of which scale a row came from, and
+tagged as metres per second (`src/tools/set-tools.ts:1653`<!-- anchor: velocityUnits: CURRENT_VELOCITY_UNITS -->). Older sets keep their original scale on
+disk, and the server rescales them when it reads them (`src/store/velocity-units.ts:1-8`<!-- anchor: the correction happens HERE, on read -->,
+`src/store/velocity-units.ts:48-51`<!-- anchor: export function normaliseVelocityToMps -->). This keeps the evidence of which scale a row came from, and
 lets old and new sets be compared (VW-160).
 
 ## Isometric force
 
 The isometric tools report pull force in pounds. That reads like a settled physical measurement.
 Its plateau detection and inferred working weight have not been re-checked on hardware since the
-underlying force scale last changed (`src/tools/isometric-tools.ts:1464-1469`). The [isometric guide's calibration
+underlying force scale last changed (`src/tools/isometric-tools.ts:1464-1469`<!-- anchor: CALIBRATION CAVEAT -->). The [isometric guide's calibration
 caveat](/guides/isometric#the-calibration-caveat) explains what that means for peak and plateau
 figures.
 
 ## Volume landmarks are not yours
 
 The body page counts your weekly working sets per muscle. It compares each count with three volume
-landmarks (`src/dashboard/read-models/muscle-week.ts:1-5`, `src/dashboard/read-models/muscle-week.ts:40-48`):
+landmarks (`src/dashboard/read-models/muscle-week.ts:1-5`<!-- anchor: population volume landmarks -->, `src/dashboard/read-models/muscle-week.ts:40-48`<!-- anchor: export interface VolumeLandmarks -->):
 
 - **MEV**, minimum effective volume.
 - **MAV**, maximum adaptive volume.
 - **MRV**, maximum recoverable volume: the point past which added volume produces only fatigue
-  (`src/store/mrv-guard.ts:6-7`).
+  (`src/store/mrv-guard.ts:6-7`<!-- anchor: Maximum Recoverable Volume -->).
 
 The landmarks the server uses are population defaults. They are copied from a shared design
 library's default table, not learned from your training
-(`src/dashboard/read-models/muscle-week.ts:17-21`, `src/dashboard/read-models/muscle-week.ts:50-61`).
+(`src/dashboard/read-models/muscle-week.ts:17-21`<!-- anchor: LANDMARKS ARE POPULATION DEFAULTS -->, `src/dashboard/read-models/muscle-week.ts:50-61`<!-- anchor: DEFAULT_VOLUME_LANDMARKS -->).
 Their basis is fixed as `population-default`, and the page prints that basis under the panel
-(`src/dashboard/read-models/muscle-week.ts:147`, `src/dashboard/spa/body/BodyView.tsx:309-312`).
+(`src/dashboard/read-models/muscle-week.ts:147`<!-- anchor: looked up, never discovered -->, `src/dashboard/spa/body/BodyView.tsx:337-341`<!-- anchor: landmarkBasis -->).
 
 Your own landmarks may sit well away from the defaults. Finding them from your set history is
 tracked as VW-146. Until then, `history.weekly_volume` in [`metrics.compute`](/reference/metrics)
 leaves its verdict empty rather than judge your volume against someone else's numbers
-(`src/dashboard/read-models/muscle-week.ts:19-21`).
+(`src/dashboard/read-models/muscle-week.ts:19-21`<!-- anchor: `verdict: null` -->).
 
 ## Baselines and drift
 
 The server keeps a confidence state for each exercise you train. It moves from COLD through
 SHAPE_ONLY and PROVISIONAL to CALIBRATED as evidence builds up, and drops to STALE after a long gap
-(`src/store/exercise-baselines.ts:263-280`). At SHAPE_ONLY, relative signals such as velocity loss
+(`src/store/exercise-baselines.ts:263-280`<!-- anchor: Ratchets COLD -->). At SHAPE_ONLY, relative signals such as velocity loss
 are honest, but anything phrased in reps to failure is not
-(`src/store/exercise-baselines.ts:269-271`).
+(`src/store/exercise-baselines.ts:269-271`<!-- anchor: Relative signals -->).
 
 [`baselines.get`](/reference/baselines) reads that state. It is a diagnostic read, not a value
 lookup. Its own description says to treat numbers from a baseline below CALIBRATED as provisional
-(`src/tools/baseline-tools.ts:65-73`).
+(`src/tools/baseline-tools.ts:65-73`<!-- anchor: should be treated as provisional -->).
 
 [`driftguard.check`](/reference/driftguard) is also diagnostic. It shows whether two sessions of an
 exercise were comparable, for example after a change in range of motion, tempo or setup. It gives
-the same verdict the internal checks use (`src/tools/drift-guard-tools.ts:30-34`).
+the same verdict the internal checks use (`src/tools/drift-guard-tools.ts:30-34`<!-- anchor: same comparability -->).
 
 Neither tool tells you what to do. They tell you how much the server knows
-(`src/tools/drift-guard-tools.ts:35-36`, `src/tools/baseline-tools.ts:67-68`).
+(`src/tools/drift-guard-tools.ts:35-36`<!-- anchor: not as a step in an automated coaching decision -->, `src/tools/baseline-tools.ts:67-68`<!-- anchor: diagnostic read -->).
 
 ## Effort numbers
 
 The strictest trust rules in the server apply to reps in reserve. A fitted effort curve counts as
-trusted only when its error is 1.5 reps or less (`src/analytics/rir-velocity.ts:62-80`).
+trusted only when its error is 1.5 reps or less (`src/analytics/rir-velocity.ts:62-80`<!-- anchor: TRUSTED_RIR_ERROR_REPS = 1.5 -->).
 [Velocity and effort](/concepts/velocity-and-effort) explains that rule and where the dashboard
 withholds effort numbers today.
 

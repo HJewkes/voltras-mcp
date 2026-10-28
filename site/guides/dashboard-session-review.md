@@ -26,7 +26,7 @@ time on the right. It assumes the dashboard is already open; if it is not, start
 
 The capture below comes from a scripted run on the mock adapter. The summary shows the last
 exercise of that run: two sets of Cable Chest Fly, five reps each at 140 lb, against a plan
-that asks for 12 to 15 reps (`src/docs/capture-shots.ts:424-446`,
+that asks for 12 to 15 reps (`src/docs/capture-shots.ts:424-446`<!-- anchor: name: 'session-summary' -->,
 `scripts/dashboard-plan-drive.mjs`).
 
 ## 1. Open the summary
@@ -37,11 +37,11 @@ Click **review** in the nav rail. It opens `#/summary`
 With no session named, the page shows the session that ended most recently, looking among the
 20 that started most recently. If none of those has ended, it shows the one that started most
 recently, the title reads "Session in progress" instead of "Session complete", and a "Session
-still open" tag replaces the duration (`src/dashboard/read-models/session-summary.ts:114-144`,
+still open" tag replaces the duration (`src/dashboard/read-models/session-summary.ts:114-144`<!-- anchor: LATEST_SCAN_LIMIT -->,
 `src/dashboard/spa/planner/summary/SummaryHeader.tsx`).
 
 The page loads once and does not poll, because a finished session's numbers do not change
-(`src/dashboard/spa/planner/SessionSummaryPage.tsx:14-15`). If you opened it on a session in
+(`src/dashboard/spa/planner/SessionSummaryPage.tsx:14-15`<!-- anchor: does not poll -->). If you opened it on a session in
 progress, reload the page after [`session.end`](/reference/session) to see the final numbers.
 
 <CaptureCallouts
@@ -62,7 +62,7 @@ The header counts the whole session: exercises, sets, reps, volume and duration.
 out sets with no load, such as band or damper sets, and says how many it left out
 (`src/dashboard/spa/planner/session-summary-model.ts`, `headerTotals`). Below it, the page
 draws one band per exercise the session touched, so a session that moved between lifts shows
-each one (`src/dashboard/spa/planner/SessionSummaryPage.tsx:4-7`).
+each one (`src/dashboard/spa/planner/SessionSummaryPage.tsx:4-7`<!-- anchor: One band per exercise the session TOUCHED -->).
 
 The **LBS / KG** toggle in the header switches every load on the page. In kg, a step such as
 "Back off 3 kg" is the difference between the two loads shown, so it always adds up.
@@ -73,8 +73,8 @@ Each band opens on the left with the fatigue verdict: the same word and the same
 the live page shows mid-set (`src/dashboard/spa/planner/summary/VerdictColumn.tsx`). The line
 above the word names the set it read and that set's velocity loss. The verdict reads the
 exercise's worst working set, measured by velocity loss
-(`src/dashboard/read-models/session-summary-view.ts:80-86`). On a tie it reads the later set
-(`src/dashboard/read-models/session-summary.ts:258-280`). What the verdict words mean is
+(`src/dashboard/read-models/session-summary-view.ts:80-86`<!-- anchor: Worst within-set velocity loss -->). On a tie it reads the later set
+(`src/dashboard/read-models/session-summary.ts:279-284`<!-- anchor: Ties go to the LATER set -->). What the verdict words mean is
 explained in [Fatigue and pacing](/concepts/fatigue-and-pacing).
 
 With no verdict, the band says why instead: no working sets to score, or no bar-speed data.
@@ -97,7 +97,7 @@ score, are greyed and labelled.
 
 The right of the band gives next time's load in large type, and the step that lands on it:
 "Add 5 lb", "Hold" or "Back off 5 lb". The load is the heaviest working load of this session
-plus the step (`src/dashboard/spa/planner/session-summary-model.ts:32-39`). The step is never
+plus the step (`src/dashboard/spa/planner/session-summary-model.ts:32-39`<!-- anchor: export function nextLoad -->). The step is never
 coloured as an alarm. Hover it for the rule's own reasoning; in kg that text keeps its lb
 numbers and says so.
 
@@ -106,22 +106,22 @@ recommendation counted. A chip with an arrow up reached the top of the range; an
 fell short of it.
 
 The step comes from the same rule that [`plan.suggest_progression`](/reference/plan) runs
-(`src/tools/plan-tools.ts:1750-1756`, `src/dashboard/read-models/session-summary.ts:420`).
+(`src/tools/plan-tools.ts:1750-1756`<!-- anchor: session-completion screen computes its -->, `src/dashboard/read-models/session-summary.ts:422`<!-- anchor: computeProgressionDelta(planned, args.sets, args.sessionId) -->).
 The page runs that rule with a default intermediate tier and no diet phase. The tool reads
 your own tier and declared diet phase, so the two can disagree
-(`src/tools/plan-tools.ts:1127-1130`, `src/tools/plan-tools.ts:1620-1625`). By default the
+(`src/tools/plan-tools.ts:1127-1130`<!-- anchor: tier: 'intermediate' -->, `src/tools/plan-tools.ts:1620-1625`<!-- anchor: readDietPhaseState(state) -->). By default the
 tool also reads the most recent session that trained the exercise, while the page reads the
 session on screen. When they do, ask Claude for the tool's answer.
 
 When the verdict and the step point opposite ways, a short label says so, for example "Moved
-well · missed reps" (`src/dashboard/spa/planner/session-summary-model.ts:83-99`). It also
+well · missed reps" (`src/dashboard/spa/planner/session-summary-model.ts:83-99`<!-- anchor: export function disagreement -->). It also
 shows your usual rep range at this load, once your history has enough sets for one, and flags a
 load whose effort has drifted from the plan. Hover any of these for the detail.
 
 The recommendation needs a plan. The band reads "No recommendation" when the sets named no
 exercise, when there is no active training program, or when the current program does not
 prescribe the exercise; hover it for which
-(`src/dashboard/read-models/session-summary.ts:398-419`). To get one, build the workout first:
+(`src/dashboard/read-models/session-summary.ts:398-419`<!-- anchor: No active training program -->). To get one, build the workout first:
 see [Build a plan on the dashboard](/guides/dashboard-plan-builder).
 
 ## 6. Read the set table

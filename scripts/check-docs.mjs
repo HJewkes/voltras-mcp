@@ -134,31 +134,9 @@ function resolveInRepo(citation) {
   return { kind: 'file', lineCount: source.length, source };
 }
 
-/**
- * Site pages whose line citations predate the anchor rule and are still being
- * backfilled (VW-925). A page leaves this list when every line citation on it
- * carries an anchor; a page not on it must anchor every one. The anchors these
- * pages already carry are verified all the same.
- */
-const PAGES_AWAITING_ANCHORS = new Set([
-  'site/coming-soon/body-map.md',
-  'site/coming-soon/goals-page.md',
-  'site/concepts/calibration-and-trust.md',
-  'site/concepts/fatigue-and-pacing.md',
-  'site/concepts/how-coaching-works.md',
-  'site/concepts/technique-signals.md',
-  'site/guides/bilateral.md',
-  'site/guides/dashboard-pacing-and-form.md',
-  'site/guides/dashboard-plan-builder.md',
-  'site/guides/dashboard-session-review.md',
-  'site/guides/dashboard-setup.md',
-  'site/guides/isometric.md',
-]);
-
 function anchorFindings(page, text, citations) {
   if (historical(page)) return [];
-  const required = page.startsWith('site/') && !PAGES_AWAITING_ANCHORS.has(page);
-  return checkAnchorPlacement(text, citations, { required });
+  return checkAnchorPlacement(text, citations, { required: page.startsWith('site/') });
 }
 
 function gitLines(args) {

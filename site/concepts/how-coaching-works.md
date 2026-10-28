@@ -35,13 +35,13 @@ The server measures and records. Claude, reading what the server reports, does t
 The **pt-session skill** is the set of instructions that tells Claude how to act as your trainer.
 It covers two kinds of work: a live workout with the device, and a sitting with no device, such
 as a weekly review or planning the next block
-(`plugins/voltras-channel/skills/pt-session/SKILL.md:9-12`). It ships inside this repo, so it is
-never older than the server it came with (`plugins/voltras-channel/skills/pt-session/SKILL.md:14`).
+(`plugins/voltras-channel/skills/pt-session/SKILL.md:9-12`<!-- anchor: You do two kinds of work -->). It ships inside this repo, so it is
+never older than the server it came with (`plugins/voltras-channel/skills/pt-session/SKILL.md:14`<!-- anchor: never older than the server it came with -->).
 
 The skill sets rules Claude follows. Two examples: never promise that a set will stop on its own,
 and never strip the experience tier from coaching advice
-(`plugins/voltras-channel/skills/pt-session/SKILL.md:188`,
-`plugins/voltras-channel/skills/pt-session/SKILL.md:198`).
+(`plugins/voltras-channel/skills/pt-session/SKILL.md:188`<!-- anchor: Never strip the tier -->,
+`plugins/voltras-channel/skills/pt-session/SKILL.md:198`<!-- anchor: Don't promise auto-stop -->).
 
 ## Automatic spoken cues
 
@@ -49,14 +49,14 @@ A **cue** is a short spoken line, such as a set intro or a note that you are slo
 can come from two places.
 
 - **Claude speaks** through [`system.speak`](/reference/system). This is the default. With
-  automatic cues off, Claude drives all speech (`src/config.ts:106-113`).
+  automatic cues off, Claude drives all speech (`src/config.ts:106-113`<!-- anchor: the model drives all TTS -->).
 - **The server speaks on its own**, the instant an event fires. This avoids the delay of waiting
   for Claude, which once made a rep count arrive after the set had ended
-  (`src/voice/cue-emitter.ts:1-5`). It works on macOS only, through the built-in `say` voice
-  (`src/config.ts:114-116`).
+  (`src/voice/cue-emitter.ts:1-5`<!-- anchor: no LLM round-trip -->). It works on macOS only, through the built-in `say` voice
+  (`src/config.ts:117-119`<!-- anchor: non-macOS hosts -->).
 
 When the server speaks on its own, a fixed rule called `decideCue` picks the line. It maps four
-events to four kinds of cue and ignores every other event (`src/voice/cue-policy.ts:29-46`):
+events to four kinds of cue and ignores every other event (`src/voice/cue-policy.ts:29-46`<!-- anchor: export function decideCue -->):
 
 | Event                    | Cue          | When it can play |
 | ------------------------ | ------------ | ---------------- |
@@ -66,16 +66,16 @@ events to four kinds of cue and ignores every other event (`src/voice/cue-policy
 | `velocity_loss_exceeded` | slowdown     | mid-set          |
 
 The rule has no memory: the same event always gives the same decision
-(`src/voice/cue-policy.ts:5-7`). A slowdown cue is urgent and interrupts whatever is being said
-(`src/voice/cue-policy.ts:108-115`). Each kind of cue plays at most once per set
-(`src/voice/cue-emitter.ts:54-57`).
+(`src/voice/cue-policy.ts:5-7`<!-- anchor: has no internal state -->). A slowdown cue is urgent and interrupts whatever is being said
+(`src/voice/cue-policy.ts:108-115`<!-- anchor: priority: 'urgent' -->). Each kind of cue plays at most once per set
+(`src/voice/cue-emitter.ts:54-57`<!-- anchor: at most once per set -->).
 
 Two switches control whether cues play, and both are off by default:
 
-- `VMCP_CUES` turns automatic cues on at all (`src/config.ts:13`, `src/config.ts:106-117`).
+- `VMCP_CUES` turns automatic cues on at all (`src/config.ts:13`<!-- anchor: VMCP_CUES -->, `src/config.ts:106-117`<!-- anchor: no automatic spoken cues -->).
 - `VMCP_CUES_MIDSET` also allows the two mid-set cues. They are off by default because every cue
   mutes the microphone while it plays, which matters for the spoken stop described below
-  (`src/config.ts:14`, `src/config.ts:122-141`). Its third value, `risk`, lets mid-set lines speak
+  (`src/config.ts:14`<!-- anchor: VMCP_CUES_MIDSET -->, `src/config.ts:122-141`<!-- anchor: Gating mid-set cues off by -->). Its third value, `risk`, lets mid-set lines speak
   only through the cue-delivery layer, and only on a set whose risk reading at set start is green.
   Amber, red and unread sets stay silent mid-set (`src/voice/cue-delivery/risk-permit.ts`).
 
@@ -86,24 +86,24 @@ technique focus repeated in the same words across sets, and a firmer tone as the
 failure. `VMCP_CUES` and `VMCP_CUES_MIDSET` still gate it (`src/config.ts`).
 
 [`system.set_cues`](/reference/system) changes `VMCP_CUES` and `VMCP_CUES_MIDSET` while the
-server runs, with no restart (`src/voice/cue-settings.ts:1-12`).
+server runs, with no restart (`src/voice/cue-settings.ts:1-12`<!-- anchor: `system.set_cues` mutates it in place -->).
 
 ## The effort cue
 
-There is a third, separate switch: `VOLTRAS_EFFORT_CUE`, off by default (`src/config.ts:16`,
-`src/config.ts:299`). When on, an effort rule decides the one ending cue for a set. It picks at
+There is a third, separate switch: `VOLTRAS_EFFORT_CUE`, off by default (`src/config.ts:17`<!-- anchor: VOLTRAS_EFFORT_CUE -->,
+`src/config.ts:342`<!-- anchor: env.VOLTRAS_EFFORT_CUE -->). When on, an effort rule decides the one ending cue for a set. It picks at
 most one of: target reps reached, velocity loss exceeded, or an effort target reached, and it stores
 a record of the cue with the set. It stays off by default until it has been tested on the device
-(`src/config.ts:149-157`). [Velocity and effort](/concepts/velocity-and-effort#when-the-server-will-state-a-number)
+(`src/config.ts:169-176`<!-- anchor: Turned on by default only after the bench -->). [Velocity and effort](/concepts/velocity-and-effort#when-the-server-will-state-a-number)
 explains the strict conditions it puts on your effort curve.
 
 ## Your experience tier
 
 Advice depends on how experienced you are. The server's **tier signal** places you as a
-**beginner**, **intermediate** or **advanced** lifter (`src/tools/tier-signal.ts:38`), and
-[`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:265-271`).
+**beginner**, **intermediate** or **advanced** lifter (`src/profile/tier.ts:5`<!-- anchor: 'beginner' | 'intermediate' | 'advanced' -->), and
+[`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:265-271`<!-- anchor: 'profile.get_tier_signal' -->).
 
-It answers two questions separately (`src/tools/tier-signal.ts:8-14`):
+It answers two questions separately (`src/tools/tier-signal.ts:8-14`<!-- anchor: Two questions, answered separately -->):
 
 - **How sure is it?** The tier counts as confident only after 24 training days logged over 12
   weeks.
@@ -111,7 +111,7 @@ It answers two questions separately (`src/tools/tier-signal.ts:8-14`):
   history, or a record of earlier training with only a short break since. The server never
   derives advanced, and it only ever lowers the tier you declared, never raises it.
 
-Several tools read the tier (`src/tools/tier-signal.ts:16-20`):
+Several tools read the tier (`src/tools/tier-signal.ts:16-20`<!-- anchor: Consumers read the clamped -->):
 
 - [`plan.warmup_ramp`](/reference/plan) uses it for the number of warm-up steps.
 - [`report.weekly`](/reference/report) and [`plan.suggest_progression`](/reference/plan) use it
@@ -120,47 +120,47 @@ Several tools read the tier (`src/tools/tier-signal.ts:16-20`):
 - [`profile.get_starting_prescription`](/reference/profile) uses it for your first loads.
 
 Goal setting reads the tier you declared instead, and flags when the server's own reading
-disagrees (`src/tools/tier-signal.ts:19-20`).
+disagrees (`src/tools/tier-signal.ts:19-20`<!-- anchor: DECLARED tier -->).
 
 ## Where coaching.explain gets its answers
 
 [`coaching.explain`](/reference/coaching) answers coaching questions by topic. Topics are grouped
 by the kind of conversation: onboarding, live coaching, the training block, and diet
-(`src/tools/coaching-tools.ts:30-36`).
+(`src/tools/coaching-tools.ts:30-36`<!-- anchor: grouped by conversation type -->).
 
 Its knowledge is **RP-derived**: it comes from a curated set of mined coaching notes, and each
-note's id starts with `rp-` (`src/tools/coaching-content.ts:13-16`,
-`src/tools/coaching-content.ts:50-52`). Five topics draw on published research instead, and cite
-author and year (`src/tools/coaching-tools.ts:43-48`).
+note's id starts with `rp-` (`src/tools/coaching-content.ts:13-16`<!-- anchor: mined-note ids -->,
+`src/tools/coaching-content.ts:50-52`<!-- anchor: rp-s4-beginner-definition-time-and-plateau -->). Five topics draw on published research instead, and cite
+author and year (`src/tools/coaching-tools.ts:43-48`<!-- anchor: Five topics draw on primary literature -->).
 
 Every answer states its numbers per tier, in the prose itself. A number from this material without
 its tier is meaningless, so Claude is told never to strip the tier when passing it on
-(`src/tools/coaching-tools.ts:37-40`). If the tier is not known yet, the answer gives every tier
-at once (`src/tools/coaching-tools.ts:39-40`).
+(`src/tools/coaching-tools.ts:37-40`<!-- anchor: never strip the tier qualifier -->). If the tier is not known yet, the answer gives every tier
+at once (`src/tools/coaching-tools.ts:39-40`<!-- anchor: omit it to get every applicable tier -->).
 
 Every answer also lists its sources. When the source material disagrees with itself, the answer
 carries a caveat, and Claude quotes a range rather than one number
-(`src/tools/coaching-tools.ts:40-42`).
+(`src/tools/coaching-tools.ts:40-42`<!-- anchor: `caveats` array -->).
 
 ## The spoken stop, and its blind spot
 
 You can stop the weight by voice. [`system.listen_start`](/reference/system) turns on a
 microphone that runs on your machine, and it is off until something calls it
-(`src/tools/voice-tools.ts:1-14`). Once it is on, short phrases such as "stop", "unload" or "cut
+(`src/tools/voice-tools.ts:1-14`<!-- anchor: Off-by-default -->). Once it is on, short phrases such as "stop", "unload" or "cut
 the weight" unload every connected device, with no wait for Claude
-(`src/voice/transcript-router.ts:22-31`, `src/tools/voice-tools.ts:7-11`). A phrase like "don't
+(`src/voice/transcript-router.ts:22-31`<!-- anchor: SAFETY_PHRASES -->, `src/tools/voice-tools.ts:7-11`<!-- anchor: ungated unload fast-path -->). A phrase like "don't
 stop" is ignored, and so is a long sentence that merely contains the word
-(`src/voice/transcript-router.ts:33-49`).
+(`src/voice/transcript-router.ts:33-49`<!-- anchor: NEGATION_TOKENS -->).
 
 ::: warning The microphone is deaf while anything is spoken
 Today, while any line plays, whether Claude's speech or an automatic cue, the microphone is
 muted and the sound it hears is thrown away. A spoken "stop" in that window is lost, with no event
-to say so (`src/voice/voice-listener.ts:17-19`, `src/voice/voice-listener.ts:505-512`,
-`plugins/voltras-channel/skills/pt-session/SKILL.md:176`). A single mute lasts at most eight
-seconds (`src/tools/tts-tools.ts:120-129`). The fix is tracked as VW-173 and is not on `main`
+to say so (`src/voice/voice-listener.ts:17-19`<!-- anchor: Entering the -->, `src/voice/voice-listener.ts:505-512`<!-- anchor: Muted frames are discarded -->,
+`plugins/voltras-channel/skills/pt-session/SKILL.md:176`<!-- anchor: The mic is deaf while any line plays -->). A single mute lasts at most eight
+seconds (`src/tools/tts-tools.ts:120-129`<!-- anchor: MUTE_FAILSAFE_MS = 8000 -->). The fix is tracked as VW-173 and is not on `main`
 yet.
 :::
 
-That is why the mid-set cues are off by default (`src/config.ts:120-128`). It is also why the
+That is why the mid-set cues are off by default (`src/config.ts:123-131`<!-- anchor: Gating mid-set cues off by -->). It is also why the
 skill tells Claude to keep lines short and stay silent during a heavy set, and to have you keep a
-hand near the device's own stop (`plugins/voltras-channel/skills/pt-session/SKILL.md:176`).
+hand near the device's own stop (`plugins/voltras-channel/skills/pt-session/SKILL.md:176`<!-- anchor: keep a hand near the stop -->).

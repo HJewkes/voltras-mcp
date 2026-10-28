@@ -36,12 +36,12 @@ Every capture here comes from the real MCP tools running against the mock adapte
 ## 1. The tempo target
 
 A tempo target is four numbers in seconds: lowering, pause at the bottom, lifting, pause at the
-top (`src/dashboard/tempo-defaults.ts:21-22`). The dashboard uses the tempo your coach set on the
+top (`src/dashboard/tempo-defaults.ts:21-22`<!-- anchor: export type TempoTuple -->). The dashboard uses the tempo your coach set on the
 planned exercise, else the exercise's default, else none
-(`src/dashboard/tempo-defaults.ts:71-89`). When one applies, it sits in the header under the
-prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:321-340`).
+(`src/dashboard/tempo-defaults.ts:71-89`<!-- anchor: export function resolveTargetTempo -->). When one applies, it sits in the header under the
+prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:321-340`<!-- anchor: session.tempo && -->).
 With none, the header shows no tempo rather than an invented one
-(`src/dashboard/spa/live-page/ExerciseHeader.tsx:172`).
+(`src/dashboard/spa/live-page/ExerciseHeader.tsx:172`<!-- anchor: no prescribed tempo -->).
 
 <CaptureCallouts
   shot="live-mid-set"
@@ -52,21 +52,21 @@ With none, the header shows no tempo rather than an invented one
   ]'
 />
 
-The tint compares each rep with the target (`src/dashboard/spa/panels/fatigue-view.ts:139-148`,
-`src/dashboard/spa/panels/fatigue-view.ts:419-422`). The card also shows the set's own tempo
-next to the target (`src/dashboard/spa/panels/fatigue-view.ts:447-448`).
+The tint compares each rep with the target (`src/dashboard/spa/panels/fatigue-view.ts:145-154`<!-- anchor: function tempoDeviationFor -->,
+`src/dashboard/spa/panels/fatigue-view.ts:432-434`<!-- anchor: per-rep tempo-deviation tint -->). The card also shows the set's own tempo
+next to the target (`src/dashboard/spa/panels/fatigue-view.ts:459-460`<!-- anchor: targetTempoSeconds -->).
 
 ## 2. The tempo and form lights
 
 The fatigue card carries three lights under its verdict: velocity loss, form (range of motion)
-and tempo (`src/dashboard/spa/live-page/fatigue-model.ts:105-107`). Each light is ok, warn or
+and tempo (`src/dashboard/spa/live-page/fatigue-model.ts:105-107`<!-- anchor: three dimension lights -->). Each light is ok, warn or
 alarm.
 
 - The **tempo light** compares your reps with each other, not with the target. A tint far from
   the target does not by itself change this light.
 - The **form light** compares each rep's range of motion with the set's own working range. The
   card draws a line at 75% of that range on its range-of-motion chart
-  (`src/dashboard/spa/panels/fatigue-view.ts:441-443`).
+  (`src/dashboard/spa/panels/fatigue-view.ts:454-455`<!-- anchor: workingStandard * 0.75 -->).
 
 A form or tempo alarm turns the verdict to form breakdown, even when the bars look fast.
 [The fatigue verdict](/concepts/fatigue-and-pacing#the-fatigue-verdict) gives the thresholds.
@@ -88,32 +88,32 @@ When a set closes, the live page switches to its rest stage.
 />
 
 The **rest ring** counts down the rest length for this exercise
-(`src/dashboard/spa/live-page/RestView.tsx:209-242`). In this capture that is the plan's own
-rest, 90 seconds for Cable Chest Press (`scripts/dashboard-plan-drive.mjs:115-123`). When the
+(`src/dashboard/spa/live-page/RestView.tsx:209-242`<!-- anchor: function RestCountdown -->). In this capture that is the plan's own
+rest, 90 seconds for Cable Chest Press (`scripts/dashboard-plan-drive.mjs:115-123`<!-- anchor: restSec: 90 -->). When the
 plan sets no rest, the ring counts down a default for the exercise's training intent and says
 "Default rest" under it, so a default never reads as your coach's number
-(`src/coach-copy/dashboard.ts`, `src/analytics/rest-defaults.ts:145-155`).
+(`src/coach-copy/dashboard.ts`, `src/analytics/rest-defaults.ts:145-155`<!-- anchor: 'intent_default' -->).
 With no rest length at all, a clock counts up from the end of the set instead
-(`src/dashboard/spa/live-page/RestView.tsx:244-252`).
+(`src/dashboard/spa/live-page/RestView.tsx:244-252`<!-- anchor: mode="up" -->).
 [Rest between sets](/concepts/fatigue-and-pacing#rest-between-sets) explains the defaults.
 
 The **pace footer** sits at the bottom of the rail. It shows **Left**, the planned sets still
 to do, **ETA**, the time the plan projects the session to end, and, once the first set starts,
 **Pace**: `on pace`, or how many minutes behind or ahead of the plan you are
-(`src/dashboard/spa/live-page/model.ts:910-934`). When you are behind or ahead and the plan has
+(`src/dashboard/spa/live-page/model.ts:938-966`<!-- anchor: export function derivePaceMetrics -->). When you are behind or ahead and the plan has
 sets left to change, a sentence under the rail suggests sets to trim or add
-(`src/dashboard/spa/live-page/LivePage.tsx:290-292`,
-`src/dashboard/read-models/session-pace.ts:281-296`). The same estimate drives the clock and
-pace marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:276-284`). Without
+(`src/dashboard/spa/live-page/LivePage.tsx:224-226`<!-- anchor: derivePaceSuggestion(pace -->,
+`src/dashboard/read-models/session-pace.ts:281-296`<!-- anchor: export function suggestPaceAdjustment -->). The same estimate drives the clock and
+pace marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:210-217`<!-- anchor: budgetMs: pace.plannedMinutes -->). Without
 an attached plan there is no footer at all, rather than a guessed finish time
-(`src/dashboard/spa/live-page/LivePage.tsx:246-254`, `src/dashboard/spa/live-page/model.ts:911`).
+(`src/dashboard/spa/live-page/LivePage.tsx:180-188`<!-- anchor: Empty with no plan attached -->, `src/dashboard/spa/live-page/model.ts:943`<!-- anchor: if (pace === null) return [] -->).
 The capture does not pin the ETA, because it is wall-clock time.
 
 ## 4. Left and right
 
 With two Voltras bound to the `left` and `right` [slots](/reference/slot), the live page switches to
 its diverging stage on its own: one velocity chart per side
-(`src/dashboard/spa/live-page/stage-variant.ts:71`).
+(`src/dashboard/spa/live-page/stage-variant.ts:71`<!-- anchor: 'live-dual' -->).
 
 <CaptureCallouts
   shot="live-dual-mid-set"
@@ -125,16 +125,16 @@ its diverging stage on its own: one velocity chart per side
 />
 
 The fatigue card stays one card for both sides: its verdict and lights describe you as a whole
-(`src/dashboard/spa/live-page/fatigue-model.ts:105-109`). Only the velocity story is per side:
+(`src/dashboard/spa/live-page/fatigue-model.ts:105-109`<!-- anchor: ATHLETE AS A WHOLE -->). Only the velocity story is per side:
 each side's bars, its rep-shape curves, and the **L/R** figure
-(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:11-20`,
-`src/dashboard/spa/live-page/DivergingLiveStage.tsx:89-96`). If the
+(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:11-20`<!-- anchor: WHAT IS PER-LIMB -->,
+`src/dashboard/spa/live-page/DivergingLiveStage.tsx:89-96`<!-- anchor: L/R -->). If the
 two units were set up differently, the stage shows "L/R held back" and the reason instead,
 because the gap would describe the rig rather than you
-(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:80-85`). A side with no device bound reads
-"awaiting" plus that side (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:101-110`). You
+(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:80-85`<!-- anchor: L/R held back -->). A side with no device bound reads
+"awaiting" plus that side (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:101-110`<!-- anchor: awaiting -->). You
 see that only with `?variant=live-dual` in the URL, because without it the page leaves the
-diverging stage as soon as a side drops (`src/dashboard/spa/live-page/stage-variant.ts:66-87`).
+diverging stage as soon as a side drops (`src/dashboard/spa/live-page/stage-variant.ts:66-87`<!-- anchor: ?variant=live-dual -->).
 [Left and right](/concepts/technique-signals#left-and-right) covers the measurement, and the
 [bilateral guide](/guides/bilateral) covers the setup.
 
@@ -144,14 +144,14 @@ With a workout template attached, the session reports where it stands against th
 dashboard snapshot and `session.get` both carry it as `sessionPace`: a `state` (`ahead`,
 `on_pace`, `behind`, or `idle` before your first working set), a signed `slipMinutes` (positive
 when behind), and, when there is something to change, a `suggestion` to trim or add sets
-(`src/tools/session-tools.ts:175-182`).
+(`src/tools/session-tools.ts:175-182`<!-- anchor: sessionPace -->).
 
 **Time drives the state, and only time.** The plan gives every set a length: its work plus its
 rest. The state compares the clock since the session started with where the plan says you
 should be after the working sets you have logged. Rest inside the plan's own rest never counts
 against you, and slip within two minutes (or 5% of a long plan) reads as on pace. A streaming
 set counts as work in progress, so the state leaves `idle` as soon as the first set starts
-(`src/dashboard/read-models/session-pace.ts:154-196`).
+(`src/dashboard/read-models/session-pace.ts:154-196`<!-- anchor: Rest inside the owed rest is not slip -->).
 
 Volume, load and fatigue do not move the state. A lighter set or a heavier one takes the same
 planned slot, and a hard set does not read as slow because it was hard. Those signals answer

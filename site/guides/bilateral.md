@@ -26,7 +26,7 @@ sourced: 2026-09-30
 
 A bilateral rig is two Voltras, one per side, tracked as independent
 [slots](/reference/slot): `left` and `right`, instead of the single `primary` slot a
-one-device session uses (`src/tools/device-tools.ts:155-159`). Everything downstream — telemetry, sets,
+one-device session uses (`src/tools/device-tools.ts:155-159`<!-- anchor: default: 'primary' -->). Everything downstream — telemetry, sets,
 push events, the dashboard — keys off which slot a rep came from, so the two sides never
 get mixed into one stream.
 
@@ -37,22 +37,22 @@ session is the same `session.*`/`set.*` lifecycle running twice, once per slot.
 
 [`device.connect`](/reference/device) binds a device to a slot the same way it does for
 one unit — call it twice, once with `slot: 'left'` and once with `slot: 'right'`
-(`src/tools/device-tools.ts:155-159`).
+(`src/tools/device-tools.ts:155-159`<!-- anchor: which slot the device binds to -->).
 
 Two Voltras look identical on the table, so [`slot.identify`](/reference/slot) exists to
 answer "which one is which": it briefly switches the named slot's device into Damper mode
 — the screen visibly changes — then reverts it to whatever mode it was in
-(`src/tools/slot-tools.ts:95-101`). The default hold is 3 seconds. Watch which physical unit's display changes and you
+(`src/tools/slot-tools.ts:95-101`<!-- anchor: Default hold: 3 s -->). The default hold is 3 seconds. Watch which physical unit's display changes and you
 know which slot it's bound to.
 
 Once you've confirmed a side, [`slot.bind`](/reference/slot) persists the deviceId ↔
 `left`/`right` mapping to `~/.voltras/slot-bindings.json`
-(`VMCP_SLOT_BINDINGS_PATH`, `src/tools/slot-tools.ts:103-108`, `src/config.ts:325`), so a later
+(`VMCP_SLOT_BINDINGS_PATH`, `src/tools/slot-tools.ts:103-108`<!-- anchor: ~/.voltras/slot-bindings.json -->, `src/config.ts:354`<!-- anchor: env.VMCP_SLOT_BINDINGS_PATH -->), so a later
 `device.connect {slot: 'auto'}` against the same device routes it to the same side
 without repeating the identify ritual. [`slot.bindings_list`](/reference/slot) shows what's
 persisted, and [`slot.unbind`](/reference/slot) removes an entry. [`slot.swap`](/reference/slot)
 swaps the two connected slots' bindings in place with no BLE traffic at all
-(`src/tools/device-tools.ts:1607-1620`).
+(`src/tools/device-tools.ts:1607-1620`<!-- anchor: 'slot.swap' -->).
 
 ## Setting both units at once: `bilateral.cascade`
 
@@ -61,7 +61,7 @@ chains across one or more bound slots in a single call. It's a full-settings con
 a partial patch: every call must supply all four fields, or the tool rejects it with
 `INVALID_INPUT` naming what's missing — a partial cascade would leave the omitted settings
 at their prior firmware value, which is exactly the kind of stale state this tool exists to
-avoid (`src/tools/device-tools.ts:330-337`).
+avoid (`src/tools/device-tools.ts:330-337`<!-- anchor: Full-settings contract -->).
 
 ### Why the mode write goes first
 
@@ -70,7 +70,7 @@ setters fired concurrently, and on 2026-09-07 that produced a real failure on ha
 requesting Isokinetic mode across two bound slots left one unit in Weight Training and the
 other in Idle, twice, while calling `device.set_mode` alone stuck every time. The weight,
 eccentric and chains writes racing the mode change were making the firmware fall back
-(`src/state/bilateral-cascade.ts:11-21`, `src/tools/device-tools.ts:333`, VW-162).
+(`src/state/bilateral-cascade.ts:11-21`<!-- anchor: the MODE write is never part of the fan-out -->, `src/tools/device-tools.ts:333`<!-- anchor: a partial cascade would leave the unset settings -->, VW-162).
 
 The fix: when the requested mode differs from what the device currently echoes, the mode
 write goes out alone first, and the cascade waits for the device's mode echo before firing
@@ -82,15 +82,15 @@ its `modeEcho` field:
   for.
 - `timeout` — the echo didn't arrive in time. The slot's other setters are **not** issued;
   re-issue `device.set_mode` for that slot and check `device.get_state` before retrying
-  (`src/tools/device-tools.ts:334`).
+  (`src/tools/device-tools.ts:334`<!-- anchor: the mode write goes FIRST and alone -->).
 
 The wait is bounded by `MODE_REVERT_WINDOW_MS` — 2000ms — the same window the mode-revert
 guard itself uses to keep evaluating divergence, so a longer wait would report a
 confirmation the safety guard no longer stands behind
-(`src/state/mode-revert-guard.ts:40`, `src/state/bilateral-cascade.ts:60-67`).
+(`src/state/mode-revert-guard.ts:40`<!-- anchor: MODE_REVERT_WINDOW_MS = 2000 -->, `src/state/bilateral-cascade.ts:60-67`<!-- anchor: modeEchoTimeoutMs -->).
 
 **Where this stands:** the reordering is merged and covered by tests, including one that
-exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:577`,
+exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:577`<!-- anchor: VW-162: waits on the slot mode-revert guard -->,
 `VW-162: waits on the slot mode-revert guard and reports the echo`). No re-run against two
 physical units is recorded in this repository: the original failure that motivated the fix
 was a hardware observation, and the fix itself is confirmed in tests, not on a bench.
@@ -98,7 +98,7 @@ was a hardware observation, and the fix itself is confirmed in tests, not on a b
 Slots still run concurrently with each other, so a failure or a timeout on one slot doesn't
 block the other. With `abortOnFirstFailure: true`, setters within a slot run sequentially
 instead, and the first rejection anywhere stops every setter not yet issued
-(`src/tools/device-tools.ts:335`, `src/state/bilateral-cascade.ts:28-36`).
+(`src/tools/device-tools.ts:335`<!-- anchor: On `timeout` the slot FAILS -->, `src/state/bilateral-cascade.ts:28-36`<!-- anchor: abortOnFirstFailure: true -->).
 
 ## Reading per-slot events
 
@@ -106,7 +106,7 @@ Most push events carry a `slot` meta key: `primary` for a single-device flow, `l
 `right` when two units are connected, so a coaching surface can filter on it to keep the
 two rep streams apart. Every event also carries an `at` meta key — an ISO-8601 UTC
 timestamp of when the server emitted the push
-(`docs/push-events.md:40-49`). A handful of events never carry `slot` at all (global things
+(`docs/push-events.md:40-49`<!-- anchor: `at` meta key -->). A handful of events never carry `slot` at all (global things
 like `timer_complete`). `bilateral_divergence` carries `slot` for the side whose close
 fired it, plus `partner_slot_id` for the other side — see
 [the full breakdown](https://github.com/HJewkes/voltras-mcp/blob/main/docs/push-events.md)
@@ -114,7 +114,7 @@ if you're filtering programmatically.
 
 If a cascade stops partway because another client took the write lease, the
 `lease_lost` event names both the tool and the slot it stopped on
-(`docs/push-events.md:630-659`).
+(`docs/push-events.md:651-675`<!-- anchor: `meta` carries `event_type: lease_lost` and `tool` -->).
 
 ## Watching it on the dashboard
 
@@ -122,9 +122,9 @@ The live page picks its stage from state: the diverging two-column stage renders
 **both** limb slots — `left` and `right` — are bound. One bound limb, or none, falls back
 to the single stage, because an ordinary one-device session running on `primary` would
 otherwise draw an empty second column
-(`src/dashboard/spa/live-page/stage-variant.ts:10-20`). `?variant=live-dual` (or
+(`src/dashboard/spa/live-page/stage-variant.ts:10-20`<!-- anchor: THE RULE: the diverging stage needs BOTH limb slots bound -->). `?variant=live-dual` (or
 `?variant=live`) on the dashboard URL pins one or the other for testing
-(`src/dashboard/spa/panels/LivePagePanel.tsx:5-12`). See the ["Two Voltras, one dashboard"](/guides/dashboard-tour#two-voltras-one-dashboard)
+(`src/dashboard/spa/panels/LivePagePanel.tsx:5-12`<!-- anchor: `?variant=` survives as a manual stage pin -->). See the ["Two Voltras, one dashboard"](/guides/dashboard-tour#two-voltras-one-dashboard)
 capture in the walkthrough for what the diverging stage actually looks like mid-set.
 
 Here it is moving. The right side starts late and finishes short, so the gap between the
@@ -147,7 +147,7 @@ pipeline with no hardware at all. Stock mock mode only advertises one synthetic 
 `--dual` boots the server with `scripts/mock-two-slot-preload.mjs` imported, which makes the
 mock's scan return two devices and gives each dialled slot its own independent telemetry
 generator — real rep isolation, not one stream mirrored into two slots
-(`scripts/mock-two-slot-preload.mjs:1-26`, `scripts/dashboard-mock-drive.mjs:72-79`).
+(`scripts/mock-two-slot-preload.mjs:1-26`<!-- anchor: advertise TWO Voltras -->, `scripts/dashboard-mock-drive.mjs:72-79`<!-- anchor: --import scripts/mock-two-slot-preload.mjs -->).
 
 Asymmetry is the point of the driver, so it takes flags to make the two sides diverge on
 purpose rather than mirror each other:
@@ -156,11 +156,11 @@ purpose rather than mirror each other:
 - `--lag=right:ms` — that slot starts each set N ms late
 - `--stall=right@N` / `--stall-ms=ms` — freeze that slot's telemetry mid-set on set N
 
-(`scripts/dashboard-mock-drive.mjs:84-87`)
+(`scripts/dashboard-mock-drive.mjs:84-87`<!-- anchor: --stall-ms=6000 -->)
 
 A run against an isolated database and a non-default dashboard port, with the right side
 aiming for fewer reps and starting late. `--hold=0` ends the run when the workout does;
-without it the server stays up until you stop it (`scripts/dashboard-mock-drive.mjs:168-169`):
+without it the server stays up until you stop it (`scripts/dashboard-mock-drive.mjs:172-173`<!-- anchor: const HOLD -->):
 
 ```
 VMCP_DB_PATH=/tmp/vmcp-dual-verbatim.sqlite node scripts/dashboard-mock-drive.mjs --dual \
@@ -201,7 +201,7 @@ slot's own rep count, which is the evidence the two rep streams stayed apart rat
 mirroring each other. The counts vary from run to run: the mock streams reps continuously,
 so a side can pass its target before its `set.end` lands, as the right side did in sets 2
 and 3. `--pinned` makes each set exactly its `--reps` target
-(`scripts/dashboard-mock-drive.mjs:89`). Open the dashboard URL the driver prints while the
+(`scripts/dashboard-mock-drive.mjs:89`<!-- anchor: --pinned -->). Open the dashboard URL the driver prints while the
 run is going.
 
 ## What a detected asymmetry does not license
@@ -214,7 +214,7 @@ Two statements hold across every tool in this server, and neither is a style pre
 against bilateral training, unilateral training was clearly better for unilateral jump
 (ES 0.89, 95% CI 0.52-1.26) and worse for bilateral strength (ES -0.43, CI -0.71 to -0.14),
 while unilateral strength, bilateral jump, sprint and change of direction were all
-non-significant (Liao et al., _Biology of Sport_ 2022; `src/tools/coaching-content.ts:563-575`). Unilateral work is goal-specific —
+non-significant (Liao et al., _Biology of Sport_ 2022; `src/tools/coaching-content.ts:563-575`<!-- anchor: DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK -->). Unilateral work is goal-specific —
 prescribe it when single-limb capacity is the goal. The evidence that any method reduces
 asymmetry at all is thin: a seven-week bilateral back-squat block moved isometric peak-force
 asymmetry only in the subgroup that started weaker, and several combined and flywheel
@@ -226,8 +226,8 @@ need no intervention at all.
 **A load derived from an isometric maximum is a heuristic.** `isometric.measure_max` and
 `isometric.measure_imbalance` both return an inferred working weight at 70% of the mean
 peak force of the best two trials, rounded to 5 lb, and both label it as a heuristic in the
-result itself, not only in the description (`src/tools/isometric-tools.ts:184-186`,
-`src/tools/isometric-tools.ts:471-477`). No study validates a cable-device isometric maximum
+result itself, not only in the description (`src/tools/isometric-tools.ts:184-186`<!-- anchor: 70% -->,
+`src/tools/isometric-tools.ts:471-477`<!-- anchor: INFERRED_WORKING_WEIGHT_BASIS -->). No study validates a cable-device isometric maximum
 as a predictor of dynamic cable loads, and no `plan.*` or `progression.*` path consumes one.
 Joint angle dominates what an isometric maximum predicts: an isometric squat predicted the
 full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum et
@@ -265,7 +265,7 @@ The signature each side is compared on is its median concentric cable travel ove
 that count as work — the same observable the setup clustering
 ([`exercise.confirm_setup`](/reference/exercise)) reads. Two sides more than 1.15x apart
 are a geometry mismatch, the same band a single side's sets have to cross before they are
-judged a new setup (`src/analytics/setup-comparability.ts:23`, `src/analytics/setup-comparability.ts:42-57`).
+judged a new setup (`src/analytics/setup-comparability.ts:23`<!-- anchor: The same observable -->, `src/analytics/setup-comparability.ts:42-57`<!-- anchor: 1.15 is the top of that band -->).
 
 - On the wall, the `L/R` callout under the diverging stage is replaced by the reason it
   was held back. You get a sentence, not a blank space.
@@ -273,9 +273,9 @@ judged a new setup (`src/analytics/setup-comparability.ts:23`, `src/analytics/se
   `setupComparability`, `setupSignatures` (both sides' travel medians) and `setupReason`.
   On `setup_confounded` the per-side set counts and top loads still ship, because those are
   facts about one side each — what is withheld is reading the gap between them as an
-  imbalance (`src/tools/progression-tools.ts:411-470`).
+  imbalance (`src/tools/progression-tools.ts:411-470`<!-- anchor: setup_confounded -->).
 - `setup_unverified` means at least one side recorded no measurable travel, so the check
-  never ran (`src/analytics/setup-comparability.ts:111-116`).
+  never ran (`src/analytics/setup-comparability.ts:111-116`<!-- anchor: 'setup_unverified' -->).
   That is not a mismatch, and it does not withhold anything.
 
 If the verdict comes back `setup_confounded`, fix the rig rather than the lifter: match
