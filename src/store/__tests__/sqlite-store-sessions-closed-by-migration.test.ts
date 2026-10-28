@@ -101,11 +101,29 @@ async function seededStore(file: string): Promise<void> {
   await store.close();
 }
 
+/**
+ * Today's sessions DDL without the v45 column and the comment above it. Rebuilt by hand rather
+ * than with DROP COLUMN, which the SQLite in CI's Node 22 refuses on this table.
+ */
+function v44SessionsSql(db: DatabaseSync): string {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`)
+    .get() as { sql: string };
+  const sql = row.sql.replace(/,\s*(--[^\n]*\n\s*)*closed_by TEXT/, '');
+  if (sql === row.sql) throw new Error('sessions DDL holds no closed_by column to remove');
+  return sql.replace(/CREATE TABLE sessions/, 'CREATE TABLE sessions_v44');
+}
+
 /** A store as v44 left it: today's rows, no closed_by column, stamped 44. */
 async function v44Store(file: string): Promise<void> {
   await seededStore(file);
   withRawDb(file, (db) => {
-    db.exec('ALTER TABLE sessions DROP COLUMN closed_by');
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec(v44SessionsSql(db));
+    const columns = sessionColumns(file).filter((name) => name !== 'closed_by');
+    db.exec(`INSERT INTO sessions_v44 SELECT ${columns.join(', ')} FROM sessions`);
+    db.exec('DROP TABLE sessions');
+    db.exec('ALTER TABLE sessions_v44 RENAME TO sessions');
     db.exec(`PRAGMA user_version = ${PRIOR_VERSION}`);
   });
 }
