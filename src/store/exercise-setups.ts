@@ -30,6 +30,7 @@
 import { getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
 import { SETUP_GEOMETRY_RATIO } from '../analytics/setup-comparability.js';
+import { median } from '../analytics/stats.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { normalisePositionsToMetres, type PositionScaledSet } from './position-units.js';
 import type {
@@ -140,7 +141,7 @@ export function setMedianRomM(set: PositionScaledSet): number | undefined {
   const roms = selectEligibleReps(normalisePositionsToMetres(set).reps)
     .map((rep: Rep) => getRepRangeOfMotion(rep))
     .filter((rom) => rom > 0);
-  return roms.length === 0 ? undefined : median(roms);
+  return median(roms);
 }
 
 /**
@@ -175,7 +176,7 @@ export function clusterSetsByRom(observations: readonly SetRomObservation[]): Se
     }
     clusters[index].setIds.push(obs.setId);
     members[index].push(obs.medianRomM);
-    clusters[index].centreRomM = median(members[index]);
+    clusters[index].centreRomM = median(members[index])!;
   }
   return clusters;
 }
@@ -354,12 +355,6 @@ function sideKey(
 function separation(a: number, b: number): number {
   if (a <= 0 || b <= 0) return Number.POSITIVE_INFINITY;
   return Math.max(a, b) / Math.min(a, b);
-}
-
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function encode(value: string): string {
