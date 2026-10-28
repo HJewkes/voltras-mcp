@@ -19,6 +19,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
+import { inMigrationTransaction } from '../migration-transaction.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import { decodeValue, type PortableValue } from './codec.js';
 import { insertSql, readInventory, type TableShape } from './inventory.js';
@@ -61,16 +62,11 @@ function loadInto(storePath: string, inDir: string, manifest: ExportManifest): v
     db.exec('PRAGMA foreign_keys = ON');
     const shapes = readInventory(db);
     checkCompatible(readSchemaVersion(db), shapes, manifest);
-    db.exec('BEGIN');
-    db.exec('PRAGMA defer_foreign_keys = ON');
-    try {
+    inMigrationTransaction(db, () => {
+      db.exec('PRAGMA defer_foreign_keys = ON');
       for (const shape of shapes) clearSeedRows(db, shape);
       for (const shape of shapes) insertTable(db, shape, inDir, manifest);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
   } finally {
     db.close();
   }
