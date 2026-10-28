@@ -142,7 +142,6 @@ function resolveInRepo(citation) {
  */
 const PAGES_AWAITING_ANCHORS = new Set([
   'site/coming-soon/body-map.md',
-  'site/coming-soon/goals-page.md',
   'site/concepts/calibration-and-trust.md',
   'site/concepts/fatigue-and-pacing.md',
   'site/concepts/how-coaching-works.md',
@@ -150,8 +149,6 @@ const PAGES_AWAITING_ANCHORS = new Set([
   'site/guides/bilateral.md',
   'site/guides/dashboard-pacing-and-form.md',
   'site/guides/dashboard-plan-builder.md',
-  'site/guides/dashboard-session-review.md',
-  'site/guides/dashboard-setup.md',
   'site/guides/isometric.md',
 ]);
 

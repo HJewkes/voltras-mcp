@@ -33,24 +33,24 @@ npm run build && npm run build:dashboard
 ```
 
 `npm run build` alone gives you a working server whose `/app` page shows only a "SPA not
-built" placeholder (`src/dashboard/server.ts:2175-2178`). The plugin
+built" placeholder (`src/dashboard/server.ts:2175-2178`<!-- anchor: SPA_NOT_BUILT_HTML -->). The plugin
 launcher runs `npm run build:dashboard` for you when the built dashboard is missing or older
-than its source (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:80-87`).
+than its source (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:80-87`<!-- anchor: npm run build:dashboard -->).
 
 ## 2. Launch so the dashboard is on
 
 Whether the dashboard starts depends on how you launch the server:
 
 - **Registered with `claude mcp add`.** The dashboard is on. The server starts it unless
-  `VMCP_DASHBOARD_PORT` is `off` or `0` (`src/server.ts:56-59`).
+  `VMCP_DASHBOARD_PORT` is `off` or `0` (`src/server.ts:57-60`<!-- anchor: raw === 'off' || raw === '0' -->).
 - **`scripts/voltra-pt`.** The dashboard is on. In its default plugin mode the script sets `VOLTRA_PT=1`, which tells
   the plugin launcher to leave the dashboard at its default port (`scripts/voltra-pt:95-97`).
 - **Any other plugin launch.** The dashboard is off. The plugin launcher sets
   `VMCP_DASHBOARD_PORT=off` when that variable is unset and `VOLTRA_PT` is not `1`, so a
   session that is not a workout does not hold a port
-  (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:45-46`). To turn it on, set
+  (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:45-46`<!-- anchor: export VMCP_DASHBOARD_PORT=off -->). To turn it on, set
   `VMCP_DASHBOARD_PORT=7723` in your environment or in `.launch.env` at the repository root,
-  which the launcher reads after that default (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:71-74`).
+  which the launcher reads after that default (`plugins/voltras-channel/bin/voltras-mcp-launch.sh:71-74`<!-- anchor: .launch.env -->).
 
 [Launch options](/start/launch-options) compares the launch routes, and the
 [environment variables](/reference/environment-variables) reference lists
@@ -63,26 +63,26 @@ answer the question:
 
 - `dashboardAvailable` is `true` when the dashboard is running.
 - `dashboardUrl` is the full address to open. It ends in `/app` and names the port this
-  session actually bound (`src/tools/server-tools.ts:253`).
+  session actually bound (`src/tools/server-tools.ts:254`<!-- anchor: names the port THIS -->).
 - `dashboardDisabledReason` is `"disabled"` when `VMCP_DASHBOARD_PORT` set to `off` or `0`
-  turned the dashboard off, and `null` otherwise (`src/server.ts:59`, `src/server.ts:181`).
+  turned the dashboard off, and `null` otherwise (`src/server.ts:60`<!-- anchor: raw === 'off' || raw === '0' -->, `src/server.ts:186`<!-- anchor: disabledReason -->).
 
-The default port is `7723` (`src/dashboard/server.ts:265`). When another process already
+The default port is `7723` (`src/dashboard/server.ts:266`<!-- anchor: DEFAULT_DASHBOARD_PORT = 7723 -->). When another process already
 holds it, for example a second Claude Code session, the dashboard binds a port the operating
-system picks instead of failing (`src/server.ts:149-158`, `src/dashboard/server.ts:439`). So read `dashboardUrl` rather than
+system picks instead of failing (`src/server.ts:149-158`<!-- anchor: Fall back -->, `src/dashboard/server.ts:440-443`<!-- anchor: listenOnPort(EPHEMERAL_PORT -->). So read `dashboardUrl` rather than
 typing `7723`. The server also writes the address it bound to stderr, as an `info` log
-line (`src/server.ts:158`).
+line (`src/server.ts:163`<!-- anchor: dashboard sidecar listening at -->).
 
 ## 4. Open it
 
 Open `dashboardUrl` in a browser on the same machine. The dashboard binds `127.0.0.1` only,
 so another computer or a phone on your network cannot reach it
-(`src/dashboard/server.ts:267`).
+(`src/dashboard/server.ts:268`<!-- anchor: DEFAULT_DASHBOARD_HOST = '127.0.0.1' -->).
 
 You can open it at any point in a session. While a session is open, the server sends that
 session's finished sets with every update, so a page opened or reloaded mid-session shows
-the sets already done (`src/state/live-state.ts:1362-1373`,
-`src/dashboard/spa/adapter.ts:766-777`). When the session ends, the live page clears its set
+the sets already done (`src/state/live-state.ts:1362-1373`<!-- anchor: snapshotCompletedSets -->,
+`src/dashboard/spa/adapter.ts:766-777`<!-- anchor: function summariseCompletedEntry -->). When the session ends, the live page clears its set
 log; the **review** screen shows the finished session.
 
 Before a Voltra connects, the live page says so instead of showing empty panels:
@@ -103,12 +103,12 @@ Read `dashboardDisabledReason`. If it is `"disabled"`, `VMCP_DASHBOARD_PORT` is 
 dashboard failed to start. Either the port was held and the fallback port the operating
 system picked failed too, or the bind failed for another reason, which gets no fallback. The
 server logs the reason to stderr and keeps running without a dashboard
-(`src/server.ts:159-171`, `src/dashboard/server.ts:439`).
+(`src/server.ts:159-171`<!-- anchor: isAddressInUse(err) -->, `src/dashboard/server.ts:440-442`<!-- anchor: if (!retryable) throw err -->).
 
 ### The page says "SPA not built"
 
 The server is built but the dashboard is not. Run `npm run build:dashboard` and reload the
-page (`src/dashboard/server.ts:2175-2178`).
+page (`src/dashboard/server.ts:2175-2178`<!-- anchor: SPA_NOT_BUILT_HTML -->).
 
 ### The page shows a different session
 
