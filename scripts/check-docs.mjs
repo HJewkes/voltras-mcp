@@ -142,10 +142,8 @@ function resolveInRepo(citation) {
  */
 const PAGES_AWAITING_ANCHORS = new Set([
   'site/coming-soon/body-map.md',
-  'site/concepts/calibration-and-trust.md',
   'site/concepts/fatigue-and-pacing.md',
   'site/concepts/how-coaching-works.md',
-  'site/concepts/technique-signals.md',
   'site/guides/bilateral.md',
   'site/guides/isometric.md',
 ]);
