@@ -134,18 +134,9 @@ function resolveInRepo(citation) {
   return { kind: 'file', lineCount: source.length, source };
 }
 
-/**
- * Site pages whose line citations predate the anchor rule and are still being
- * backfilled (VW-925). A page leaves this list when every line citation on it
- * carries an anchor; a page not on it must anchor every one. The anchors these
- * pages already carry are verified all the same.
- */
-const PAGES_AWAITING_ANCHORS = new Set(['site/guides/isometric.md']);
-
 function anchorFindings(page, text, citations) {
   if (historical(page)) return [];
-  const required = page.startsWith('site/') && !PAGES_AWAITING_ANCHORS.has(page);
-  return checkAnchorPlacement(text, citations, { required });
+  return checkAnchorPlacement(text, citations, { required: page.startsWith('site/') });
 }
 
 function gitLines(args) {
