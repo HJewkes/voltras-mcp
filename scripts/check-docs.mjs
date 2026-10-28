@@ -147,8 +147,6 @@ const PAGES_AWAITING_ANCHORS = new Set([
   'site/concepts/how-coaching-works.md',
   'site/concepts/technique-signals.md',
   'site/guides/bilateral.md',
-  'site/guides/dashboard-pacing-and-form.md',
-  'site/guides/dashboard-plan-builder.md',
   'site/guides/isometric.md',
 ]);
 
