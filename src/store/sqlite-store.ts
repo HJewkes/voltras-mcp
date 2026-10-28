@@ -181,9 +181,11 @@ import {
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
+  SESSION_CLOSERS,
+  type SessionCloser,
 } from './types.js';
 
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 45;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -741,7 +743,10 @@ const SCHEMA_SQL = `
     -- v35 (VW-489): test or training. NULL = never reviewed, and unreviewed is
     -- excluded from every lifter-facing read. See store/session-kind.ts for why
     -- there is no stored cut-over instant.
-    kind TEXT CHECK (kind IN ('training','test'))
+    kind TEXT CHECK (kind IN ('training','test')),
+    -- v45 (VW-919): what ended the session. NULL = open, or no closer recorded.
+    -- No CHECK: sessions is never rebuilt, so a CHECK could never grow a closer.
+    closed_by TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -2405,6 +2410,34 @@ function migrateV43ToV44(db: DatabaseSync): void {
   }
 }
 
+/**
+ * The note the idle rule appended before v45 (VW-856), verbatim. Frozen here rather than built
+ * from the rule's constants: the backfill must match what was written, not what the rule says now.
+ */
+export const LEGACY_IDLE_CLOSE_NOTE = 'Closed by rule:idle: no rep for 6 h.';
+
+/**
+ * v44 -> v45: `sessions.closed_by` (VW-919). Additive, and backfilled only where the row already
+ * says who closed it: an ended session whose notes are the idle rule's note, alone or as the last
+ * line. A note quoted mid-text, or a session still open, stays NULL. Notes are left as they are.
+ */
+function migrateV44ToV45(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'sessions', 'closed_by', 'TEXT');
+    db.prepare(
+      `UPDATE sessions SET closed_by = 'rule:idle'
+        WHERE closed_by IS NULL AND ended_at IS NOT NULL
+          AND (notes = ? OR substr(notes, -?) = ?)`,
+    ).run(LEGACY_IDLE_CLOSE_NOTE, LEGACY_IDLE_CLOSE_NOTE.length + 1, `\n${LEGACY_IDLE_CLOSE_NOTE}`);
+    db.exec('PRAGMA user_version = 45');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
   const row = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ui_actions'`)
@@ -2770,6 +2803,7 @@ interface SessionRow {
   pre_session_carbs_hours_since_meal: number | null;
   catalog_version: string | null;
   kind: string | null;
+  closed_by: string | null;
 }
 
 interface DietPhaseRow {
@@ -3381,14 +3415,16 @@ interface ProgramAssignmentRow {
 const PUT_SESSION_SQL = `
   INSERT INTO sessions
     (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind,
+     closed_by)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     started_at = excluded.started_at,
     ended_at = excluded.ended_at,
     exercise_id = excluded.exercise_id,
     exercise_name = excluded.exercise_name,
     notes = excluded.notes,
+    closed_by = COALESCE(sessions.closed_by, excluded.closed_by),
     diet_phase = CASE WHEN sessions.lifter IS NULL THEN ? END`;
 
 /** The `AND ...` tail that keeps named sessions and later sets out of a recency read (VW-642). */
@@ -3581,6 +3617,9 @@ export class SqliteSessionStore implements SessionStore {
     // `patchSession` owns them after start, and a re-put from one process's live
     // state would revert a patch another process made. The diet-phase stamp
     // therefore follows the STORED label, the one that survives the re-put.
+    //
+    // closed_by is first-writer-wins (VW-919): a re-put that carries none, or a
+    // later session.end after the idle rule already closed the row, keeps it.
     this.atomically(() => {
       // Derived here, never taken from the caller: the stamp's whole job is
       // to agree with the table for a session written now, and a tool that
@@ -3601,6 +3640,7 @@ export class SqliteSessionStore implements SessionStore {
           s.preSessionCarbs?.hoursSinceLastMeal ?? null,
           s.catalogVersion ?? null,
           s.kind ?? null,
+          s.closedBy ?? null,
           phase,
         );
     });
@@ -6866,6 +6906,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 43) {
     migrateV43ToV44(db);
   }
+  if (current <= 44) {
+    migrateV44ToV45(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -7004,7 +7047,12 @@ function rowToSession(row: SessionRow): StoredSession {
   if (row.catalog_version !== null) out.catalogVersion = row.catalog_version;
   // VW-489: absent = never reviewed, which no lifter-facing read counts.
   if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
+  if (row.closed_by !== null && isSessionCloser(row.closed_by)) out.closedBy = row.closed_by;
   return out;
+}
+
+function isSessionCloser(value: string): value is SessionCloser {
+  return (SESSION_CLOSERS as readonly string[]).includes(value);
 }
 
 function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {

@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "the session upsert lets a re-put overwrite closed_by",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    closed_by = COALESCE(sessions.closed_by, excluded.closed_by),",
+      "replace": "    closed_by = excluded.closed_by,",
+      "kills": [
+        "the session closer keeps the idle rule as the closer through a later session.end re-put"
+      ]
+    },
+    {
+      "name": "session.end records no closer",
+      "file": "src/tools/session-tools.ts",
+      "find": "    closedBy: 'manual',\n",
+      "replace": "",
+      "kills": ["the session closer records the lifter as the closer of a session.end"]
+    },
+    {
+      "name": "the idle rule leaves no row in the activity trail",
+      "file": "src/state/idle-session-close.ts",
+      "find": "  await recordIdleClose(store, session.id);",
+      "replace": "",
+      "kills": [
+        "the session closer records an idle close in the activity trail as the rule's, with the closer as its reason"
+      ]
+    }
+  ]
+}

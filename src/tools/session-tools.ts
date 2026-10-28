@@ -659,6 +659,7 @@ async function endSession(
     id: active.sessionId,
     startedAt: active.startedAt,
     endedAt,
+    closedBy: 'manual',
     ...(active.exerciseId !== undefined ? { exerciseId: active.exerciseId } : {}),
     ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
     ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),

@@ -366,6 +366,7 @@ export const TABLE_RULES: Readonly<Record<string, TableRule>> = {
     pre_session_carbs_level: keep,
     pre_session_carbs_hours_since_meal: keep,
     kind: keep,
+    closed_by: keep,
   },
   sets: {
     id: keep,
