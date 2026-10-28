@@ -21,7 +21,7 @@ import { openSqliteTestStore } from './open-test-store.js';
 
 const CURRENT_VERSION = 43;
 const PRIOR_VERSION = 42;
-const LATEST_VERSION = 44;
+const LATEST_VERSION = 45;
 
 const AT = '2026-10-01T09:00:00.000Z';
 const DONE_AT = '2026-10-01T09:00:01.000Z';

@@ -700,7 +700,17 @@ export interface StoredSession {
    * `store/session-kind.ts`.
    */
   kind?: SessionKind;
+  /**
+   * What ended the session (VW-919): the lifter's `session.end`, or the idle rule. Absent on a
+   * session still open, on one ended by another path, and on one ended before v45 that no
+   * backfill could attribute. The first closer to land holds it: a later re-put never changes it.
+   */
+  closedBy?: SessionCloser;
 }
+
+/** Who can be recorded as having ended a session (VW-919). */
+export const SESSION_CLOSERS = ['manual', 'rule:idle'] as const;
+export type SessionCloser = (typeof SESSION_CLOSERS)[number];
 
 /** A session's self-reported pre-session carb context (VW-307). */
 /** The session fields a tool may change after start, for {@link SessionStore.patchSession}. */
