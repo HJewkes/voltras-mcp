@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "the v32 step logs inside its transaction",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    deleted: db.prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`).run(),\n  }));",
+      "replace": "    deleted: db.prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`).run(),\n    logged: log.warn('store v32: logged inside the transaction'),\n  }));",
+      "kills": [
+        "v31 -> v32: sessions_28d counts training days keeps the retirement and surfaces the error when the warning after commit throws"
+      ]
+    }
+  ]
+}
