@@ -141,7 +141,6 @@ function resolveInRepo(citation) {
  * pages already carry are verified all the same.
  */
 const PAGES_AWAITING_ANCHORS = new Set([
-  'site/concepts/fatigue-and-pacing.md',
   'site/concepts/how-coaching-works.md',
   'site/guides/isometric.md',
 ]);
