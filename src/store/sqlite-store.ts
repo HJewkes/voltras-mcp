@@ -3356,7 +3356,7 @@ const PUT_SESSION_SQL = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     started_at = excluded.started_at,
-    ended_at = excluded.ended_at,
+    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),
     exercise_id = excluded.exercise_id,
     exercise_name = excluded.exercise_name,
     notes = excluded.notes,
@@ -3556,6 +3556,8 @@ export class SqliteSessionStore implements SessionStore {
     //
     // closed_by is first-writer-wins (VW-919): a re-put that carries none, or a
     // later session.end after the idle rule already closed the row, keeps it.
+    // ended_at follows the same rule (VW-960): the first end stamps it, and a
+    // later re-put cannot move it or reopen the row.
     this.atomically(() => {
       // Derived here, never taken from the caller: the stamp's whole job is
       // to agree with the table for a session written now, and a tool that

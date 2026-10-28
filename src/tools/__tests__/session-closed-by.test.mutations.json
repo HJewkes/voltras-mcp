@@ -25,6 +25,33 @@
       "kills": [
         "the session closer records an idle close in the activity trail as the rule's, with the closer as its reason"
       ]
+    },
+    {
+      "name": "the session upsert lets a re-put overwrite ended_at",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),",
+      "replace": "    ended_at = excluded.ended_at,",
+      "kills": [
+        "the session closer keeps the idle rule's end time through a later session.end re-put"
+      ]
+    },
+    {
+      "name": "the session upsert prefers the re-put's ended_at over the stored one",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),",
+      "replace": "    ended_at = COALESCE(excluded.ended_at, sessions.ended_at),",
+      "kills": [
+        "the session closer keeps the idle rule's end time through a later session.end re-put"
+      ]
+    },
+    {
+      "name": "the session upsert never stamps ended_at on an existing row",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),",
+      "replace": "    ended_at = sessions.ended_at,",
+      "kills": [
+        "the session closer stamps the end time on the first session.end of a session nothing closed"
+      ]
     }
   ]
 }
