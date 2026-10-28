@@ -6,8 +6,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { log } from '../../logger.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredGoalTarget, type StoredPriority } from '../types.js';
 
@@ -21,6 +22,7 @@ beforeEach(() => {
   path = join(dir, 'store.sqlite');
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -131,5 +133,19 @@ describe('v31 -> v32: sessions_28d counts training days', () => {
 
     expect(byUser.map((row) => row.id)).toEqual(['lift']);
     expect(byPriority.map((row) => row.id)).toEqual(['lift']);
+  });
+
+  it('keeps the retirement and surfaces the error when the warning after commit throws', async () => {
+    await seedV31();
+    vi.spyOn(log, 'warn').mockImplementation(() => {
+      throw new Error('log sink down');
+    });
+
+    expect(() => SqliteSessionStore.open(path)).toThrow('log sink down');
+
+    const raw = new DatabaseSync(path, { readOnly: true });
+    const row = raw.prepare(`SELECT outcome FROM goal_targets WHERE id = 'accepted'`).get();
+    raw.close();
+    expect(row).toEqual({ outcome: 'abandoned' });
   });
 });
