@@ -111,6 +111,29 @@ describe('the session closer', () => {
     expect((await booting.getSession('sess-1'))?.closedBy).toBe('rule:idle');
   });
 
+  it('stamps the end time on the first session.end of a session nothing closed', async () => {
+    const store = openStore();
+    const invoke = serverOn(store, await seedActive(store));
+
+    await invoke('session.end', {});
+
+    expect((await store.getSession('sess-1'))?.endedAt).not.toBe(undefined);
+    expect((await store.getSession('sess-1'))?.endedAt).not.toBe(AT);
+  });
+
+  it("keeps the idle rule's end time through a later session.end re-put", async () => {
+    const ending = openStore();
+    const booting = openStore();
+    const invoke = serverOn(ending, await seedActive(ending));
+    await closeIdleSessions(booting, LATER);
+    const closedAt = (await booting.getSession('sess-1'))?.endedAt;
+
+    await invoke('session.end', {});
+
+    expect(closedAt).toBe(AT);
+    expect((await booting.getSession('sess-1'))?.endedAt).toBe(closedAt);
+  });
+
   it('shows the closer on session.get and session.list', async () => {
     const store = openStore();
     await store.putSession({ id: 'sess-1', startedAt: AT, kind: 'training' });
