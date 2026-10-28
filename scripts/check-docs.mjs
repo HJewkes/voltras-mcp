@@ -140,10 +140,7 @@ function resolveInRepo(citation) {
  * carries an anchor; a page not on it must anchor every one. The anchors these
  * pages already carry are verified all the same.
  */
-const PAGES_AWAITING_ANCHORS = new Set([
-  'site/concepts/how-coaching-works.md',
-  'site/guides/isometric.md',
-]);
+const PAGES_AWAITING_ANCHORS = new Set(['site/guides/isometric.md']);
 
 function anchorFindings(page, text, citations) {
   if (historical(page)) return [];
