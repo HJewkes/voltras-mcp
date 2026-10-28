@@ -143,7 +143,6 @@ function resolveInRepo(citation) {
 const PAGES_AWAITING_ANCHORS = new Set([
   'site/concepts/fatigue-and-pacing.md',
   'site/concepts/how-coaching-works.md',
-  'site/guides/bilateral.md',
   'site/guides/isometric.md',
 ]);
 
