@@ -20,7 +20,7 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 // The cards draw their charts only after measuring themselves, which a static render never
 // does, so the chart props the page hands titan are recorded on the way through.
 const goalCardProps = vi.hoisted(() => [] as Record<string, unknown>[]);
-vi.mock('@titan-design/react-ui', async (importOriginal) => {
+vi.mock('@titan-design/react-ui/workout', async (importOriginal) => {
   const titan = await importOriginal<typeof Titan>();
   const GoalCard = (props: Parameters<typeof titan.GoalCard>[0]) => {
     goalCardProps.push(props as unknown as Record<string, unknown>);
@@ -29,7 +29,7 @@ vi.mock('@titan-design/react-ui', async (importOriginal) => {
   return { ...titan, GoalCard };
 });
 
-import type * as Titan from '@titan-design/react-ui';
+import type * as Titan from '@titan-design/react-ui/workout';
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
 import {

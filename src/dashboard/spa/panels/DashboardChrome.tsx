@@ -24,14 +24,8 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
-import {
-  DashboardShell,
-  ScaleIcon,
-  TargetIcon,
-  workoutNavItems,
-  type SessionState,
-  type SideNavItem,
-} from '@titan-design/react-ui';
+import { ScaleIcon, TargetIcon, type SideNavItem } from '@titan-design/react-ui';
+import { DashboardShell, workoutNavItems, type SessionState } from '@titan-design/react-ui/workout';
 
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';

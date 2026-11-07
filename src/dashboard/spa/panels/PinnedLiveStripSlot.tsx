@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { useStore } from 'zustand';
-import { PinnedLiveStrip } from '@titan-design/react-ui';
+import { PinnedLiveStrip } from '@titan-design/react-ui/workout';
 
 import { PAGE_PADDING } from '../planner/PlanBuilderPage';
 import { dashboardStore } from '../store';

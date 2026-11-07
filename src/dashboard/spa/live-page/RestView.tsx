@@ -3,18 +3,20 @@ import { type ReactElement } from 'react';
 import { View, Text } from 'react-native';
 import { useStore } from 'zustand';
 import {
-  RestTimer,
   TimerReadout,
   Metric,
   MetricGroup,
-  ExerciseCardHeading,
-  SetRow,
-  SetTableHeader,
   Surface,
   useOnSurfaceColor,
   type MetricProps,
-  type SetRowProps,
 } from '@titan-design/react-ui';
+import {
+  RestTimer,
+  ExerciseCardHeading,
+  SetRow,
+  SetTableHeader,
+  type SetRowProps,
+} from '@titan-design/react-ui/workout';
 import {
   activeCompletedSets,
   AUTO_ARM_BADGE_TEXT,
