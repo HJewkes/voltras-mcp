@@ -165,7 +165,9 @@ export function DashboardChrome(props: {
       ref={shellRef}
       style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}
     >
+      {/* Every route sets its own page gutter, so titan's default content padding would double it. */}
       <DashboardShell
+        contentPadding="none"
         activeKey={activeKey}
         navItems={NAV_ITEMS}
         liveKey={liveKey}
