@@ -178,34 +178,53 @@ export function defaultVadFactory(): Vad {
   return createSileroVad();
 }
 
+/** The slice of the `nodejs-whisper` module the default STT path calls. */
+export interface WhisperModule {
+  transcribeDetailed: (path: string, opts: Record<string, unknown>) => Promise<{ text: string }>;
+}
+
+// The package's default logger is `console`, and its CLI backend sends every
+// stdout line to `logger.info`: on stdio that would land in the MCP transport.
+const WHISPER_LOGGER = {
+  debug: (...args: unknown[]): void => log.debug('[whisper]', ...args),
+  info: (...args: unknown[]): void => log.debug('[whisper]', ...args),
+  error: (...args: unknown[]): void => log.warn('[whisper]', ...args),
+};
+
+function loadWhisperModule(): WhisperModule {
+  return require('nodejs-whisper') as WhisperModule;
+}
+
 /**
  * Default STT impl: route through `nodejs-whisper`. Lazy-required for the same
  * Linux-import reason as the audio factory. Writes a tempfile wav per call.
+ *
+ * `transcribeDetailed`, not `nodewhisper`: since 0.4 the latter throws on an
+ * utterance with no segments (silence, the pre-warm buffer) instead of
+ * returning an empty transcript.
  */
-export function defaultWhisper(): WhisperFn {
+export function defaultWhisper(loadWhisper: () => WhisperModule = loadWhisperModule): WhisperFn {
   return async (audio: Buffer, model: SttModelName) => {
     const fs = await import('node:fs/promises');
     const os = await import('node:os');
     const path = await import('node:path');
-    const whisper = require('nodejs-whisper') as {
-      nodewhisper: (path: string, opts: Record<string, unknown>) => Promise<string>;
-    };
+    const whisper = loadWhisper();
 
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'voltras-voice-'));
     const wavPath = path.join(tmpDir, 'utterance.wav');
     await fs.writeFile(wavPath, encodePcmAsWav(audio, SAMPLE_RATE_HZ));
     try {
-      const transcript = await whisper.nodewhisper(wavPath, {
+      const result = await whisper.transcribeDetailed(wavPath, {
         modelName: model,
         autoDownloadModelName: model,
         removeWavFileAfterTranscription: false,
-        whisperOptions: { outputInText: true },
+        logger: WHISPER_LOGGER,
       });
-      // whisper-cli prints timestamp markup in front of every segment and
-      // nodejs-whisper hands its stdout back verbatim. Strip it here so the
-      // WhisperFn contract is "the words the speaker said" — the safety word
-      // budget downstream must not be spent on markup. See whisper-markup.ts.
-      return { transcript: stripWhisperMarkup(transcript) };
+      // The text can still carry whisper's non-speech tags ([BLANK_AUDIO]).
+      // Strip them so the WhisperFn contract is "the words the speaker said" —
+      // the safety word budget downstream must not be spent on markup. See
+      // whisper-markup.ts.
+      return { transcript: stripWhisperMarkup(result.text) };
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
