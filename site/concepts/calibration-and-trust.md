@@ -92,7 +92,7 @@ The landmarks the server uses are population defaults. They are copied from a sh
 library's default table, not learned from your training
 (`src/dashboard/read-models/muscle-week.ts:17-21`<!-- anchor: LANDMARKS ARE POPULATION DEFAULTS -->, `src/dashboard/read-models/muscle-week.ts:50-61`<!-- anchor: DEFAULT_VOLUME_LANDMARKS -->).
 Their basis is fixed as `population-default`, and the page prints that basis under the panel
-(`src/dashboard/read-models/muscle-week.ts:147`<!-- anchor: looked up, never discovered -->, `src/dashboard/spa/body/BodyView.tsx:337-341`<!-- anchor: landmarkBasis -->).
+(`src/dashboard/read-models/muscle-week.ts:147`<!-- anchor: looked up, never discovered -->, `src/dashboard/spa/body/BodyView.tsx:333-337`<!-- anchor: landmarkBasis -->).
 
 Your own landmarks may sit well away from the defaults. Finding them from your set history is
 tracked as VW-146. Until then, `history.weekly_volume` in [`metrics.compute`](/reference/metrics)

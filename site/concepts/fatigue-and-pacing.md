@@ -153,9 +153,9 @@ drive the other.
 
 After a set closes, the dashboard counts down a rest length. It uses the rest from your plan when
 there is one. Otherwise it uses a default for the exercise's training goal and labels it "Default
-rest", so it never reads as your coach's number (`src/dashboard/spa/live-page/RestView.tsx:55-57`<!-- anchor: captioned as a default -->,
+rest", so it never reads as your coach's number (`src/dashboard/spa/live-page/RestView.tsx:57-59`<!-- anchor: captioned as a default -->,
 `src/coach-copy/dashboard.ts`). With no rest target at all, it counts up from
-the end of the set instead (`src/dashboard/spa/live-page/RestView.tsx:244-252`<!-- anchor: mode="up" -->).
+the end of the set instead (`src/dashboard/spa/live-page/RestView.tsx:246-254`<!-- anchor: mode="up" -->).
 
 The goal defaults are 150 seconds for strength, 105 seconds for hypertrophy, and 120 seconds for
 any other goal or when no goal is known (`src/analytics/rest-defaults.ts`). A default rest can grow. If your last

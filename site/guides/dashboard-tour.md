@@ -99,7 +99,7 @@ Closing a set with [`set.end`](/reference/set) moves the live page into its rest
 The countdown ring runs down the rest the plan set for this exercise. When the plan sets
 none, it runs a default for the exercise's training intent, captioned "Default rest", with
 the intent and any added seconds when there are some
-(`src/dashboard/spa/live-page/RestView.tsx:209-242`<!-- anchor: restBasisCaption -->, `src/analytics/rest-defaults.ts:145-155`<!-- anchor: intent_default_extended -->,
+(`src/dashboard/spa/live-page/RestView.tsx:211-244`<!-- anchor: restBasisCaption -->, `src/analytics/rest-defaults.ts:145-155`<!-- anchor: intent_default_extended -->,
 `src/coach-copy/dashboard.ts`).
 The [pacing and form tour](/guides/dashboard-pacing-and-form) covers the ring and the pace
 footer.

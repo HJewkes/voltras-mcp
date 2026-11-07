@@ -30,7 +30,7 @@ declared with your coach, the committed and stretch bands for each target, a wee
 trajectory chart, and whole-body cards for bodyweight and training days.
 
 The page is in the dashboard's side rail as "Goals"
-(`src/dashboard/spa/panels/DashboardChrome.tsx:55-59`<!-- anchor: label: 'Goals' -->).
+(`src/dashboard/spa/panels/DashboardChrome.tsx:49-53`<!-- anchor: label: 'Goals' -->).
 
 The goal tools themselves work today. `goal.declare_priorities`, `goal.propose_targets` and
 `goal.accept_target` set goals, and `profile.log_bodyweight` logs a weigh-in. This page is only
@@ -64,7 +64,7 @@ accepting a real goal; that check waits on your first declared priority (VW-360)
 
 **The unreviewed-days count is shown.** When some days are left out of the counts until you
 review them, a line at the top of the page says how many
-(`src/dashboard/spa/goals/GoalsView.tsx:93`<!-- anchor: UnreviewedNote unreviewedDays -->, `src/dashboard/spa/goals/GoalsView.tsx:104-111`<!-- anchor: function UnreviewedNote -->).
+(`src/dashboard/spa/goals/GoalsView.tsx:89`<!-- anchor: UnreviewedNote unreviewedDays -->, `src/dashboard/spa/goals/GoalsView.tsx:100-107`<!-- anchor: function UnreviewedNote -->).
 A page that lets you review those days so they count is VW-901.
 
 **The block week is served but not drawn.** The dashboard sends the current block week

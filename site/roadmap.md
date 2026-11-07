@@ -88,7 +88,7 @@ calling the route ([Dashboard API](/reference/dashboard-api)):
   mean velocity, but the hero's set row still reads peak velocity, so it reads higher than the
   rest recap. The shared analytics library already publishes the mean version; switching over
   is an open decision, not something blocked on a missing dependency
-  (`src/dashboard/spa/panels/exercise-hero-view.ts:66-70`<!-- anchor: not a blocked -->).
+  (`src/dashboard/spa/panels/exercise-hero-view.ts:70-74`<!-- anchor: not a blocked -->).
 - **Sharing more logic between the wall dashboard and a mobile app.** The two connect to the
   device in different ways today and don't share view logic. A direction for unifying more of
   that is documented; it isn't scheduled
