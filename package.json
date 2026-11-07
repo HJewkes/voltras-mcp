@@ -71,7 +71,7 @@
     "@voltras/node-sdk": "^0.15.0",
     "@voltras/workout-analytics": "^3.3.0",
     "node-record-lpcm16": "^1.0.1",
-    "nodejs-whisper": "^0.3.0",
+    "nodejs-whisper": "^0.4.1",
     "onnxruntime-node": "^1.27.0",
     "zod": "^4.4.2",
     "zustand": "^5.0.14"

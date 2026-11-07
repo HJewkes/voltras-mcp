@@ -155,7 +155,7 @@ stop" is ignored, and so is a long sentence that merely contains the word
 ::: warning The microphone is deaf while anything is spoken
 Today, while any line plays, whether Claude's speech or an automatic cue, the microphone is
 muted and the sound it hears is thrown away. A spoken "stop" in that window is lost, with no event
-to say so (`src/voice/voice-listener.ts:17-19`<!-- anchor: Entering the -->, `src/voice/voice-listener.ts:505-512`<!-- anchor: Muted frames are discarded -->,
+to say so (`src/voice/voice-listener.ts:17-19`<!-- anchor: Entering the -->, `src/voice/voice-listener.ts:524-531`<!-- anchor: Muted frames are discarded -->,
 `plugins/voltras-channel/skills/pt-session/SKILL.md:176`<!-- anchor: The mic is deaf while any line plays -->). A single mute lasts at most eight
 seconds (`src/tools/tts-tools.ts:120-129`<!-- anchor: MUTE_FAILSAFE_MS = 8000 -->). The fix is tracked as VW-173 and is not on `main`
 yet.
