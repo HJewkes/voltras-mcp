@@ -17,7 +17,7 @@
  * two-voltra stage it fed (each in its own full live view) and the fixture-fabricating
  * `deriveDualModel` before that.
  */
-import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
+import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui/workout';
 import type { FatigueVerdict } from '@voltras/workout-analytics';
 import { targetVerdict, type TargetVerdict } from '../../../analytics/target-verdict.js';
 import { selectWorkingSets } from '../../../store/working-sets.js';

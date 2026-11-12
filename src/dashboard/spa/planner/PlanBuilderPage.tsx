@@ -50,12 +50,12 @@ import {
   EmptyState,
   Input,
   LayersIcon,
-  MuscleGroupChip,
   Pill,
   Select,
   Surface,
   Typography,
 } from '@titan-design/react-ui';
+import { MuscleGroupChip } from '@titan-design/react-ui/workout';
 
 import { dashboardStore } from '../store';
 import { type MassUnit } from '../live-page/mass';

@@ -2,7 +2,8 @@
 import { useState } from 'react';
 import { Text, View, type LayoutChangeEvent } from 'react-native';
 import { useStore } from 'zustand';
-import { LiveFatiguePanel, SessionRail, Surface, useOnSurfaceColor } from '@titan-design/react-ui';
+import { LiveFatiguePanel, Surface, useOnSurfaceColor } from '@titan-design/react-ui';
+import { SessionRail } from '@titan-design/react-ui/workout';
 import { ExerciseHeader } from './ExerciseHeader';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';

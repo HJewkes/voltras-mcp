@@ -16,7 +16,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { defaultNavItems } from '@titan-design/react-ui';
+import { defaultNavItems } from '@titan-design/react-ui/workout';
 
 vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
 

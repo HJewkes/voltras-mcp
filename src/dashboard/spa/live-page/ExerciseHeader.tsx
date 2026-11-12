@@ -1,14 +1,8 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { useState } from 'react';
 import { View, Text, type LayoutChangeEvent } from 'react-native';
-import {
-  SetsRepsLoad,
-  SetStrip,
-  TempoDisplay,
-  Tooltip,
-  getSemanticColors,
-  useOnSurfaceColor,
-} from '@titan-design/react-ui';
+import { Tooltip, getSemanticColors, useOnSurfaceColor } from '@titan-design/react-ui';
+import { SetsRepsLoad, SetStrip, TempoDisplay } from '@titan-design/react-ui/workout';
 import {
   type DashboardModel,
   type SetupCard,

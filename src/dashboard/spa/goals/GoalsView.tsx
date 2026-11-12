@@ -31,17 +31,13 @@
  */
 import React from 'react';
 import { Text } from 'react-native';
+import { EmptyState, Link, Surface, Typography, useOnSurfaceColor } from '@titan-design/react-ui';
 import {
   BodyweightGoalCard,
-  EmptyState,
   GoalCard,
   GoalPriorityIndex,
-  Link,
   SessionsGoalCard,
-  Surface,
-  Typography,
-  useOnSurfaceColor,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
 
 import { PANEL_GAP } from '../planner/PanelCard.js';

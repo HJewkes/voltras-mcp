@@ -15,7 +15,7 @@
  * draw. Per-sample curves can arrive empty from a summary-only rep stream, and an
  * empty ghost spark is a bare axis where the diverging hero could have been.
  */
-import type { DualVelocityStream } from '@titan-design/react-ui';
+import type { DualVelocityStream } from '@titan-design/react-ui/workout';
 import type { DivergingHeroModel, DivergingHeroSide, RepVelocityCurve } from './fatigue-model';
 
 /**

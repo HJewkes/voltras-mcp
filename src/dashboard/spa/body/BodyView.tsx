@@ -22,17 +22,13 @@
  * raw hex.
  */
 import React from 'react';
+import { Caption, EmptyState, Surface, Typography, useSurfaceMode } from '@titan-design/react-ui';
 import {
-  Caption,
-  EmptyState,
   MetricTiles,
   MuscleStrip,
   PrBadge,
-  Surface,
-  Typography,
-  useSurfaceMode,
   type MetricTileData,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 import {
   BodyMap,
   BodyMapDetailPanel,

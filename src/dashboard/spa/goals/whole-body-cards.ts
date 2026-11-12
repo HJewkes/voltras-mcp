@@ -9,7 +9,7 @@ import type {
   WholeBodyRate,
   WholeBodySessionsRow,
   WholeBodyWeightRow,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 
 import {
   GOAL_PROGRESS_CONSTANTS,

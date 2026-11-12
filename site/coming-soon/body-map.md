@@ -27,7 +27,7 @@ sourced: 2026-09-30
 
 The body map is the `#/body` page of the wall dashboard. It shows how many working sets each
 muscle got this week, which lifts are getting stronger, and what your plan still owes. The
-page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/DashboardChrome.tsx:44-52`<!-- anchor: body: { name: 'body' } -->).
+page is in the dashboard's side rail as "body" (`src/dashboard/spa/panels/DashboardChrome.tsx:38-46`<!-- anchor: body: { name: 'body' } -->).
 
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
@@ -36,12 +36,12 @@ them (`src/dashboard/spa/body/BodyPage.tsx:30-38`<!-- anchor: fetchMuscleRecover
 [below](#recovery-the-last-trained-line).
 
 - **This week.** Working sets per muscle, set against volume landmarks, from
-  `/api/muscle-week` (`src/dashboard/spa/body/body-client.ts:31-33`<!-- anchor: /api/muscle-week -->, `src/dashboard/spa/body/BodyView.tsx:318-343`<!-- anchor: function ThisWeekPanel -->).
+  `/api/muscle-week` (`src/dashboard/spa/body/body-client.ts:31-33`<!-- anchor: /api/muscle-week -->, `src/dashboard/spa/body/BodyView.tsx:314-339`<!-- anchor: function ThisWeekPanel -->).
 - **Recent PRs.** Each lift's best estimated one-rep max over 12 weeks and its trend, from
-  `/api/muscle-strength` (`src/dashboard/spa/body/body-client.ts:35-37`<!-- anchor: /api/muscle-strength -->, `src/dashboard/spa/body/BodyView.tsx:290-316`<!-- anchor: function RecentPrsPanel -->). Left and right sides
+  `/api/muscle-strength` (`src/dashboard/spa/body/body-client.ts:35-37`<!-- anchor: /api/muscle-strength -->, `src/dashboard/spa/body/BodyView.tsx:286-312`<!-- anchor: function RecentPrsPanel -->). Left and right sides
   get separate trends, never an average (`src/dashboard/muscle-strength-api.ts:14-18`<!-- anchor: PER SIDE, NEVER POOLED -->).
 - **Next up.** The planned sets your current program week still owes, from `/api/muscle-plan`
-  (`src/dashboard/spa/body/BodyView.tsx:261-288`<!-- anchor: function NextUpPanel -->).
+  (`src/dashboard/spa/body/BodyView.tsx:257-284`<!-- anchor: function NextUpPanel -->).
 
 ## Why it is not ready yet <Badge type="warning" text="Coming soon" />
 
@@ -105,7 +105,7 @@ grow, the range that helps most, and the most you can recover from. They are the
 for everyone. They are copied reference values, not numbers
 learned from your training (`src/dashboard/read-models/muscle-week.ts:17-21`<!-- anchor: LANDMARKS ARE POPULATION DEFAULTS -->,
 `src/dashboard/read-models/muscle-week.ts:61-78`<!-- anchor: POPULATION_VOLUME_LANDMARKS -->). The page says so under This week
-(`src/dashboard/spa/body/BodyView.tsx:337-341`<!-- anchor: landmarkBasis -->). Read a muscle's colour as "how this week compares
+(`src/dashboard/spa/body/BodyView.tsx:333-337`<!-- anchor: landmarkBasis -->). Read a muscle's colour as "how this week compares
 to a typical lifter," not as "how this week compares to what you can recover from."
 
 Landmarks fitted to you do not exist yet. That is a known limitation (VW-146), not something
@@ -114,9 +114,9 @@ this page is waiting on.
 ## Recovery: the last-trained line <Badge type="warning" text="Coming soon" />
 
 Tapping a muscle opens a side sheet over the figures
-(`src/dashboard/spa/body/BodyView.tsx:166-168`<!-- anchor: onMusclePress -->, `src/dashboard/spa/body/BodyView.tsx:216-227`<!-- anchor: function MuscleSheet -->).
+(`src/dashboard/spa/body/BodyView.tsx:162-164`<!-- anchor: onMusclePress -->, `src/dashboard/spa/body/BodyView.tsx:212-223`<!-- anchor: function MuscleSheet -->).
 Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
-(`src/dashboard/server.ts:694-696`<!-- anchor: /api/muscle-recovery -->, `src/dashboard/spa/body/body-sheet-model.ts:107`<!-- anchor: recoveryLine( -->). The line
+(`src/dashboard/server.ts:694-696`<!-- anchor: /api/muscle-recovery -->, `src/dashboard/spa/body/body-sheet-model.ts:114`<!-- anchor: recoveryLine( -->). The line
 states what happened, when you last trained the muscle and how that session went against the
 one before, and never a recovery verdict or a countdown
 (`src/dashboard/spa/body/body-sheet-model.ts:66-68`<!-- anchor: never a recovery verdict or countdown -->). It does not say how long a muscle needs

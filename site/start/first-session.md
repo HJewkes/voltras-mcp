@@ -88,7 +88,7 @@ progression, or session history. If a set already ran under the wrong name,
 long as they're set as the lifter — the header is yours by default, so a name only
 appears while someone else is actually on the cable, and it goes back to showing nothing
 extra the moment you clear it
-(`src/dashboard/spa/live-page/ExerciseHeader.tsx:277-287`<!-- anchor: session.lifter !== null -->).
+(`src/dashboard/spa/live-page/ExerciseHeader.tsx:271-281`<!-- anchor: session.lifter !== null -->).
 
 Afterwards: [`session.list`](/reference/session) / `session.get` for history, `set.get`
 for one set's full rep detail, [`metrics.compute`](/reference/metrics) for the analytics

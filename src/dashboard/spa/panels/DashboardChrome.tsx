@@ -24,14 +24,8 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
-import {
-  DashboardShell,
-  ScaleIcon,
-  TargetIcon,
-  workoutNavItems,
-  type SessionState,
-  type SideNavItem,
-} from '@titan-design/react-ui';
+import { ScaleIcon, TargetIcon, type SideNavItem } from '@titan-design/react-ui';
+import { DashboardShell, workoutNavItems, type SessionState } from '@titan-design/react-ui/workout';
 
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
@@ -171,7 +165,9 @@ export function DashboardChrome(props: {
       ref={shellRef}
       style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}
     >
+      {/* Every route sets its own page gutter, so titan's default content padding would double it. */}
       <DashboardShell
+        contentPadding="none"
         activeKey={activeKey}
         navItems={NAV_ITEMS}
         liveKey={liveKey}

@@ -77,12 +77,19 @@ export function planSection(row: MusclePlanMuscleView): MusclePlanSection {
     plannedSetsThisWeek: row.plannedSetsThisWeek,
     doneSetsThisWeek: row.doneSetsThisWeek,
     exercises: row.plannedRemaining.map((exercise) => ({ ...exercise, done: false })),
+    frequency: row.frequency,
   };
 }
 
 /** Per-side rows pass through untouched: a bilateral muscle keeps one row per limb. */
 function strengthSection(row: MuscleStrengthMuscle): MuscleStrengthSection {
-  return { exercises: row.exercises, agreement: row.agreement, earlyPhase: row.earlyPhase };
+  return {
+    exercises: row.exercises,
+    agreement: row.agreement,
+    earlyPhase: row.earlyPhase,
+    relativeIndexBySide: row.relativeIndexBySide,
+    daysSinceTrained: row.daysSinceTrained,
+  };
 }
 
 /** A muscle the week plans nothing for has no plan section, not a 0-set target. */

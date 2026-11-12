@@ -14,7 +14,7 @@ import type {
   GoalMuscleLift,
   GoalNextTarget,
   GoalWeekEntry,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 // The muscle taxonomy's VALUE export lives on this subpath, not on the root
 // barrel: the root `.d.ts` re-declares `MuscleGroup` but `dist/index.mjs` never
 // emits it, so a root import typechecks and is `undefined` at runtime.

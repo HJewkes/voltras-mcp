@@ -39,9 +39,9 @@ A tempo target is four numbers in seconds: lowering, pause at the bottom, liftin
 top (`src/dashboard/tempo-defaults.ts:21-22`<!-- anchor: export type TempoTuple -->). The dashboard uses the tempo your coach set on the
 planned exercise, else the exercise's default, else none
 (`src/dashboard/tempo-defaults.ts:71-89`<!-- anchor: export function resolveTargetTempo -->). When one applies, it sits in the header under the
-prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:321-340`<!-- anchor: session.tempo && -->).
+prescription, at the end of the set strip (`src/dashboard/spa/live-page/ExerciseHeader.tsx:315-334`<!-- anchor: session.tempo && -->).
 With none, the header shows no tempo rather than an invented one
-(`src/dashboard/spa/live-page/ExerciseHeader.tsx:172`<!-- anchor: no prescribed tempo -->).
+(`src/dashboard/spa/live-page/ExerciseHeader.tsx:166`<!-- anchor: no prescribed tempo -->).
 
 <CaptureCallouts
   shot="live-mid-set"
@@ -88,13 +88,13 @@ When a set closes, the live page switches to its rest stage.
 />
 
 The **rest ring** counts down the rest length for this exercise
-(`src/dashboard/spa/live-page/RestView.tsx:209-242`<!-- anchor: function RestCountdown -->). In this capture that is the plan's own
+(`src/dashboard/spa/live-page/RestView.tsx:211-244`<!-- anchor: function RestCountdown -->). In this capture that is the plan's own
 rest, 90 seconds for Cable Chest Press (`scripts/dashboard-plan-drive.mjs:115-123`<!-- anchor: restSec: 90 -->). When the
 plan sets no rest, the ring counts down a default for the exercise's training intent and says
 "Default rest" under it, so a default never reads as your coach's number
 (`src/coach-copy/dashboard.ts`, `src/analytics/rest-defaults.ts:145-155`<!-- anchor: 'intent_default' -->).
 With no rest length at all, a clock counts up from the end of the set instead
-(`src/dashboard/spa/live-page/RestView.tsx:244-252`<!-- anchor: mode="up" -->).
+(`src/dashboard/spa/live-page/RestView.tsx:246-254`<!-- anchor: mode="up" -->).
 [Rest between sets](/concepts/fatigue-and-pacing#rest-between-sets) explains the defaults.
 
 The **pace footer** sits at the bottom of the rail. It shows **Left**, the planned sets still
@@ -102,11 +102,11 @@ to do, **ETA**, the time the plan projects the session to end, and, once the fir
 **Pace**: `on pace`, or how many minutes behind or ahead of the plan you are
 (`src/dashboard/spa/live-page/model.ts:938-966`<!-- anchor: export function derivePaceMetrics -->). When you are behind or ahead and the plan has
 sets left to change, a sentence under the rail suggests sets to trim or add
-(`src/dashboard/spa/live-page/LivePage.tsx:224-226`<!-- anchor: derivePaceSuggestion(pace -->,
+(`src/dashboard/spa/live-page/LivePage.tsx:225-227`<!-- anchor: derivePaceSuggestion(pace -->,
 `src/dashboard/read-models/session-pace.ts:281-296`<!-- anchor: export function suggestPaceAdjustment -->). The same estimate drives the clock and
-pace marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:210-217`<!-- anchor: budgetMs: pace.plannedMinutes -->). Without
+pace marker at the top of the rail (`src/dashboard/spa/live-page/LivePage.tsx:211-218`<!-- anchor: budgetMs: pace.plannedMinutes -->). Without
 an attached plan there is no footer at all, rather than a guessed finish time
-(`src/dashboard/spa/live-page/LivePage.tsx:180-188`<!-- anchor: Empty with no plan attached -->, `src/dashboard/spa/live-page/model.ts:943`<!-- anchor: if (pace === null) return [] -->).
+(`src/dashboard/spa/live-page/LivePage.tsx:181-189`<!-- anchor: Empty with no plan attached -->, `src/dashboard/spa/live-page/model.ts:943`<!-- anchor: if (pace === null) return [] -->).
 The capture does not pin the ETA, because it is wall-clock time.
 
 ## 4. Left and right
@@ -128,11 +128,11 @@ The fatigue card stays one card for both sides: its verdict and lights describe 
 (`src/dashboard/spa/live-page/fatigue-model.ts:105-109`<!-- anchor: ATHLETE AS A WHOLE -->). Only the velocity story is per side:
 each side's bars, its rep-shape curves, and the **L/R** figure
 (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:11-20`<!-- anchor: WHAT IS PER-LIMB -->,
-`src/dashboard/spa/live-page/DivergingLiveStage.tsx:89-96`<!-- anchor: L/R -->). If the
+`src/dashboard/spa/live-page/DivergingLiveStage.tsx:85-92`<!-- anchor: L/R -->). If the
 two units were set up differently, the stage shows "L/R held back" and the reason instead,
 because the gap would describe the rig rather than you
-(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:80-85`<!-- anchor: L/R held back -->). A side with no device bound reads
-"awaiting" plus that side (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:101-110`<!-- anchor: awaiting -->). You
+(`src/dashboard/spa/live-page/DivergingLiveStage.tsx:76-81`<!-- anchor: L/R held back -->). A side with no device bound reads
+"awaiting" plus that side (`src/dashboard/spa/live-page/DivergingLiveStage.tsx:97-106`<!-- anchor: awaiting -->). You
 see that only with `?variant=live-dual` in the URL, because without it the page leaves the
 diverging stage as soon as a side drops (`src/dashboard/spa/live-page/stage-variant.ts:66-87`<!-- anchor: ?variant=live-dual -->).
 [Left and right](/concepts/technique-signals#left-and-right) covers the measurement, and the

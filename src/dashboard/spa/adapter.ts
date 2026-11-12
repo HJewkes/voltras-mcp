@@ -23,7 +23,7 @@ import {
 // Type-only: erased at build, so this adds no titan runtime dependency to this
 // otherwise WA-only pure module (safe under the node/vitest test env — no import
 // is emitted). These are the shell TopBar's device/state contracts.
-import type { Device, DeviceRowState, SessionState } from '@titan-design/react-ui';
+import type { Device, DeviceRowState, SessionState } from '@titan-design/react-ui/workout';
 // Type-only, same rationale: mirrors the store's four-value set-purpose enum
 // (VMCP-02.84) without pulling the store's runtime (sqlite, node:sqlite) into
 // this browser bundle.

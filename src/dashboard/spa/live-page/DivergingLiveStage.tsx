@@ -25,12 +25,8 @@
  */
 import { useState } from 'react';
 import { View, Text, type LayoutChangeEvent } from 'react-native';
-import {
-  DualGhostSpark,
-  DualVelocityStrip,
-  LiveAuraFrame,
-  useOnSurfaceColor,
-} from '@titan-design/react-ui';
+import { DualGhostSpark, useOnSurfaceColor } from '@titan-design/react-ui';
+import { DualVelocityStrip, LiveAuraFrame } from '@titan-design/react-ui/workout';
 import { LiveControlsRow } from './LiveControlsRow';
 import { exertionMessage } from './live-copy';
 import { type LiveDashboardModel } from './model';
