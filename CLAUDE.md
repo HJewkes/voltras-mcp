@@ -82,7 +82,7 @@ The 15 test files under `src/**/__tests__/` still hold protocol fixtures and are
 ## Gotchas
 
 - `ci.yml` runs only on PRs whose base is `main`: a stacked PR gets no checks, and retargeting it to `main` does not start them (close and reopen does).
-- PRs are squash-merged, so after a parent PR lands, rebase a stacked branch with `git rebase --onto origin/main <old-parent-sha>` and check `git diff --name-only origin/main...HEAD`.
+- PRs are squash-merged, so after a parent PR lands, merge `origin/main` into a stacked branch (`git merge origin/main`, then a plain push; worker profiles cannot force-push) and check `git diff --name-only origin/main...HEAD`. Attended sessions may instead rebase with `git rebase --onto origin/main <old-parent-sha>`.
 - `pages.yml` runs `docs:build` on PRs only when `site/**` changes, but the site includes the root `CHANGELOG.md`; run `npm run docs:build` for any docs or CHANGELOG change, and write CHANGELOG links site-relative (`/guides/x`), not as repo paths. `docs:check` does not catch dead links.
 - The docs protocol guard (`src/docs/protocol-guard.ts`) rewrites any ALL-CAPS-HYPHENATED token to `[redacted]` in generated pages while `docs:check` still passes; avoid that emphasis in tool descriptions and grep the regenerated `site/reference/` diff for `[redacted]`.
 - `security-audit` blocks only on critical vulns (`--audit-level=critical`), and they sit in the production tree (`@modelcontextprotocol/sdk`, `onnxruntime-node`), so `--omit=dev` does not help; try plain `npm audit fix` first.
