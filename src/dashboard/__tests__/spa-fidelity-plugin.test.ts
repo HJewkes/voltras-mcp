@@ -85,6 +85,33 @@ describe('transformSpaModule', () => {
     expect(result.uninstrumented).toEqual(['StatRow', 'Tile', 'Field', 'Page']);
   });
 
+  it('tags a declared placeholder with that kind and leaves its neighbours spa', () => {
+    const declaredKinds = { [`${SOURCE}#EmptyPanel`]: 'placeholder' } as const;
+
+    const result = transform(
+      `function EmptyPanel() { return null; }\nfunction RealPanel() { return null; }\n`,
+      { ...OPTIONS, declaredKinds },
+    );
+
+    expect(result.code).toContain(
+      `EmptyPanel = __vmcpWithProvenance(EmptyPanel, {"kind":"placeholder","name":"EmptyPanel","source":"${SOURCE}"});`,
+    );
+    expect(result.code).toContain('{"kind":"spa","name":"RealPanel"');
+  });
+
+  it('does not apply a declaration made for the same name in another file', () => {
+    const declaredKinds = {
+      'src/dashboard/spa/other/Other.tsx#EmptyPanel': 'placeholder',
+    } as const;
+
+    const result = transform(`function EmptyPanel() { return null; }\n`, {
+      ...OPTIONS,
+      declaredKinds,
+    });
+
+    expect(result.code).toContain('{"kind":"spa","name":"EmptyPanel"');
+  });
+
   it('skips an opted-out name even when it is a function component', () => {
     const result = transform(`function Carousel() { return null; }\n`);
 
