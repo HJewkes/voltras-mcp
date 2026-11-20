@@ -47,7 +47,7 @@ With none, the header shows no tempo rather than an invented one
   shot="live-mid-set"
   :callouts='[
     {"quote": "Cable Chest Press 3 × 8–10 @ 140 lbs", "text": "The prescription in the header. A tempo target, when one applies, sits with it."},
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44", "text": "One bar per rep. With a tempo target, each rep is tinted by how far its lifting time sat from the target lifting time."},
+    {"quote": "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61", "text": "One bar per rep. With a tempo target, each rep is tinted by how far its lifting time sat from the target lifting time."},
     {"quote": "FATIGUE — RPE Good", "text": "The fatigue card. Its three lights sit under this verdict: velocity loss, form and tempo."}
   ]'
 />
@@ -119,8 +119,8 @@ its diverging stage on its own: one velocity chart per side
   shot="live-dual-mid-set"
   :callouts='[
     {"quote": "MOCK-VOLTRA-LEFT", "text": "The device bound to the left slot. The right side is labelled the same way."},
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46", "text": "Each side has its own bars and loss lines. Here the left side is six reps in, the right side four."},
-    {"quote": "L/R 2% Right leading", "text": "The imbalance: the gap in mean rep speed between the sides, and which side is faster."}
+    {"quote": "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 VL 20% VL 30% 0.70 0.68 0.66 0.63", "text": "Each side has its own bars and loss lines. Here the left side is six reps in, the right side four."},
+    {"quote": "L/R 3% Right leading", "text": "The imbalance: the gap in mean rep speed between the sides, and which side is faster."}
   ]'
 />
 

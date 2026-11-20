@@ -1,5 +1,5 @@
 {
-  "definitionHash": "0305ee095c5d78968f8c01090a7c1174ba567d28d3800d1f97d7a51afc51113e",
+  "definitionHash": "4664f6cee9c6f43bd95c1969eaa05ceda62dd32c603ca3bb29e41046d10e16a9",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -81,14 +81,14 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0/8 sets",
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44",
+        "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61",
         "FATIGUE — RPE Good",
         "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 826883,
-      "sha256": "2bb3e65c215d4575a1ebb1322cb9a27289bed8538f233a46e61a9b1bc5dc5679"
+      "bytes": 817807,
+      "sha256": "85e5e72e21ca94072df8df121e52e0098b5593a863c8f52c30d3cb68b9655ee2"
     },
     {
       "name": "live-rest",
@@ -110,8 +110,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 120492,
-      "sha256": "72141137def20f5936e8cb12ad44f15da1f4e6e2600499577818830f9592ef34"
+      "bytes": 118116,
+      "sha256": "d2e8dc792450a94fce1fe91f0f4f63dc2872d5d88c816a860e42e5c45c7f0d61"
     },
     {
       "name": "session-summary",
@@ -129,12 +129,12 @@
         "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO",
         "VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%",
         "NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps",
-        "Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb"
+        "Cable Chest Fly #1 working 5 140 lb 12% 0.7 163 lb #2 working 5 140 lb 12% 0.7 163 lb"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 75676,
-      "sha256": "5c93384f580796ffe96c724e19fcfb3c0e1c0d5198bcc23b21ebd74526fdc557"
+      "bytes": 76028,
+      "sha256": "2565bdaf40ea806a9e3e96787803fc3ad77b908b27243c9c4c9cdf33326f2fce"
     },
     {
       "name": "plan-builder",
@@ -171,14 +171,14 @@
       },
       "assertedText": ["Cable Chest Press", "VELOCITY · this set", "FATIGUE"],
       "assertedValues": [
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37",
+        "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 0.57 0.55 0.53 0.51",
         "FATIGUE — RPE Slowing",
         "PACE on pace"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 914409,
-      "sha256": "0fadf93390600b53148577a6d1a46abf2afac297708014d4c52ebcb1db04300a"
+      "bytes": 901853,
+      "sha256": "492bc8effb54970d6a03324c200873623a086c83325d87dec0bd856d5ef554a1"
     },
     {
       "name": "live-dual-mid-set",
@@ -195,13 +195,13 @@
       },
       "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R"],
       "assertedValues": [
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46",
-        "L/R 2% Right leading"
+        "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 VL 20% VL 30% 0.70 0.68 0.66 0.63",
+        "L/R 3% Right leading"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 293767,
-      "sha256": "6d36c19f15f569fcc8d2cf765930c5066b01f8838e05a713c01bafa7c07891d7"
+      "bytes": 294706,
+      "sha256": "0e8b39abbb3bec05734db349796ac918d288c4fbcd448f7f1c7e6fd8e6bbe74f"
     },
     {
       "name": "goals",
@@ -339,7 +339,7 @@
       "sha256": "683dd7173875e6a05a2591e72cb34cd62bbf21554441951f8586eeb78debe19b"
     }
   ],
-  "clipDefinitionHash": "ceec7f13f33c402f80428528fa3ede5f35ae3db1571b5c95e46d3361447475f0",
+  "clipDefinitionHash": "9192528c705eab9f03d0273f6e32619072c5cd5aeae9e755885d9729591da181",
   "clipSize": {
     "width": 1280,
     "height": 800

@@ -52,7 +52,7 @@ progress, reload the page after [`session.end`](/reference/session) to see the f
     {"quote": "Cable Chest Fly HOW IT MOVED · WORST SET #2 · VL12% Good VEL ROM TEMPO", "text": "The verdict for this exercise, the set it read and that set’s velocity loss."},
     {"quote": "VL 12%→12% e1RM 163→163 · 0% #1 5 140 lb VL12% #2 5 140 lb VL12%", "text": "The sets behind the verdict: velocity loss and estimated one-rep max from first set to last, then one column per set."},
     {"quote": "NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps", "text": "The load for next time, the step that lands on it, and the reps it scored against the plan."},
-    {"quote": "Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb", "text": "One row per set: what it counted as, reps, load, velocity loss, best rep velocity and estimated one-rep max."}
+    {"quote": "Cable Chest Fly #1 working 5 140 lb 12% 0.7 163 lb #2 working 5 140 lb 12% 0.7 163 lb", "text": "One row per set: what it counted as, reps, load, velocity loss, best rep velocity and estimated one-rep max."}
   ]'
 />
 
