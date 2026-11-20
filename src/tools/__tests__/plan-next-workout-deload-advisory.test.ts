@@ -24,7 +24,7 @@ const NOW = new Date('2026-03-15T12:00:00.000Z');
 
 const SILENT_KEYS = ['reasoning', 'rung', 'status', 'userMessage'];
 const WATCHING_KEYS = [...SILENT_KEYS, 'muscles'].sort();
-const ADVISE_KEYS = [...WATCHING_KEYS, 'algorithmVersion', 'thresholdsUsed'].sort();
+const ADVISE_KEYS = [...WATCHING_KEYS, 'algorithmVersion', 'respondWith', 'thresholdsUsed'].sort();
 
 const SET_COUNT_ADVICE = /\b(add|hold|cut|drop|remove|fewer|more)\b[^.]{0,30}\bsets?\b/i;
 
@@ -196,15 +196,30 @@ describe('plan.next_workout deloadAdvisory', () => {
     });
   });
 
-  it('names no tool that is not registered, even when it advises', async () => {
+  it('names only registered tools, and the answer tool only when it advises', async () => {
     // Act
     const advisory = await advisoryAfter([6, 4, 3]);
 
     // Assert
-    expect(advisory.status).toBe('advise');
+    expect(advisory).toMatchObject({
+      status: 'advise',
+      respondWith: 'plan.respond_deload_advisory',
+    });
     const named = JSON.stringify(advisory).match(/\b[a-z_]+\.[a-z_]+\b/g) ?? [];
     const toolLike = named.filter((name) => /^(plan|mrvguard|session|goal)\./.test(name));
     expect(toolLike.filter((name) => !CORE_TOOL_NAMES.includes(name))).toEqual([]);
+  });
+
+  it.each<[string, [number, number, number] | null]>([
+    ['clear', [6, 6, 7]],
+    ['watching', [6, 4, 4]],
+    ['inconclusive', null],
+  ])('names no answer tool when it reads %s', async (status, reps) => {
+    // Act
+    const advisory = await advisoryAfter(reps);
+
+    // Assert
+    expect(advisory.status).toBe(status);
     expect(JSON.stringify(advisory)).not.toContain('respond_deload_advisory');
   });
 

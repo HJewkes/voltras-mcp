@@ -286,7 +286,8 @@ const SERVER_INSTRUCTIONS = [
   'FATIGUE CHANNELS: soreness and recovery timing move set count; only measured performance ' +
     'decline drives the fatigue-reduction ladder (`deloadAdvisory` on `plan.next_workout`). ' +
     'Subjective fatigue never triggers a rung on its own. Relay an advised rung as a suggestion ' +
-    'and let the lifter decide; never apply it.',
+    'and let the lifter decide; never apply it. File their answer with ' +
+    '`plan.respond_deload_advisory`, never one of your own.',
 ].join('\n');
 
 export interface ClientConnectionOptions {

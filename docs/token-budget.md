@@ -14,7 +14,7 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 71884 |
+| tools/list | 72268 |
 | live-workout responses | 24278 |
 | live-workout push events | 11490 |
 | live-workout total | 35768 |
@@ -96,11 +96,12 @@ grows more than 5% over this table, or when a row is new.
 | `plan.current_block` | 1044 | 323 |
 | `plan.exercise.create` | 4694 | 1609 |
 | `plan.exercise.list_for_template` | 370 | 171 |
-| `plan.next_workout` | 2100 | 612 |
+| `plan.next_workout` | 2272 | 657 |
 | `plan.program.archive` | 322 | 148 |
 | `plan.program.create` | 472 | 206 |
 | `plan.program.get` | 262 | 131 |
 | `plan.program.list` | 244 | 122 |
+| `plan.respond_deload_advisory` | 1013 | 339 |
 | `plan.suggest_progression` | 3977 | 1155 |
 | `plan.template.create` | 964 | 377 |
 | `plan.template.get` | 272 | 134 |

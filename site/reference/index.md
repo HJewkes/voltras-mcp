@@ -6,8 +6,8 @@ Everything on this page is generated from a running server: the generator boots
 voltras-mcp against the mock adapter and reads `tools/list`, so a description here
 is the description a client actually sees.
 
-**128 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
-**130** in mock mode — the `mock.*` namespace is registered only when
+**129 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
+**131** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
 Those counts include `device.send_raw` and `debug.recent_frames`, which are registered only when `VMCP_DEBUG_TOOLS=on`.
 
@@ -47,7 +47,7 @@ whose status differs from its namespace is named in the same cell.
 
 | Namespace                              | Tools | Status               |
 | -------------------------------------- | ----- | -------------------- |
-| [`plan.*`](./plan)                     | 26    | available by default |
+| [`plan.*`](./plan)                     | 27    | available by default |
 | [`goal.*`](./goal)                     | 7     | available by default |
 | [`profile.*`](./profile)               | 11    | available by default |
 | [`accountability.*`](./accountability) | 3     | available by default |

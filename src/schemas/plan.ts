@@ -263,6 +263,17 @@ export const PlanNextWorkoutInput = z
   })
   .strict();
 
+// `plan.respond_deload_advisory` (VW-594) — the lifter's answer to the advised
+// ladder rung on `plan.next_workout`'s `deloadAdvisory`.
+//
+// ACCEPT OR DECLINE THE ADVISED RUNG, NOTHING ELSE. A lighter response is a
+// decline plus the lifter's own plan edit, and neither answer edits the plan.
+export const PlanRespondDeloadAdvisoryInput = z
+  .object({
+    response: z.enum(['accepted', 'declined']),
+  })
+  .strict();
+
 /**
  * Mark a workout template as completed by writing a ProgramAssignment row
  * linking the given session to the template. `sessionId` is optional — when

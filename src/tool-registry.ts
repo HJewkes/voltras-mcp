@@ -121,6 +121,7 @@ export const CORE_TOOL_NAMES = [
   'plan.block.planning_brief',
   // Progression / session-link tools (compose the CRUD layer above).
   'plan.next_workout',
+  'plan.respond_deload_advisory',
   'plan.complete_workout',
   'plan.attach_to_session',
   'plan.suggest_progression',
@@ -422,6 +423,7 @@ export const TOOL_ACCESS = {
   'plan.current_block': 'read',
   'plan.block.planning_brief': 'read',
   'plan.next_workout': 'read',
+  'plan.respond_deload_advisory': 'write',
   'plan.complete_workout': 'write',
   'plan.attach_to_session': 'write',
   'plan.suggest_progression': 'read',

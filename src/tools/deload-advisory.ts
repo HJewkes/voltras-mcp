@@ -11,6 +11,11 @@
 // ONE SET FILTER. Owner-only and training-only come from the store's own
 // defaults; warm-up, probe and technique sets are dropped by
 // `isEligibleForComparison`, the filter the drift and MRV guards already use.
+//
+// ANSWERS (VW-594). `recordDeloadResponse` files the lifter's accept or decline
+// as one `advisory_decisions` row and writes nothing else. Either answer makes
+// the rung read `suppressed` until some confirmed muscle has a newer confirming
+// session than the one the answer was filed against.
 
 import type { MrvGuardVerdict, MrvUnderperformanceVerdict } from '@voltras/workout-analytics';
 
@@ -28,7 +33,12 @@ import { mapCatalogMuscle, type TitanMuscleGroup } from '../exercises/muscle-map
 import type { ServerState } from '../state/server-state.js';
 import { checkMrvGuard } from '../store/mrv-guard.js';
 import { isEligibleForComparison, scopeSetsToLifter } from '../store/set-scope.js';
-import { LOCAL_USER_ID, type SessionStore, type StoredSet } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type SessionStore,
+  type StoredAdvisoryDecision,
+  type StoredSet,
+} from '../store/types.js';
 import { getTierSignal, type TierSignalState } from './tier-signal.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -62,33 +72,77 @@ export interface DeloadAdvisoryContext {
 
 type AdvisoryCore = Pick<DeloadAdvisory, 'status' | 'rung' | 'reasoning' | 'userMessage'>;
 
+/** The tool that files the lifter's answer to an advised rung. */
+export const RESPOND_DELOAD_TOOL = 'plan.respond_deload_advisory';
+
+/** The read on `advise`: reproducible, and naming the tool that files the answer. */
+type AdviseRead = AdvisoryCore &
+  Pick<DeloadAdvisory, 'muscles' | 'thresholdsUsed' | 'algorithmVersion'> & {
+    respondWith: typeof RESPOND_DELOAD_TOOL;
+  };
+
 /**
  * The advisory as `plan.next_workout` emits it. Only `advise` carries the
- * thresholds and version that make it reproducible, and only `advise` and
- * `watching` name muscles: a silent read costs the sitting as few tokens as
- * it can. No answer tool is named until the one that records the lifter's
- * answer is registered (VW-594).
+ * thresholds and version that make it reproducible and the tool that answers
+ * it, and only `advise` and `watching` name muscles: a silent read costs the
+ * sitting as few tokens as it can.
  */
 export type DeloadAdvisoryRead =
   | AdvisoryCore
   | (AdvisoryCore & Pick<DeloadAdvisory, 'muscles'>)
-  | (AdvisoryCore & Pick<DeloadAdvisory, 'muscles' | 'thresholdsUsed' | 'algorithmVersion'>);
+  | AdviseRead;
+
+/**
+ * Per confirmed muscle, the session id of its newest flagged check. This is the
+ * evidence an answer is filed against; sibling exercises that never flagged do
+ * not move it, so their ageing out of the window re-offers nothing.
+ */
+type ConfirmingSessions = Record<string, string>;
+
+/** The read, with the evidence key an answer to it would be filed against. */
+export interface DeloadAssessment {
+  read: DeloadAdvisoryRead;
+  confirmingSessions: ConfirmingSessions;
+}
 
 /** The ladder advisory as it stands at `now`, always explained, never applied. */
 export async function buildDeloadAdvisory(
   deps: BuildDeloadAdvisoryDeps,
   context: DeloadAdvisoryContext,
 ): Promise<DeloadAdvisoryRead> {
+  return (await assessDeloadAdvisory(deps, context)).read;
+}
+
+/** {@link buildDeloadAdvisory} plus the evidence key `recordDeloadResponse` files. */
+export async function assessDeloadAdvisory(
+  deps: BuildDeloadAdvisoryDeps,
+  context: DeloadAdvisoryContext,
+): Promise<DeloadAssessment> {
   const muscles = await collectDeloadBreaches(deps, context.now);
   const tier = await getTierSignal(deps, LOCAL_USER_ID, context.now.toISOString());
+  const decisions = await deps.store.listAdvisoryDecisions(LOCAL_USER_ID, {
+    code: DELOAD_LADDER_CODE,
+  });
   const advisory = selectDeloadRung({
     muscles,
     tier: { tier: tier.tier, confidence: tier.confidence },
     currentWeekIsDeload: context.currentWeekIsDeload,
-    priorDecisions: await readPriorLadderDecisions(deps.store),
+    priorDecisions: toPriorLadderDecisions(decisions),
     now: context.now,
   });
-  return toAdvisoryRead(advisory);
+  const confirmingSessions = confirmingSessionsOf(muscles);
+  const answer =
+    advisory.status === 'advise' ? findAnswer(decisions, confirmingSessions) : undefined;
+  const read = answer === undefined ? toAdvisoryRead(advisory) : answeredVerdict(answer);
+  return { read, confirmingSessions };
+}
+
+function confirmingSessionsOf(muscles: readonly CollectedMuscleSignal[]): ConfirmingSessions {
+  return Object.fromEntries(
+    muscles.flatMap((signal) =>
+      signal.confirmedBy === undefined ? [] : [[signal.muscle, signal.confirmedBy]],
+    ),
+  );
 }
 
 function toAdvisoryRead(advisory: DeloadAdvisory): DeloadAdvisoryRead {
@@ -96,13 +150,111 @@ function toAdvisoryRead(advisory: DeloadAdvisory): DeloadAdvisoryRead {
   const core = { status, rung, reasoning, userMessage };
   if (status === 'advise') {
     const { thresholdsUsed, algorithmVersion } = advisory;
-    return { ...core, muscles, thresholdsUsed, algorithmVersion };
+    return { ...core, muscles, thresholdsUsed, algorithmVersion, respondWith: RESPOND_DELOAD_TOOL };
   }
   return status === 'watching' ? { ...core, muscles } : core;
 }
 
-async function readPriorLadderDecisions(store: SessionStore): Promise<PriorLadderDecision[]> {
-  const decisions = await store.listAdvisoryDecisions(LOCAL_USER_ID, { code: DELOAD_LADDER_CODE });
+function isAdviseRead(read: DeloadAdvisoryRead): read is AdviseRead {
+  return read.status === 'advise' && 'respondWith' in read;
+}
+
+/** Each confirmed muscle and the sessions behind it, filed so the answer can be reproduced. */
+function answeredEvidence(muscles: DeloadAdvisory['muscles']): Record<string, unknown>[] {
+  return muscles
+    .filter((signal) => signal.state === 'confirmed')
+    .map(({ muscle, evidence }) => ({
+      muscle,
+      evidence: evidence.map(({ exerciseId, sessionIds }) => ({
+        exerciseId,
+        sessionIds: [...sessionIds],
+      })),
+    }));
+}
+
+function isAnswered(decision: StoredAdvisoryDecision): boolean {
+  return decision.userResponse === 'accepted' || decision.userResponse === 'declined';
+}
+
+function filedSessions(decision: StoredAdvisoryDecision): ConfirmingSessions {
+  const filed = decision.inputs.confirmingSessions;
+  return typeof filed === 'object' && filed !== null ? (filed as ConfirmingSessions) : {};
+}
+
+/**
+ * The newest answer that covers the current evidence, when every confirmed
+ * muscle's newest confirming session has already been answered. Only a muscle
+ * with a newer confirming session re-offers a rung: one muscle recovering does
+ * not re-ask a smaller rung on the others' unchanged evidence.
+ */
+function findAnswer(
+  decisions: readonly StoredAdvisoryDecision[],
+  current: ConfirmingSessions,
+): StoredAdvisoryDecision | undefined {
+  const pairs = Object.entries(current);
+  const answered = decisions.filter(isAnswered);
+  const answers = (muscle: string, sessionId: string) => (decision: StoredAdvisoryDecision) =>
+    filedSessions(decision)[muscle] === sessionId;
+  const covered =
+    pairs.length > 0 &&
+    pairs.every(([muscle, sessionId]) => answered.some(answers(muscle, sessionId)));
+  if (!covered) return undefined;
+  return answered.find((decision) =>
+    pairs.some(([muscle, sessionId]) => answers(muscle, sessionId)(decision)),
+  );
+}
+
+function answeredVerdict(answer: StoredAdvisoryDecision): DeloadAdvisoryRead {
+  const rung = answer.verdict.replaceAll('_', ' ');
+  const day = answer.issuedAt.slice(0, 10);
+  return {
+    status: 'suppressed',
+    rung: null,
+    reasoning: `The lifter ${answer.userResponse ?? 'answered'} the ${rung} advised on ${day} on this same evidence, so it is not offered again until a newer session of a confirmed muscle comes in.`,
+    userMessage:
+      answer.userResponse === 'declined'
+        ? `You turned down the ${rung} on this evidence. It comes back only if a newer session shows the decline again.`
+        : `You already said yes to the ${rung} on this evidence. Nothing in the plan was changed for you.`,
+  };
+}
+
+/**
+ * File the lifter's answer to the rung open in `read`. Writes one decision row
+ * and nothing else: accepting records a yes and leaves the plan as it is.
+ */
+export async function recordDeloadResponse(
+  store: SessionStore,
+  { read, confirmingSessions }: DeloadAssessment,
+  response: 'accepted' | 'declined',
+  now: Date,
+): Promise<{ recorded: boolean; reason: string }> {
+  if (!isAdviseRead(read) || read.rung === null) {
+    return { recorded: false, reason: `No ladder rung is open: ${read.reasoning}` };
+  }
+  const at = now.toISOString();
+  await store.putAdvisoryDecision({
+    userId: LOCAL_USER_ID,
+    code: DELOAD_LADDER_CODE,
+    issuedAt: at,
+    inputs: { muscles: answeredEvidence(read.muscles), confirmingSessions },
+    thresholds: read.thresholdsUsed,
+    algorithmVersion: read.algorithmVersion,
+    verdict: read.rung,
+    userResponse: response,
+    respondedAt: at,
+  });
+  return {
+    recorded: true,
+    reason:
+      response === 'declined'
+        ? 'Declined and filed. The same evidence is not re-offered; a newer session that confirms the decline again re-opens it.'
+        : 'Filed. Nothing in the plan changed: flag a deload week or lighten a session with the plan tools if the lifter wants it applied. The same evidence is not offered again.',
+  };
+}
+
+function toPriorLadderDecisions(
+  decisions: readonly StoredAdvisoryDecision[],
+): PriorLadderDecision[] {
   return decisions.flatMap((decision) =>
     isLadderRung(decision.verdict)
       ? [
@@ -119,6 +271,9 @@ async function readPriorLadderDecisions(store: SessionStore): Promise<PriorLadde
 function isLadderRung(verdict: string): verdict is DeloadRung {
   return LADDER_RUNGS.includes(verdict);
 }
+
+/** A muscle's state; a confirmed one also names the session of its newest flagged check. */
+export type CollectedMuscleSignal = DeloadMuscleSignal & { confirmedBy?: string };
 
 /** One owner session of one exercise, stamped with its newest working set. */
 interface ExerciseSession {
@@ -142,7 +297,7 @@ interface ExerciseCheck {
 export async function collectDeloadBreaches(
   deps: DeloadAdvisoryDeps,
   now: Date,
-): Promise<DeloadMuscleSignal[]> {
+): Promise<CollectedMuscleSignal[]> {
   const exerciseIds = await exercisesTrainedInWindow(deps.store, now);
   const checks = new Map<string, ExerciseCheck>();
   for (const exerciseId of exerciseIds) {
@@ -245,13 +400,20 @@ function groupByPrimaryMuscle(
   return byMuscle;
 }
 
-function muscleSignal(muscle: string, checks: readonly ExerciseCheck[]): DeloadMuscleSignal {
+function muscleSignal(muscle: string, checks: readonly ExerciseCheck[]): CollectedMuscleSignal {
   const evidence = checks.map((check) => check.evidence);
   const flagged = checks.filter((check) => check.guard.mrvFlagged);
   if (flagged.length > 0) {
     if (hasCounterEvidence(checks)) return { muscle, evidence, state: 'provisional' };
-    const confirmedAt = flagged.map((check) => check.confirmedAt).sort()[flagged.length - 1];
-    return { muscle, evidence, state: 'confirmed', confirmedAt: confirmedAt as string };
+    const newest = [...flagged].sort((a, b) => a.confirmedAt.localeCompare(b.confirmedAt));
+    const { confirmedAt, evidence: confirming } = newest[newest.length - 1] as ExerciseCheck;
+    return {
+      muscle,
+      evidence,
+      state: 'confirmed',
+      confirmedAt,
+      confirmedBy: confirming.sessionIds[2],
+    };
   }
   if (checks.some(isSingleMiss)) return { muscle, evidence, state: 'provisional' };
   if (checks.some(hasEvaluablePair)) return { muscle, evidence, state: 'clear' };

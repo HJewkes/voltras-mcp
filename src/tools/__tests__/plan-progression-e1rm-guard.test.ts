@@ -155,6 +155,7 @@ const PLAN_TOOLS = [
   'plan.current_block',
   'plan.block.planning_brief',
   'plan.next_workout',
+  'plan.respond_deload_advisory',
   'plan.complete_workout',
   'plan.attach_to_session',
   'plan.suggest_progression',

@@ -127,6 +127,7 @@ const ACTION_CASES: Record<string, ActionCase> = {
     input: () => ({ response: 'declined' }),
   },
   'profile.set_diet_phase': { input: () => ({ phase: 'maintenance' }) },
+  'plan.respond_deload_advisory': { seed: seedDatedBlock, input: () => ({ response: 'declined' }) },
 };
 
 let proposedTargetId = '';
