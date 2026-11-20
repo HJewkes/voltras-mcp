@@ -43,7 +43,7 @@ Three things happen in this phase beyond scan and connect: take the **lease** ex
 
 Why the explicit lease call when the first write would take it anyway: the lease error you would otherwise hit is on `bilateral.cascade` or `set.start`, with the user already holding the handle. `LEASE_HELD_ENGAGED` means another client is actively driving the device. Recovery is in `07-recovery-and-escalation.md`.
 
-Why `server.health` here: the dashboard binds after the server instructions are sent, so its URL exists nowhere else. It also tells you whether spoken cues are armed (`cues`, `cuesMidSet`), whether auto-arm is on (`autoArm`), and whether voice can transcribe at all (`voiceReady.whisperCli`, `voiceReady.model`; false means speech will not work, so say so before relying on it). If `dashboardAvailable` is false with a null reason on a machine that normally has one, a stale server from another session may hold the port; say so and move on.
+Why `server.health` here: the dashboard binds after the server instructions are sent, so its URL exists nowhere else. It also tells you whether spoken cues are armed (`cues`, `cuesMidSet`), whether auto-arm is on (`autoArm`), and whether voice can transcribe at all (`voiceReady.addon`, `voiceReady.model`; false means speech will not work, so say so before relying on it). If `dashboardAvailable` is false with a null reason on a machine that normally has one, a stale server from another session may hold the port; say so and move on.
 
 `get_state.connectionState: "awaitingAcceptance"` means a connect is still waiting for the lifter to accept on the device.
 

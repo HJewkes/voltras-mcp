@@ -98,24 +98,25 @@ function schemaGate({ buildSchemaVersion, storeSchemaVersion, storePath }) {
   };
 }
 
-function whisperGate({ whisperCliPresent, whisperModelPresent }) {
-  if (!whisperCliPresent) {
+function whisperGate({ whisperAddonPresent, whisperModelPresent }) {
+  if (!whisperAddonPresent) {
     return {
       id: 'whisper',
       level: 'fail',
       message:
-        'whisper-cli is missing — voice input will not transcribe. ' +
-        'Run `node scripts/ensure-whisper.mjs` (needs cmake).',
+        'The nodejs-whisper native addon is missing — voice input will not transcribe. ' +
+        'Reinstall with `npm ci`.',
     };
   }
   if (!whisperModelPresent) {
     return {
       id: 'whisper',
       level: 'warn',
-      message: 'whisper-cli is built but the tiny.en model is missing; it downloads on first use.',
+      message:
+        'The whisper native addon is present but the tiny.en model is missing; it downloads on first use.',
     };
   }
-  return { id: 'whisper', level: 'ok', message: 'whisper-cli and tiny.en model present.' };
+  return { id: 'whisper', level: 'ok', message: 'Whisper native addon and tiny.en model present.' };
 }
 
 function nodeGate({ nodeVersion }) {

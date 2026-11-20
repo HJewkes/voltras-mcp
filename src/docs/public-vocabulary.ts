@@ -412,6 +412,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'sideSplit.comparisonMetric',
   'sideSplit.comparisonBasis',
   'variance.cv',
+  'voiceReady.addon',
   'voiceReady.model',
   'voiceReady.whisperCli',
   'watch.inactivityTimeoutMs',

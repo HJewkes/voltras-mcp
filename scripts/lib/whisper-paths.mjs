@@ -15,6 +15,15 @@ export const WHISPER_CLI_RELATIVE = 'cpp/whisper.cpp/build/bin/whisper-cli';
 /** GGML weights for `tiny.en` — the model the voice listener defaults to. */
 export const WHISPER_MODEL_RELATIVE = 'cpp/whisper.cpp/models/ggml-tiny.en.bin';
 
+/** Candidate native-addon files `transcribeDetailed` loads, local build first. */
+export function whisperAddonCandidates(packageRoot, platform) {
+  const root = packageRoot.replace(/\/$/, '');
+  return [
+    `${root}/build/default/Release/nodejs_whisper.node`,
+    `${root}/prebuilds/${platform}/default/nodejs_whisper.node`,
+  ];
+}
+
 /** Absolute paths of both artifacts for an installed `nodejs-whisper` root. */
 export function whisperArtifactPaths(packageRoot) {
   const join = (rel) => `${packageRoot.replace(/\/$/, '')}/${rel}`;

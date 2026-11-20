@@ -14,16 +14,16 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 71644 |
-| live-workout responses | 24184 |
+| tools/list | 71648 |
+| live-workout responses | 24191 |
 | live-workout push events | 11490 |
-| live-workout total | 35674 |
-| sunday-sitting responses | 9333 |
+| live-workout total | 35681 |
+| sunday-sitting responses | 9340 |
 | sunday-sitting push events | 0 |
-| sunday-sitting total | 9333 |
-| weekly-review responses | 2778 |
+| sunday-sitting total | 9340 |
+| weekly-review responses | 2785 |
 | weekly-review push events | 0 |
-| weekly-review total | 2778 |
+| weekly-review total | 2785 |
 
 ## tools/list
 
@@ -126,7 +126,7 @@ grows more than 5% over this table, or when a row is new.
 | `report.weekly` | 2808 | 834 |
 | `rir_velocity.fit` | 1415 | 439 |
 | `rir_velocity.target` | 1250 | 411 |
-| `server.health` | 2040 | 584 |
+| `server.health` | 2054 | 588 |
 | `session.checkin` | 2563 | 896 |
 | `session.end` | 1402 | 539 |
 | `session.get` | 1135 | 359 |
@@ -171,7 +171,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.next_workout` | 1 | 250 | 109 | 109 |
 | `progression.get_for_exercise` | 1 | 2615 | 1080 | 1080 |
 | `report.session_results` | 1 | 215 | 105 | 105 |
-| `server.health` | 1 | 466 | 245 | 245 |
+| `server.health` | 1 | 479 | 252 | 252 |
 | `session.end` | 1 | 11 | 6 | 6 |
 | `session.start` | 1 | 52 | 27 | 27 |
 | `set.end` | 2 | 428 | 147 | 74 |
@@ -207,7 +207,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.get_training_background` | 1 | 16 | 8 | 8 |
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
-| `server.health` | 1 | 466 | 245 | 245 |
+| `server.health` | 1 | 479 | 252 | 252 |
 | `session.mark_kind` | 1 | 413 | 217 | 217 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
@@ -225,7 +225,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
 | `report.weekly` | 1 | 1707 | 458 | 458 |
-| `server.health` | 1 | 466 | 245 | 245 |
+| `server.health` | 1 | 479 | 252 | 252 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
 ## weekly-review: push events

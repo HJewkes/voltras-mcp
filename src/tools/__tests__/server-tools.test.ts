@@ -345,7 +345,8 @@ describe('server.health', () => {
     const body = JSON.parse((await invoke('server.health', {})).content[0].text);
 
     // Assert
-    expect(Object.keys(body.voiceReady).sort()).toEqual(['model', 'whisperCli']);
+    expect(Object.keys(body.voiceReady).sort()).toEqual(['addon', 'model', 'whisperCli']);
+    expect(typeof body.voiceReady.addon).toBe('boolean');
     expect(typeof body.voiceReady.whisperCli).toBe('boolean');
     expect(typeof body.voiceReady.model).toBe('boolean');
   });

@@ -153,7 +153,7 @@ A different case: the server answers but **newer tools are missing** (`plan.curr
 
 ### Mode L — voice is not working
 
-`server.health.voiceReady.whisperCli` or `.model` false means speech will not transcribe at all. Say so and fall back to typed input. And remember the standing limit: the mic is deaf while any spoken line plays, safety phrases included (VW-173, open). Never rely on a spoken "stop" during a cue.
+`server.health.voiceReady.addon` or `.model` false means speech will not transcribe at all. Say so and fall back to typed input. And remember the standing limit: the mic is deaf while any spoken line plays, safety phrases included (VW-173, open). Never rely on a spoken "stop" during a cue.
 
 ## The 3-cascade-and-verify budget
 
