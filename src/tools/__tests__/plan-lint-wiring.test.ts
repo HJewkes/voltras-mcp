@@ -32,6 +32,7 @@ import type { PlanWarning } from '../../plan/lint-plan.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredPlannedExercise } from '../../store/types.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown) => Promise<unknown>;
@@ -580,5 +581,137 @@ describe('plan.block.create lints', () => {
     });
 
     expect(body<{ warnings: PlanWarning[] }>(r).warnings).toEqual([]);
+  });
+});
+
+describe('plan.exercise.create swap gate (VW-622)', () => {
+  interface SwapBody {
+    plannedExercise: StoredPlannedExercise;
+    swapCheck?: { outgoingExerciseId: string; incomingExerciseId: string; trend: string };
+  }
+
+  /** A two-day week; Day A trained when `trained`, so the block is under way. */
+  async function weekWithBench(trained: boolean): Promise<string> {
+    const weekId = await makeWeek(h, await makeBlock(h, await makeProgram(h), 4), 0);
+    const dayA = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 0, 'A'));
+    await makeTemplateAt(h, weekId, 1, 'B');
+    await h.invoke('plan.exercise.create', {
+      id: 'slot-1',
+      workoutTemplateId: dayA.template.id,
+      exerciseId: 'bench-press',
+      orderIndex: 0,
+      targetSets: 3,
+    });
+    if (trained) {
+      await seedTrainingDay(h.store, { id: 'sess-a', startedAt: '2026-09-01T10:00:00.000Z' });
+      await h.store.putProgramAssignment({
+        id: 'assign-a',
+        sessionId: 'sess-a',
+        workoutTemplateId: dayA.template.id,
+        assignedAt: '2026-09-01T10:00:00.000Z',
+      });
+    }
+    return dayA.template.id;
+  }
+
+  function rewriteSlot(templateId: string, exerciseId: string): Promise<ToolResult> {
+    return h.invoke('plan.exercise.create', {
+      id: 'slot-1',
+      workoutTemplateId: templateId,
+      exerciseId,
+      orderIndex: 0,
+      targetSets: 3,
+    });
+  }
+
+  it('adds a swap check to a mid-block replacement and still writes the row', async () => {
+    const templateId = await weekWithBench(true);
+
+    const r = await rewriteSlot(templateId, 'cable-fly');
+
+    expect(r.isError).toBeUndefined();
+    expect(body<SwapBody>(r).swapCheck).toMatchObject({
+      outgoingExerciseId: 'bench-press',
+      incomingExerciseId: 'cable-fly',
+      trend: 'too_little_history',
+    });
+    expect((await h.store.getPlannedExercise('slot-1'))?.exerciseId).toBe('cable-fly');
+  });
+
+  it('adds no swap check before the block has been trained', async () => {
+    const templateId = await weekWithBench(false);
+
+    const r = await rewriteSlot(templateId, 'cable-fly');
+
+    expect(body<SwapBody>(r).swapCheck).toBeUndefined();
+  });
+
+  it('adds no swap check to an edit that keeps the exercise', async () => {
+    const templateId = await weekWithBench(true);
+
+    const r = await rewriteSlot(templateId, 'bench-press');
+
+    expect(body<SwapBody>(r).swapCheck).toBeUndefined();
+  });
+});
+
+describe('plan.exercise.create beginner rotation lint (VW-622)', () => {
+  async function blockTemplate(programId: string, orderIndex: number): Promise<string> {
+    const block = await h.invoke('plan.block.create', {
+      programId,
+      orderIndex,
+      name: `Block ${orderIndex + 1}`,
+      weeksCount: 4,
+    });
+    const weekId = await makeWeek(h, body<{ block: { id: string } }>(block).block.id, 0);
+    return body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 0, 'A')).template.id;
+  }
+
+  const PREVIOUS = ['cable-row', 'cable-lat-pulldown', 'cable-bicep-curl', 'cable-face-pull'];
+
+  async function addAll(templateId: string, ids: readonly string[]): Promise<PlanWarning[][]> {
+    const all: PlanWarning[][] = [];
+    for (const [i, id] of ids.entries()) {
+      const r = await addExercise(h, templateId, id, 2, i);
+      all.push(body<{ warnings: PlanWarning[] }>(r).warnings);
+    }
+    return all;
+  }
+
+  function rotationCodes(warnings: PlanWarning[]): PlanWarning[] {
+    return warnings.filter((w) => w.code === 'beginner_rotation_over_quarter');
+  }
+
+  it('stays quiet while the next block is still half built, even when its lifts are new', async () => {
+    const programId = await makeProgram(h);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
+    const second = await blockTemplate(programId, 1);
+
+    const writes = await addAll(second, ['cable-chest-fly', 'cable-row', 'cable-lateral-raise']);
+
+    expect(writes.flatMap(rotationCodes)).toEqual([]);
+  });
+
+  it('warns once a built-out beginner block has 2 of its 4 exercises new', async () => {
+    const programId = await makeProgram(h);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
+    const second = await blockTemplate(programId, 1);
+    await addAll(second, ['cable-row', 'cable-lat-pulldown', 'cable-chest-fly']);
+
+    const r = await addExercise(h, second, 'cable-lateral-raise', 2, 3);
+
+    const [warning] = rotationCodes(body<{ warnings: PlanWarning[] }>(r).warnings);
+    expect(warning).toMatchObject({ observed: 50, ceiling: 25 });
+    expect(warning?.message).toMatch(/tier is provisional/);
+  });
+
+  it('stays quiet when the next block keeps the same exercises', async () => {
+    const programId = await makeProgram(h);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
+    const second = await blockTemplate(programId, 1);
+
+    const writes = await addAll(second, PREVIOUS);
+
+    expect(writes.flatMap(rotationCodes)).toEqual([]);
   });
 });

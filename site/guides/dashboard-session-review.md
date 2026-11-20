@@ -106,10 +106,10 @@ recommendation counted. A chip with an arrow up reached the top of the range; an
 fell short of it.
 
 The step comes from the same rule that [`plan.suggest_progression`](/reference/plan) runs
-(`src/tools/plan-tools.ts:1764-1770`<!-- anchor: session-completion screen computes its -->, `src/dashboard/read-models/session-summary.ts:422`<!-- anchor: computeProgressionDelta(planned, args.sets, args.sessionId) -->).
+(`src/tools/plan-tools.ts:1785-1791`<!-- anchor: session-completion screen computes its -->, `src/dashboard/read-models/session-summary.ts:422`<!-- anchor: computeProgressionDelta(planned, args.sets, args.sessionId) -->).
 The page runs that rule with a default intermediate tier and no diet phase. The tool reads
 your own tier and declared diet phase, so the two can disagree
-(`src/tools/plan-tools.ts:1133-1136`<!-- anchor: tier: 'intermediate' -->, `src/tools/plan-tools.ts:1634-1639`<!-- anchor: readDietPhaseState(state) -->). By default the
+(`src/tools/plan-tools.ts:1154-1157`<!-- anchor: tier: 'intermediate' -->, `src/tools/plan-tools.ts:1655-1660`<!-- anchor: readDietPhaseState(state) -->). By default the
 tool also reads the most recent session that trained the exercise, while the page reads the
 session on screen. When they do, ask Claude for the tool's answer.
 

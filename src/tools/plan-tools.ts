@@ -107,6 +107,8 @@ import {
 import { lintMuscleFrequencyChange, type FrequencyTemplate } from '../plan/muscle-frequency.js';
 import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
+import { lintTemplateBlockRotation, type RotationWrite } from './plan-rotation-lint.js';
+import { swapCheckForEdit, type SwapCheck } from './plan-swap-check.js';
 
 class ToolError extends UserFacingError {
   readonly code: string;
@@ -209,7 +211,14 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and ' +
   'nothing is written; ' +
   'this is the only refusal, since warnings never block. Nothing reads `goalKind` or ' +
-  '`restLearning` during a set yet.';
+  '`restLearning` during a set yet. A beginner block whose exercises are over a quarter new ' +
+  'against the previous block warns (VW-622). Writing an existing `id` with a different ' +
+  '`exerciseId` while its block is under way is a swap: the write still succeeds, and the ' +
+  "response adds a swap check with the outgoing lift's top-load trend. Still progressing means " +
+  'finish the block, since boredom is not grounds; flat or declining means the swap is ' +
+  'supported. Read its text to the lifter before going on. The swap check fires only when an ' +
+  "existing planned exercise's lift changes; a swap made by adding new ids to later templates " +
+  'is not checked.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
@@ -804,7 +813,13 @@ async function listTemplatesForWeek(
 async function createPlannedExercise(
   state: ServerState,
   input: z.infer<typeof PlanExerciseCreateInput>,
-): Promise<{ plannedExercise: StoredPlannedExercise; warnings: PlanWarning[] }> {
+): Promise<{
+  plannedExercise: StoredPlannedExercise;
+  warnings: PlanWarning[];
+  swapCheck?: SwapCheck;
+}> {
+  const replaced =
+    input.id === undefined ? undefined : await state.store.getPlannedExercise(input.id);
   const plannedExercise: StoredPlannedExercise = {
     id: input.id ?? randomUUID(),
     workoutTemplateId: input.workoutTemplateId,
@@ -824,8 +839,13 @@ async function createPlannedExercise(
   const refusal = validatePrescription(plannedExercise);
   if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
-  const warnings = await lintTemplateVolume(state, input.workoutTemplateId, plannedExercise.id);
-  return { plannedExercise, warnings };
+  const warnings = await lintTemplateVolume(state, {
+    templateId: input.workoutTemplateId,
+    writtenId: plannedExercise.id,
+    ...(replaced !== undefined ? { replacedExerciseId: replaced.exerciseId } : {}),
+  });
+  const swapCheck = await swapCheckForEdit(state, replaced, plannedExercise);
+  return { plannedExercise, warnings, ...(swapCheck !== null ? { swapCheck } : {}) };
 }
 
 /** The goal and rest fields as stored: an omitted kind takes the default, and learning states itself. */
@@ -854,9 +874,9 @@ function prescriptionGoalAndRest(
  */
 async function lintTemplateVolume(
   state: ServerState,
-  workoutTemplateId: string,
-  addedId: string,
+  write: RotationWrite,
 ): Promise<PlanWarning[]> {
+  const { templateId: workoutTemplateId, writtenId: addedId } = write;
   try {
     const siblings = await state.store.getPlannedExercisesForTemplate(workoutTemplateId);
     const { tier, confidence } = await getTierSignal(state);
@@ -868,7 +888,8 @@ async function lintTemplateVolume(
     const added = { templateId: workoutTemplateId, exercises: siblings, addedId };
     const crossTemplateWarnings = await lintAcrossWeek(state, added, tier, confidence);
     const specialization = await lintSpecialization(state, added, tier, confidence);
-    return [...sessionWarnings, ...specialization, ...crossTemplateWarnings];
+    const rotation = await lintTemplateBlockRotation(state.store, write, tier, confidence);
+    return [...sessionWarnings, ...specialization, ...crossTemplateWarnings, ...rotation];
   } catch {
     return [];
   }

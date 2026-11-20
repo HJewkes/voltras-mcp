@@ -7,7 +7,7 @@ import { todayLocal } from '../analytics/training-days.js';
 import type { Flatline } from '../analytics/stall-step.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type StoredTrainingBlock } from '../store/types.js';
-import { computeHistoryTrend } from './metrics-tools.js';
+import { computeHistoryTrend, type HistoryTrendResult } from './metrics-tools.js';
 import {
   activeRestAdvisory,
   cadenceTier,
@@ -138,14 +138,24 @@ async function mainLiftIds(state: AdvisoryState): Promise<string[]> {
   return [...new Set(priorities.filter((p) => p.kind === 'lift').map((p) => p.ref))];
 }
 
-async function openFlatline(state: AdvisoryState, exerciseId: string): Promise<Flatline | null> {
+/** A lift's top-load `history.trend` read, or `null` when it has no working sets in the window. */
+export type TopLoadTrendReader = (
+  state: AdvisoryState,
+  exerciseId: string,
+) => Promise<HistoryTrendResult | null>;
+
+/** The read behind the `staleness` advisory, shared with the swap gate (VW-622). */
+export const readTopLoadTrend: TopLoadTrendReader = async (state, exerciseId) => {
   try {
-    const result = await computeHistoryTrend(state as ServerState, { exerciseId });
-    return result.plateau?.flatline ?? null;
+    return await computeHistoryTrend(state as ServerState, { exerciseId });
   } catch {
     // A lift with no working sets in the window has no trend, so it cannot be stale.
     return null;
   }
+};
+
+async function openFlatline(state: AdvisoryState, exerciseId: string): Promise<Flatline | null> {
+  return (await readTopLoadTrend(state, exerciseId))?.plateau?.flatline ?? null;
 }
 
 function stalenessAdvisory(exerciseId: string, found: Flatline): BriefAdvisory {

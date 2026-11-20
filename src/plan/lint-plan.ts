@@ -47,7 +47,8 @@ export type PlanWarningCode =
   | 'week_without_off_day'
   | 'muscle_frequency_below_band'
   | 'muscle_frequency_above_band'
-  | 'specialized_muscle_single_exercise';
+  | 'specialized_muscle_single_exercise'
+  | 'beginner_rotation_over_quarter';
 
 export interface PlanWarning {
   code: PlanWarningCode;
