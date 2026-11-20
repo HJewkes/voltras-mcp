@@ -28,6 +28,7 @@ import {
   PlanExerciseListForTemplateInput,
   PlanNextWorkoutInput,
   PlanProgramArchiveInput,
+  PlanRespondDeloadAdvisoryInput,
   PlanProgramCreateInput,
   PlanProgramGetInput,
   PlanProgramListInput,
@@ -68,7 +69,11 @@ import {
 import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state.js';
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
 import { buildRecompDegradation } from './recomp-degradation.js';
-import { buildDeloadAdvisory, type DeloadAdvisoryRead } from './deload-advisory.js';
+import {
+  buildDeloadAdvisory,
+  recordDeloadResponse,
+  type DeloadAdvisoryRead,
+} from './deload-advisory.js';
 import type { RecompDegradationResult } from '../analytics/recomp-degradation.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
@@ -284,8 +289,18 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   '`realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same ' +
   'terms. Every shape also carries `deloadAdvisory`: `status` is `clear`, `watching` (one session ' +
   'below the week before, noise), `advise`, `inconclusive` or `suppressed` (a deload week). On ' +
-  '`advise`, relay `userMessage`, never apply it; `muscles[].evidence` session ids reproduce ' +
-  'through `mrvguard.check`.';
+  '`advise`, relay `userMessage` as a suggestion and ask; never apply it. Once the lifter ' +
+  'has said yes or no, file that answer with plan.respond_deload_advisory. ' +
+  '`muscles[].evidence` session ids reproduce through `mrvguard.check`.';
+const PLAN_RESPOND_DELOAD_ADVISORY_DESCRIPTION =
+  'File the lifter\u2019s answer to the rung `plan.next_workout` advised in `deloadAdvisory`: ' +
+  '`response` is `accepted` or `declined`, for the advised rung only (a lighter choice is a ' +
+  'decline plus the lifter\u2019s own plan edit). Call it only with the lifter\u2019s own answer, ' +
+  'never on their behalf. The advisory is recomputed, so a stale one files nothing: with no ' +
+  'rung open it returns `recorded: false` and the reason. Returns `{ recorded, reason, ' +
+  'advisory }`. Accepting records a yes and changes no plan row; flagging a deload week stays ' +
+  'with `plan.week.update`. A decline stops the same evidence being re-offered; a newer ' +
+  'session that confirms the decline again re-opens it.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
   '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
@@ -495,6 +510,15 @@ export function registerPlanTools(
     PlanNextWorkoutInput,
     wrapHandler(PlanNextWorkoutInput, (input) => nextWorkout(state, input)),
     PLAN_NEXT_WORKOUT_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'plan.respond_deload_advisory',
+    PlanRespondDeloadAdvisoryInput,
+    wrapHandler(PlanRespondDeloadAdvisoryInput, (input) =>
+      respondDeloadAdvisory(state, input.response),
+    ),
+    PLAN_RESPOND_DELOAD_ADVISORY_DESCRIPTION,
   );
   install(
     placeholders,
@@ -1429,9 +1453,36 @@ export async function nextWorkout(
   const result = await nextWorkoutFor(state, read, input.programId);
   const deloadAdvisory = await buildDeloadAdvisory(state, {
     now,
-    currentWeekIsDeload: read.week?.isDeload === true || ('week' in result && result.week.isDeload),
+    currentWeekIsDeload: isDeloadWeek(read, result),
   });
   return { ...result, planning: read.planning, reEntry, deloadAdvisory };
+}
+
+function isDeloadWeek(read: CurrentBlockRead, result: NextWorkoutResult | undefined): boolean {
+  return (
+    read.week?.isDeload === true ||
+    (result !== undefined && 'week' in result && result.week.isDeload)
+  );
+}
+
+/**
+ * `plan.respond_deload_advisory` (VW-594). The advisory is re-derived exactly as
+ * `plan.next_workout` derives it with no `programId`, so an answer is only ever
+ * filed against evidence that is still true. With no program on file there is
+ * no next workout to look at, and the advisory still stands on its own.
+ */
+async function respondDeloadAdvisory(
+  state: ServerState,
+  response: 'accepted' | 'declined',
+): Promise<{ recorded: boolean; reason: string; advisory: DeloadAdvisoryRead }> {
+  const now = new Date();
+  const read = await resolveCurrentBlock(state.store, todayLocal());
+  const result = read.program === null ? undefined : await nextWorkoutFor(state, read, undefined);
+  const advisory = await buildDeloadAdvisory(state, {
+    now,
+    currentWeekIsDeload: isDeloadWeek(read, result),
+  });
+  return { ...(await recordDeloadResponse(state.store, advisory, response, now)), advisory };
 }
 
 async function nextWorkoutFor(

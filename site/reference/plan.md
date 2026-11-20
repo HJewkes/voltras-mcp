@@ -2,7 +2,7 @@
 
 # `plan.*`
 
-26 tools in the `plan` namespace.
+27 tools in the `plan` namespace.
 
 ## `plan.program.create`
 
@@ -254,11 +254,21 @@ READS ONLY and never plans anything by itself: run the sitting only after asking
 
 Get the next un-completed workout template.
 
-With `programId`, that program is walked in order. Without it, the plan in force today decides (plan.current_block): in a CURRENT dated block only that block is walked; when no block is dated, the newest program with workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE the first dated block starts, there is no planned workout today and the result is `{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter training continues unplanned today, and, when `nextBlock` is null, offer to plan the next block now; never present a workout from the ended block. `{ ok: true, completed: true }` means every workout in scope is done. Every result also carries `planning`, the same read plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms. Every shape also carries `deloadAdvisory`: `status` is `clear`, `watching` (one session below the week before, noise), `advise`, `inconclusive` or `suppressed` (a deload week). On `advise`, relay `userMessage`, never apply it; `muscles[].evidence` session ids reproduce through `mrvguard.check`.
+With `programId`, that program is walked in order. Without it, the plan in force today decides (plan.current_block): in a CURRENT dated block only that block is walked; when no block is dated, the newest program with workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE the first dated block starts, there is no planned workout today and the result is `{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter training continues unplanned today, and, when `nextBlock` is null, offer to plan the next block now; never present a workout from the ended block. `{ ok: true, completed: true }` means every workout in scope is done. Every result also carries `planning`, the same read plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms. Every shape also carries `deloadAdvisory`: `status` is `clear`, `watching` (one session below the week before, noise), `advise`, `inconclusive` or `suppressed` (a deload week). On `advise`, relay `userMessage` as a suggestion and ask; never apply it. Once the lifter has said yes or no, file that answer with plan.respond_deload_advisory. `muscles[].evidence` session ids reproduce through `mrvguard.check`.
 
 **Parameters**
 
 - `programId` — `string`, optional.
+
+## `plan.respond_deload_advisory`
+
+File the lifter’s answer to the rung `plan.next_workout` advised in `deloadAdvisory`: `response` is `accepted` or `declined`, for the advised rung only (a lighter choice is a decline plus the lifter’s own plan edit).
+
+Call it only with the lifter’s own answer, never on their behalf. The advisory is recomputed, so a stale one files nothing: with no rung open it returns `recorded: false` and the reason. Returns `{ recorded, reason, advisory }`. Accepting records a yes and changes no plan row; flagging a deload week stays with `plan.week.update`. A decline stops the same evidence being re-offered; a newer session that confirms the decline again re-opens it.
+
+**Parameters**
+
+- `response` — `accepted` | `declined`, **required**.
 
 ## `plan.complete_workout`
 

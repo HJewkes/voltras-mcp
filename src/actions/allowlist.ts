@@ -95,6 +95,11 @@ export const ACTION_ALLOWLIST: Readonly<Record<string, ActionEntry>> = {
     tier: 'W2',
     why: 'Records an answer to a standing advisory. A later answer is the correction.',
   },
+  'plan.respond_deload_advisory': {
+    tool: 'plan.respond_deload_advisory',
+    tier: 'W2',
+    why: 'Records an answer to the advised ladder rung and edits no plan row. A later answer is the correction.',
+  },
   'session.mark_kind': {
     tool: 'session.mark_kind',
     tier: 'W2',

@@ -35,6 +35,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { registerGoalTools } from '../tools/goal-tools.js';
 import { registerPlanScheduleTools } from '../tools/plan-schedule-tools.js';
+import { registerPlanTools } from '../tools/plan-tools.js';
 import { registerProfileTools } from '../tools/profile-tools.js';
 import { registerSessionTools } from '../tools/session-tools.js';
 import type { ServerState } from '../state/server-state.js';
@@ -59,6 +60,8 @@ const CAPTURED_MODULES = [
   registerProfileTools,
   registerGoalTools,
   registerPlanScheduleTools,
+  // For `plan.respond_deload_advisory` (VW-594); the allowlist names no other tool here.
+  registerPlanTools,
   registerSessionTools,
 ];
 

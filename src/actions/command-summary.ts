@@ -209,6 +209,7 @@ export const COMMAND_SUMMARIES: Readonly<Record<WriteToolName, Summariser | type
   'plan.exercise.create': plannedExercise,
   'plan.complete_workout': NAME_ONLY,
   'plan.attach_to_session': NAME_ONLY,
+  'plan.respond_deload_advisory': NAME_ONLY,
   'truecoach.import_week': (args) => pick({ weekLabel: localDate(args.from) }),
 
   'profile.set_training_background': NAME_ONLY,
