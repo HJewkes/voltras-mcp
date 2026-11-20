@@ -137,3 +137,21 @@ The legend opens with the overlay. It shows:
   the uninstrumented list.
 
 The overlay shows component names and repo-relative file paths only.
+
+## Declaring a placeholder
+
+A component the SPA renders as an honest empty state can be tagged `placeholder` instead of
+`spa`. The category is declared, never inferred: add one line to `DECLARED_KINDS` in
+`src/dashboard/spa/dev/fidelity/declared-kinds.ts`, keyed by the repo-relative file and the
+component name:
+
+```ts
+export const DECLARED_KINDS: DeclaredKinds = {
+  'src/dashboard/spa/goals/EmptyGoals.tsx#EmptyGoals': 'placeholder',
+};
+```
+
+The fidelity plugin reads the list when it wraps a top-level function component, so
+production source carries no marker. The component then drops out of the promotion
+candidates and shows in the placeholder row with a dashed outline. A key that matches no
+component does nothing. The list ships empty.

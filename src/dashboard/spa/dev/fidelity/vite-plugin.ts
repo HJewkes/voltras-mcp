@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import type { Plugin, ResolvedConfig } from 'vite';
 
+import { DECLARED_KINDS, type DeclaredKinds } from './declared-kinds.js';
+
 export const FIDELITY_MODE = 'fidelity';
 export const TITAN_SPECIFIERS: readonly string[] = [
   '@titan-design/react-ui',
@@ -64,6 +66,8 @@ export interface SpaModuleOptions {
   /** Top-level function components are only tagged in `.tsx` modules. */
   readonly tagComponents: boolean;
   readonly withProvenanceImport: string;
+  /** Components declared as something other than `spa`; defaults to the shipped list. */
+  readonly declaredKinds?: DeclaredKinds;
 }
 
 export interface SpaModuleResult {
@@ -150,8 +154,9 @@ function applyEdits(code: string, edits: readonly Edit[]): string {
     .reduce((out, edit) => out.slice(0, edit.start) + edit.text + out.slice(edit.end), code);
 }
 
-function wrapStatement(name: string, source: string): string {
-  const meta = JSON.stringify({ kind: 'spa', name, source });
+function wrapStatement(name: string, source: string, declaredKinds: DeclaredKinds): string {
+  const kind = declaredKinds[`${source}#${name}`] ?? 'spa';
+  const meta = JSON.stringify({ kind, name, source });
   return `\n${name} = ${WRAP_IDENTIFIER}(${name}, ${meta});`;
 }
 
@@ -179,7 +184,11 @@ export function transformSpaModule(
     const name = functionComponentName(node);
     if (name !== undefined && !FIDELITY_OPT_OUT.has(name)) {
       instrumented.push(name);
-      edits.push({ start: node.end, end: node.end, text: wrapStatement(name, options.source) });
+      edits.push({
+        start: node.end,
+        end: node.end,
+        text: wrapStatement(name, options.source, options.declaredKinds ?? DECLARED_KINDS),
+      });
     }
     uninstrumented.push(...uninstrumentedNames(node));
   }

@@ -8,8 +8,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { STORAGE_KEY } from '../spa/dev/fidelity/overlay-model.js';
-import { FidelityOverlay } from '../spa/dev/fidelity/overlay.js';
-import { noteUninstrumented } from '../spa/dev/fidelity/registry.js';
+import { FidelityOverlay, measureEntries } from '../spa/dev/fidelity/overlay.js';
+import { noteUninstrumented, snapshot } from '../spa/dev/fidelity/registry.js';
 import { withProvenance } from '../spa/dev/fidelity/with-provenance.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -106,5 +106,19 @@ describe('FidelityOverlay', () => {
     const legend = query('fidelity-legend')?.textContent ?? '';
     expect(legend).toContain('not instrumented');
     expect(legend.slice(legend.indexOf('not instrumented'))).toContain(`StatRow ${SOURCE}`);
+  });
+
+  it('measures entries in document order, outermost first, whatever order they are given', async () => {
+    const Outer = withProvenance(
+      (props: { children?: React.ReactNode }) => createElement('section', null, props.children),
+      { kind: 'spa', name: 'Outer', source: SOURCE },
+    );
+    await settle(() =>
+      mount().render(createElement(Outer, null, createElement(Tile, { label: 'a' }))),
+    );
+
+    const names = measureEntries([...snapshot().entries].reverse()).map(({ entry }) => entry.name);
+
+    expect(names).toEqual(['Outer', 'ExampleTile']);
   });
 });
