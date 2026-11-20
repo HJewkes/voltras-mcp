@@ -60,20 +60,45 @@ export interface DeloadAdvisoryContext {
   currentWeekIsDeload: boolean;
 }
 
+type AdvisoryCore = Pick<DeloadAdvisory, 'status' | 'rung' | 'reasoning' | 'userMessage'>;
+
+/**
+ * The advisory as `plan.next_workout` emits it. Only `advise` carries the
+ * thresholds and version that make it reproducible, and only `advise` and
+ * `watching` name muscles: a silent read costs the sitting as few tokens as
+ * it can. No answer tool is named until the one that records the lifter's
+ * answer is registered (VW-594).
+ */
+export type DeloadAdvisoryRead =
+  | AdvisoryCore
+  | (AdvisoryCore & Pick<DeloadAdvisory, 'muscles'>)
+  | (AdvisoryCore & Pick<DeloadAdvisory, 'muscles' | 'thresholdsUsed' | 'algorithmVersion'>);
+
 /** The ladder advisory as it stands at `now`, always explained, never applied. */
 export async function buildDeloadAdvisory(
   deps: BuildDeloadAdvisoryDeps,
   context: DeloadAdvisoryContext,
-): Promise<DeloadAdvisory> {
+): Promise<DeloadAdvisoryRead> {
   const muscles = await collectDeloadBreaches(deps, context.now);
   const tier = await getTierSignal(deps, LOCAL_USER_ID, context.now.toISOString());
-  return selectDeloadRung({
+  const advisory = selectDeloadRung({
     muscles,
     tier: { tier: tier.tier, confidence: tier.confidence },
     currentWeekIsDeload: context.currentWeekIsDeload,
     priorDecisions: await readPriorLadderDecisions(deps.store),
     now: context.now,
   });
+  return toAdvisoryRead(advisory);
+}
+
+function toAdvisoryRead(advisory: DeloadAdvisory): DeloadAdvisoryRead {
+  const { status, rung, reasoning, userMessage, muscles } = advisory;
+  const core = { status, rung, reasoning, userMessage };
+  if (status === 'advise') {
+    const { thresholdsUsed, algorithmVersion } = advisory;
+    return { ...core, muscles, thresholdsUsed, algorithmVersion };
+  }
+  return status === 'watching' ? { ...core, muscles } : core;
 }
 
 async function readPriorLadderDecisions(store: SessionStore): Promise<PriorLadderDecision[]> {

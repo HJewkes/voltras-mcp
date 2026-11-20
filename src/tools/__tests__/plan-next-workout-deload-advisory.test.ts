@@ -22,16 +22,9 @@ const { CORE_TOOL_NAMES } = await import('../../tool-registry.js');
 
 const NOW = new Date('2026-03-15T12:00:00.000Z');
 
-const ADVISORY_KEYS = [
-  'algorithmVersion',
-  'muscles',
-  'reasoning',
-  'respondWith',
-  'rung',
-  'status',
-  'thresholdsUsed',
-  'userMessage',
-];
+const SILENT_KEYS = ['reasoning', 'rung', 'status', 'userMessage'];
+const WATCHING_KEYS = [...SILENT_KEYS, 'muscles'].sort();
+const ADVISE_KEYS = [...WATCHING_KEYS, 'algorithmVersion', 'thresholdsUsed'].sort();
 
 const SET_COUNT_ADVICE = /\b(add|hold|cut|drop|remove|fewer|more)\b[^.]{0,30}\bsets?\b/i;
 
@@ -42,7 +35,6 @@ interface Advisory {
   rung: string | null;
   reasoning: string;
   userMessage: string;
-  respondWith: string | null;
   muscles: Array<{ muscle: string; state: string; evidence: Array<{ sessionIds: string[] }> }>;
 }
 
@@ -75,24 +67,42 @@ afterEach(async () => {
   await store.close();
 });
 
-/** One program, one block, one week holding one untrained template. */
-async function seedPlan(options: { isDeload: boolean }): Promise<void> {
-  await store.putTrainingProgram({ id: 'p', name: 'Synthetic', createdAt: '2026-01-01T00:00:00Z' });
+/** One program, one block, one week holding one untrained template, all ids prefixed. */
+async function seedPlan(options: { isDeload: boolean; prefix?: string }): Promise<void> {
+  const id = (suffix: string): string => `${options.prefix ?? ''}${suffix}`;
+  await store.putTrainingProgram({
+    id: id('p'),
+    name: 'Synthetic',
+    createdAt: '2026-01-01T00:00:00Z',
+  });
   await store.putTrainingBlock({
-    id: 'b',
-    programId: 'p',
+    id: id('b'),
+    programId: id('p'),
     orderIndex: 0,
     name: 'B',
     weeksCount: 1,
   });
   await store.putTrainingWeek({
-    id: 'w',
-    blockId: 'b',
+    id: id('w'),
+    blockId: id('b'),
     orderIndex: 0,
     name: 'W',
     isDeload: options.isDeload,
   });
-  await store.putWorkoutTemplate({ id: 't', weekId: 'w', orderIndex: 0, name: 'Day' });
+  await store.putWorkoutTemplate({ id: id('t'), weekId: id('w'), orderIndex: 0, name: 'Day' });
+}
+
+/** Puts the prefixed block on the calendar for the week ending at NOW. */
+async function dateBlock(prefix: string): Promise<void> {
+  await store.appendBlockSchedule({
+    blockId: `${prefix}b`,
+    startsOn: '2026-03-09',
+    weeksCount: 1,
+    skips: [],
+    kind: 'planned',
+    changedBy: 'user',
+    declaredAt: '2026-03-01T12:00:00.000Z',
+  });
 }
 
 async function nextWorkout(args: unknown = { programId: 'p' }): Promise<Record<string, unknown>> {
@@ -110,8 +120,8 @@ async function advisoryAfter(
   return (await nextWorkout()).deloadAdvisory as Advisory;
 }
 
-function expectExplainedWithoutSetCount(advisory: Advisory): void {
-  expect(Object.keys(advisory).sort()).toEqual(ADVISORY_KEYS);
+function expectExplainedWithoutSetCount(advisory: Advisory, keys = SILENT_KEYS): void {
+  expect(Object.keys(advisory).sort()).toEqual(keys);
   expect(advisory.reasoning.length).toBeGreaterThan(0);
   expect(advisory.userMessage.length).toBeGreaterThan(0);
   expect(`${advisory.reasoning} ${advisory.userMessage}`).not.toMatch(SET_COUNT_ADVICE);
@@ -123,7 +133,7 @@ describe('plan.next_workout deloadAdvisory', () => {
     const advisory = await advisoryAfter([6, 6, 7]);
 
     // Assert
-    expect(advisory).toMatchObject({ status: 'clear', rung: null, respondWith: null });
+    expect(advisory).toMatchObject({ status: 'clear', rung: null });
     expectExplainedWithoutSetCount(advisory);
   });
 
@@ -132,9 +142,9 @@ describe('plan.next_workout deloadAdvisory', () => {
     const advisory = await advisoryAfter([6, 4, 4]);
 
     // Assert
-    expect(advisory).toMatchObject({ status: 'watching', rung: null, respondWith: null });
+    expect(advisory).toMatchObject({ status: 'watching', rung: null });
     expect(advisory.userMessage).toContain('noise');
-    expectExplainedWithoutSetCount(advisory);
+    expectExplainedWithoutSetCount(advisory, WATCHING_KEYS);
   });
 
   it('advises a recovery session after two consecutive misses of one muscle', async () => {
@@ -145,11 +155,10 @@ describe('plan.next_workout deloadAdvisory', () => {
     expect(advisory).toMatchObject({
       status: 'advise',
       rung: 'recovery_session',
-      respondWith: 'plan.respond_deload_advisory',
       muscles: [{ muscle: 'chest', state: 'confirmed' }],
     });
     expect(advisory.muscles[0]?.evidence[0]?.sessionIds).toEqual(['s1', 's2', 's3']);
-    expectExplainedWithoutSetCount(advisory);
+    expectExplainedWithoutSetCount(advisory, ADVISE_KEYS);
   });
 
   it('reads inconclusive with no comparable history', async () => {
@@ -157,7 +166,7 @@ describe('plan.next_workout deloadAdvisory', () => {
     const advisory = await advisoryAfter(null);
 
     // Assert
-    expect(advisory).toMatchObject({ status: 'inconclusive', rung: null, respondWith: null });
+    expect(advisory).toMatchObject({ status: 'inconclusive', rung: null });
     expectExplainedWithoutSetCount(advisory);
   });
 
@@ -166,8 +175,37 @@ describe('plan.next_workout deloadAdvisory', () => {
     const advisory = await advisoryAfter([6, 4, 3], { isDeload: true });
 
     // Assert
-    expect(advisory).toMatchObject({ status: 'suppressed', rung: null, respondWith: null });
+    expect(advisory).toMatchObject({ status: 'suppressed', rung: null });
     expectExplainedWithoutSetCount(advisory);
+  });
+
+  it('is suppressed when the dated week in force is a deload week but the returned one is not', async () => {
+    // Arrange
+    await seedPlan({ isDeload: true, prefix: 'dated-' });
+    await dateBlock('dated-');
+    await seedPlan({ isDeload: false });
+    await recorder.recordWeekly([6, 4, 3]);
+
+    // Act
+    const next = await nextWorkout({ programId: 'p' });
+
+    // Assert
+    expect(next).toMatchObject({
+      week: { isDeload: false },
+      deloadAdvisory: { status: 'suppressed', rung: null },
+    });
+  });
+
+  it('names no tool that is not registered, even when it advises', async () => {
+    // Act
+    const advisory = await advisoryAfter([6, 4, 3]);
+
+    // Assert
+    expect(advisory.status).toBe('advise');
+    const named = JSON.stringify(advisory).match(/\b[a-z_]+\.[a-z_]+\b/g) ?? [];
+    const toolLike = named.filter((name) => /^(plan|mrvguard|session|goal)\./.test(name));
+    expect(toolLike.filter((name) => !CORE_TOOL_NAMES.includes(name))).toEqual([]);
+    expect(JSON.stringify(advisory)).not.toContain('respond_deload_advisory');
   });
 
   it('carries the advisory on the completed shape', async () => {
