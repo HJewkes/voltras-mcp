@@ -58,7 +58,7 @@ their writes then fail.
 
 The server runs a small web dashboard next to itself. It listens on `127.0.0.1`, the address that
 only your own computer can reach, so a phone or another computer on your network cannot open it
-(`src/dashboard/server.ts:4-11`<!-- anchor: deliberate security posture -->, `src/dashboard/server.ts:267`<!-- anchor: loopback only -->). It sends no headers that
+(`src/dashboard/server.ts:4-11`<!-- anchor: deliberate security posture -->, `src/dashboard/server.ts:268`<!-- anchor: loopback only -->). It sends no headers that
 would let another website read its data (`src/dashboard/server.ts:14-17`<!-- anchor: CORS headers are intentionally absent -->).
 
 Most of its routes only read: the live view, your history, your plan, and your goals

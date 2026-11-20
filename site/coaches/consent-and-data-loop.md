@@ -37,7 +37,7 @@ With no extra settings, voltras-mcp sends nothing to anyone:
 - The dashboard binds `127.0.0.1` only, so no other machine can open it. Its live-view
   routes are reads. Its write routes edit plans or run a short allowlist of store-only
   actions, such as logging bodyweight or answering a weekly check-in, each behind the write
-  guard (`src/dashboard/server.ts:267`<!-- anchor: loopback only -->, `src/dashboard/server.ts:587-610`<!-- anchor: checkWriteRequest -->,
+  guard (`src/dashboard/server.ts:268`<!-- anchor: loopback only -->, `src/dashboard/server.ts:587-610`<!-- anchor: checkWriteRequest -->,
   `src/actions/allowlist.ts`, `src/dashboard/write-guard.ts:85-95`<!-- anchor: export function checkWriteRequest -->).
 - `report.session_results` and `report.weekly` read the store and make no network call
   (`src/tools/report-tools.ts`).

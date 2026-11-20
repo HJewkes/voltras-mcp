@@ -61,6 +61,7 @@ import {
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
+import { TEST_ONLY_NOTE } from '../test-only-note.js';
 import { REVIEW_DAYS_LINK, unreviewedLine } from './review-copy.js';
 import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
@@ -76,7 +77,11 @@ export function GoalsView(props: {
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
         <EmptyState
           title="No priorities declared"
-          description="Tell Claude which lift you want to improve to see it here."
+          description={
+            data.onlyTestSessions === true
+              ? `Tell Claude which lift you want to improve to see it here. ${TEST_ONLY_NOTE}`
+              : 'Tell Claude which lift you want to improve to see it here.'
+          }
         />
       </Surface>
     );

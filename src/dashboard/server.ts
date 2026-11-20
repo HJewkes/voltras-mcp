@@ -222,6 +222,7 @@ import {
   type GoalProgressStore,
 } from './goal-progress-api.js';
 import { readUnreviewed } from '../analytics/session-review.js';
+import { readOnlyTestSessions } from './read-models/test-only-sessions.js';
 import { log } from '../logger.js';
 import { getTierSignal, type TierSignalState } from '../tools/tier-signal.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
@@ -993,7 +994,8 @@ async function serveMuscleWeek(
     catalog: (id) => state.exercises?.getById(id),
     now,
   });
-  sendJson(res, 200, view);
+  const onlyTestSessions = await readOnlyTestSessions(state.store);
+  sendJson(res, 200, { ...view, onlyTestSessions });
 }
 
 /**
@@ -1098,7 +1100,8 @@ async function serveGoals(res: ServerResponse, state: DashboardServerState): Pro
   // to be able to say so rather than render an unexplained zero. Server field
   // only — the goals SPA reads it in its own change (PR #454 owns that tree).
   const review = await readUnreviewed(state.store);
-  sendJson(res, 200, { priorities: rows, mesocycle, review });
+  const onlyTestSessions = await readOnlyTestSessions(state.store);
+  sendJson(res, 200, { priorities: rows, mesocycle, review: { ...review, onlyTestSessions } });
 }
 
 /**
