@@ -225,7 +225,7 @@ export const CAPTURE_CLIPS: readonly CaptureClip[] = [
       'Cable Chest Press 3 × 8–10 @ 140 lbs',
       // The last of the eight pinned reps: present only if the whole burst
       // landed on camera, which is what this clip is for.
-      '0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40',
+      '0.70 0.68 0.66 0.63 0.61 0.59 0.57 0.55',
       // The rest stage the end predicate waits for, as the page renders it: the 8
       // pinned reps at the 140 lb the mock reports, through the rail tile's own
       // formatter, which abbreviates a total of 1000 or more.
@@ -233,7 +233,7 @@ export const CAPTURE_CLIPS: readonly CaptureClip[] = [
       // The rail's Pace tile (VW-580), sampled while the set is open.
       'PACE on pace',
     ],
-    nominalSeconds: 33,
+    nominalSeconds: 37,
   },
   {
     name: 'dual-divergence',
@@ -258,9 +258,9 @@ export const CAPTURE_CLIPS: readonly CaptureClip[] = [
       // is the max across both slots (`fatigue-view.ts`). So the left side, which
       // is still open and one rep ahead, hides its eighth; the right side, whose
       // indices never reach that far, shows all of its own.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44',
+      'VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 0.57 VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61',
     ],
-    nominalSeconds: 37,
+    nominalSeconds: 40,
   },
 ];
 

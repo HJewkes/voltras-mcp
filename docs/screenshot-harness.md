@@ -78,7 +78,7 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | `goals`             | `dashboard-mock-drive.mjs --goal`, PR loop    | the goal-coach page with a PR    |
 
 `live-slowing` has a scenario of its own, `fatigued`: the same plan driver with one set of
-ten pinned reps instead of five. The per-rep peaks fall from 0.50 to 0.37, a 26% loss, so
+ten pinned reps instead of five. The per-rep peaks fall from 0.70 to 0.51, a 27% loss, so
 the fatigue card reads `Slowing` rather than the `Good` that `live-mid-set` pins.
 
 The goals and body shots are captioned `Seeded data, not yet available:`. Both pages are
