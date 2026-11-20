@@ -108,7 +108,7 @@ At phone width the stepper becomes a step count and the buttons stack:
 turns the dashboard on, and how to find its address. In short: call
 [`server.health`](/reference/server) and open the `dashboardUrl` it returns. The port is
 `7723` unless that port was busy, so read the address rather than typing it
-(`src/tools/server-tools.ts:254-256`<!-- anchor: falls back to an OS-assigned one -->).
+(`src/tools/server-tools.ts:258-260`<!-- anchor: falls back to an OS-assigned one -->).
 
 You can open the page at any point in a session. While a session is open, the server sends
 its finished sets with every update, so a page opened or reloaded mid-session shows them
