@@ -147,7 +147,7 @@ component name:
 
 ```ts
 export const DECLARED_KINDS: DeclaredKinds = {
-  'src/dashboard/spa/goals/EmptyGoals.tsx#EmptyGoals': 'placeholder',
+  'src/dashboard/spa/live-page/EmptyLiveView.tsx#EmptyLiveView': 'placeholder',
 };
 ```
 
