@@ -34,7 +34,7 @@ reps of this set, the slowest rep is only a little under the fastest.
 <CaptureCallouts
   shot="live-mid-set"
   :callouts='[
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44", "text": "One bar per rep. The two lines mark 20% and 30% velocity loss from the best rep."},
+    {"quote": "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61", "text": "One bar per rep. The two lines mark 20% and 30% velocity loss from the best rep."},
     {"quote": "FATIGUE — RPE Good", "text": "The verdict word. No bar is near either line, so it reads Good."}
   ]'
 />
@@ -57,12 +57,12 @@ This set runs ten reps at the same load. Each rep is a little slower than the on
 <CaptureCallouts
   shot="live-slowing"
   :callouts='[
-    {"quote": "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37", "text": "Ten reps. The last one is 26% slower than the first, so it sits past the 20% line and short of the 30% line."},
+    {"quote": "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 0.57 0.55 0.53 0.51", "text": "Ten reps. The last one is 27% slower than the first, so it sits past the 20% line and short of the 30% line."},
     {"quote": "FATIGUE — RPE Slowing", "text": "The verdict word has changed from Good to Slowing."}
   ]'
 />
 
-Slowing is the verdict's warning step. Velocity loss alone is enough for it here: 26% is past
+Slowing is the verdict's warning step. Velocity loss alone is enough for it here: 27% is past
 the 20% warning mark and short of the 30% alarm. [The fatigue verdict](/concepts/fatigue-and-pacing#the-fatigue-verdict)
 lists all four words and what triggers each.
 
@@ -71,7 +71,7 @@ This set has not reached its stop line. The driver starts the set with no veloci
 training intent or, failing that, the hypertrophy default. The seeded exercise states no
 intent (`scripts/dashboard-plan-drive.mjs:115-126`<!-- anchor: const PLANNED -->), so the default applies, and it is 30%
 (`src/state/velocity-loss-intent.ts:45-49`<!-- anchor: hypertrophy: 30 -->, `src/state/velocity-loss-intent.ts:113`<!-- anchor: DEFAULT_STOP_INTENT -->). The block's "Hypertrophy" focus does not set it.
-At 26% the card is in its approaching band, which starts at two thirds of the stop line
+At 27% the card is in its approaching band, which starts at two thirds of the stop line
 (`src/dashboard/spa/live-page/fatigue-state.ts:29-37`<!-- anchor: stop.bands[1] -->,
 `src/state/velocity-loss-intent.ts:149-152`<!-- anchor: stopThirdsBands -->). At 30% it would read stop.
 [When the live card says stop](/concepts/fatigue-and-pacing#when-the-live-card-says-stop)

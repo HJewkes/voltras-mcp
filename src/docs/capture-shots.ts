@@ -388,7 +388,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // All five: the page draws the fifth rep a poll after the server counts
       // it, and briefly with only its lifting half, so four passed on a page
       // that had not caught up yet (VW-437).
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44',
+      'VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61',
       // The readout that caught this: two runs of the OLD harness disagreed
       // here (5.5 "Good" against 6.0 "Slowing") and both were green. The RPE is
       // a dash: withheld until a trusted fitted profile exists (VW-485).
@@ -439,7 +439,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // Next time's load is the top load less the step, in neutral ink, with the
       // disagreement as a short label (its sentence is the tip).
       'NEXT TIME · REPS VS PLAN 135 lb Back off 5 lb 2×12–15 5 5 Moved well · missed reps',
-      'Cable Chest Fly #1 working 5 140 lb 12% 0.5 163 lb #2 working 5 140 lb 12% 0.5 163 lb',
+      'Cable Chest Fly #1 working 5 140 lb 12% 0.7 163 lb #2 working 5 140 lb 12% 0.7 163 lb',
     ],
     holdsPageOpen: false,
     variesBy: 'the session start and end stamps',
@@ -470,8 +470,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     waitFor: { kind: 'set-open', reps: [['primary', 10]] },
     expectText: ['Cable Chest Press', 'VELOCITY · this set', 'FATIGUE'],
     expectValues: [
-      // Ten per-rep peaks: the last one sits 26% under the first.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40 0.38 0.37',
+      // Ten per-rep peaks: the last one sits 27% under the first.
+      'VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 0.57 0.55 0.53 0.51',
       // The verdict the tour exists to show. `live-mid-set` pins `Good`.
       'FATIGUE — RPE Slowing',
       'PACE on pace',
@@ -496,8 +496,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // Both sides' per-rep peaks in one string, so a slot that stopped
       // updating or started mirroring its neighbour cannot pass. Six values
       // left, four right — the scenario's own asymmetric target.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46',
-      'L/R 2% Right leading',
+      'VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 VL 20% VL 30% 0.70 0.68 0.66 0.63',
+      'L/R 3% Right leading',
     ],
     // Unlike the other live-page shots, this is the ONLY shot in the `dual`
     // scenario, so there is no later shot's continuity to preserve by holding
