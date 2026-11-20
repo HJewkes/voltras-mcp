@@ -667,27 +667,51 @@ describe('plan.exercise.create beginner rotation lint (VW-622)', () => {
     return body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 0, 'A')).template.id;
   }
 
-  it('warns when a beginner block is mostly new exercises against the one before', async () => {
+  const PREVIOUS = ['cable-row', 'cable-lat-pulldown', 'cable-bicep-curl', 'cable-face-pull'];
+
+  async function addAll(templateId: string, ids: readonly string[]): Promise<PlanWarning[][]> {
+    const all: PlanWarning[][] = [];
+    for (const [i, id] of ids.entries()) {
+      const r = await addExercise(h, templateId, id, 2, i);
+      all.push(body<{ warnings: PlanWarning[] }>(r).warnings);
+    }
+    return all;
+  }
+
+  function rotationCodes(warnings: PlanWarning[]): PlanWarning[] {
+    return warnings.filter((w) => w.code === 'beginner_rotation_over_quarter');
+  }
+
+  it('stays quiet while the next block is still half built, even when its lifts are new', async () => {
     const programId = await makeProgram(h);
-    const first = await blockTemplate(programId, 0);
-    await addExercise(h, first, 'bench-press', 3, 0);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
     const second = await blockTemplate(programId, 1);
 
-    const r = await addExercise(h, second, 'cable-fly', 3, 0);
+    const writes = await addAll(second, ['cable-chest-fly', 'cable-row', 'cable-lateral-raise']);
 
-    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
-    expect(warnings.filter((w) => w.code === 'beginner_rotation_over_quarter')).toHaveLength(1);
+    expect(writes.flatMap(rotationCodes)).toEqual([]);
   });
 
-  it('stays quiet when the next block keeps the same exercise', async () => {
+  it('warns once a built-out beginner block has 2 of its 4 exercises new', async () => {
     const programId = await makeProgram(h);
-    const first = await blockTemplate(programId, 0);
-    await addExercise(h, first, 'bench-press', 3, 0);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
+    const second = await blockTemplate(programId, 1);
+    await addAll(second, ['cable-row', 'cable-lat-pulldown', 'cable-chest-fly']);
+
+    const r = await addExercise(h, second, 'cable-lateral-raise', 2, 3);
+
+    const [warning] = rotationCodes(body<{ warnings: PlanWarning[] }>(r).warnings);
+    expect(warning).toMatchObject({ observed: 50, ceiling: 25 });
+    expect(warning?.message).toMatch(/tier is provisional/);
+  });
+
+  it('stays quiet when the next block keeps the same exercises', async () => {
+    const programId = await makeProgram(h);
+    await addAll(await blockTemplate(programId, 0), PREVIOUS);
     const second = await blockTemplate(programId, 1);
 
-    const r = await addExercise(h, second, 'bench-press', 3, 0);
+    const writes = await addAll(second, PREVIOUS);
 
-    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
-    expect(warnings.filter((w) => w.code === 'beginner_rotation_over_quarter')).toEqual([]);
+    expect(writes.flatMap(rotationCodes)).toEqual([]);
   });
 });

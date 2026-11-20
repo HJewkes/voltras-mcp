@@ -1,9 +1,9 @@
 // The planning brief's staleness and cadence advisories (VW-558 S10, VW-619).
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Flatline } from '../../analytics/stall-step.js';
-import type { StoredPriority, StoredTrainingBlock } from '../../store/types.js';
+import type { StoredPriority, StoredSet, StoredTrainingBlock } from '../../store/types.js';
 import {
   readBriefAdvisories,
   type AdvisoryReaders,
@@ -101,6 +101,78 @@ describe('staleness advisory', () => {
 
     expect(advisories).toEqual([]);
     expect(flatAsked).toEqual([]);
+  });
+});
+
+/** One working set a week on bench-press at `load`, from the week of 2026-07-06. */
+function weeklyBenchSets(loads: number[]): StoredSet[] {
+  return loads.map((weightLbs, i) => {
+    const startedAt = new Date(Date.parse('2026-07-06T12:00:00.000Z') + i * 7 * 86_400_000);
+    const rep = (n: number) => ({
+      id: `s-${i}-rep-${n}`,
+      setId: `s-${i}`,
+      index: n,
+      repNumber: n + 1,
+      concentric: { samples: [], peakVelocity: 0.5 },
+      eccentric: { samples: [], peakVelocity: 0.5 },
+    });
+    return {
+      id: `s-${i}`,
+      sessionId: `sess-${i}`,
+      startedAt: startedAt.toISOString(),
+      endedAt: startedAt.toISOString(),
+      partial: false,
+      weightLbs,
+      exerciseId: 'bench-press',
+      reps: [rep(0), rep(1)],
+    } as unknown as StoredSet;
+  });
+}
+
+/** A state whose store answers the real `history.trend` read behind the default reader. */
+function trendStateOf(loads: number[]) {
+  const sets = weeklyBenchSets(loads);
+  const store = {
+    listPriorities: async () => [liftPriority('bench-press')],
+    getSetsForExercise: async () => sets,
+    listSessions: async () => [],
+    getSetsForSession: async () => [],
+    getDietPhaseCovering: async () => undefined,
+    chapterStartedAt: async () => null,
+  };
+  return {
+    store,
+    exercises: { getById: () => undefined },
+    config: { adapter: 'node' },
+  } as unknown as Parameters<typeof readBriefAdvisories>[0];
+}
+
+describe('staleness advisory through the default trend reader', () => {
+  const { readFlatline: _injected, ...withoutFlatline } = intermediate;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('names a main lift whose real top-load trend has gone flat', async () => {
+    const state = trendStateOf([100, 100, 100, 100]);
+
+    const advisories = await readBriefAdvisories(state, null, withoutFlatline);
+
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toMatchObject({ kind: 'staleness', exerciseId: 'bench-press' });
+  });
+
+  it('says nothing about a main lift whose real top-load trend is still climbing', async () => {
+    const state = trendStateOf([100, 105, 110, 115, 120]);
+
+    const advisories = await readBriefAdvisories(state, null, withoutFlatline);
+
+    expect(advisories).toEqual([]);
   });
 });
 
