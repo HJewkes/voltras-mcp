@@ -544,6 +544,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'loadFactor',
   'sourceKind',
   'sourceRef',
+  // VW-593: `plan.next_workout`'s fatigue-reduction ladder read and its rungs.
+  'deloadAdvisory',
+  'userMessage',
+  'recovery_session',
+  'recovery_half_week',
   // VW-907: `plan.suggest_progression`'s age of the basis session, and the load after a break.
   'lastTime',
   'daysAgo',

@@ -16,8 +16,12 @@ import type { MrvGuardVerdict, MrvUnderperformanceVerdict } from '@voltras/worko
 
 import {
   DELOAD_LADDER_CONSTANTS,
+  selectDeloadRung,
+  type DeloadAdvisory,
   type DeloadEvidence,
   type DeloadMuscleSignal,
+  type DeloadRung,
+  type PriorLadderDecision,
 } from '../analytics/deload-ladder.js';
 import type { ExerciseService } from '../exercises/exercise-service.js';
 import { mapCatalogMuscle, type TitanMuscleGroup } from '../exercises/muscle-map.js';
@@ -25,6 +29,7 @@ import type { ServerState } from '../state/server-state.js';
 import { checkMrvGuard } from '../store/mrv-guard.js';
 import { isEligibleForComparison, scopeSetsToLifter } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredSet } from '../store/types.js';
+import { getTierSignal, type TierSignalState } from './tier-signal.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -37,6 +42,58 @@ const WINDOW_SESSION_LIMIT = 500;
 export type DeloadAdvisoryDeps = Pick<ServerState, 'store'> & {
   exercises: Pick<ExerciseService, 'getById'>;
 };
+
+/** The `advisory_decisions` code a ladder advisory is filed under. */
+export const DELOAD_LADDER_CODE = 'deload_ladder';
+
+const LADDER_RUNGS: readonly string[] = [
+  'recovery_session',
+  'recovery_half_week',
+  'deload_week',
+] satisfies DeloadRung[];
+
+export type BuildDeloadAdvisoryDeps = DeloadAdvisoryDeps & TierSignalState;
+
+export interface DeloadAdvisoryContext {
+  now: Date;
+  /** The planned week in force, or the week of the workout about to be trained, is a deload week. */
+  currentWeekIsDeload: boolean;
+}
+
+/** The ladder advisory as it stands at `now`, always explained, never applied. */
+export async function buildDeloadAdvisory(
+  deps: BuildDeloadAdvisoryDeps,
+  context: DeloadAdvisoryContext,
+): Promise<DeloadAdvisory> {
+  const muscles = await collectDeloadBreaches(deps, context.now);
+  const tier = await getTierSignal(deps, LOCAL_USER_ID, context.now.toISOString());
+  return selectDeloadRung({
+    muscles,
+    tier: { tier: tier.tier, confidence: tier.confidence },
+    currentWeekIsDeload: context.currentWeekIsDeload,
+    priorDecisions: await readPriorLadderDecisions(deps.store),
+    now: context.now,
+  });
+}
+
+async function readPriorLadderDecisions(store: SessionStore): Promise<PriorLadderDecision[]> {
+  const decisions = await store.listAdvisoryDecisions(LOCAL_USER_ID, { code: DELOAD_LADDER_CODE });
+  return decisions.flatMap((decision) =>
+    isLadderRung(decision.verdict)
+      ? [
+          {
+            rung: decision.verdict,
+            advisedAt: decision.issuedAt,
+            response: decision.userResponse ?? null,
+          },
+        ]
+      : [],
+  );
+}
+
+function isLadderRung(verdict: string): verdict is DeloadRung {
+  return LADDER_RUNGS.includes(verdict);
+}
 
 /** One owner session of one exercise, stamped with its newest working set. */
 interface ExerciseSession {

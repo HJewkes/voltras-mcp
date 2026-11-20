@@ -169,6 +169,10 @@ describe('server instructions', () => {
     expect(instructions).toContain('driftguard.check');
     expect(instructions).toContain('baselines.get');
     expect(instructions).toContain('DIAGNOSTIC-ONLY');
+    expect(instructions).toContain('soreness and recovery timing move set count');
+    expect(instructions).toContain(
+      'only measured performance decline drives the fatigue-reduction ladder',
+    );
 
     await client.close();
     await connection.server.close();

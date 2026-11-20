@@ -68,6 +68,8 @@ import {
 import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state.js';
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
 import { buildRecompDegradation } from './recomp-degradation.js';
+import { buildDeloadAdvisory } from './deload-advisory.js';
+import type { DeloadAdvisory } from '../analytics/deload-ladder.js';
 import type { RecompDegradationResult } from '../analytics/recomp-degradation.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
@@ -272,7 +274,17 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
   'written by this tool. When priorities have been declared (goal.declare_priorities) it also carries ' +
   '`realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same ' +
-  'terms.';
+  'terms. Every shape also carries `deloadAdvisory` (VW-593), the fatigue-reduction ladder read: ' +
+  '`status` is `clear`, `watching` (one session below the week before, which is noise), `advise`, ' +
+  '`inconclusive` (not enough comparable history) or `suppressed` (the current planned week, or ' +
+  'the week of the returned workout, is a deload week). Only measured performance decline moves ' +
+  'it: a muscle advises once it came in below its own performance a week earlier on two ' +
+  'consecutive sessions. `rung` is non-null only on `advise`: `recovery_session` for one such ' +
+  'muscle in the rolling 7 days, `recovery_half_week` for two or more. `reasoning` says why, ' +
+  'including why it is silent; `userMessage` is what the rung means, a suggestion to relay and ' +
+  'ask about, never to apply. `muscles[].evidence` carries the session ids `mrvguard.check` ' +
+  'reproduces. It never changes the plan and never says how many sets to do: soreness and ' +
+  'recovery timing move set count, not this ladder.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
   '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
@@ -1391,14 +1403,22 @@ type NextWorkoutResult =
 export async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
-): Promise<NextWorkoutResult & { planning: PlanningRead; reEntry: ReEntryResult }> {
+): Promise<
+  NextWorkoutResult & {
+    planning: PlanningRead;
+    reEntry: ReEntryResult;
+    deloadAdvisory: DeloadAdvisory;
+  }
+> {
+  const now = new Date();
   const read = await resolveCurrentBlock(state.store, todayLocal());
-  const reEntry = await readReEntry(state.store, todayLocal(), new Date().toISOString());
-  return {
-    ...(await nextWorkoutFor(state, read, input.programId)),
-    planning: read.planning,
-    reEntry,
-  };
+  const reEntry = await readReEntry(state.store, todayLocal(), now.toISOString());
+  const result = await nextWorkoutFor(state, read, input.programId);
+  const deloadAdvisory = await buildDeloadAdvisory(state, {
+    now,
+    currentWeekIsDeload: read.week?.isDeload === true || ('week' in result && result.week.isDeload),
+  });
+  return { ...result, planning: read.planning, reEntry, deloadAdvisory };
 }
 
 async function nextWorkoutFor(
