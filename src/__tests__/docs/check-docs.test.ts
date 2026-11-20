@@ -14,6 +14,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  checkAnchorPlacement,
   checkPageFrontmatter,
   checkPathCitations,
   checkProtocolLeakage,
@@ -107,6 +108,84 @@ describe('checkPathCitations', () => {
   it('accepts a line citation inside the file', () => {
     const citations = extractPathCitations('`src/errors.ts:12` does it', REPO_ROOTS);
     expect(checkPathCitations(citations, resolve)).toEqual([]);
+  });
+
+  it('reports a range that runs backwards', () => {
+    const citations = extractPathCitations('`src/errors.ts:12-4` does it', REPO_ROOTS);
+    expect(checkPathCitations(citations, resolve)[0]).toMatchObject({
+      check: 'line',
+      message: expect.stringContaining('12-4 is not a line range'),
+    });
+  });
+
+  it('reports line zero, which no file has', () => {
+    const citations = extractPathCitations('`src/errors.ts:0` does it', REPO_ROOTS);
+    expect(checkPathCitations(citations, resolve)[0].check).toBe('line');
+  });
+});
+
+describe('citation anchors', () => {
+  const source = ['// header', 'export const RETRY_LIMIT = 3;', '', 'function backoff() {}'];
+  const resolve = () => ({ kind: 'file', lineCount: source.length, source });
+
+  function findings(text: string) {
+    return checkPathCitations(extractPathCitations(text, REPO_ROOTS), resolve);
+  }
+
+  it('reads the anchor recorded directly after a citation', () => {
+    const [citation] = extractPathCitations(
+      '(`src/a.ts:2`<!-- anchor: RETRY_LIMIT -->)',
+      REPO_ROOTS,
+    );
+    expect(citation.anchor).toBe('RETRY_LIMIT');
+  });
+
+  it('accepts a cited line that still holds its anchor', () => {
+    expect(findings('(`src/a.ts:2`<!-- anchor: RETRY_LIMIT -->)')).toEqual([]);
+  });
+
+  it('accepts an anchor anywhere in a cited list of ranges', () => {
+    expect(findings('(`src/a.ts:1,3-4`<!-- anchor: function backoff -->)')).toEqual([]);
+  });
+
+  it('reports a cited line that no longer holds its anchor', () => {
+    expect(findings('(`src/a.ts:1`<!-- anchor: RETRY_LIMIT -->)')[0]).toMatchObject({
+      check: 'anchor',
+      message: 'src/a.ts:1 no longer contains "RETRY_LIMIT"',
+    });
+  });
+
+  it('reports an out-of-range citation once, as a line finding', () => {
+    expect(findings('(`src/a.ts:9`<!-- anchor: RETRY_LIMIT -->)')).toMatchObject([
+      { check: 'line' },
+    ]);
+  });
+
+  it('reports a line citation with no anchor where anchors are required', () => {
+    const text = '(`src/a.ts:2`) and (`src/a.ts`)';
+    const placed = checkAnchorPlacement(text, extractPathCitations(text, REPO_ROOTS), {
+      required: true,
+    });
+    expect(placed.map((finding) => finding.message)).toEqual(['src/a.ts:2 has no anchor']);
+  });
+
+  it('allows a line citation with no anchor where anchors are not yet required', () => {
+    const text = '(`src/a.ts:2`)';
+    const citations = extractPathCitations(text, REPO_ROOTS);
+    expect(checkAnchorPlacement(text, citations, { required: false })).toEqual([]);
+  });
+
+  it('reports an anchor that drifted away from its citation', () => {
+    const text = '(`src/a.ts:2`, see above)<!-- anchor: RETRY_LIMIT -->';
+    const citations = extractPathCitations(text, REPO_ROOTS);
+    expect(checkAnchorPlacement(text, citations, { required: false })[0]).toMatchObject({
+      line: 1,
+      check: 'anchor',
+    });
+  });
+
+  it('does not read a dotted anchor as a tool name', () => {
+    expect(toolMessages('(`src/a.ts:2`<!-- anchor: session.lifter -->)')).toEqual([]);
   });
 });
 

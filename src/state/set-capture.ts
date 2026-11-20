@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import type { Rep } from '@voltras/workout-analytics';
+import { median } from '../analytics/stats.js';
 import type { DeviceSnapshot } from './live-state.js';
 import type { StoredSet } from '../store/types.js';
 
@@ -142,10 +143,7 @@ export function measureSampleRateHz(reps: readonly Rep[]): number | undefined {
     if (dt > 0) intervals.push(dt);
   }
   if (intervals.length < 2) return undefined;
-  intervals.sort((a, b) => a - b);
-  const mid = Math.floor(intervals.length / 2);
-  const medianMs =
-    intervals.length % 2 === 0 ? (intervals[mid - 1]! + intervals[mid]!) / 2 : intervals[mid]!;
+  const medianMs = median(intervals) ?? 0;
   if (medianMs <= 0) return undefined;
   // One decimal place: the measurement is not precise enough to justify more,
   // and a stable rounded value groups a corpus cleanly.
@@ -158,7 +156,7 @@ export function measureSampleRateHz(reps: readonly Rep[]): number | undefined {
  * WeightTraining and reads as an honest gap (`—`) for every Damper or Band
  * set, even though the device told us exactly what it was configured to.
  *
- * The single place this decision is made: `setLine` (SPA), `toSetView`
+ * The single place this decision is made: `setLoad` (SPA), `toSetView`
  * (session-summary) and `report.session_results` all render this same string
  * so the three surfaces cannot drift apart on the same set.
  *

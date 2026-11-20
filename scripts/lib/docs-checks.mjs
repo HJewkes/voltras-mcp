@@ -3,8 +3,8 @@
 // The site's hard constraint is that every claim cites a file, a tool name or a
 // PR that exists on `main`. A constraint nobody checks is a wish, so these are
 // the mechanisable parts of it: a cited path resolves, a cited line is in
-// range, a cited tool is registered, and no encoded device value appears on a
-// page.
+// range and still holds the anchor recorded beside it, a cited tool is
+// registered, and no encoded device value appears on a page.
 //
 // FALSE POSITIVES are what get a guard deleted, so every extractor here is
 // deliberately narrow and each exclusion says why. Nothing in this module
@@ -51,6 +51,11 @@ function documentLines(text) {
   return text.split('\n').map((line) => line.replace(URL_SHAPE, ' '));
 }
 
+/** Document lines without their anchors, which quote code rather than name tools. */
+function proseLines(text) {
+  return documentLines(text).map((line) => line.replace(ANCHOR_COMMENT, ' '));
+}
+
 /** Markdown and sentence punctuation the path shape swallows at the end. */
 function trimTrailingPunctuation(token) {
   return token.replace(/[.,:;_-]+$/, '');
@@ -77,7 +82,14 @@ export function extractPathCitations(text, repoRoots) {
       if (!repoRoots.has(root) || GENERATED_ROOTS.has(root)) continue;
       const extension = token.split('/').at(-1).split('.').at(-1);
       if (!isDirectory && !CITED_EXTENSIONS.has(extension.toLowerCase())) continue;
-      citations.push({ line: index + 1, path: token, lines: parseLineSpec(match[2]) });
+      const after = line.slice(match.index + match[0].length);
+      citations.push({
+        line: index + 1,
+        path: token,
+        lines: parseLineSpec(match[2]),
+        ranges: parseLineRanges(match[2]),
+        anchor: match[2] === undefined ? undefined : ANCHOR_AFTER_CITATION.exec(after)?.[1],
+      });
     }
   }
   return citations;
@@ -89,9 +101,32 @@ function parseLineSpec(spec) {
   return spec.split(/[-,]/).map(Number);
 }
 
+/** The same spec as inclusive `[first, last]` pairs: `28-45,94` is `[[28, 45], [94, 94]]`. */
+function parseLineRanges(spec) {
+  if (spec === undefined) return [];
+  return spec.split(',').map((part) => {
+    const [first, last = first] = part.split('-').map(Number);
+    return [first, last];
+  });
+}
+
+/**
+ * The anchor a line citation carries (VW-925): a token the cited lines must
+ * still contain, in an HTML comment directly after the citation, so a reader
+ * never sees it and it travels with the citation when the numbers are edited.
+ *
+ *     (`src/schemas/isometric.ts:14`<!-- anchor: DEFAULT_DURATION_MS -->)
+ *
+ * A line number alone survives any edit that keeps the file long enough; the
+ * anchor is what notices the cited code moved away.
+ */
+const ANCHOR_AFTER_CITATION = /^`?<!-- anchor: (.+?) -->/;
+const ANCHOR_COMMENT = /<!-- anchor: .+? -->/g;
+
 /**
  * Findings for path and line citations. `resolve` reports what the repo has:
- * `{ kind: 'file' | 'directory' | 'missing', lineCount }`.
+ * `{ kind: 'file' | 'directory' | 'missing', lineCount, source }`, where
+ * `source` is a file's lines and is only read for a citation with an anchor.
  */
 export function checkPathCitations(citations, resolve) {
   const findings = [];
@@ -101,12 +136,67 @@ export function checkPathCitations(citations, resolve) {
       findings.push({ ...citation, check: 'path', message: `no such file: ${citation.path}` });
       continue;
     }
-    const cited = Math.max(0, ...citation.lines);
-    if (target.kind !== 'file' || cited <= target.lineCount) continue;
-    findings.push({
-      ...citation,
+    if (target.kind !== 'file') continue;
+    const problem = lineRangeProblem(citation, target.lineCount) ?? anchorProblem(citation, target);
+    if (problem !== null) findings.push({ ...citation, ...problem });
+  }
+  return findings;
+}
+
+function lineRangeProblem(citation, lineCount) {
+  const cited = Math.max(0, ...citation.lines);
+  if (cited > lineCount) {
+    return {
       check: 'line',
-      message: `${citation.path} has ${target.lineCount} lines; cited line ${cited}`,
+      message: `${citation.path} has ${lineCount} lines; cited line ${cited}`,
+    };
+  }
+  const backwards = citation.ranges.find(([first, last]) => first < 1 || last < first);
+  if (backwards === undefined) return null;
+  return { check: 'line', message: `${citation.path}: ${backwards.join('-')} is not a line range` };
+}
+
+function anchorProblem(citation, target) {
+  if (citation.anchor === undefined) return null;
+  const cited = citation.ranges.flatMap(([first, last]) => target.source.slice(first - 1, last));
+  if (cited.join('\n').includes(citation.anchor)) return null;
+  return {
+    check: 'anchor',
+    message: `${citedSpec(citation)} no longer contains "${citation.anchor}"`,
+  };
+}
+
+function citedSpec({ path, ranges }) {
+  const parts = ranges.map(([first, last]) => (first === last ? first : `${first}-${last}`));
+  return `${path}:${parts.join(',')}`;
+}
+
+/**
+ * Findings for the anchor rule's other two halves: a line citation with no
+ * anchor, and an anchor comment no citation owns (one that drifted away from
+ * its citation when the sentence was edited). The caller decides which pages
+ * must anchor; a stray anchor is wrong on any page.
+ */
+export function checkAnchorPlacement(text, citations, { required }) {
+  const findings = [];
+  if (required) {
+    for (const citation of citations) {
+      if (citation.lines.length === 0 || citation.anchor !== undefined) continue;
+      findings.push({
+        line: citation.line,
+        check: 'anchor',
+        message: `${citedSpec(citation)} has no anchor`,
+      });
+    }
+  }
+  for (const [index, line] of text.split('\n').entries()) {
+    const comments = line.match(ANCHOR_COMMENT)?.length ?? 0;
+    const owned = citations.filter((citation) => citation.line === index + 1 && citation.anchor);
+    if (comments <= owned.length) continue;
+    findings.push({
+      line: index + 1,
+      check: 'anchor',
+      message: 'an anchor comment does not directly follow a line citation',
     });
   }
   return findings;
@@ -147,7 +237,7 @@ function isExcludedToolToken(token, registry) {
 export function checkToolNames(text, registry, known = new Set()) {
   const namespaces = new Set([...registry].map((name) => name.split('.')[0]));
   const findings = [];
-  for (const [index, line] of documentLines(text).entries()) {
+  for (const [index, line] of proseLines(text).entries()) {
     for (const match of line.matchAll(TOOL_SHAPE)) {
       const token = match[0];
       if (!namespaces.has(token.split('.')[0])) continue;
@@ -170,7 +260,7 @@ export function checkToolNames(text, registry, known = new Set()) {
 export function checkToolCoverage(texts, registry, ignored) {
   const named = new Set();
   for (const text of texts) {
-    for (const line of documentLines(text)) {
+    for (const line of proseLines(text)) {
       for (const match of line.matchAll(TOOL_SHAPE)) named.add(match[0]);
     }
   }

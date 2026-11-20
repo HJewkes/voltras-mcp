@@ -56,7 +56,7 @@ These hold in every phase. When a tool description and your instinct disagree, t
 11. **Ask before you treat stored history as training.** The owner said most stored sessions were bench tests. When the server has `session.review_list` (VW-489), review unreviewed days first and never guess a kind; see "Review unreviewed days" under Sittings. On an older server no tool can mark a test, so logged day counts are overstated and a start value may rest on a test pull. See `12`.
 12. **A cardiovascular flag goes to a doctor.** Read `medicalClearanceNote` as written. Do not grade it or program around it.
 13. **An estimated 1RM never moves load. An asymmetry never prescribes single-limb work.** Both are trend reads.
-14. **Protocol detail stays out.** No bytes, frames, command codes or register names in anything you say, write or log. `device.send_raw` and `debug.recent_frames` are for an explicit debug request only, and their content is never quoted.
+14. **Protocol detail stays out.** No bytes, frames, command codes or register names in anything you say, write or log. `device.send_raw` and `debug.recent_frames` are for an explicit debug request only, and their content is never quoted. They exist only when the server runs with `VMCP_DEBUG_TOOLS=on`; when they are missing, say so and do not look for another way to send raw commands.
 
 ## Two facts you can't afford to forget
 

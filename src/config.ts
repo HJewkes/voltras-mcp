@@ -15,6 +15,8 @@
 //   - VMCP_CUE_DELIVERY                — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VOLTRAS_EFFORT_CUE               — 'on' | 'off', default 'off'.
+//   - VMCP_PUSH_DETAIL                 — 'compact' | 'full', default 'compact'.
+//   - VMCP_DEBUG_TOOLS                 — 'on' or anything else (off), default off.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
 //   - VMCP_TRUECOACH_SUBMIT_ON_END     — 'on' | 'off', default 'off'.
@@ -25,7 +27,7 @@
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
 // VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE,
-// VMCP_AUTO_ARM, VMCP_CUE_DELIVERY, VOLTRAS_EFFORT_CUE or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
+// VMCP_AUTO_ARM, VMCP_CUE_DELIVERY, VOLTRAS_EFFORT_CUE, VMCP_PUSH_DETAIL or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
 // failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
 // on the same terms.
 
@@ -174,6 +176,27 @@ export type AutoArmMode = 'off' | 'on';
 export type EffortCueMode = 'off' | 'on';
 
 /**
+ * How much of `rep_finalized` and `set_ended` reaches the client channel (VW-832).
+ *   - `'compact'` (DEFAULT) — the rep push keeps its attributes and summary line;
+ *     the set close carries one table row per rep instead of per-rep objects.
+ *     Spoken cues and the dashboard still read the full payloads.
+ *   - `'full'` — the payloads exactly as the builders write them, for bench work.
+ */
+export type PushDetail = 'compact' | 'full';
+
+/**
+ * Whether the two raw-device tools are registered at all (VW-935):
+ * `device.send_raw`, which writes caller-supplied bytes to the motor, and
+ * `debug.recent_frames`, which hands raw telemetry to the model and so to the
+ * transcript.
+ *   - `'off'` (DEFAULT) — neither tool is in `tools/list`. Any value other than
+ *     `on` lands here rather than stopping startup: an operator typo must
+ *     never turn the raw write path on.
+ *   - `'on'` — both registered, for bench work.
+ */
+export type DebugToolsMode = 'off' | 'on';
+
+/**
  * Whether `session.end` drops the session's rendered coach results into the
  * local outbox directory (`src/integrations/truecoach/outbox.ts`).
  *   - `'off'` (DEFAULT) — nothing is written. `report.session_results` still
@@ -237,6 +260,8 @@ export interface Config {
   readonly cueDelivery: CueDeliveryMode;
   readonly autoArm: AutoArmMode;
   readonly effortCue: EffortCueMode;
+  readonly pushDetail: PushDetail;
+  readonly debugTools: DebugToolsMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
   readonly trueCoachOutboxDir: string;
   readonly trueCoachSubmitOnEnd: TrueCoachSubmitOnEndMode;
@@ -315,6 +340,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const cueDelivery = onOffFlag(env.VMCP_CUE_DELIVERY, 'VMCP_CUE_DELIVERY', 'off');
   const effortCue = onOffFlag(env.VOLTRAS_EFFORT_CUE, 'VOLTRAS_EFFORT_CUE', 'off');
+  const pushDetail = env.VMCP_PUSH_DETAIL ?? 'compact';
+  if (pushDetail !== 'compact' && pushDetail !== 'full') {
+    throw new Error(`Invalid VMCP_PUSH_DETAIL="${pushDetail}". Must be "compact" or "full".`);
+  }
   const mountRatingLbs = parseMountRatingLbs(env.VMCP_MOUNT_RATING_LBS);
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
@@ -333,6 +362,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cueDelivery,
     autoArm,
     effortCue,
+    pushDetail,
+    debugTools: env.VMCP_DEBUG_TOOLS === 'on' ? 'on' : 'off',
     trueCoachOutbox,
     trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
     trueCoachSubmitOnEnd,

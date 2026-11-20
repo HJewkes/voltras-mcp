@@ -43,6 +43,22 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=critical
 
+  # TP-3104: flags a merge call shape (the gh CLI, REST or GraphQL merge APIs) committed into code or an
+  # agent brief. The allowlist is .github/merge-lint.json, empty here; at level warn the job never fails.
+  # The exact pin moves only by a reviewed re-pin PR.
+  merge-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      # tool-guard's zod is a peer dependency, which the repo's legacy-peer-deps would leave uninstalled.
+      - name: Merge call shapes
+        env:
+          npm_config_legacy_peer_deps: 'false'
+        run: npx --yes -p @titan-design/tool-guard@0.5.3 titan-merge-lint
+
   # Lint, format, type checking
   lint:
     runs-on: ubuntu-latest

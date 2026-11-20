@@ -8,8 +8,10 @@
 // pause ends the stale in-memory session at its last rep before the new
 // activity attaches. Neither runs while a set is open.
 
+import { createHash, randomUUID } from 'node:crypto';
+
 import { getSlot, type ServerState } from './server-state.js';
-import type { SessionStore, StoredSession } from '../store/types.js';
+import type { SessionCloser, SessionStore, StoredSession } from '../store/types.js';
 import { log } from '../logger.js';
 
 /**
@@ -19,7 +21,10 @@ import { log } from '../logger.js';
  */
 export const IDLE_SESSION_CLOSE_HOURS = 6;
 
-export const IDLE_SESSION_CLOSER = 'rule:idle';
+export const IDLE_SESSION_CLOSER = 'rule:idle' satisfies SessionCloser;
+
+/** Stored on the rule's audit row in place of a hash of an input it never had. */
+const IDLE_CLOSE_INPUT_HASH = createHash('sha256').update('rule:idle').digest('hex');
 
 const HOUR_MS = 3_600_000;
 
@@ -27,9 +32,33 @@ function isIdle(lastRepAt: string, now: Date): boolean {
   return Date.parse(lastRepAt) <= now.getTime() - IDLE_SESSION_CLOSE_HOURS * HOUR_MS;
 }
 
-function closedNote(session: StoredSession): string {
-  const note = `Closed by ${IDLE_SESSION_CLOSER}: no rep for ${String(IDLE_SESSION_CLOSE_HOURS)} h.`;
-  return session.notes === undefined || session.notes === '' ? note : `${session.notes}\n${note}`;
+/**
+ * The close's row in the activity trail, as the scheduler's (`tick`, shown as `rule`). The trail
+ * has no surface for a rule, and this one runs inside the MCP server, so it says `mcp`. A failure
+ * is logged: the session is already closed, and `closed_by` still says by whom.
+ */
+async function recordIdleClose(store: SessionStore, sessionId: string): Promise<void> {
+  const actionId = randomUUID();
+  try {
+    await store.claimUiAction({
+      actionId,
+      actionName: 'session.end',
+      actor: 'tick',
+      surface: 'mcp',
+      reason: IDLE_SESSION_CLOSER,
+      sessionId,
+      inputHash: IDLE_CLOSE_INPUT_HASH,
+      createdAt: new Date().toISOString(),
+    });
+    await store.completeUiAction({
+      actionId,
+      resultStatus: 'ok',
+      result: null,
+      completedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    log.warn('idle-session close: recording the close in the activity trail failed', err);
+  }
 }
 
 async function endAtLastRep(
@@ -37,16 +66,17 @@ async function endAtLastRep(
   session: StoredSession,
   lastRepAt: string,
 ): Promise<void> {
-  await store.putSession({ ...session, endedAt: lastRepAt, notes: closedNote(session) });
+  await store.putSession({ ...session, endedAt: lastRepAt, closedBy: IDLE_SESSION_CLOSER });
+  await recordIdleClose(store, session.id);
 }
 
 /**
  * End every open session, whoever the lifter, whose last rep is at least
  * {@link IDLE_SESSION_CLOSE_HOURS} old, stamping `endedAt` with that last rep
  * (not `now`) so a session that ran past midnight stays on its own day. The
- * closer is written into the session's notes through `putSession`, the same
- * path `session.end` uses. A session with no rep ends at its start. Returns
- * the ids it closed.
+ * closer goes in `closedBy` through `putSession`, the same path `session.end`
+ * uses, and the close is recorded in the activity trail. A session with no rep
+ * ends at its start. Returns the ids it closed.
  */
 export async function closeIdleSessions(store: SessionStore, now: Date): Promise<string[]> {
   const closed: string[] = [];

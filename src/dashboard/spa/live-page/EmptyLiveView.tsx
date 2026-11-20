@@ -7,16 +7,15 @@ import {
   DumbbellIcon,
   EmptyState,
   Link,
-  LiveAuraFrame,
   Metric,
   MetricGroup,
-  PlaceholderStrip,
   Surface,
   getSemanticColors,
   panelBodySplit,
   panelLayout,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
+import { LiveAuraFrame, PlaceholderStrip } from '@titan-design/react-ui/workout';
 import { type DashboardModel } from './model';
 import { formatMass } from './mass';
 import { LATEST_SESSION, routeHash } from '../routing';

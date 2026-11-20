@@ -37,6 +37,7 @@ export {
   buildPlanTreeView,
   nextOrderIndex,
   type ExerciseNameLookup,
+  type NextWorkoutScope,
   type PlanBlockView,
   type PlanExerciseView,
   type PlanProgramSummary,

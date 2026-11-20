@@ -23,6 +23,7 @@ import {
   type FatigueStop,
 } from '../../../state/velocity-loss-intent.js';
 import {
+  bilateralPartnerSides,
   buildConnectionStatus,
   buildCurrentSet,
   pickRepresentativeDevice,
@@ -231,6 +232,8 @@ function mapCompletedSet(set: StoreCompletedSet, exerciseStop: FatigueStop): Com
     autoCreatedBy: set.autoCreatedBy,
     fatigueStop: fatigueStopForSet(set.watch, exerciseStop),
     fatigueVerdict: set.reps.length < 2 ? null : getSetFatigueVerdict({ reps: set.reps }),
+    bilateralGroupId: set.bilateralGroupId ?? null,
+    side: set.side ?? null,
   };
 }
 
@@ -325,6 +328,9 @@ function mapSession(
     completedSets: setLog
       .map((set) => mapCompletedSet(set, exerciseStopOf(snapshot)))
       .filter(isRealCompletedSet),
+    partnerSides: bilateralPartnerSides(snapshot).map((set) =>
+      mapCompletedSet(set, exerciseStopOf(snapshot)),
+    ),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
     plannedExercises,
     // Resolved rest (VW-441): the plan's, else the goal default; null with no session.

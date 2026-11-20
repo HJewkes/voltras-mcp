@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "a migration commits its own transaction again",
+      "file": "src/store/sqlite-store.ts",
+      "find": "    db.exec('PRAGMA user_version = 44');\n",
+      "replace": "    db.exec('PRAGMA user_version = 44');\n    db.exec('COMMIT');\n",
+      "kills": [
+        "every non-test source file holds transaction-control literals only inside the named openers"
+      ]
+    }
+  ]
+}

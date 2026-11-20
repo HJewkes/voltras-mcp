@@ -56,8 +56,9 @@ beforeEach(async () => {
   process.env.VMCP_DB_PATH = join(dbDir, 'lease.sqlite');
   process.env.VMCP_SLOT_BINDINGS_PATH = join(dbDir, 'slot-bindings.json');
   state = await bootstrapState(loadConfig());
-  a = createClientConnection('client-a');
-  b = createClientConnection('client-b');
+  // Every tool is classified, so the debug-gated ones are registered too.
+  a = createClientConnection('client-a', { debugTools: 'on' });
+  b = createClientConnection('client-b', { debugTools: 'on' });
   a.activate(state);
   b.activate(state);
 });

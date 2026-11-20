@@ -86,6 +86,8 @@ function isolatedEnv(scratchDir) {
     VMCP_DB_PATH: path.join(scratchDir, 'reference.sqlite'),
     VMCP_SLOT_BINDINGS_PATH: path.join(scratchDir, 'slot-bindings.json'),
     VMCP_DASHBOARD_PORT: 'off',
+    // The reference documents the debug-gated tools too, marked as such.
+    VMCP_DEBUG_TOOLS: 'on',
   };
 }
 
@@ -207,7 +209,7 @@ async function writePages(outDir, pages, sidebar, isGeneratedPage) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   ensureBuild();
-  const { CORE_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
+  const { CORE_TOOL_NAMES, DEBUG_GATED_TOOL_NAMES, MOCK_TOOL_NAMES, TOOL_ACCESS } = await import(
     path.join(REPO_ROOT, 'dist/tool-registry.js')
   );
   const { buildReference, isGeneratedPage, HAND_WRITTEN_REFERENCE_PAGES } = await import(
@@ -259,6 +261,7 @@ async function main() {
     environmentVariables: ENVIRONMENT_VARIABLES,
     coreToolNames: CORE_TOOL_NAMES,
     mockToolNames: MOCK_TOOL_NAMES,
+    debugToolNames: DEBUG_GATED_TOOL_NAMES,
     tools: surface.tools,
     resources: surface.resources,
     resourceTemplates: surface.resourceTemplates,

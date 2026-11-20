@@ -26,7 +26,7 @@ import {
   type BodyMapData,
   type VolumeStatus as TitanVolumeStatus,
 } from '@titan-design/react-ui/bodymap';
-import type { MuscleStripMuscleData } from '@titan-design/react-ui';
+import type { MuscleStripMuscleData } from '@titan-design/react-ui/workout';
 
 import type {
   MusclePlanView,

@@ -34,7 +34,7 @@
 // have no ceiling to cite, so `observed`/`ceiling`/`tier` are optional on
 // `PlanWarning` to let them omit what does not apply.
 
-import type { Tier, TierConfidence } from '../tools/tier-signal.js';
+import type { Tier, TierConfidence } from '../profile/tier.js';
 import { hasRestWord, isOffOnly } from './rest-label.js';
 
 export type PlanWarningCode =

@@ -146,6 +146,14 @@ const SITES: Record<string, Site[]> = {
       count: 1,
     },
   ],
+  'state/push-detail.ts': [
+    {
+      event: 'any (push-detail compaction)',
+      category: 'wrapper',
+      pattern: /this\.inner\.publish\(compactChannelEvent\(event\)\)/g,
+      count: 1,
+    },
+  ],
   'state/lease-fence.ts': [
     {
       event: 'lease_lost',

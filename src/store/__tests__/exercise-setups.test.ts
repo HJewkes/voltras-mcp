@@ -107,6 +107,11 @@ describe('setMedianRomM', () => {
   it('is undefined when no rep carries measurable travel', () => {
     expect(setMedianRomM({ reps: [makeRep('s', 0, 0), makeRep('s', 1, 0)] })).toBeUndefined();
   });
+
+  it('takes the middle ROM of an odd count, not the mean', () => {
+    const reps = [makeRep('s', 0, 0.3), makeRep('s', 1, 0.33), makeRep('s', 2, 0.31)];
+    expect(setMedianRomM({ reps })).toBeCloseTo(0.31, 5);
+  });
 });
 
 describe('clusterSetsByRom', () => {
@@ -149,6 +154,13 @@ describe('clusterSetsByRom', () => {
   it('assigns to the NEAREST centre, not the first one within the ratio', () => {
     const clusters = clusterSetsByRom([obs('a', 0.3), obs('b', 0.5), obs('c', 0.49)]);
     expect(clusters[1].setIds).toEqual(['b', 'c']);
+  });
+
+  it('moves a centre to the median of its members, averaging the middle two of an even count', () => {
+    const two = clusterSetsByRom([obs('a', 0.3), obs('b', 0.32)]);
+    const three = clusterSetsByRom([obs('a', 0.3), obs('b', 0.32), obs('c', 0.33)]);
+    expect(two[0].centreRomM).toBeCloseTo(0.31, 5);
+    expect(three[0].centreRomM).toBeCloseTo(0.32, 5);
   });
 
   it('is append-only: a later set never moves an earlier one', () => {

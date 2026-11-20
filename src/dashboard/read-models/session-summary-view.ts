@@ -14,7 +14,7 @@ import type { LoadDriftFlag } from '../../analytics/load-drift.js';
 // Type-only: erased at build, so this stays free of a runtime store dependency
 // (see the file banner) — mirrors the store's four-value set-purpose enum, the
 // same treatment `dashboard/spa/live-page/model.ts`'s `CompletedSet` gives it.
-import type { SetPurpose } from '../../store/types.js';
+import type { SetPurpose, StoredSide } from '../../store/types.js';
 // Type-only, and itself store/node-free (see its own file banner) — the VW-301
 // expected-rep-range shape.
 import type { RepsToThresholdRange } from '../../analytics/reps-to-threshold-range.js';
@@ -48,6 +48,10 @@ export interface SessionSummarySet {
    * threshold and load. Null below the module's minimum qualifying history.
    */
   expectedRepRange: RepsToThresholdRange | null;
+  /** The limb, when the set is one side of a bilateral pair or otherwise sided. */
+  side: StoredSide | null;
+  /** Shared by the two sides of one live-paired bilateral effort (VW-951). */
+  bilateralGroupId: string | null;
 }
 
 /** The `plan.suggest_progression` recommendation, per exercise. */

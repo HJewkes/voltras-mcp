@@ -27,6 +27,9 @@ export const HAND_WRITTEN_REFERENCE_PAGES: readonly SidebarLink[] = [
 
 const MOCK_NAMESPACE = 'mock';
 const MOCK_ONLY_LABEL = 'mock adapter only (`VOLTRA_ADAPTER=mock`)';
+const DEBUG_GATED_NOTE =
+  '> **Debug only.** Registered only when `VMCP_DEBUG_TOOLS=on`; without it the tool is not in ' +
+  '`tools/list`. See [environment variables](./environment-variables).';
 
 const PUSH_EVENTS_DOC_URL = 'https://github.com/HJewkes/voltras-mcp/blob/main/docs/push-events.md';
 
@@ -84,6 +87,8 @@ export interface ReferenceInput {
   readonly environmentVariables: readonly EnvironmentVariable[];
   readonly coreToolNames: readonly string[];
   readonly mockToolNames: readonly string[];
+  /** Core tools registered only under `VMCP_DEBUG_TOOLS=on` (VW-935). */
+  readonly debugToolNames?: readonly string[];
   readonly tools: readonly ToolSpec[];
   readonly resources: readonly ResourceSpec[];
   readonly resourceTemplates: readonly ResourceTemplateSpec[];
@@ -220,11 +225,12 @@ const STATUS_WORDS: Readonly<Record<ToolStatusNote['status'], string>> = {
 
 function renderBadges(
   tags: readonly string[],
-  mockOnly: boolean,
-  status: ToolStatusNote | undefined,
+  context: Pick<ToolContext, 'mockOnly' | 'debugGated' | 'status'>,
 ): string {
+  const { mockOnly, debugGated, status } = context;
   const badges = tags.map((tag) => `<Badge type="warning" text="${tag}" />`);
   if (mockOnly) badges.push('<Badge type="tip" text="mock adapter only" />');
+  if (debugGated) badges.push('<Badge type="danger" text="debug only" />');
   if (status) badges.push(`<Badge type="info" text="${STATUS_WORDS[status.status]}" />`);
   return badges.join(' ');
 }
@@ -237,21 +243,23 @@ function renderStatusNote(status: ToolStatusNote): string {
 
 interface ToolContext {
   readonly mockOnly: boolean;
+  readonly debugGated: boolean;
   readonly status: ToolStatusNote | undefined;
   readonly guard: ProtocolGuard;
 }
 
 function renderTool(tool: ToolSpec, context: ToolContext): RenderedTool {
-  const { guard, mockOnly, status } = context;
+  const { guard, debugGated, status } = context;
   const { tags, body } = splitTags(tool.description ?? '');
   const redacted = guard.redact(body);
   const summary = firstSentence(redacted.text);
   const rest = redacted.text.slice(summary.length).trim();
   const params = renderParameters(tool.inputSchema, guard);
-  const badges = renderBadges(tags, mockOnly, status);
+  const badges = renderBadges(tags, context);
   const blocks = [`## \`${tool.name}\``, ''];
   if (badges) blocks.push(badges, '');
   if (status) blocks.push(renderStatusNote(status), '');
+  if (debugGated) blocks.push(DEBUG_GATED_NOTE, '');
   blocks.push(summary || '_No description._', '');
   if (rest) blocks.push(rest, '');
   blocks.push(...params.lines);
@@ -281,6 +289,7 @@ function pluralTools(count: number): string {
 interface PageContext {
   readonly byName: ReadonlyMap<string, ToolSpec>;
   readonly mockNames: ReadonlySet<string>;
+  readonly debugNames: ReadonlySet<string>;
   readonly toolStatus: Readonly<Record<string, ToolStatusNote>>;
   readonly redactions: Record<string, number>;
   readonly guard: ProtocolGuard;
@@ -303,6 +312,7 @@ function renderNamespacePage(
     if (!spec) throw new Error(`the booted server did not report tool ${name}`);
     const rendered = renderTool(spec, {
       mockOnly: context.mockNames.has(name),
+      debugGated: context.debugNames.has(name),
       status: context.toolStatus[name],
       guard: context.guard,
     });
@@ -358,6 +368,13 @@ function renderIndexGroups(
   return lines;
 }
 
+/** The counts above include the debug-gated tools; say which they are. */
+function debugGatedLines(names: readonly string[]): string[] {
+  if (names.length === 0) return [];
+  const list = names.map((name) => `\`${name}\``).join(' and ');
+  return [`Those counts include ${list}, which are registered only when \`VMCP_DEBUG_TOOLS=on\`.`];
+}
+
 function renderIndexPage(
   input: ReferenceInput,
   byNamespace: ReadonlyMap<string, string[]>,
@@ -377,6 +394,7 @@ function renderIndexPage(
     `**${core} tools** are registered with the real adapter (\`VOLTRA_ADAPTER=node\`) and`,
     `**${total}** in mock mode — the \`mock.*\` namespace is registered only when`,
     '`VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.',
+    ...debugGatedLines(input.debugToolNames ?? []),
     '',
     'The status column uses the words defined on the [page status](/status) page. A tool',
     'whose status differs from its namespace is named in the same cell.',
@@ -498,6 +516,7 @@ export function buildReference(input: ReferenceInput): ReferenceOutput {
   const context: PageContext = {
     byName: new Map(input.tools.map((tool) => [tool.name, tool])),
     mockNames: new Set(input.mockToolNames),
+    debugNames: new Set(input.debugToolNames),
     toolStatus: input.toolStatus,
     redactions: {},
     guard: input.guard,

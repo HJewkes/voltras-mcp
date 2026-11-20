@@ -22,6 +22,7 @@ const GUARDED_FILES = [
   'voice/cue-templates.ts',
   'dashboard/spa/live-page/live-copy.ts',
   'dashboard/spa/goals/calibration-copy.ts',
+  'dashboard/spa/planner/session-summary-model.ts',
 ];
 const PROSE_WORD_FLOOR = 4;
 

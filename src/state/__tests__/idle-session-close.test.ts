@@ -47,7 +47,7 @@ describe('closeIdleSessions', () => {
     const stored = await store.getSession('s1');
     expect(closed).toEqual(['s1']);
     expect(stored?.endedAt).toBe('2026-01-11T00:20:00.000Z');
-    expect(stored?.notes).toContain(IDLE_SESSION_CLOSER);
+    expect(stored?.closedBy).toBe(IDLE_SESSION_CLOSER);
   });
 
   it('keeps a session that ran past local midnight on the local day of its last rep', async () => {
@@ -98,7 +98,7 @@ describe('closeIdleSessions', () => {
     expect((await store.getSession('s2'))?.endedAt).toBeUndefined();
   });
 
-  it('closes a repless session at its start and keeps its existing notes', async () => {
+  it('closes a repless session at its start and leaves its notes as they were', async () => {
     const store = openSqliteTestStore();
     await store.putSession({
       id: 's3',
@@ -110,7 +110,8 @@ describe('closeIdleSessions', () => {
 
     const stored = await store.getSession('s3');
     expect(stored?.endedAt).toBe('2026-01-10T08:00:00.000Z');
-    expect(stored?.notes).toMatch(/^bench test\nClosed by rule:idle/);
+    expect(stored?.notes).toBe('bench test');
+    expect(stored?.closedBy).toBe(IDLE_SESSION_CLOSER);
   });
 
   it("closes a guest lifter's session by the same rule", async () => {

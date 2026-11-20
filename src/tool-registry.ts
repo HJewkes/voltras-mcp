@@ -232,6 +232,23 @@ export const CORE_TOOL_NAMES = [
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
 export const MOCK_TOOL_NAMES = ['mock.configure', 'mock.inject_error'] as const;
 
+/**
+ * Core tools registered only when `VMCP_DEBUG_TOOLS=on` (VW-935). One writes
+ * caller-supplied bytes to the motor behind a `confirm` flag the model sets
+ * itself; the other hands raw telemetry to the model and the transcript.
+ * Neither belongs in a default session, so without the env they are absent
+ * from `tools/list` rather than refusing at call time.
+ */
+export const DEBUG_GATED_TOOL_NAMES = [
+  'device.send_raw',
+  'debug.recent_frames',
+] as const satisfies readonly (typeof CORE_TOOL_NAMES)[number][];
+
+/** Whether `name` is registered only under `VMCP_DEBUG_TOOLS=on`. */
+export function isDebugGatedTool(name: string): boolean {
+  return (DEBUG_GATED_TOOL_NAMES as readonly string[]).includes(name);
+}
+
 export type CoreToolName = (typeof CORE_TOOL_NAMES)[number];
 export type MockToolName = (typeof MOCK_TOOL_NAMES)[number];
 export type ToolName = CoreToolName | MockToolName;

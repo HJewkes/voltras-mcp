@@ -4,7 +4,7 @@
 // tool and the dashboard cannot disagree. Pure, and it imports only the `Tier` type, so
 // the dashboard SPA bundle can import it too.
 
-import type { Tier } from '../tools/tier-signal.js';
+import type { Tier } from './tier.js';
 
 export interface EffortTarget {
   /** `null` at the beginner tier, which should not track RIR at all. */

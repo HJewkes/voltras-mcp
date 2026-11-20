@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "mutations": [
+    {
+      "name": "the helper rethrows without rolling back",
+      "file": "src/store/migration-transaction.ts",
+      "find": "    db.exec('ROLLBACK');\n",
+      "replace": "",
+      "kills": [
+        "inMigrationTransaction rolls back and rethrows the original error when the work throws"
+      ]
+    }
+  ]
+}

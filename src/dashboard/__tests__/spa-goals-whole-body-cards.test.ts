@@ -2,6 +2,8 @@
 // come from `buildGoalProgressView` over literal bands, the same function
 // `/api/goal-progress` calls, so each fixture is the shape the route returns.
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { GoalBand, GoalBandWeek } from '../../analytics/goal-band.js';
@@ -13,6 +15,7 @@ import {
   type GoalProgressInput,
   type GoalProgressView,
 } from '../read-models/goal-progress.js';
+import { GoalsView } from '../spa/goals/GoalsView.js';
 import type { GoalsPageData } from '../spa/goals/goals-model.js';
 import {
   priorityIndexEntries,
@@ -295,5 +298,37 @@ describe('the priority index', () => {
       { name: 'Bodyweight', level: 'maintain', hasTarget: true },
       { name: 'Strength', level: 'maintain', hasTarget: false },
     ]);
+  });
+});
+
+describe('the bodyweight card in the wall’s kg display unit (VW-946)', () => {
+  function visibleText(displayUnit: 'lbs' | 'kg'): string {
+    const data = page([BODYWEIGHT, [cutView()]]);
+    const html = renderToStaticMarkup(createElement(GoalsView, { data, displayUnit }));
+    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  it('carries the weigh-in and this week of the band in kg, unrounded', () => {
+    const row = weightRow(cutView(), 'kg');
+
+    expect(row.unit).toBe('kg');
+    expect(row.latest?.value).toBeCloseTo(89.27, 2); // 196.8 lb
+    expect(row.week.low).toBeCloseTo(89.81, 2); // 198 lb
+    expect(row.week.high).toBeCloseTo(88.9, 2); // 196 lb
+    expect(row.rate).toEqual(weightRow(cutView()).rate);
+  });
+
+  it('prints the weigh-in to one decimal of a kg, with no pound reading', () => {
+    const text = visibleText('kg');
+
+    expect(text).toContain('89.3 kg');
+    expect(text).toContain('88.9 89.8'); // the band's scale, 196 and 198 lb
+    expect(text).not.toMatch(/\d\s*lbs?\b/);
+  });
+
+  it('leaves the lb card as it was', () => {
+    expect(weightRow(cutView(), 'lbs')).toEqual(weightRow(cutView()));
+    expect(visibleText('lbs')).toContain('196.8 lb');
+    expect(visibleText('lbs')).toContain('196.0 198.0');
   });
 });

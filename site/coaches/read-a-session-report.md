@@ -44,10 +44,10 @@ appears when the session had a plan attached (`plan.complete_workout` /
 
 Which sets count follows the same rule [`plan.suggest_progression`](/reference/plan) uses:
 sets flagged as a warm-up, probe or technique set are excluded, then the sets at the top load
-are kept (`src/store/working-sets.ts:20-58`). A guest lifter's sets (`session.set_lifter`) and
+are kept (`src/store/working-sets.ts:20-58`<!-- anchor: heaviest load -->). A guest lifter's sets (`session.set_lifter`) and
 zero-rep sets never appear, and an exercise with no working set is omitted rather than
 reported empty. Mock-adapter sets are left out too, unless the server itself runs on the mock
-adapter (`src/tools/report-tools.ts:151-161`).
+adapter (`src/tools/report-tools.ts:151-161`<!-- anchor: set.source !== 'mock' -->).
 
 ## Load labels on non-weight modes
 
@@ -104,7 +104,7 @@ Two things gate it, and both are read before anything runs (`tools/truecoach-sub
 
 The submit button's own selector ships marked `UNVERIFIED` in source: nobody has clicked it
 yet, so the first real run is also the first verification of that one constant
-(`tools/truecoach-submit/src/selectors.js:28-45`).
+(`tools/truecoach-submit/src/selectors.js:28-45`<!-- anchor: UNVERIFIED -->).
 
 By default a human runs the submitter by hand. Two optional triggers change that: a daily
 launchd job the lifter installs by hand, and `VMCP_TRUECOACH_SUBMIT_ON_END=on` (with the outbox also on) makes every outbox write spawn
@@ -122,7 +122,7 @@ tree — is a different, already-read-only tool: see
 [`report.weekly`](/reference/report) rolls per-session results like the ones above up over
 a date range — training days, a rolling 28-day count of training days, adherence and its trend,
 schedule changes, progression suggestions, flags, a check-in section and goal lines
-(`src/tools/report-tools.ts:452-462`). See the
+(`src/tools/report-tools.ts:452-462`<!-- anchor: export interface WeeklyReport -->). See the
 [weekly report guide](/coaches/read-the-weekly-report) for what each part means and how to call it.
 
 ## What to read next

@@ -10,7 +10,7 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run build` — emit `dist/` (the `voltras-mcp` bin)
 - `npm run format` / `npm run format:check` — Prettier (globs are `src/**` and `scripts/**` only; markdown is not format-gated)
 - `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
-- `npm run dashboard:preview -- <goals|body|plan>` — open one wall page on a seeded scratch store and hold it; `goals` takes `--state` and `--unreviewed <n>` (see `src/docs/preview-seeds.ts`)
+- `npm run dashboard:preview -- <goals|body|plan|summary>` — open one wall page on a seeded scratch store and hold it; `summary` opens the session-complete page on an ended four-exercise session; `goals` takes `--state` and `--unreviewed <n>` (see `src/docs/preview-seeds.ts`); `persona <name> [--route <hash>]` opens `#/summary` (or the given hash) on a synthetic lifter from `src/docs/personas/`, and `node scripts/seed-persona.mjs <name> <db-path>` writes one to a new file
 
 **Tests run in UTC.** `vitest.config.ts` pins `process.env.TZ = 'UTC'`, which is what CI runs, so a fixture written as a UTC instant reads the same on any machine. Goal weeks, block calendars and `history.trend` buckets are LOCAL weeks, so a green run west of UTC proves nothing about local-time behaviour unless the file pins its own zone: set `process.env.TZ` before the first import, and restore it in `afterAll` (`src/plan/__tests__/block-calendar-local-time.test.ts`, `src/tools/__tests__/goal-targets-on-blocks.test.ts`). The docs site is built in CI (`npm run docs:build`) and is not part of the CI gate below: a rendered tool description containing an angle-bracket placeholder fails it (VitePress parses it as HTML).
 
@@ -36,7 +36,7 @@ Adapter is read once at startup; runtime switching is out of scope for v1.
 
 ## Concurrency
 
-Stdio is single-client by transport design — each Claude Code session spawns its own `voltras-mcp` process. Keep one process per `VMCP_DB_PATH`: that is a caller responsibility, not something the store enforces. On open the store runs a single `BEGIN IMMEDIATE` write-lock probe, so a newcomer is rejected with a clear lock error **only if the incumbent happens to hold a write lock at that instant**. It is not a persistent lock (the DB is not in WAL mode), so two processes that both open while neither is mid-write will both succeed — their later concurrent writes then fail with a `SQLITE_BUSY`-style error. The probe catches the common case; it is not a guarantee.
+Stdio is single-client by transport design — each Claude Code session spawns its own `voltras-mcp` process. Keep one process per `VMCP_DB_PATH`: that is a caller responsibility, not something the store enforces. On open the store runs a single `BEGIN IMMEDIATE` write-lock probe, so a newcomer is rejected with a clear lock error **only if the incumbent happens to hold a write lock at that instant**. It is not a persistent lock (the DB is not in WAL mode), so two processes that both open while neither is mid-write will both succeed — their later concurrent writes then fail with a `SQLITE_BUSY`-style error. The probe catches the common case; it is not a guarantee. The probe runs with no wait, so a live incumbent is rejected at once. Right after it, the store sets `PRAGMA busy_timeout` to 5 seconds (`src/store/busy-timeout.ts`), as do the read-only snapshot connections behind export and verify, so a brief overlapping lock is waited out instead of failing with `SQLITE_BUSY`; a lock held longer than that still fails.
 
 ## Source-Layout Conventions
 
@@ -82,7 +82,7 @@ The 15 test files under `src/**/__tests__/` still hold protocol fixtures and are
 ## Gotchas
 
 - `ci.yml` runs only on PRs whose base is `main`: a stacked PR gets no checks, and retargeting it to `main` does not start them (close and reopen does).
-- PRs are squash-merged, so after a parent PR lands, rebase a stacked branch with `git rebase --onto origin/main <old-parent-sha>` and check `git diff --name-only origin/main...HEAD`.
+- PRs are squash-merged, so after a parent PR lands, merge `origin/main` into a stacked branch (`git merge origin/main`, then a plain push; worker profiles cannot force-push) and check `git diff --name-only origin/main...HEAD`. Attended sessions may instead rebase with `git rebase --onto origin/main <old-parent-sha>`.
 - `pages.yml` runs `docs:build` on PRs only when `site/**` changes, but the site includes the root `CHANGELOG.md`; run `npm run docs:build` for any docs or CHANGELOG change, and write CHANGELOG links site-relative (`/guides/x`), not as repo paths. `docs:check` does not catch dead links.
 - The docs protocol guard (`src/docs/protocol-guard.ts`) rewrites any ALL-CAPS-HYPHENATED token to `[redacted]` in generated pages while `docs:check` still passes; avoid that emphasis in tool descriptions and grep the regenerated `site/reference/` diff for `[redacted]`.
 - `security-audit` blocks only on critical vulns (`--audit-level=critical`), and they sit in the production tree (`@modelcontextprotocol/sdk`, `onnxruntime-node`), so `--omit=dev` does not help; try plain `npm audit fix` first.

@@ -47,6 +47,8 @@ import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
 import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
 import { BODY_FAT_SOURCES, isBodyFatSource } from '../analytics/body-fat-sources.js';
+import { BUSY_TIMEOUT_MS } from './busy-timeout.js';
+import { inMigrationTransaction } from './migration-transaction.js';
 import { isLeannessBand, LEANNESS_BANDS } from './leanness-band.js';
 import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
@@ -180,9 +182,11 @@ import {
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
+  SESSION_CLOSERS,
+  type SessionCloser,
 } from './types.js';
 
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 45;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -740,7 +744,10 @@ const SCHEMA_SQL = `
     -- v35 (VW-489): test or training. NULL = never reviewed, and unreviewed is
     -- excluded from every lifter-facing read. See store/session-kind.ts for why
     -- there is no stored cut-over instant.
-    kind TEXT CHECK (kind IN ('training','test'))
+    kind TEXT CHECK (kind IN ('training','test')),
+    -- v45 (VW-919): what ended the session. NULL = open, or no closer recorded.
+    -- No CHECK: sessions is never rebuilt, so a CHECK could never grow a closer.
+    closed_by TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -2103,27 +2110,20 @@ function migrateV30ToV31(db: DatabaseSync): void {
  */
 function migrateV31ToV32(db: DatabaseSync): void {
   const live = `metric = 'sessions_28d' AND retired_at IS NULL`;
-  db.exec('BEGIN');
-  try {
-    const retired = db
+  const { retired, deleted } = inMigrationTransaction(db, () => ({
+    retired: db
       .prepare(
         `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
            WHERE ${live} AND accepted_by IS NOT NULL`,
       )
-      .run(new Date().toISOString());
-    const deleted = db
-      .prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`)
-      .run();
-    db.exec('COMMIT');
-    if (retired.changes > 0 || deleted.changes > 0) {
-      log.warn(
-        `store v32: sessions_28d now counts training days; retired ${retired.changes} accepted ` +
-          `and deleted ${deleted.changes} proposed session-count target(s). Propose again.`,
-      );
-    }
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+      .run(new Date().toISOString()),
+    deleted: db.prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`).run(),
+  }));
+  if (retired.changes > 0 || deleted.changes > 0) {
+    log.warn(
+      `store v32: sessions_28d now counts training days; retired ${retired.changes} accepted ` +
+        `and deleted ${deleted.changes} proposed session-count target(s). Propose again.`,
+    );
   }
 }
 
@@ -2135,8 +2135,7 @@ function migrateV31ToV32(db: DatabaseSync): void {
  * so a failure leaves the v32 shape; idempotent, so a re-open changes nothing.
  */
 function migrateV32ToV33(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     db.exec(BLOCK_SCHEDULES_DDL);
     addColumnIfMissing(
       db,
@@ -2144,11 +2143,7 @@ function migrateV32ToV33(db: DatabaseSync): void {
       'block_id',
       'TEXT REFERENCES training_blocks(id) ON DELETE SET NULL',
     );
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2169,15 +2164,10 @@ function migrateV33ToV34(db: DatabaseSync): void {
  * idempotent, so a re-open changes nothing.
  */
 function migrateV34ToV35(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     addColumnIfMissing(db, 'sessions', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
     addColumnIfMissing(db, 'sets', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2205,18 +2195,13 @@ function migrateV35ToV36(_db: DatabaseSync): void {
  * One transaction, so a failure leaves the v36 shape; idempotent, so a re-open changes nothing.
  */
 function migrateV36ToV37(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     addColumnIfMissing(db, 'commitments', 'lifter_if_then', 'TEXT');
     addColumnIfMissing(db, 'commitments', 'lifter_wording', 'TEXT');
     addColumnIfMissing(db, 'commitments', 'revision', 'INTEGER NOT NULL DEFAULT 1');
     db.exec(COMMITMENT_REVISION_INDEX_SQL);
     db.exec(COMMITMENTS_APPEND_ONLY_TRIGGER_SQL);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2241,18 +2226,13 @@ function migrateV36ToV37(db: DatabaseSync): void {
  * One transaction, so a failure leaves the v37 shape.
  */
 function migrateV37ToV38(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     addColumnIfMissing(db, 'planned_exercises', 'goal_kind', PLANNED_GOAL_KIND_DDL);
     addColumnIfMissing(db, 'planned_exercises', 'target_velocity_loss_pct', 'REAL');
     addColumnIfMissing(db, 'planned_exercises', 'rest_learning', 'INTEGER NOT NULL DEFAULT 1');
     db.exec('UPDATE planned_exercises SET rest_learning = 0 WHERE rest_sec IS NOT NULL');
     backfillGoalKind(db);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2277,17 +2257,12 @@ function migrateV37ToV38(db: DatabaseSync): void {
  * EXISTS` and the unconditional drop make a second run a no-op.
  */
 function migrateV38ToV39(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     addColumnIfMissing(db, 'ui_actions', 'device_id', 'TEXT');
     db.exec(UI_ACTION_DEVICE_INDEX_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
     db.exec(UI_ACTIONS_COMPLETE_ONCE_V39_TRIGGER_SQL);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2300,15 +2275,10 @@ function migrateV38ToV39(db: DatabaseSync): void {
  * run, and a fresh store whose `SCHEMA_SQL` already declared both, a no-op.
  */
 function migrateV39ToV40(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     addColumnIfMissing(db, 'sets', 'effort_context_json', SET_EFFORT_CONTEXT_DDL);
     addColumnIfMissing(db, 'sets', 'cue_record_json', SET_CUE_RECORD_DDL);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2322,15 +2292,10 @@ function migrateV39ToV40(db: DatabaseSync): void {
  * no-op.
  */
 function migrateV40ToV41(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     assertNoDuplicateAssignments(db);
     db.exec(ASSIGNMENT_UNIQUE_INDEX_SQL);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2352,17 +2317,12 @@ function migrateV40ToV41(db: DatabaseSync): void {
  * leaves the v41 shape.
  */
 function migrateV41ToV42(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     if (uiActionsNeedsRebuild(db)) rebuildUiActions(db);
     db.exec(UI_ACTION_SESSION_INDEX_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
     db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2374,17 +2334,12 @@ function migrateV41ToV42(db: DatabaseSync): void {
  * triggers, so a file that has them must never read as 42, even after a kill mid-open.
  */
 function migrateV42ToV43(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     db.exec(UI_ACTIONS_NO_REPLACE_TRIGGER_SQL);
     db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
     db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
     db.exec('PRAGMA user_version = 43');
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 /**
@@ -2393,15 +2348,33 @@ function migrateV42ToV43(db: DatabaseSync): void {
  * kill mid-step leaves the file at 43 with no index, and the next open builds it again.
  */
 function migrateV43ToV44(db: DatabaseSync): void {
-  db.exec('BEGIN');
-  try {
+  inMigrationTransaction(db, () => {
     db.exec(UI_ACTIONS_ACTIVITY_INDEX_SQL);
     db.exec('PRAGMA user_version = 44');
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
+}
+
+/**
+ * The note the idle rule appended before v45 (VW-856), verbatim. Frozen here rather than built
+ * from the rule's constants: the backfill must match what was written, not what the rule says now.
+ */
+export const LEGACY_IDLE_CLOSE_NOTE = 'Closed by rule:idle: no rep for 6 h.';
+
+/**
+ * v44 -> v45: `sessions.closed_by` (VW-919). Additive, and backfilled only where the row already
+ * says who closed it: an ended session whose notes are the idle rule's note, alone or as the last
+ * line. A note quoted mid-text, or a session still open, stays NULL. Notes are left as they are.
+ */
+function migrateV44ToV45(db: DatabaseSync): void {
+  inMigrationTransaction(db, () => {
+    addColumnIfMissing(db, 'sessions', 'closed_by', 'TEXT');
+    db.prepare(
+      `UPDATE sessions SET closed_by = 'rule:idle'
+        WHERE closed_by IS NULL AND ended_at IS NOT NULL
+          AND (notes = ? OR substr(notes, -?) = ?)`,
+    ).run(LEGACY_IDLE_CLOSE_NOTE, LEGACY_IDLE_CLOSE_NOTE.length + 1, `\n${LEGACY_IDLE_CLOSE_NOTE}`);
+    db.exec('PRAGMA user_version = 45');
+  });
 }
 
 function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
@@ -2626,9 +2599,9 @@ function rebuildSetsForV7(db: DatabaseSync): void {
   }
 
   db.exec('PRAGMA foreign_keys = OFF');
-  db.exec('BEGIN');
   try {
-    db.exec(`
+    inMigrationTransaction(db, () => {
+      db.exec(`
       CREATE TABLE sets_v7 (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -2673,43 +2646,43 @@ function rebuildSetsForV7(db: DatabaseSync): void {
       )
     `);
 
-    // The backfills. Each one is either information-preserving or explicitly
-    // noted as lossy in the migration notes — nothing here infers a value the
-    // data never had.
-    //
-    //   training_mode  'Unknown' was only ever a sentinel, never a real mode.
-    //                  Converting it to NULL is strictly information-preserving.
-    //   weight_lbs     A stored 0 is ambiguous: missing-snapshot sentinel or a
-    //                  genuine unloaded set. NULLIF collapses both to NULL and
-    //                  therefore LOSES A GENUINE ZERO. Applied anyway — the
-    //                  sentinel dominates (the device clamps at 5 lb and
-    //                  nothing prescribes 0 lb), and an honest NULL beats a
-    //                  confident wrong number. Pre-v6 NULLs must not be read as
-    //                  certain gaps.
-    //   exercise_id    Inherited from the parent session. Correct wherever a
-    //                  session held one exercise, which is nearly all of them;
-    //                  where a session was genuinely multi-exercise the
-    //                  session-level value was already wrong and this
-    //                  faithfully reproduces that wrongness rather than
-    //                  inventing a better one.
-    //   set_purpose    Historical probe rungs are indistinguishable from
-    //                  working sets and are permanently lost as such.
-    //   position_units Every existing row is device-native BY DEFINITION —
-    //                  no conversion has ever run. This is the one place a
-    //                  DEFAULT is safe, because it records what already is
-    //                  rather than assuming what might be.
-    //   source         Mock-adapter rows already in the DB are mislabelled
-    //                  'local'; nothing distinguished them at write time and
-    //                  they are NOT separable after the fact.
-    //
-    // Deliberately NOT backfilled: device_id / side / slot (discarded at write
-    // time — historical rows are permanently side-unknown, and inferring a side
-    // would manufacture data that looks measured), bilateral_group_id (a
-    // heuristic pairing lacks the opposite-slot guard the live path has, so it
-    // can create false pairs the live path cannot — and an inferred group still
-    // yields no side), and every settings/firmware/capture column, which were
-    // never captured at all.
-    db.exec(`
+      // The backfills. Each one is either information-preserving or explicitly
+      // noted as lossy in the migration notes — nothing here infers a value the
+      // data never had.
+      //
+      //   training_mode  'Unknown' was only ever a sentinel, never a real mode.
+      //                  Converting it to NULL is strictly information-preserving.
+      //   weight_lbs     A stored 0 is ambiguous: missing-snapshot sentinel or a
+      //                  genuine unloaded set. NULLIF collapses both to NULL and
+      //                  therefore LOSES A GENUINE ZERO. Applied anyway — the
+      //                  sentinel dominates (the device clamps at 5 lb and
+      //                  nothing prescribes 0 lb), and an honest NULL beats a
+      //                  confident wrong number. Pre-v6 NULLs must not be read as
+      //                  certain gaps.
+      //   exercise_id    Inherited from the parent session. Correct wherever a
+      //                  session held one exercise, which is nearly all of them;
+      //                  where a session was genuinely multi-exercise the
+      //                  session-level value was already wrong and this
+      //                  faithfully reproduces that wrongness rather than
+      //                  inventing a better one.
+      //   set_purpose    Historical probe rungs are indistinguishable from
+      //                  working sets and are permanently lost as such.
+      //   position_units Every existing row is device-native BY DEFINITION —
+      //                  no conversion has ever run. This is the one place a
+      //                  DEFAULT is safe, because it records what already is
+      //                  rather than assuming what might be.
+      //   source         Mock-adapter rows already in the DB are mislabelled
+      //                  'local'; nothing distinguished them at write time and
+      //                  they are NOT separable after the fact.
+      //
+      // Deliberately NOT backfilled: device_id / side / slot (discarded at write
+      // time — historical rows are permanently side-unknown, and inferring a side
+      // would manufacture data that looks measured), bilateral_group_id (a
+      // heuristic pairing lacks the opposite-slot guard the live path has, so it
+      // can create false pairs the live path cannot — and an inferred group still
+      // yields no side), and every settings/firmware/capture column, which were
+      // never captured at all.
+      db.exec(`
       INSERT INTO sets_v7 (
         id, session_id, user_id, started_at, ended_at, partial, partial_reason,
         training_mode, weight_lbs, exercise_id, set_purpose,
@@ -2736,21 +2709,18 @@ function rebuildSetsForV7(db: DatabaseSync): void {
       FROM sets s
     `);
 
-    db.exec(`DROP TABLE sets`);
-    db.exec(`ALTER TABLE sets_v7 RENAME TO sets`);
-    // DROP TABLE took every index with it; recreate before the FK check.
-    createV7SetsIndexes(db);
+      db.exec(`DROP TABLE sets`);
+      db.exec(`ALTER TABLE sets_v7 RENAME TO sets`);
+      // DROP TABLE took every index with it; recreate before the FK check.
+      createV7SetsIndexes(db);
 
-    const violations = db.prepare(`PRAGMA foreign_key_check`).all();
-    if (violations.length > 0) {
-      throw new Error(
-        `v5→v6 sets rebuild left ${String(violations.length)} foreign-key violation(s); rolled back`,
-      );
-    }
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+      const violations = db.prepare(`PRAGMA foreign_key_check`).all();
+      if (violations.length > 0) {
+        throw new Error(
+          `v5→v6 sets rebuild left ${String(violations.length)} foreign-key violation(s); rolled back`,
+        );
+      }
+    });
   } finally {
     db.exec('PRAGMA foreign_keys = ON');
   }
@@ -2769,6 +2739,7 @@ interface SessionRow {
   pre_session_carbs_hours_since_meal: number | null;
   catalog_version: string | null;
   kind: string | null;
+  closed_by: string | null;
 }
 
 interface DietPhaseRow {
@@ -3380,14 +3351,16 @@ interface ProgramAssignmentRow {
 const PUT_SESSION_SQL = `
   INSERT INTO sessions
     (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind,
+     closed_by)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     started_at = excluded.started_at,
-    ended_at = excluded.ended_at,
+    ended_at = COALESCE(sessions.ended_at, excluded.ended_at),
     exercise_id = excluded.exercise_id,
     exercise_name = excluded.exercise_name,
     notes = excluded.notes,
+    closed_by = COALESCE(sessions.closed_by, excluded.closed_by),
     diet_phase = CASE WHEN sessions.lifter IS NULL THEN ? END`;
 
 /** The `AND ...` tail that keeps named sessions and later sets out of a recency read (VW-642). */
@@ -3539,6 +3512,9 @@ export class SqliteSessionStore implements SessionStore {
       db.exec('PRAGMA foreign_keys = ON');
       checkSchemaVersion(db, path);
       probeWriteLock(db, path);
+      // After the probe, so a live incumbent is still rejected at once; from
+      // here on a brief overlapping lock is waited out rather than thrown.
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
       db.exec(SCHEMA_SQL);
       applyMigrations(db);
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -3577,6 +3553,11 @@ export class SqliteSessionStore implements SessionStore {
     // `patchSession` owns them after start, and a re-put from one process's live
     // state would revert a patch another process made. The diet-phase stamp
     // therefore follows the STORED label, the one that survives the re-put.
+    //
+    // closed_by is first-writer-wins (VW-919): a re-put that carries none, or a
+    // later session.end after the idle rule already closed the row, keeps it.
+    // ended_at follows the same rule (VW-960): the first end stamps it, and a
+    // later re-put cannot move it or reopen the row.
     this.atomically(() => {
       // Derived here, never taken from the caller: the stamp's whole job is
       // to agree with the table for a session written now, and a tool that
@@ -3597,6 +3578,7 @@ export class SqliteSessionStore implements SessionStore {
           s.preSessionCarbs?.hoursSinceLastMeal ?? null,
           s.catalogVersion ?? null,
           s.kind ?? null,
+          s.closedBy ?? null,
           phase,
         );
     });
@@ -6862,6 +6844,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 43) {
     migrateV43ToV44(db);
   }
+  if (current <= 44) {
+    migrateV44ToV45(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -7000,7 +6985,12 @@ function rowToSession(row: SessionRow): StoredSession {
   if (row.catalog_version !== null) out.catalogVersion = row.catalog_version;
   // VW-489: absent = never reviewed, which no lifter-facing read counts.
   if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
+  if (row.closed_by !== null && isSessionCloser(row.closed_by)) out.closedBy = row.closed_by;
   return out;
+}
+
+function isSessionCloser(value: string): value is SessionCloser {
+  return (SESSION_CLOSERS as readonly string[]).includes(value);
 }
 
 function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {

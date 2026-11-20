@@ -238,7 +238,8 @@ export function registerServerTools(
       'whether the server auto-arms a set on the first idle rep of an open session (`autoArm`, ' +
       'from VMCP_AUTO_ARM), which rule decides the mid-set ending cue (`effortCue`: `off` is ' +
       "the watch's own triggers, `on` is the effort resolver's one cue per set, from " +
-      'VOLTRAS_EFFORT_CUE), ' +
+      'VOLTRAS_EFFORT_CUE), whether the raw-device diagnostics `device.send_raw` and ' +
+      '`debug.recent_frames` are registered (`debugTools`, from VMCP_DEBUG_TOOLS), ' +
       'push-channel status, device-lease ' +
       'status, voice-input readiness (`voiceReady.whisperCli`/`voiceReady.model` — false means ' +
       'speech will not transcribe, usually because `npm ci` wiped the compiled binary), ' +
@@ -266,6 +267,7 @@ export function registerServerTools(
         logLevel: state.config.logLevel,
         autoArm: state.config.autoArm,
         effortCue: state.config.effortCue,
+        debugTools: state.config.debugTools,
         ...resolveCueStatus(state),
         voiceReady: VOICE_READY,
         dashboardAvailable: state.dashboard?.available ?? false,

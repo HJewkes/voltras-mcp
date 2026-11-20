@@ -96,13 +96,13 @@ tools against `VOLTRA_ADAPTER=mock` (`docs/screenshot-harness.md`,
   `session-summary` in `site/public/captures/manifest.json`).
 - **Fatigue you can see.** The live page draws two velocity-loss lines, at two thirds of the
   goal's stop threshold and at the threshold itself, and a fatigue card
-  (`src/state/velocity-loss-intent.ts:146-159`), and the session summary repeats the verdict (`site/public/captures/manifest.json`,
+  (`src/state/velocity-loss-intent.ts:146-159`<!-- anchor: stopThirdsBands -->), and the session summary repeats the verdict (`site/public/captures/manifest.json`,
   `site/concepts/fatigue-and-pacing.md`). The effort number (RPE or reps in reserve) is
   withheld until a lift has a trusted fitted profile (`site/coming-soon/effort-readout.md`).
 - **Plans on screen.** The [`plan.*`](/reference/plan) tools hold programs, blocks, weeks,
   workout templates and planned exercises ([plan reference](/reference/plan)). The plan builder at `/app#/plan`
   re-reads the plan every 2 seconds, so a lift added over MCP appears without a reload
-  (`src/dashboard/spa/planner/planner-client.ts:25`).
+  (`src/dashboard/spa/planner/planner-client.ts:25`<!-- anchor: PLANNER_POLL_INTERVAL_MS = 2000 -->).
 - **Reports for your coach.** [`report.session_results`](/reference/report) and
   [`report.weekly`](/reference/report) read the store and make no network call
   (`src/tools/report-tools.ts`, `site/coaches/index.md`).

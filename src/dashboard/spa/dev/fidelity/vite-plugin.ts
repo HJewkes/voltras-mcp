@@ -8,6 +8,7 @@ export const FIDELITY_MODE = 'fidelity';
 export const TITAN_SPECIFIERS: readonly string[] = [
   '@titan-design/react-ui',
   '@titan-design/react-ui/bodymap',
+  '@titan-design/react-ui/workout',
 ];
 // Parents that match children by component type would see the wrapper instead (Carousel checks its slides).
 export const FIDELITY_OPT_OUT: ReadonlySet<string> = new Set(['Carousel', 'CarouselSlide']);

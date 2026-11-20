@@ -160,7 +160,7 @@ device.configure_isokinetic {slot: "right", targetSpeedMmPerSec: 300, eccMode: "
 device.get_state; user reads the screen
 session.set_exercise {exerciseId, slot: "right"}     # if the exercise changed
 set.start {slot: "right", setPurpose: "probe"}       # a probe is not a working set
-… peak force per rep arrives in rep_finalized …
+… peak force per rep arrives in rep_finalized (body peak_force) …
 device.set_mode {slot: "right", mode: "WeightTraining"} when done; verify
 ```
 

@@ -31,12 +31,13 @@
 import { randomUUID } from 'node:crypto';
 
 import { todayLocal } from '../analytics/training-days.js';
-import { resolveCurrentBlock } from '../plan/current-block.js';
+import { resolveCurrentBlock, type CurrentBlockRead } from '../plan/current-block.js';
 
 import {
   buildPlanTreeView,
   nextOrderIndex,
   type ExerciseNameLookup,
+  type NextWorkoutScope,
   type PlanTreeRows,
   type PlanTreeView,
 } from './read-models/index.js';
@@ -119,10 +120,9 @@ export async function fetchPlanTree(
   opts: { programId?: string | undefined; active?: ActivePlanContext } = {},
 ): Promise<PlanTreeView> {
   const programs = await store.listTrainingPrograms({ includeArchived: true });
+  const read = opts.programId === undefined ? await resolveCurrentBlock(store, todayLocal()) : null;
   const program =
-    opts.programId !== undefined
-      ? programs.find((p) => p.id === opts.programId)
-      : ((await resolveCurrentBlock(store, todayLocal())).program ?? undefined);
+    read === null ? programs.find((p) => p.id === opts.programId) : (read.program ?? undefined);
 
   const rows: PlanTreeRows = {
     programs,
@@ -134,6 +134,7 @@ export async function fetchPlanTree(
     completedTemplateIds: new Set(),
     activeExerciseId: opts.active?.exerciseId ?? null,
     activeTemplateId: await resolveActiveTemplateId(store, opts.active?.sessionId),
+    nextWorkoutScope: nextWorkoutScope(read),
   };
   if (program === undefined) return buildPlanTreeView(rows, nameOf);
 
@@ -165,6 +166,19 @@ export async function fetchPlanTree(
     { ...rows, blocks, weeksByBlock, templatesByWeek, exercisesByTemplate, completedTemplateIds },
     nameOf,
   );
+}
+
+/**
+ * The scope `plan.next_workout` walks: an explicit program walks all of it; the
+ * default program walks only the block in force, and a gap or a program that
+ * has not started has nothing due.
+ */
+function nextWorkoutScope(read: CurrentBlockRead | null): NextWorkoutScope {
+  if (read !== null && (read.state === 'gap' || read.state === 'upcoming')) return { kind: 'none' };
+  if (read?.state === 'current' && read.block !== null) {
+    return { kind: 'block', blockId: read.block.id };
+  }
+  return { kind: 'program' };
 }
 
 /** The workout template the live session was attached to, when it was attached to one. */

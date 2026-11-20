@@ -31,21 +31,19 @@
  */
 import React from 'react';
 import { Text } from 'react-native';
+import { EmptyState, Link, Surface, Typography, useOnSurfaceColor } from '@titan-design/react-ui';
 import {
   BodyweightGoalCard,
-  EmptyState,
   GoalCard,
   GoalPriorityIndex,
   SessionsGoalCard,
-  Surface,
-  Typography,
-  useOnSurfaceColor,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
 
 import { PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
+import { routeHash } from '../routing.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
 import type { MassUnit } from '../live-page/mass.js';
 import { calibrationLine } from './calibration-copy.js';
@@ -63,7 +61,7 @@ import {
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
-import { unreviewedLine } from './review-copy.js';
+import { REVIEW_DAYS_LINK, unreviewedLine } from './review-copy.js';
 import { priorityIndexEntries, wholeBodyCards } from './whole-body-cards.js';
 
 /** `displayUnit` is the wall's chosen unit; the read models stay in lb. */
@@ -78,7 +76,7 @@ export function GoalsView(props: {
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
         <EmptyState
           title="No priorities declared"
-          description="Declare a priority with goal.declare_priorities to see it here."
+          description="Tell Claude which lift you want to improve to see it here."
         />
       </Surface>
     );
@@ -92,17 +90,34 @@ export function GoalsView(props: {
       {primary !== null && <PrimaryGoalCard row={primary} unit={displayUnit} />}
       <PerLiftGrid rows={liftRows(data)} narrow={narrow} unit={displayUnit} />
       <MuscleGrid rows={muscleCardRows(data, displayUnit)} narrow={narrow} />
-      <WholeBodySection data={data} narrow={narrow} />
+      <WholeBodySection data={data} narrow={narrow} unit={displayUnit} />
     </Surface>
   );
 }
 
-/** The one line saying how many days the counts below leave out (VW-514); nothing at zero. */
+const DAYS_HASH = routeHash({ name: 'days' });
+
+/**
+ * The one line saying how many days the counts below leave out (VW-514), and the way to
+ * mark them (VW-847); nothing at zero. The approved words stay as they are; the link follows.
+ */
 function UnreviewedNote(props: { unreviewedDays: number | undefined }): React.JSX.Element | null {
   const color = useOnSurfaceColor('secondary');
   const line = unreviewedLine(props.unreviewedDays);
   if (line === null) return null;
-  return <Text style={{ color, fontSize: 14 }}>{line}</Text>;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: SPACE.xs }}>
+      <Text style={{ color, fontSize: 14 }}>{line}</Text>
+      <Link
+        color="primary"
+        onPress={() => {
+          window.location.hash = DAYS_HASH;
+        }}
+      >
+        {REVIEW_DAYS_LINK}
+      </Link>
+    </div>
+  );
 }
 
 /** The lead priority's lift as the full goal card (plan §4, wall; VW-385). */
@@ -118,7 +133,7 @@ function PrimaryGoalCard(props: { row: GoalTargetRow; unit: MassUnit }): React.J
         basis={view.statusBasis}
         isPR={hasPR(view)}
         milestone={cardMilestone(view, props.unit)}
-        goal={cardChart(view)}
+        goal={cardChart(view, props.unit)}
       />
     </WithCalibrationNote>
   );
@@ -212,7 +227,7 @@ function PerLiftGrid(props: {
               basis={row.view.statusBasis}
               isPR={hasPR(row.view)}
               milestone={cardMilestone(row.view, props.unit)}
-              trend={cardTrend(row.view)}
+              trend={cardTrend(row.view, props.unit)}
             />
           </WithCalibrationNote>
         ))}
@@ -256,8 +271,9 @@ function MuscleGrid(props: {
 function WholeBodySection(props: {
   data: GoalsPageData;
   narrow: boolean;
+  unit: MassUnit;
 }): React.JSX.Element | null {
-  const cards = wholeBodyCards(props.data);
+  const cards = wholeBodyCards(props.data, props.unit);
   if (cards === null) return null;
   return (
     <PageSection title="Whole body">

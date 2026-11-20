@@ -108,7 +108,23 @@ export interface PlanTreeView {
   activeTemplateId: string | null;
   /** Exercise the live session is currently on, when any. */
   activeExerciseId: string | null;
+  /**
+   * The workout `plan.next_workout` would return for this program: the first one
+   * not yet trained, in program order and within {@link NextWorkoutScope}. Null
+   * when every workout in scope is trained or nothing is planned today (VW-949).
+   */
+  nextTemplateId: string | null;
 }
+
+/**
+ * Where `plan.next_workout` looks for the next workout. `block` is the block in
+ * force today; `program` walks every block (an explicit program, or one with no
+ * dated blocks); `none` is a gap or a program that has not started yet.
+ */
+export type NextWorkoutScope =
+  | { kind: 'program' }
+  | { kind: 'block'; blockId: string }
+  | { kind: 'none' };
 
 /** Everything `buildPlanTreeView` needs, already read out of the store. */
 export interface PlanTreeRows {
@@ -123,6 +139,8 @@ export interface PlanTreeRows {
   completedTemplateIds: ReadonlySet<string>;
   activeTemplateId?: string | null;
   activeExerciseId?: string | null;
+  /** Defaults to the whole program. */
+  nextWorkoutScope?: NextWorkoutScope;
 }
 
 /** Catalog name lookup. Returning `undefined` falls back to the raw exercise id. */
@@ -241,7 +259,31 @@ export function buildPlanTreeView(rows: PlanTreeRows, nameOf: ExerciseNameLookup
     program,
     activeTemplateId: rows.activeTemplateId ?? null,
     activeExerciseId: rows.activeExerciseId ?? null,
+    nextTemplateId:
+      program === null
+        ? null
+        : findNextTemplateId(program, rows.nextWorkoutScope ?? { kind: 'program' }),
   };
+}
+
+/**
+ * The first untrained workout in program order — the walk `plan.next_workout`
+ * (`plan-tools.ts`) runs against the store, run here over the built tree so the
+ * dashboard's default selection and the tool name the same workout.
+ */
+export function findNextTemplateId(
+  program: PlanProgramView,
+  scope: NextWorkoutScope,
+): string | null {
+  if (scope.kind === 'none') return null;
+  for (const block of program.blocks) {
+    if (scope.kind === 'block' && block.id !== scope.blockId) continue;
+    for (const week of block.weeks) {
+      const next = week.templates.find((t) => !t.completed);
+      if (next !== undefined) return next.id;
+    }
+  }
+  return null;
 }
 
 /**

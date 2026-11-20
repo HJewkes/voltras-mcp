@@ -36,12 +36,12 @@ export function exportStore(storePath: string, outDir: string): ExportManifest {
   }
 }
 
-/** An export writes a whole directory, so it refuses to share one. */
-function prepareOutDir(outDir: string): void {
+/** An export (or an anonymised one) writes a whole directory, so it refuses to share one. */
+export function prepareOutDir(outDir: string): void {
   mkdirSync(outDir, { recursive: true });
   const existing = readdirSync(outDir);
   if (existing.length > 0) {
-    throw new Error(`export refuses to write into a non-empty directory: ${outDir}`);
+    throw new Error(`refusing to write into a non-empty directory: ${outDir}`);
   }
 }
 

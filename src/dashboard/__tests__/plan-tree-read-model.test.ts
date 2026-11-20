@@ -7,7 +7,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildPlanTreeView, nextOrderIndex, type PlanTreeRows } from '../read-models/plan-tree.js';
+import {
+  buildPlanTreeView,
+  findNextTemplateId,
+  nextOrderIndex,
+  type PlanProgramView,
+  type PlanTreeRows,
+} from '../read-models/plan-tree.js';
 import type {
   StoredPlannedExercise,
   StoredTrainingBlock,
@@ -153,5 +159,48 @@ describe('nextOrderIndex', () => {
     // A gapped list (0, 5) has length 2 — appending at `length` would collide
     // with nothing today but silently reorder once index 2 exists.
     expect(nextOrderIndex([{ orderIndex: 0 }, { orderIndex: 5 }])).toBe(6);
+  });
+});
+
+describe('findNextTemplateId', () => {
+  /** Two one-week blocks of two workouts; `trained` ids are finished. */
+  function program(trained: string[]): PlanProgramView {
+    const templates = (ids: string[]) =>
+      ids.map((id, orderIndex) => ({
+        id,
+        name: id,
+        orderIndex,
+        exercises: [],
+        completed: trained.includes(id),
+      }));
+    const block = (id: string, orderIndex: number, ids: string[]) => ({
+      id,
+      name: id,
+      orderIndex,
+      weeksCount: 1,
+      weeks: [{ id: `${id}-wk`, orderIndex: 0, isDeload: false, templates: templates(ids) }],
+    });
+    return {
+      id: 'prog-1',
+      name: 'P',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      blocks: [block('blk-1', 0, ['a1', 'a2']), block('blk-2', 1, ['b1', 'b2'])],
+    };
+  }
+
+  it('returns the first untrained workout in program order', () => {
+    expect(findNextTemplateId(program(['a1', 'a2', 'b1']), { kind: 'program' })).toBe('b2');
+  });
+
+  it('walks only the block in force when scoped to one', () => {
+    expect(findNextTemplateId(program([]), { kind: 'block', blockId: 'blk-2' })).toBe('b1');
+    expect(findNextTemplateId(program(['b1', 'b2']), { kind: 'block', blockId: 'blk-2' })).toBe(
+      null,
+    );
+  });
+
+  it('names nothing in a gap, or once every workout is trained', () => {
+    expect(findNextTemplateId(program([]), { kind: 'none' })).toBeNull();
+    expect(findNextTemplateId(program(['a1', 'a2', 'b1', 'b2']), { kind: 'program' })).toBeNull();
   });
 });

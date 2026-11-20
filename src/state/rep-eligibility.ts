@@ -20,6 +20,7 @@
 // the rule holds across exercises, lifters and cable geometries.
 
 import { getPhaseRangeOfMotion, type Rep } from '@voltras/workout-analytics';
+import { median } from '../analytics/stats.js';
 
 /**
  * Concentric ROM more than this multiple of the median of the other reps (or
@@ -182,15 +183,8 @@ function peakVelocity(rep: Rep): number {
  * nothing can be called an outlier against them.
  */
 export function isOutlier(value: number, comparators: number[], ratio: number): boolean {
-  const reference = median(comparators);
+  const reference = median(comparators) ?? 0;
   if (reference <= 0) return false;
   const observed = value / reference;
   return observed > ratio || observed < 1 / ratio;
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length === 0) return 0;
-  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }

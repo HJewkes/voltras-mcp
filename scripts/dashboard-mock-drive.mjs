@@ -91,6 +91,10 @@
 //                           number repeats run to run. Off by default — this is
 //                           for `npm run docs:captures`, not for a demo. See
 //                           scripts/lib/mock-burst.mjs.
+//   --slot-load=left:90     per-slot load in lb (default `--load` each), for an
+//                           asymmetric bilateral pair
+//   --keep-open             skip `session.end`, so the Live page holds at rest
+//                           with every closed pair still on it
 //
 // Usage:
 //   npm run build && npm run build:dashboard
@@ -226,6 +230,8 @@ const PLAN = {
   reps: parsePerSlot(flag('reps'), 5),
   lagMs: parsePerSlot(flag('lag'), 0),
   stallAtSet: parseStall(flag('stall')),
+  loadLbs: parsePerSlot(flag('slot-load'), LOAD_LBS),
+  keepOpen: flags.has('keep-open'),
 };
 
 /**
@@ -518,7 +524,7 @@ async function runDual() {
     log(`slot ${slot} ← ${DEVICE_ID[slot]} (mock telemetry streaming)`);
   }
   await sleep(500);
-  for (const slot of SLOTS) await applyLoad(LOAD_LBS, slot);
+  for (const slot of SLOTS) await applyLoad(PLAN.loadLbs[slot], slot);
   if (PINNED) {
     // Wait out the one rep each adapter always streams on connect (only its own
     // set boundary can stop it), then arm each slot's burst size. Both happen
@@ -541,6 +547,10 @@ async function runDual() {
     if (s < SETS) await sleep(REST_MS);
   }
 
+  if (PLAN.keepOpen) {
+    log('--keep-open: sessions left open at rest');
+    return;
+  }
   for (const slot of SLOTS) await callTool('session.end', { slot });
   summarizeSlots(await snapshot(), 'sessions ended ');
   log(`dual workout complete: ${SETS} sets × ${SLOTS.length} slots through the real pipeline`);

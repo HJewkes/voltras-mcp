@@ -1,0 +1,27 @@
+{
+  "$schema": "merge-lint/1",
+  "level": "warn",
+  "scan": {
+    "include": ["**/*"],
+    "brief": [
+      "**/CLAUDE.md",
+      "**/AGENTS.md",
+      "**/SKILL.md",
+      "**/briefs/**",
+      "**/*.brief.md",
+      "profiles/*.json"
+    ]
+  },
+  "exclude": [
+    "**/*.test.*",
+    "**/__tests__/**",
+    "**/fixtures/**",
+    "**/testdata/**",
+    "**/CHANGELOG.md",
+    ".changeset/**",
+    "site/**",
+    "docs/**",
+    "**/README.md"
+  ],
+  "allow": []
+}

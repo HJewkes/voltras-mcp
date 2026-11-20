@@ -143,6 +143,16 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     source: CONFIG,
   },
   {
+    name: 'VMCP_PUSH_DETAIL',
+    section: 'Recording',
+    defaultValue: '`compact`',
+    accepts: '`compact` \\| `full`',
+    onInvalid: 'stops startup',
+    purpose:
+      'How much of `rep_finalized` and `set_ended` the client receives. `compact` sends the rep summary line and peak force, and one table row per rep at set close; `full` sends every per-rep field. `set.get` returns full rep detail either way.',
+    source: CONFIG,
+  },
+  {
     name: 'VMCP_REST_TIMER',
     section: 'Recording',
     defaultValue: '`off`',
@@ -190,6 +200,16 @@ export const ENVIRONMENT_VARIABLES: readonly EnvironmentVariable[] = [
     onInvalid: 'stops startup',
     purpose:
       'Legacy switch that sets the two variables above together. Either one set on its own wins over it.',
+    source: CONFIG,
+  },
+  {
+    name: 'VMCP_DEBUG_TOOLS',
+    section: 'Diagnostics',
+    defaultValue: '`off`',
+    accepts: '`on`',
+    onInvalid: 'uses the default',
+    purpose:
+      'Registers `device.send_raw` and `debug.recent_frames`. Without it neither tool is in `tools/list`. `device.send_raw` writes unchecked commands and can move the motor, and `debug.recent_frames` puts raw telemetry into the transcript, so turn it on for hardware debugging only. Any value other than `on` leaves both off.',
     source: CONFIG,
   },
   {

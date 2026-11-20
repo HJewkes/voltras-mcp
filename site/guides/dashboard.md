@@ -37,7 +37,7 @@ shows what the server records.
 - **Local.** The dashboard binds `127.0.0.1` only, so you open it on the machine that runs the
   server and no other machine can reach it (`src/dashboard/server.ts`).
 - **One per session.** Each Claude Code session runs its own server, and each server starts
-  its own dashboard on its own port (`src/server.ts:148-157`).
+  its own dashboard on its own port (`src/server.ts:148-157`<!-- anchor: resolveDashboardPort -->).
 - **Mostly read-only.** The live page and the session summary only read. The plan builder and
   the check-in page write, and each write needs a same-origin request that carries a per-boot
   write token (`src/dashboard/server.ts`, `src/dashboard/write-guard.ts`). The check-in page
@@ -46,15 +46,15 @@ shows what the server records.
 - **No effort reading yet.** The live page and the session summary show velocity loss and a
   fatigue verdict, but no measured RPE or reps in reserve. The live page does show an effort
   target under the prescription: the plan's RPE, or your tier's default target
-  (`src/dashboard/spa/live-page/model.ts:474-490`). The
+  (`src/dashboard/spa/live-page/model.ts:501-518`<!-- anchor: function deriveEffort -->). The
   [effort readout](/coming-soon/effort-readout) is coming soon.
 
 No capture on this site comes from a real Voltra. Most captures come from the real MCP
 tools running against the mock adapter (`VOLTRA_ADAPTER=mock`). The goals capture also seeds
 the store before boot: a prior-week set and, for the whole-body cards, five weeks of weigh-ins
-(`scripts/dashboard-mock-drive.mjs:241-296`). The body capture comes entirely from training
+(`scripts/dashboard-mock-drive.mjs:241-296`<!-- anchor: async function seedCut -->). The body capture comes entirely from training
 rows seeded into the store, because the per-muscle reads leave mock sets out
-(`src/docs/capture-shots.ts:165-176`).
+(`src/docs/capture-shots.ts:182-188`<!-- anchor: exclude mock sets -->).
 
 ## The screens
 
@@ -108,21 +108,21 @@ At phone width the stepper becomes a step count and the buttons stack:
 turns the dashboard on, and how to find its address. In short: call
 [`server.health`](/reference/server) and open the `dashboardUrl` it returns. The port is
 `7723` unless that port was busy, so read the address rather than typing it
-(`src/tools/server-tools.ts:252`).
+(`src/tools/server-tools.ts:254-256`<!-- anchor: falls back to an OS-assigned one -->).
 
 You can open the page at any point in a session. While a session is open, the server sends
 its finished sets with every update, so a page opened or reloaded mid-session shows them
-(`src/dashboard/spa/adapter.ts:758-769`). When the session ends, the live page clears its
+(`src/dashboard/spa/adapter.ts:299-304`<!-- anchor: finished sets, oldest-first -->). When the session ends, the live page clears its
 set log; the session summary shows the finished session.
 
 ## How it stays current
 
 The live page polls `/api/snapshot` every 2 seconds as a reconciliation backstop
-(`POLL_INTERVAL_MS`, `src/dashboard/spa/main.tsx:64`), with `/api/stream` (SSE) layered
+(`POLL_INTERVAL_MS`, `src/dashboard/spa/main.tsx:65`<!-- anchor: POLL_INTERVAL_MS = 2000 -->), with `/api/stream` (SSE) layered
 alongside it as the primary path for live phase/rep/velocity data and instant structural
 pushes (`src/dashboard/spa/live-stream.ts`). The plan builder is on neither the poll nor the
 stream cadence above. It re-polls `/api/plan-tree` on its own 2-second interval
-(`src/dashboard/spa/planner/planner-client.ts:25`), so an exercise added over MCP
+(`src/dashboard/spa/planner/planner-client.ts:25`<!-- anchor: PLANNER_POLL_INTERVAL_MS = 2000 -->), so an exercise added over MCP
 (`plan.exercise.create`) shows up without a reload.
 
 ## Tours

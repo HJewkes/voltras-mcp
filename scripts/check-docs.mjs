@@ -8,7 +8,10 @@
 // `site/changelog.md` now renders) and the `changelog.d/` fragments folded into it:
 //
 //   1. path         a cited repo path resolves                   FAILS
-//   2. line         a cited `file.ts:NNN` is within the file     FAILS
+//   2. line         a cited `file.ts:NNN` is within the file,    FAILS
+//                   and still holds the anchor token recorded
+//                   beside it (VW-925); a site page must anchor
+//                   every line citation
 //   3. tool         a cited `namespace.tool` is registered       FAILS
 //   4. protocol     an encoded device value reached a page       FAILS
 //   5. frontmatter  a hand-written site page declares its status,
@@ -40,6 +43,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  checkAnchorPlacement,
   checkPageFrontmatter,
   checkPathCitations,
   checkProtocolLeakage,
@@ -126,7 +130,13 @@ function resolveInRepo(citation) {
   const full = join(REPO_ROOT, citation);
   if (!existsSync(full)) return { kind: 'missing', lineCount: 0 };
   if (statSync(full).isDirectory()) return { kind: 'directory', lineCount: 0 };
-  return { kind: 'file', lineCount: readFileSync(full, 'utf8').split('\n').length };
+  const source = readFileSync(full, 'utf8').split('\n');
+  return { kind: 'file', lineCount: source.length, source };
+}
+
+function anchorFindings(page, text, citations) {
+  if (historical(page)) return [];
+  return checkAnchorPlacement(text, citations, { required: page.startsWith('site/') });
 }
 
 function gitLines(args) {
@@ -233,6 +243,7 @@ async function main() {
     const citations = historical(page) ? [] : extractPathCitations(text, repoRoots);
     const found = [
       ...checkPathCitations(citations, resolveInRepo),
+      ...anchorFindings(page, text, citations),
       ...(historical(page) ? [] : checkToolNames(text, registry, pipelines)),
       ...checkProtocolLeakage(text, { path: page, findEncodedValues, allowed: ALLOWED_TOKENS }),
       ...frontmatterFindings(page, text),

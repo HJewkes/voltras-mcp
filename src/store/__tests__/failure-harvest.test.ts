@@ -105,6 +105,27 @@ describe('evaluateFailureCandidate — criterion v1', () => {
     expect(result.inputs.reason).toContain('ROM collapsed');
   });
 
+  it('reads the final ROM against the middle ROM of an odd-length set', () => {
+    const result = evaluateFailureCandidate(
+      setOf([0.6, 0.62, 0.55, 0.48, 0.4], [0.4, 0.6, 0.5, 0.5, 0.45]),
+    );
+
+    expect(result.inputs.romRatio).toBe(0.9);
+  });
+
+  it('reads the final ROM against the mean of the middle two ROMs of an even-length set', () => {
+    const result = evaluateFailureCandidate(setOf([0.6, 0.62, 0.5, 0.4], [0.4, 0.6, 0.5, 0.3]));
+
+    expect(result.inputs.romRatio).toBe(0.667);
+  });
+
+  it('leaves romRatio unset and the ROM intact when no rep carries a ROM', () => {
+    const result = evaluateFailureCandidate(setOf([0.6, 0.62, 0.55, 0.48, 0.4], [0, 0, 0, 0, 0]));
+
+    expect(result.verdict).toBe('failure');
+    expect(result.inputs.romRatio).toBeUndefined();
+  });
+
   it('is not a candidate when the final rep never stalled', () => {
     const result = evaluateFailureCandidate(setOf([0.6, 0.62, 0.6, 0.58, 0.57], FULL_ROM));
 

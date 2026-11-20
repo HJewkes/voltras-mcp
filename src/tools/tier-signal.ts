@@ -32,14 +32,11 @@ import {
   validateHistory,
   type HistoricalTrainingSummary,
 } from './tier-history.js';
+import type { Tier, TierConfidence, TierSource } from '../profile/tier.js';
 
 export type { HistoricalTrainingSummary } from './tier-history.js';
-
-export type Tier = 'beginner' | 'intermediate' | 'advanced';
-
-export type TierConfidence = 'provisional' | 'confident';
-
-export type TierSource = 'default' | 'declared' | 'derived';
+// Re-exported while the remaining importers move to `src/profile/tier.ts` (VW-813).
+export type { Tier, TierConfidence, TierSource } from '../profile/tier.js';
 
 /** Which path raised the ceiling to intermediate, or `null` when it stayed at beginner. */
 export type TierCeilingBasis = 'logged_history' | 'returner' | null;

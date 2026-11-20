@@ -15,6 +15,8 @@ import { setPurposeOf, type PurposeBearing } from './set-purpose.js';
  */
 export interface WorkingSetCandidate extends PurposeBearing {
   weightLbs?: number | null;
+  /** Shared by the two sides of one live-paired bilateral effort. */
+  bilateralGroupId?: string | null;
 }
 
 /**
@@ -30,6 +32,9 @@ export interface WorkingSetCandidate extends PurposeBearing {
  *   2. Top load, for the (still common) unflagged warmups: a warmup is a
  *      sub-working-weight ramp-up, so treat the sets at the heaviest load as
  *      the working sets — the ones the rep band is actually prescribed against.
+ *      A bilateral pair is one effort with two sides (VW-951), so it ranks by
+ *      its heavier side and both sides stay or go together: a lighter side is
+ *      an asymmetry, not a warm-up.
  *
  * `sets` MUST already be scoped to one exercise. The top-load rank is relative
  * to whatever it is given, so a mixed list resolves to the heaviest movement in
@@ -47,14 +52,29 @@ export function selectWorkingSets<T extends WorkingSetCandidate>(sets: readonly 
   // Only weighted sets can be ranked by load. When none recorded a weight there
   // is no basis to discriminate, so every working set is kept — which is what
   // the pre-v6 sentinel produced anyway (all loads equal at 0).
-  const loads = working
-    .map((set) => set.weightLbs)
-    .filter((w): w is number => w !== undefined && w !== null);
+  const loadOf = effortLoads(working);
+  const loads = working.map(loadOf).filter((w): w is number => w !== undefined);
   if (loads.length === 0) return working;
   const topLoad = Math.max(...loads);
-  return working.filter(
-    (set) => set.weightLbs !== undefined && set.weightLbs !== null && set.weightLbs >= topLoad,
-  );
+  return working.filter((set) => (loadOf(set) ?? -Infinity) >= topLoad);
+}
+
+/** A set's own load, or for one side of a bilateral pair, the heavier side's. */
+function effortLoads<T extends WorkingSetCandidate>(
+  sets: readonly T[],
+): (set: T) => number | undefined {
+  const pairTop = new Map<string, number>();
+  for (const set of sets) {
+    const groupId = set.bilateralGroupId ?? undefined;
+    const load = set.weightLbs ?? undefined;
+    if (groupId === undefined || load === undefined) continue;
+    pairTop.set(groupId, Math.max(load, pairTop.get(groupId) ?? load));
+  }
+  return (set) => {
+    const groupId = set.bilateralGroupId ?? undefined;
+    const pairLoad = groupId === undefined ? undefined : pairTop.get(groupId);
+    return pairLoad ?? set.weightLbs ?? undefined;
+  };
 }
 
 /**

@@ -16,7 +16,11 @@ import {
   getSetRepPeakVelocities,
   getSetTempoSeconds,
 } from '@voltras/workout-analytics/view';
-import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
+import type {
+  ExerciseCardProps,
+  SetRowProps,
+  TempoDisplayProps,
+} from '@titan-design/react-ui/workout';
 import { evaluateE1RMPr } from '../../../analytics/e1rm-pr';
 import { type WorkoutSetView } from '../adapter';
 import { convertMass, type MassUnit } from '../live-page/mass';

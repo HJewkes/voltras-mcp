@@ -28,6 +28,8 @@
 //     ADJUSTED SEM (SEM × √2) — a single-occasion SEM understates the error in
 //     a change score, which carries noise from both occasions (VW-271)
 
+import { median } from '../analytics/stats.js';
+
 /** A single force sample captured during an isometric trial. */
 export interface ForceSample {
   /** Milliseconds since the start of the trial (`0` for the first sample). */
@@ -373,7 +375,7 @@ export function aggregateSide(trials: TrialAnalysis[]): SideAnalysis {
     // Per the brief: "Trials with CV > 15% vs. session mean are discarded;
     // max 4 trials per side." We use median-divergence as the practical
     // robust-to-outliers proxy for "vs. session mean."
-    const peakMedian = median(validForGate.map((t) => t.peakForceLbs));
+    const peakMedian = median(validForGate.map((t) => t.peakForceLbs)) ?? 0;
     if (peakMedian > 0) {
       for (const t of filtered) {
         if (!t.valid) continue;
@@ -832,13 +834,6 @@ function mean(xs: number[]): number {
   let sum = 0;
   for (const x of xs) sum += x;
   return sum / xs.length;
-}
-
-function median(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 function coefficientOfVariation(xs: number[]): number {

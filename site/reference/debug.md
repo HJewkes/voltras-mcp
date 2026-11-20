@@ -6,6 +6,10 @@
 
 ## `debug.recent_frames`
 
+<Badge type="danger" text="debug only" />
+
+> **Debug only.** Registered only when `VMCP_DEBUG_TOOLS=on`; without it the tool is not in `tools/list`. See [environment variables](./environment-variables).
+
 DIAGNOSTIC ONLY.
 
 Returns the last `n` telemetry frames the bridge captured, oldest first, from a process-local ring buffer (default capacity 256, override `VMCP_DEBUG_BUFFER_SIZE`). `n` is capped at what the buffer currently holds, and a server restart empties it. Values are typed and DEVICE-NATIVE — not the converted units the session/set surfaces report — so never quote a number from here to a user, and never compare one against a recorded set. For the decoded bridge-level view (rep/set boundaries, settings updates, connection changes) use debug.recent_events instead.

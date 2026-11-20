@@ -96,6 +96,20 @@ describe('server.health', () => {
     expect(body.effortCue).toBe('on');
   });
 
+  it('reports whether the raw-device diagnostics are registered (VW-935)', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false, midSetMode: 'off' },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info', debugTools: 'on' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    expect(body.debugTools).toBe('on');
+  });
+
   it('reports channelsWired when a real publisher is installed', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {

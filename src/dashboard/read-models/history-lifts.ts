@@ -18,6 +18,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { plateauReferenceStepLbs } from '../../analytics/stall-step.js';
+import { median } from '../../analytics/stats.js';
 import {
   evidenceOf,
   groupRows,
@@ -134,12 +135,6 @@ function slopeOver(period: string, points: readonly LiftSessionPoint[]): History
   };
 }
 
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-}
-
 /** Trailing windows ending at each session, merged where they overlap. */
 function rawWindows(series: Series, step: number): { start: number; end: number; flat: boolean }[] {
   const { plateauMinDays } = HISTORY_LIFT_CONSTANTS;
@@ -166,7 +161,7 @@ function rawWindows(series: Series, step: number): { start: number; end: number;
 export function plateauWindows(points: readonly LiftSessionPoint[]): HistoryPlateauWindow[] {
   const valued = points.filter((point) => point.bestE1RM !== null);
   if (valued.length === 0) return [];
-  const step = plateauReferenceStepLbs(median(valued.map((point) => point.topLoad)));
+  const step = plateauReferenceStepLbs(median(valued.map((point) => point.topLoad)) ?? Number.NaN);
   const series = seriesOf(valued, (p) => p.bestE1RM);
   return rawWindows(series, step)
     .filter(({ start, end }) => end - start + 1 >= HISTORY_LIFT_CONSTANTS.plateauMinSessions)

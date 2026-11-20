@@ -78,6 +78,7 @@ import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-sc
 import { selectWorkingSets } from '../store/working-sets.js';
 import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises/movement-class.js';
 import { computePercentIncrement } from '../analytics/percent-increment.js';
+import { classifyRepsAgainstBand } from '../analytics/rep-band.js';
 import {
   LOCAL_USER_ID,
   type AppendBlockScheduleInput,
@@ -1907,9 +1908,9 @@ function tallyRepBand(
   let inBand = 0;
   let missed = 0;
   for (const set of workingSets) {
-    const count = set.reps.length;
-    if (count >= repsHigh) hitHigh += 1;
-    else if (count >= targetRepsLow) inBand += 1;
+    const band = classifyRepsAgainstBand(set.reps.length, targetRepsLow, repsHigh);
+    if (band === 'over') hitHigh += 1;
+    else if (band === 'in') inBand += 1;
     else missed += 1;
   }
   return {

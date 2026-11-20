@@ -9,7 +9,7 @@
 
 import { dayFrequencyCredit, type SlugAttribution } from '../exercises/muscle-attribution.js';
 import type { TitanMuscleGroup } from '../exercises/muscle-map.js';
-import type { Tier, TierConfidence } from '../tools/tier-signal.js';
+import type { Tier, TierConfidence } from '../profile/tier.js';
 import {
   isRestTemplate,
   trainingDayKey,

@@ -68,12 +68,13 @@ const STRENGTH: MuscleStrengthView = {
   muscles: [],
 };
 
-/** Week and strength answer; plan 404s (no active week) and recovery fails. */
+/** Week and strength answer; plan answers null (no active week) and recovery fails. */
 function stubRoutes(): void {
   vi.stubGlobal('fetch', (url: string) => {
     if (url === '/api/muscle-week') return Promise.resolve(Response.json(week()));
     if (url === '/api/muscle-strength') return Promise.resolve(Response.json(STRENGTH));
-    return Promise.resolve(new Response('{}', { status: url === '/api/muscle-plan' ? 404 : 500 }));
+    if (url === '/api/muscle-plan') return Promise.resolve(Response.json(null));
+    return Promise.resolve(new Response('{}', { status: 500 }));
   });
 }
 

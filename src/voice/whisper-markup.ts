@@ -1,14 +1,13 @@
 // whisper.cpp transcript cleanup (VMCP-02.83).
 //
-// `nodejs-whisper` returns whisper-cli's stdout verbatim, and whisper-cli prints
-// one line per segment with timestamp markup in front of the words:
+// `nodejs-whisper`'s `nodewhisper` returns one line per segment with timestamp
+// markup in front of the words:
 //
 //   "\n[00:00:00.000 --> 00:00:01.100]   Wait, stop the wait.\n"
 //
-// whisper-cli can suppress that (`-nt`), but nodejs-whisper 0.3.0 builds its
-// flag string from a closed whitelist (`WhisperOptions`) that has no
-// no-timestamps entry, so the flag is unreachable through the package. We clean
-// the text on our side of the boundary instead.
+// The producer now reads `transcribeDetailed().text`, which has no timestamps
+// but can still hold non-speech tags, and a future backend or call path may
+// bring the markup back. We clean the text on our side of the boundary.
 //
 // This is a SAFETY path, not cosmetics: `routeTranscript` only accepts a stop
 // phrase inside a short word budget, and the markup spends that budget on

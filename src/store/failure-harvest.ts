@@ -25,6 +25,7 @@
 import { getPhaseMeanVelocity, getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
 import { resistanceFamilyOf, type ResistanceFamily } from '../analytics/resistance-family.js';
+import { median } from '../analytics/stats.js';
 import { setPurposeOf } from './set-purpose.js';
 import type { SetPurpose, StoredSet } from './types.js';
 import { normaliseVelocityToMps } from './velocity-units.js';
@@ -257,15 +258,9 @@ function finalRomRatio(reps: Rep[]): number | undefined {
   const roms: number[] = reps.map((rep) => getRepRangeOfMotion(rep)).filter((r) => r > 0);
   if (roms.length === 0) return undefined;
   const last = getRepRangeOfMotion(reps[reps.length - 1]);
-  const median = medianOf(roms);
-  if (!(median > 0)) return undefined;
-  return round3(last / median);
-}
-
-function medianOf(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  const setMedian = median(roms) ?? 0;
+  if (!(setMedian > 0)) return undefined;
+  return round3(last / setMedian);
 }
 
 function concentricMeanMps(rep: Rep): number {

@@ -22,17 +22,13 @@
  * raw hex.
  */
 import React from 'react';
+import { Caption, EmptyState, Surface, Typography, useSurfaceMode } from '@titan-design/react-ui';
 import {
-  Caption,
-  EmptyState,
   MetricTiles,
   MuscleStrip,
   PrBadge,
-  Surface,
-  Typography,
-  useSurfaceMode,
   type MetricTileData,
-} from '@titan-design/react-ui';
+} from '@titan-design/react-ui/workout';
 import {
   BodyMap,
   BodyMapDetailPanel,
@@ -42,6 +38,7 @@ import {
   type VolumeStatus,
 } from '@titan-design/react-ui/bodymap';
 
+import { localDate } from '../../../analytics/training-days.js';
 import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
@@ -167,7 +164,7 @@ export function BodyView(props: BodyViewProps): React.JSX.Element {
         <MuscleStrip data={muscleStripData(data.week)} onMusclePress={drill?.onMusclePress} />
       </PanelCard>
       {selected === null ? null : (
-        <MuscleSheet slug={selected} data={data} onClose={drill?.onClose} />
+        <MuscleSheet slug={selected} data={data} narrow={narrow} onClose={drill?.onClose} />
       )}
     </Surface>
   );
@@ -188,7 +185,7 @@ function FigurePanel(props: {
   const { highlighted, onMusclePress } = props;
   return (
     <div style={{ flex: '1 1 0', minWidth: 0 }}>
-      <PanelCard title={`Week of ${props.weekStart.slice(0, 10)}`}>
+      <PanelCard title={`Week of ${localDate(props.weekStart)}`}>
         <div
           style={{
             display: 'flex',
@@ -216,19 +213,43 @@ function FigurePanel(props: {
 }
 
 /**
- * The right side-sheet over the figures. Titan's panel owns the slide, the
+ * The muscle's sheet: titan's right side-sheet over the figures on the wall,
+ * its bottom slide-up sheet on a phone. Titan's panel owns the slide, the
  * backdrop, Escape and focus; every dismiss it offers calls `onClose`, which
  * pops one drill layer. A slug the week does not carry draws no sheet.
  */
 function MuscleSheet(props: {
   slug: string;
   data: BodyPageData;
+  narrow: boolean;
   onClose: (() => void) | undefined;
 }): React.JSX.Element | null {
   const sheet = muscleSheetProps(props.slug, props.data);
   if (sheet === null) return null;
-  return <BodyMapDetailPanel {...sheet} isOpen onClose={props.onClose ?? noop} />;
+  const onClose = props.onClose ?? noop;
+  if (!props.narrow) return <BodyMapDetailPanel {...sheet} isOpen onClose={onClose} />;
+  return (
+    <div style={PHONE_SHEET_HOST} data-testid="body-phone-sheet-host">
+      <BodyMapDetailPanel {...sheet} placement="bottom" isOpen onClose={onClose} />
+    </div>
+  );
 }
+
+/**
+ * The phone sheet's frame: the viewport itself (VW-947). Titan's panel fills
+ * its nearest positioned ancestor, which on a phone is the whole stacked page,
+ * several screens tall, so a bottom sheet would dock below the fold. The panel
+ * also focuses its sheet while it still sits off screen at the start of the
+ * slide, and the browser scrolls the nearest scrollable box to reveal it; the
+ * page's own scroller took that scroll and pushed the whole page, sheet
+ * included, off the left edge. `clip` is not scrollable, so nothing can.
+ */
+const PHONE_SHEET_HOST: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  overflow: 'clip',
+  zIndex: 20,
+};
 
 function noop(): void {}
 

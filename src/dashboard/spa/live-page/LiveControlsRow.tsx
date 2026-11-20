@@ -1,7 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import { View, Text, type LayoutChangeEvent } from 'react-native';
 import {
-  TempoDisplay,
   ActivityIcon,
   AlertTriangleIcon,
   CircleSlashIcon,
@@ -10,6 +9,7 @@ import {
   alpha,
   type IconProps,
 } from '@titan-design/react-ui';
+import { TempoDisplay } from '@titan-design/react-ui/workout';
 import { type DashboardModel } from './model';
 
 // Verdict STATUS tones (success/warning/error) for the alert cue — semantic status colours,

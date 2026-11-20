@@ -3061,6 +3061,35 @@ describe('bilateral group id at finalize', () => {
     expect(rows.get(PARTNER_ID)?.bilateralGroupId).toBeTruthy();
   });
 
+  it('stamps the pairing and the bound side onto both slots live completed sets', async () => {
+    const h = setup({ bindings: { 'AA:BB:CC:DD:EE:01': 'left' } });
+    backWithMap(h, [partnerRow(12)]);
+    const partnerLive = new LiveState();
+    partnerLive.startSession({
+      sessionId: 'sess-R',
+      startedAt: PARTNER_START,
+      setIds: [],
+      status: 'active',
+    });
+    partnerLive.startSet({
+      setId: PARTNER_ID,
+      sessionId: 'sess-R',
+      startedAt: PARTNER_START,
+      reps: [],
+      status: 'active',
+    });
+    partnerLive.endSet();
+    h.state.slots.set('secondary', { slotId: 'secondary', live: partnerLive } as never);
+
+    await closePairedSet(h, 11, 12);
+
+    const [own] = h.live.snapshotCompletedSets();
+    const [partner] = partnerLive.snapshotCompletedSets();
+    expect(own.bilateralGroupId).toBeTruthy();
+    expect(own.side).toBe('left');
+    expect(partner.bilateralGroupId).toBe(own.bilateralGroupId);
+  });
+
   it('leaves an unpaired set with NO group id (a gap, never a group of one)', async () => {
     const h = setup();
     const rows = backWithMap(h, []);

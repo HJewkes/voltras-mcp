@@ -195,15 +195,15 @@ Do not plan any of these while the mount rating is unknown (VW-274, open). Isome
 
 ## 13. Debug (on an explicit request only)
 
-| Tool                        |     | When                                                          | The rule that matters                                                                   |
-| --------------------------- | --- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `debug.recent_events`       | D   | "What just happened?"                                         | Your first debug read                                                                   |
-| `debug.recording_status`    | D   | Is the flight recorder on                                     |                                                                                         |
-| `debug.push_test_channel`   | W D | Does push reach this session                                  | A missing event means the launch flag did not register; fall back to polling            |
-| `debug.confirm_channel`     | W D | Confirm the test event arrived                                |                                                                                         |
-| `debug.compare_rep_streams` | D   | Rep counts disagree                                           | Report the split. The device counts reps                                                |
-| `debug.recent_frames`       | D   | Only when the user asks for low-level capture                 | **Never quote its content** in chat, notes, tasks or commits                            |
-| `device.send_raw`           | W   | Only on the user's explicit request, in a validation campaign | Needs `confirm: true`. It can move the motor. **Never quote what was sent or received** |
+| Tool                        |     | When                                                                                               | The rule that matters                                                                   |
+| --------------------------- | --- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `debug.recent_events`       | D   | "What just happened?"                                                                              | Your first debug read                                                                   |
+| `debug.recording_status`    | D   | Is the flight recorder on                                                                          |                                                                                         |
+| `debug.push_test_channel`   | W D | Does push reach this session                                                                       | A missing event means the launch flag did not register; fall back to polling            |
+| `debug.confirm_channel`     | W D | Confirm the test event arrived                                                                     |                                                                                         |
+| `debug.compare_rep_streams` | D   | Rep counts disagree                                                                                | Report the split. The device counts reps                                                |
+| `debug.recent_frames`       | D   | Only when the user asks for low-level capture. Absent unless `VMCP_DEBUG_TOOLS=on`                 | **Never quote its content** in chat, notes, tasks or commits                            |
+| `device.send_raw`           | W   | Only on the user's explicit request, in a validation campaign. Absent unless `VMCP_DEBUG_TOOLS=on` | Needs `confirm: true`. It can move the motor. **Never quote what was sent or received** |
 
 ## Resources and push events
 

@@ -196,8 +196,8 @@ describe('the v44 step, from a store created at v43', () => {
 
     await openSqliteTestStore({ path }).close();
 
-    expect(SCHEMA_VERSION).toBe(44);
-    expect(userVersion(path)).toBe(44);
+    expect(SCHEMA_VERSION).toBe(45);
+    expect(userVersion(path)).toBe(45);
     expect(indexNames(path)).toContain(INDEX);
     expect(rows(path)).toEqual(before);
   });

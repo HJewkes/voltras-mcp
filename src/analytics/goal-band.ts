@@ -28,7 +28,7 @@
 import { dietPhaseTolerance, type DietPhaseState } from './diet-phase-tolerance.js';
 import type { DietPhase } from '../store/diet-phase.js';
 import type { BaselineState } from '../store/types.js';
-import type { Tier } from '../tools/tier-signal.js';
+import type { Tier } from '../profile/tier.js';
 
 /**
  * Every magnitude the band is built from, with its source. No entry here is
