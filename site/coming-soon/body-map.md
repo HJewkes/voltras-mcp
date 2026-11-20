@@ -105,7 +105,7 @@ grow, the range that helps most, and the most you can recover from. They are the
 for everyone. They are copied reference values, not numbers
 learned from your training (`src/dashboard/read-models/muscle-week.ts:17-21`<!-- anchor: LANDMARKS ARE POPULATION DEFAULTS -->,
 `src/dashboard/read-models/muscle-week.ts:61-78`<!-- anchor: POPULATION_VOLUME_LANDMARKS -->). The page says so under This week
-(`src/dashboard/spa/body/BodyView.tsx:333-337`<!-- anchor: landmarkBasis -->). Read a muscle's colour as "how this week compares
+(`src/dashboard/spa/body/BodyView.tsx:337-341`<!-- anchor: landmarkBasis -->). Read a muscle's colour as "how this week compares
 to a typical lifter," not as "how this week compares to what you can recover from."
 
 Landmarks fitted to you do not exist yet. That is a known limitation (VW-146), not something
@@ -114,7 +114,7 @@ this page is waiting on.
 ## Recovery: the last-trained line <Badge type="warning" text="Coming soon" />
 
 Tapping a muscle opens a side sheet over the figures
-(`src/dashboard/spa/body/BodyView.tsx:162-164`<!-- anchor: onMusclePress -->, `src/dashboard/spa/body/BodyView.tsx:212-223`<!-- anchor: function MuscleSheet -->).
+(`src/dashboard/spa/body/BodyView.tsx:165-167`<!-- anchor: onMusclePress -->, `src/dashboard/spa/body/BodyView.tsx:216-227`<!-- anchor: function MuscleSheet -->).
 Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
 (`src/dashboard/server.ts:694-696`<!-- anchor: /api/muscle-recovery -->, `src/dashboard/spa/body/body-sheet-model.ts:114`<!-- anchor: recoveryLine( -->). The line
 states what happened, when you last trained the muscle and how that session went against the

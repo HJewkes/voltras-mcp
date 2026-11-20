@@ -39,7 +39,7 @@ about the wall page that draws them.
 ## What the page shows <Badge type="warning" text="Coming soon" />
 
 The page asks the dashboard for your priorities, then for each priority's progress, every
-2 seconds (`src/dashboard/spa/goals/use-goals-poll.ts:26-47`<!-- anchor: setInterval(() => void poll(), POLL_INTERVAL_MS) -->,
+2 seconds (`src/dashboard/spa/goals/use-goals-poll.ts:32-53`<!-- anchor: setInterval(() => void poll(), POLL_INTERVAL_MS) -->,
 `src/dashboard/spa/goals/goals-client.ts:32-57`<!-- anchor: export async function fetchAllGoalProgress -->). If one priority's progress fails to load,
 only that priority shows nothing; the rest of the page still draws
 (`src/dashboard/spa/goals/goals-client.ts:44-55`<!-- anchor: return [row.priority.id, []] -->).
@@ -64,7 +64,7 @@ accepting a real goal; that check waits on your first declared priority (VW-360)
 
 **The unreviewed-days count is shown.** When some days are left out of the counts until you
 review them, a line at the top of the page says how many
-(`src/dashboard/spa/goals/GoalsView.tsx:89`<!-- anchor: UnreviewedNote unreviewedDays -->, `src/dashboard/spa/goals/GoalsView.tsx:100-107`<!-- anchor: function UnreviewedNote -->).
+(`src/dashboard/spa/goals/GoalsView.tsx:94`<!-- anchor: UnreviewedNote unreviewedDays -->, `src/dashboard/spa/goals/GoalsView.tsx:105-112`<!-- anchor: function UnreviewedNote -->).
 A page that lets you review those days so they count is VW-901.
 
 **The block week is served but not drawn.** The dashboard sends the current block week
