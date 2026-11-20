@@ -154,6 +154,8 @@ function makeStore(): SessionStore & {
     listTrainingDayInstants: vi.fn(async () => []),
     listSessionReviewRows: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
+    // VW-593: next_workout's deloadAdvisory reads prior ladder decisions.
+    listAdvisoryDecisions: vi.fn(async () => []),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
     listTrainingPrograms: vi.fn(async () => []),
