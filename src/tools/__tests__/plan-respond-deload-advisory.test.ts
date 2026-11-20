@@ -172,6 +172,67 @@ describe('plan.respond_deload_advisory', () => {
     });
   });
 
+  it('keeps a declined rung suppressed when an unflagged sibling exercise ages out of the window', async () => {
+    // Arrange
+    await recorder.recordWeekly([6, 4, 3]);
+    for (const daysAgo of [20.5, 13.5, 6.5]) {
+      await recorder.recordSession({ daysAgo, reps: 5, exerciseId: 'synthetic-fly' });
+    }
+    expect(await nextAdvisory()).toMatchObject({ status: 'advise', rung: 'recovery_session' });
+    await respond('declined');
+    vi.setSystemTime(new Date(NOW.getTime() + DAY_MS));
+
+    // Act
+    const advisory = await nextAdvisory();
+
+    // Assert
+    expect(advisory).toMatchObject({ status: 'suppressed', rung: null });
+  });
+
+  it('does not re-offer a smaller rung on unchanged evidence when one declined muscle recovers', async () => {
+    // Arrange
+    await recorder.recordWeekly([6, 4, 3]);
+    await recorder.recordWeekly([6, 4, 3], 'synthetic-curl');
+    expect(await nextAdvisory()).toMatchObject({ status: 'advise', rung: 'recovery_half_week' });
+    await respond('declined');
+    await recorder.recordSession({ daysAgo: -0.5, reps: 8, exerciseId: 'synthetic-curl' });
+    vi.setSystemTime(new Date(NOW.getTime() + DAY_MS));
+
+    // Act
+    const advisory = await nextAdvisory();
+
+    // Assert
+    expect(advisory).toMatchObject({ status: 'suppressed', rung: null });
+  });
+
+  it('re-offers once one of two answered muscles has a newer confirming session', async () => {
+    // Arrange
+    await recorder.recordWeekly([6, 4, 3]);
+    await recorder.recordWeekly([6, 4, 3], 'synthetic-curl');
+    await respond('declined');
+    await recorder.recordSession({ daysAgo: -0.5, reps: 2, exerciseId: 'synthetic-curl' });
+    vi.setSystemTime(new Date(NOW.getTime() + DAY_MS));
+
+    // Act
+    const advisory = await nextAdvisory();
+
+    // Assert
+    expect(advisory).toMatchObject({ status: 'advise', rung: 'recovery_half_week' });
+  });
+
+  it('suppresses the same evidence after an accept too', async () => {
+    // Arrange
+    await recorder.recordWeekly([6, 4, 3]);
+
+    // Act
+    await respond('accepted');
+    const advisory = await nextAdvisory();
+
+    // Assert
+    expect(advisory).toMatchObject({ status: 'suppressed', rung: null });
+    expect(advisory.reasoning).toContain('accepted');
+  });
+
   it('records nothing, with the reason, when no rung is open', async () => {
     // Arrange
     await recorder.recordWeekly([6, 6, 7]);

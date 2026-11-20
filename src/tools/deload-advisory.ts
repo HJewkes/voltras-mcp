@@ -13,9 +13,9 @@
 // `isEligibleForComparison`, the filter the drift and MRV guards already use.
 //
 // ANSWERS (VW-594). `recordDeloadResponse` files the lifter's accept or decline
-// as one `advisory_decisions` row and writes nothing else. An answered rung
-// reads `suppressed` until a newer session changes the evidence it was filed
-// against.
+// as one `advisory_decisions` row and writes nothing else. Either answer makes
+// the rung read `suppressed` until some confirmed muscle has a newer confirming
+// session than the one the answer was filed against.
 
 import type { MrvGuardVerdict, MrvUnderperformanceVerdict } from '@voltras/workout-analytics';
 
@@ -92,11 +92,32 @@ export type DeloadAdvisoryRead =
   | (AdvisoryCore & Pick<DeloadAdvisory, 'muscles'>)
   | AdviseRead;
 
+/**
+ * Per confirmed muscle, the session id of its newest flagged check. This is the
+ * evidence an answer is filed against; sibling exercises that never flagged do
+ * not move it, so their ageing out of the window re-offers nothing.
+ */
+type ConfirmingSessions = Record<string, string>;
+
+/** The read, with the evidence key an answer to it would be filed against. */
+export interface DeloadAssessment {
+  read: DeloadAdvisoryRead;
+  confirmingSessions: ConfirmingSessions;
+}
+
 /** The ladder advisory as it stands at `now`, always explained, never applied. */
 export async function buildDeloadAdvisory(
   deps: BuildDeloadAdvisoryDeps,
   context: DeloadAdvisoryContext,
 ): Promise<DeloadAdvisoryRead> {
+  return (await assessDeloadAdvisory(deps, context)).read;
+}
+
+/** {@link buildDeloadAdvisory} plus the evidence key `recordDeloadResponse` files. */
+export async function assessDeloadAdvisory(
+  deps: BuildDeloadAdvisoryDeps,
+  context: DeloadAdvisoryContext,
+): Promise<DeloadAssessment> {
   const muscles = await collectDeloadBreaches(deps, context.now);
   const tier = await getTierSignal(deps, LOCAL_USER_ID, context.now.toISOString());
   const decisions = await deps.store.listAdvisoryDecisions(LOCAL_USER_ID, {
@@ -109,8 +130,19 @@ export async function buildDeloadAdvisory(
     priorDecisions: toPriorLadderDecisions(decisions),
     now: context.now,
   });
-  const answer = advisory.status === 'advise' ? findAnswer(decisions, advisory) : undefined;
-  return answer === undefined ? toAdvisoryRead(advisory) : answeredVerdict(answer);
+  const confirmingSessions = confirmingSessionsOf(muscles);
+  const answer =
+    advisory.status === 'advise' ? findAnswer(decisions, confirmingSessions) : undefined;
+  const read = answer === undefined ? toAdvisoryRead(advisory) : answeredVerdict(answer);
+  return { read, confirmingSessions };
+}
+
+function confirmingSessionsOf(muscles: readonly CollectedMuscleSignal[]): ConfirmingSessions {
+  return Object.fromEntries(
+    muscles.flatMap((signal) =>
+      signal.confirmedBy === undefined ? [] : [[signal.muscle, signal.confirmedBy]],
+    ),
+  );
 }
 
 function toAdvisoryRead(advisory: DeloadAdvisory): DeloadAdvisoryRead {
@@ -127,7 +159,7 @@ function isAdviseRead(read: DeloadAdvisoryRead): read is AdviseRead {
   return read.status === 'advise' && 'respondWith' in read;
 }
 
-/** What an answer is filed against: each confirmed muscle and the sessions that confirmed it. */
+/** Each confirmed muscle and the sessions behind it, filed so the answer can be reproduced. */
 function answeredEvidence(muscles: DeloadAdvisory['muscles']): Record<string, unknown>[] {
   return muscles
     .filter((signal) => signal.state === 'confirmed')
@@ -140,19 +172,35 @@ function answeredEvidence(muscles: DeloadAdvisory['muscles']): Record<string, un
     }));
 }
 
+function isAnswered(decision: StoredAdvisoryDecision): boolean {
+  return decision.userResponse === 'accepted' || decision.userResponse === 'declined';
+}
+
+function filedSessions(decision: StoredAdvisoryDecision): ConfirmingSessions {
+  const filed = decision.inputs.confirmingSessions;
+  return typeof filed === 'object' && filed !== null ? (filed as ConfirmingSessions) : {};
+}
+
 /**
- * The newest answer filed against exactly this evidence. Any later session of
- * a confirmed muscle changes its session ids, which is what re-offers the rung.
+ * The newest answer that covers the current evidence, when every confirmed
+ * muscle's newest confirming session has already been answered. Only a muscle
+ * with a newer confirming session re-offers a rung: one muscle recovering does
+ * not re-ask a smaller rung on the others' unchanged evidence.
  */
 function findAnswer(
   decisions: readonly StoredAdvisoryDecision[],
-  advisory: DeloadAdvisory,
+  current: ConfirmingSessions,
 ): StoredAdvisoryDecision | undefined {
-  const evidence = JSON.stringify(answeredEvidence(advisory.muscles));
-  return decisions.find(
-    (decision) =>
-      (decision.userResponse === 'accepted' || decision.userResponse === 'declined') &&
-      JSON.stringify(decision.inputs.muscles) === evidence,
+  const pairs = Object.entries(current);
+  const answered = decisions.filter(isAnswered);
+  const answers = (muscle: string, sessionId: string) => (decision: StoredAdvisoryDecision) =>
+    filedSessions(decision)[muscle] === sessionId;
+  const covered =
+    pairs.length > 0 &&
+    pairs.every(([muscle, sessionId]) => answered.some(answers(muscle, sessionId)));
+  if (!covered) return undefined;
+  return answered.find((decision) =>
+    pairs.some(([muscle, sessionId]) => answers(muscle, sessionId)(decision)),
   );
 }
 
@@ -176,7 +224,7 @@ function answeredVerdict(answer: StoredAdvisoryDecision): DeloadAdvisoryRead {
  */
 export async function recordDeloadResponse(
   store: SessionStore,
-  read: DeloadAdvisoryRead,
+  { read, confirmingSessions }: DeloadAssessment,
   response: 'accepted' | 'declined',
   now: Date,
 ): Promise<{ recorded: boolean; reason: string }> {
@@ -188,7 +236,7 @@ export async function recordDeloadResponse(
     userId: LOCAL_USER_ID,
     code: DELOAD_LADDER_CODE,
     issuedAt: at,
-    inputs: { muscles: answeredEvidence(read.muscles) },
+    inputs: { muscles: answeredEvidence(read.muscles), confirmingSessions },
     thresholds: read.thresholdsUsed,
     algorithmVersion: read.algorithmVersion,
     verdict: read.rung,
@@ -200,7 +248,7 @@ export async function recordDeloadResponse(
     reason:
       response === 'declined'
         ? 'Declined and filed. The same evidence is not re-offered; a newer session that confirms the decline again re-opens it.'
-        : 'Filed. Nothing in the plan changed: flag a deload week or lighten a session with the plan tools if the lifter wants it applied.',
+        : 'Filed. Nothing in the plan changed: flag a deload week or lighten a session with the plan tools if the lifter wants it applied. The same evidence is not offered again.',
   };
 }
 
@@ -224,6 +272,9 @@ function isLadderRung(verdict: string): verdict is DeloadRung {
   return LADDER_RUNGS.includes(verdict);
 }
 
+/** A muscle's state; a confirmed one also names the session of its newest flagged check. */
+export type CollectedMuscleSignal = DeloadMuscleSignal & { confirmedBy?: string };
+
 /** One owner session of one exercise, stamped with its newest working set. */
 interface ExerciseSession {
   sessionId: string;
@@ -246,7 +297,7 @@ interface ExerciseCheck {
 export async function collectDeloadBreaches(
   deps: DeloadAdvisoryDeps,
   now: Date,
-): Promise<DeloadMuscleSignal[]> {
+): Promise<CollectedMuscleSignal[]> {
   const exerciseIds = await exercisesTrainedInWindow(deps.store, now);
   const checks = new Map<string, ExerciseCheck>();
   for (const exerciseId of exerciseIds) {
@@ -349,13 +400,20 @@ function groupByPrimaryMuscle(
   return byMuscle;
 }
 
-function muscleSignal(muscle: string, checks: readonly ExerciseCheck[]): DeloadMuscleSignal {
+function muscleSignal(muscle: string, checks: readonly ExerciseCheck[]): CollectedMuscleSignal {
   const evidence = checks.map((check) => check.evidence);
   const flagged = checks.filter((check) => check.guard.mrvFlagged);
   if (flagged.length > 0) {
     if (hasCounterEvidence(checks)) return { muscle, evidence, state: 'provisional' };
-    const confirmedAt = flagged.map((check) => check.confirmedAt).sort()[flagged.length - 1];
-    return { muscle, evidence, state: 'confirmed', confirmedAt: confirmedAt as string };
+    const newest = [...flagged].sort((a, b) => a.confirmedAt.localeCompare(b.confirmedAt));
+    const { confirmedAt, evidence: confirming } = newest[newest.length - 1] as ExerciseCheck;
+    return {
+      muscle,
+      evidence,
+      state: 'confirmed',
+      confirmedAt,
+      confirmedBy: confirming.sessionIds[2],
+    };
   }
   if (checks.some(isSingleMiss)) return { muscle, evidence, state: 'provisional' };
   if (checks.some(hasEvaluablePair)) return { muscle, evidence, state: 'clear' };

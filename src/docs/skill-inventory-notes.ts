@@ -392,7 +392,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.respond_deload_advisory': {
     job: 'planWrite',
     when: 'The lifter answers an advised `deloadAdvisory` rung',
-    rule: 'Call it only with an answer the lifter gave, never on your own. Accept or decline the advised rung only. Neither answer edits the plan; a decline is not re-offered on the same evidence',
+    rule: 'Call it only with an answer the lifter gave, never on your own. Accept or decline the advised rung only. Neither answer edits the plan. After either answer the rung reads `suppressed` on the same evidence, and answering again records nothing',
   },
   'plan.block.planning_brief': {
     job: 'planRead',

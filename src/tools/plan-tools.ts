@@ -70,6 +70,7 @@ import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
 import { buildRecompDegradation } from './recomp-degradation.js';
 import {
+  assessDeloadAdvisory,
   buildDeloadAdvisory,
   recordDeloadResponse,
   type DeloadAdvisoryRead,
@@ -288,7 +289,8 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'written by this tool. When priorities have been declared (goal.declare_priorities) it also carries ' +
   '`realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same ' +
   'terms. Every shape also carries `deloadAdvisory`: `status` is `clear`, `watching` (one session ' +
-  'below the week before, noise), `advise`, `inconclusive` or `suppressed` (a deload week). On ' +
+  'below the week before, noise), `advise`, `inconclusive` or `suppressed` (a deload week, or a ' +
+  'rung the lifter already answered on the same evidence). On ' +
   '`advise`, relay `userMessage` as a suggestion and ask; never apply it. Once the lifter ' +
   'has said yes or no, file that answer with plan.respond_deload_advisory. ' +
   '`muscles[].evidence` session ids reproduce through `mrvguard.check`.';
@@ -299,8 +301,9 @@ const PLAN_RESPOND_DELOAD_ADVISORY_DESCRIPTION =
   'never on their behalf. The advisory is recomputed, so a stale one files nothing: with no ' +
   'rung open it returns `recorded: false` and the reason. Returns `{ recorded, reason, ' +
   'advisory }`. Accepting records a yes and changes no plan row; flagging a deload week stays ' +
-  'with `plan.week.update`. A decline stops the same evidence being re-offered; a newer ' +
-  'session that confirms the decline again re-opens it.';
+  'with `plan.week.update`. Either answer stops the same evidence being re-offered, and a ' +
+  'repeat answer on it returns `recorded: false`; a newer session that confirms the decline ' +
+  'again for some muscle re-opens it.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
   '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
@@ -1478,11 +1481,12 @@ async function respondDeloadAdvisory(
   const now = new Date();
   const read = await resolveCurrentBlock(state.store, todayLocal());
   const result = read.program === null ? undefined : await nextWorkoutFor(state, read, undefined);
-  const advisory = await buildDeloadAdvisory(state, {
+  const assessment = await assessDeloadAdvisory(state, {
     now,
     currentWeekIsDeload: isDeloadWeek(read, result),
   });
-  return { ...(await recordDeloadResponse(state.store, advisory, response, now)), advisory };
+  const filed = await recordDeloadResponse(state.store, assessment, response, now);
+  return { ...filed, advisory: assessment.read };
 }
 
 async function nextWorkoutFor(
