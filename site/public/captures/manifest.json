@@ -339,7 +339,7 @@
       "sha256": "683dd7173875e6a05a2591e72cb34cd62bbf21554441951f8586eeb78debe19b"
     }
   ],
-  "clipDefinitionHash": "9192528c705eab9f03d0273f6e32619072c5cd5aeae9e755885d9729591da181",
+  "clipDefinitionHash": "c1d151479f20644ba1ff32221420cd938b6001bc2ad44ce44c72c051392d34d5",
   "clipSize": {
     "width": 1280,
     "height": 800
@@ -373,33 +373,33 @@
       ],
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
-        "0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40",
+        "0.70 0.68 0.66 0.63 0.61 0.59 0.57 0.55",
         "VOLUME 8 TONNAGE 1.1k lbs",
         "PACE on pace"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.32,
-      "bytes": 588032,
+      "seconds": 37.36,
+      "bytes": 590729,
       "frames": [
         {
-          "atSeconds": 5,
-          "bytes": 211955,
-          "sha256": "5c263da00c5c2ff52e5d21c61273eb1f86649ab66ca90a7c5b12b839a318702c"
+          "atSeconds": 5.6,
+          "bytes": 227883,
+          "sha256": "6da0d2d634fca700d3b576d8009e55a54995dc0930d1fdd2faafe19027f02caa"
         },
         {
-          "atSeconds": 16.66,
-          "bytes": 238115,
-          "sha256": "25ffbbadca429addbf82d6fcca3c024e74b69ebb64eeb9c9630ff5950f2afed7"
+          "atSeconds": 18.68,
+          "bytes": 223312,
+          "sha256": "61a3b73ddb7105e6a2836ffc378230a090bfc70dfe8a34987d6a93063adfc01d"
         },
         {
-          "atSeconds": 28.32,
-          "bytes": 228622,
-          "sha256": "c7971aa1089498d5966a00ec7e3493275c7add60ad9779a5cd13e94441811ae0"
+          "atSeconds": 31.76,
+          "bytes": 239990,
+          "sha256": "129a2ea1cac5ceb94b8dff946d614125161816dd384648480c9fbaab46f60c2e"
         }
       ],
-      "sha256": "b34af7f94106cfa072f05c916c7c2d14d9f53f43543a0ba2255186dd0c2d1d62"
+      "sha256": "0edfe3ba3c290d9bc438366754a879c3d07a7c2113c16f85c4a2cb59b3fb925b"
     },
     {
       "name": "dual-divergence",
@@ -422,31 +422,31 @@
       },
       "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R", "CON ECC", "TONNAGE"],
       "assertedValues": [
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44"
+        "VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61 0.59 0.57 VL 20% VL 30% 0.70 0.68 0.66 0.63 0.61"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 36.32,
-      "bytes": 512299,
+      "seconds": 40.36,
+      "bytes": 552424,
       "frames": [
         {
-          "atSeconds": 5.45,
-          "bytes": 154581,
-          "sha256": "c13f4df5e1626ef2fc2d8b0ed4fac432567afe3b34a4b6c5e060048b3ccd70cd"
+          "atSeconds": 6.05,
+          "bytes": 205744,
+          "sha256": "a97262c74c50647ad137735f8089f5f13aa94193be2920bd818cc0ec12b687ce"
         },
         {
-          "atSeconds": 18.16,
-          "bytes": 194407,
-          "sha256": "f09845b550f5d136f725362389496306c0e7a3d089c453ee37e6ad866e325bd8"
+          "atSeconds": 20.18,
+          "bytes": 195525,
+          "sha256": "68ae963bb86937bd2e69620de0f76be6d908fd3b6132aa84da126c3a80f8fb71"
         },
         {
-          "atSeconds": 30.87,
-          "bytes": 142423,
-          "sha256": "5264bd0cd6b78ff211fd4c1027dcfd11348e13be74643211910d5cc6f5e9ae60"
+          "atSeconds": 34.31,
+          "bytes": 147495,
+          "sha256": "be8e13472406584032e12bed5a5af29228a1fb762be3960d2f04ed09f06b674a"
         }
       ],
-      "sha256": "b28f58f1b55d532518b40c26778818e33f89abdd972daab6447ca6918d1d3919"
+      "sha256": "af1664dad811fad4c5ace6f627a03417c063593b5765a80f853820b72b1a995e"
     }
   ]
 }
