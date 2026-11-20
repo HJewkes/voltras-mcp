@@ -701,7 +701,7 @@ async function plateauWindowDietState(
  * report the value it used back on `PlateauDetection`. Kept in sync by
  * `computeHistoryTrend` passing `input.minDays` through when the caller set one.
  */
-const WA_DEFAULT_PLATEAU_MIN_DAYS = 14;
+export const WA_DEFAULT_PLATEAU_MIN_DAYS = 14;
 
 /**
  * VW-277 consumer 3 of 3: does the declared diet phase explain a plateau this
