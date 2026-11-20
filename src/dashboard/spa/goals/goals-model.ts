@@ -41,6 +41,8 @@ export interface GoalsPageData {
   mesocycle: MesocycleView | null;
   /** `review.unreviewedDays` from the same response; absent reads as none. */
   unreviewedDays?: number;
+  /** The store holds test sessions and no training ones (VW-968). */
+  onlyTestSessions?: boolean;
 }
 
 export interface GoalTargetRow {

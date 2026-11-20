@@ -27,7 +27,13 @@ export interface GoalsPollState {
 export async function loadGoalsPage(): Promise<GoalsPageData> {
   const { priorities, mesocycle, review } = await fetchGoalPriorities();
   const progress = await fetchAllGoalProgress(priorities);
-  return { priorities, progress, mesocycle, unreviewedDays: review?.unreviewedDays ?? 0 };
+  return {
+    priorities,
+    progress,
+    mesocycle,
+    unreviewedDays: review?.unreviewedDays ?? 0,
+    onlyTestSessions: review?.onlyTestSessions ?? false,
+  };
 }
 
 export function useGoalsPoll(): GoalsPollState {
