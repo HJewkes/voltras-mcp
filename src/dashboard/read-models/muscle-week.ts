@@ -148,6 +148,8 @@ export interface MuscleWeekView {
   landmarkBasis: 'population-default';
   /** Every titan slug (VW-328), zeros included, so the figure can paint every muscle. */
   muscles: MuscleWeekMuscleView[];
+  /** The route's field: the store holds test sessions and no training ones (VW-968). */
+  onlyTestSessions?: boolean;
 }
 
 /** Everything `buildMuscleWeekView` needs, already read out of the store. */

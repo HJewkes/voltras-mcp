@@ -236,6 +236,17 @@ function text(data: BodyPageData, drill: Omit<BodyViewProps, 'data'> = {}): stri
     .trim();
 }
 
+describe('the test-only note (VW-968)', () => {
+  it('shows the line when only test sessions exist', () => {
+    const data = pageData({ week: { ...weekView(), onlyTestSessions: true } });
+    expect(text(data)).toContain('stored as test and do not count toward goals or body data');
+  });
+
+  it('shows nothing extra otherwise', () => {
+    expect(text(pageData())).not.toContain('stored as test');
+  });
+});
+
 describe('the body page model', () => {
   it('omits untrained muscles from the figure so they keep the outline fill', () => {
     const painted = bodyMapData(weekView()).map((d) => d.muscleGroup);

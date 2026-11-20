@@ -316,6 +316,17 @@ describe('GoalsView (VW-355)', () => {
     expect(html).toContain('No priorities declared');
   });
 
+  it('explains the empty state when only test sessions exist (VW-968)', () => {
+    const html = render({ priorities: [], progress: {}, mesocycle: null, onlyTestSessions: true });
+    expect(html).toContain('No priorities declared');
+    expect(html).toContain('stored as test and do not count toward goals or body data');
+  });
+
+  it('leaves the empty state as it was without test-only sessions (VW-968)', () => {
+    const html = render({ priorities: [], progress: {}, mesocycle: null, onlyTestSessions: false });
+    expect(html).not.toContain('stored as test');
+  });
+
   it('words the empty state for the lifter, naming no MCP tool (VW-948)', () => {
     const html = render({ priorities: [], progress: {}, mesocycle: null });
     expect(html).toContain('Tell Claude which lift you want to improve');
