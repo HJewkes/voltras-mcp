@@ -31,8 +31,8 @@ You're talking to Claude in English throughout; the tool calls below are what it
 underneath, named so you can recognize them if you ask Claude to show its work.
 
 ::: warning The Voltra's own controls are your stop
-Voice stop is a convenience, off unless you turn it on, and it cannot hear you while anything
-is being spoken. See [the spoken stop, and its blind spot](/concepts/how-coaching-works#the-spoken-stop-and-its-blind-spot).
+Voice stop is a convenience, off unless you turn it on, and while anything is being spoken it
+hears only safety phrases and can miss a "stop" that echoes the spoken line. See [the spoken stop, and its blind spot](/concepts/how-coaching-works#the-spoken-stop-and-its-blind-spot).
 :::
 
 ## Option A: with a Voltra

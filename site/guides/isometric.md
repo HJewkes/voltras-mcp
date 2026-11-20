@@ -65,7 +65,7 @@ fence every device-driving tool uses. If another client takes the lease mid-asse
 wait aborts instead of running out, the tool call fails with `LEASE_LOST`, and the device is
 left unloaded — the athlete may still be pulling against it at that moment, so dropping the
 load is the one write worth making on the way out
-(`docs/push-events.md:658-663`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1326-1367`<!-- anchor: left UNLOADED -->).
+(`docs/push-events.md:671-676`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1326-1367`<!-- anchor: left UNLOADED -->).
 
 ## Joint-angle gate (`measure_hold` only)
 

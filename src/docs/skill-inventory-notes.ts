@@ -361,7 +361,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'system.speak': {
     job: 'rest',
     when: 'A short spoken cue',
-    rule: '**The mic is deaf while any line plays**, safety phrases included (VW-173, open). Keep it short. Never speak while waiting on a spoken reply, or over a heavy set. `interrupt: true` drops the queue',
+    rule: '**While any line plays the mic hears safety phrases only**; a stop made of the spoken words is dropped as echo. Keep it short. Never speak while waiting on a spoken reply, or over a heavy set. `interrupt: true` drops the queue',
   },
   'system.set_cues': {
     job: 'rest',

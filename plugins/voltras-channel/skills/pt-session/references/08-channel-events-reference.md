@@ -107,7 +107,7 @@ The voice fast-path needs `system.listen_start`. Weight phrases it handles, wake
 ### The voice rules
 
 - A safety stop on a bilateral rig cuts **every connected slot**, not only the warranted one.
-- **The mic is deaf while any line plays.** Every spoken cue, automatic or `system.speak`, mutes the listener for its whole playback (hard cap 8 s). Frames are discarded, not buffered, and an utterance already in progress is dropped. A "stop" said during a cue is lost **with no event at all** (VW-173, open).
+- **While any line plays, the mic hears safety phrases only.** Every spoken cue, automatic or `system.speak`, ducks the listener for its whole playback (hard cap 8 s). A "stop" said over it is still transcribed and still unloads (`deterministic_stop_triggered`). The wake phrase and weight commands are ignored until the line ends, and an utterance already in progress when it starts is dropped. A transcript made of the words being spoken is discarded as echo **with no event at all**, so a "stop" shouted over a line that itself says "stop" is lost: keep safety words out of anything you speak.
 - So: keep cues short. Keep `midSet` cues off. Never speak while you wait for a spoken reply. During a heavy or to-failure set, stay silent and have the lifter keep a hand near the stop.
 - `system.speak` and the automatic cues share **one queue**. Lines no longer play over each other. A call may return late because it waited its turn. `interrupt: true` cuts the line playing, drops the waiting lines, and speaks now; a dropped line returns `ok: true, spoken: false`. Use it only when the new line makes the queued ones pointless ("Stop. Don't lift.").
 - `server.health.voiceReady` false means speech will not transcribe at all. Say so before relying on voice.

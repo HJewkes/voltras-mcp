@@ -139,4 +139,4 @@ A beginner does not track reps in reserve at all (`rirTarget: null` in the start
 - The S1 and S3 outlines that use this recipe: `14-sittings.md`
 - What to say after an ordinary set: `06-analytics-and-coaching.md`
 - Watches and set purposes: `04-set-execution.md`
-- Voice and the deaf-mic window: `08-channel-events-reference.md`
+- Voice and what the mic hears while a line plays: `08-channel-events-reference.md`

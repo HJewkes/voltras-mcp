@@ -105,23 +105,23 @@ asked ([push events](/reference/push-events)). Two of them matter for stopping.
 
 Neither one ends the set. They are advisory cues: the event goes out, and the set keeps running
 until you finish or ask Claude to end it (`site/reference/push-events.md:22-23`<!-- anchor: No — advisory cue only -->,
-`docs/push-events.md:405-409`<!-- anchor: advisory cues only -->). A set can still close without you, for example on the device's
+`docs/push-events.md:418-422`<!-- anchor: advisory cues only -->). A set can still close without you, for example on the device's
 own end-of-set signal or after the inactivity timeout, for when you have walked away
-(`docs/push-events.md:409-413`<!-- anchor: the one remaining -->, `src/state/rest-timer.ts:3-4`<!-- anchor: the inactivity watchdog -->).
+(`docs/push-events.md:422-426`<!-- anchor: the one remaining -->, `src/state/rest-timer.ts:3-4`<!-- anchor: the inactivity watchdog -->).
 
 A few details shape when `velocity_loss_exceeded` fires.
 
 - It measures loss on each rep's peak lifting speed, against the fastest eligible rep in the set.
   A rep far off the set's typical range or speed is not eligible, so a positioning pull or a
-  half rep cannot set the baseline (`docs/push-events.md:541-545`<!-- anchor: ELIGIBLE reps -->).
+  half rep cannot set the baseline (`docs/push-events.md:554-558`<!-- anchor: ELIGIBLE reps -->).
 - With the lowering phase loaded heavier than the lift, the first two reps are left out. They
-  are fast for mechanical reasons, not because you are fresh (`docs/push-events.md:552-557`<!-- anchor: first two reps -->).
+  are fast for mechanical reasons, not because you are fresh (`docs/push-events.md:565-570`<!-- anchor: first two reps -->).
 - On a pulling movement it does not fire at all. Peak speed on a fast pull does not drop with
   fatigue, so the server says at the start that the watch is off
-  (`docs/push-events.md:594-598`<!-- anchor: trigger does not fire -->).
+  (`docs/push-events.md:607-611`<!-- anchor: trigger does not fire -->).
 - The server warns that velocity loss is a volume dial and a poor measure of how close you are
   to failure. Reps completed to a fixed threshold vary by about five either way between sessions
-  (`docs/push-events.md:464-467`<!-- anchor: volume-dial caveat -->).
+  (`docs/push-events.md:477-480`<!-- anchor: volume-dial caveat -->).
 
 ## Pacing each rep
 

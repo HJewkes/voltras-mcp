@@ -114,7 +114,7 @@ if you're filtering programmatically.
 
 If a cascade stops partway because another client took the write lease, the
 `lease_lost` event names both the tool and the slot it stopped on
-(`docs/push-events.md:651-675`<!-- anchor: `meta` carries `event_type: lease_lost` and `tool` -->).
+(`docs/push-events.md:664-688`<!-- anchor: `meta` carries `event_type: lease_lost` and `tool` -->).
 
 ## Watching it on the dashboard
 

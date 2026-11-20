@@ -49,7 +49,8 @@ port, the server picks a free one; `server.health` reports the URL in `dashboard
 
 > [!WARNING]
 > **The Voltra's own controls are your stop.** Voice stop is a convenience, off unless you turn
-> it on, and it cannot hear you while anything is being spoken.
+> it on, and while anything is being spoken it hears only safety phrases and can miss a "stop"
+> that echoes the spoken line.
 > [Details](https://hjewkes.github.io/voltras-mcp/concepts/how-coaching-works#the-spoken-stop-and-its-blind-spot).
 
 ## Where to go next
