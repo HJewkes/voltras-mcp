@@ -43,6 +43,7 @@ import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
+import { TEST_ONLY_NOTE } from '../test-only-note.js';
 import { EMPTY_DRILL_STACK, type DrillStack } from '../drill/drill-stack.js';
 import { openMuscle, type BodyDrillHandlers } from './body-drill.js';
 import { muscleSheetProps } from './body-sheet-model.js';
@@ -144,6 +145,7 @@ export function BodyView(props: BodyViewProps): React.JSX.Element {
         <FigurePanel
           data={figures}
           weekStart={data.week.weekStart}
+          note={data.week.onlyTestSessions === true ? TEST_ONLY_NOTE : null}
           highlighted={selected === null ? null : muscleGroupOf(selected)}
           onMusclePress={drill?.onMusclePress}
         />
@@ -179,6 +181,7 @@ export function BodyView(props: BodyViewProps): React.JSX.Element {
 function FigurePanel(props: {
   data: ReturnType<typeof bodyMapData>;
   weekStart: string;
+  note: string | null;
   highlighted: MuscleGroup | null;
   onMusclePress: ((muscle: MuscleGroup) => void) | undefined;
 }): React.JSX.Element {
@@ -186,6 +189,7 @@ function FigurePanel(props: {
   return (
     <div style={{ flex: '1 1 0', minWidth: 0 }}>
       <PanelCard title={`Week of ${localDate(props.weekStart)}`}>
+        {props.note === null ? null : <Caption color="tertiary">{props.note}</Caption>}
         <div
           style={{
             display: 'flex',

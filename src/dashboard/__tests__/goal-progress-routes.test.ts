@@ -470,7 +470,11 @@ describe('GET /api/goals', () => {
     const port = await start(makeState(store));
     const body = (await call(port, '/api/goals')).body as GoalsBody;
 
-    expect(body.review).toEqual({ unreviewedDays: 0, unreviewedDayList: [] });
+    expect(body.review).toEqual({
+      unreviewedDays: 0,
+      unreviewedDayList: [],
+      onlyTestSessions: false,
+    });
   });
 
   it('carries a null mesocycle while no block has dates (VW-480)', async () => {
