@@ -2,7 +2,7 @@
 // Loud bench pre-flight: one line per silent-failure gate, before the lifter
 // is under load. Called by scripts/voltra-pt; safe to run on its own.
 //
-// Exits 1 only for whisper-cli, Node and a store newer than the build — the
+// Exits 1 only for the whisper addon, Node and a store newer than the build — the
 // gates that make the session worthless rather than merely degraded.
 // Everything else prints WARN and the launch continues.
 
@@ -20,19 +20,21 @@ import {
   parseLsofListeners,
   readSqliteUserVersion,
 } from './lib/preflight-gates.mjs';
-import { whisperArtifactPaths } from './lib/whisper-paths.mjs';
+import { whisperAddonCandidates, whisperArtifactPaths } from './lib/whisper-paths.mjs';
 
 const LEVEL_LABEL = { ok: 'OK  ', warn: 'WARN', fail: 'FAIL' };
 
 function probeWhisper() {
   try {
-    const packageRoot = dirname(
-      createRequire(import.meta.url).resolve('nodejs-whisper/package.json'),
-    );
-    const { cli, model } = whisperArtifactPaths(packageRoot);
-    return { whisperCliPresent: existsSync(cli), whisperModelPresent: existsSync(model) };
+    const require = createRequire(import.meta.url);
+    const packageRoot = dirname(require.resolve('nodejs-whisper/package.json'));
+    const platform = require(`${packageRoot}/scripts/native-platform.js`);
+    return {
+      whisperAddonPresent: whisperAddonCandidates(packageRoot, platform).some(existsSync),
+      whisperModelPresent: existsSync(whisperArtifactPaths(packageRoot).model),
+    };
   } catch {
-    return { whisperCliPresent: false, whisperModelPresent: false };
+    return { whisperAddonPresent: false, whisperModelPresent: false };
   }
 }
 

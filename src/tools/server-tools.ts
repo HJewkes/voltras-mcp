@@ -21,9 +21,8 @@
 //                     notifications (see below).
 //   - channelsLastConfirmedAt — ISO timestamp of the last model-confirmed
 //                     channel delivery (reply-tool round-trip), or null.
-//   - voiceReady    — presence of the two whisper artifacts. `npm ci` restores
-//                     `nodejs-whisper` without its compiled CLI, so voice input
-//                     can be dead while everything else looks healthy (VW-155).
+//   - voiceReady    — presence of the native addon and model that
+//                     transcription loads (VW-962); `whisperCli` aliases `addon`.
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
@@ -241,8 +240,8 @@ export function registerServerTools(
       'VOLTRAS_EFFORT_CUE), whether the raw-device diagnostics `device.send_raw` and ' +
       '`debug.recent_frames` are registered (`debugTools`, from VMCP_DEBUG_TOOLS), ' +
       'push-channel status, device-lease ' +
-      'status, voice-input readiness (`voiceReady.whisperCli`/`voiceReady.model` — false means ' +
-      'speech will not transcribe, usually because `npm ci` wiped the compiled binary), ' +
+      'status, voice-input readiness (`voiceReady.addon`/`voiceReady.model` — false means ' +
+      'speech will not transcribe, usually because the `nodejs-whisper` native addon or model is missing), ' +
       'and dashboard-sidecar availability. Useful for diagnosing "is this the server I ' +
       'think it is", "who holds the device lease", "are spoken cues actually armed", "can voice ' +
       'input work at all", and "is ' +

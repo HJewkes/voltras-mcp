@@ -47,14 +47,14 @@ One line each, in this order. Only the first two exit non-zero.
 
 | Gate             | Level | Why it is silent otherwise                                                                                                                                                                                                   |
 | ---------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `whisper`        | FAIL  | Missing `whisper-cli` (above). The model alone is only a WARN — it downloads on demand.                                                                                                                                      |
+| `whisper`        | FAIL  | Missing nodejs-whisper native addon (reinstall with `npm ci`). The model alone is only a WARN — it downloads on demand.                                                                                                      |
 | `node`           | FAIL  | Below v22.13 there is no `node:sqlite` without a flag, and the startup error names a module, not a version.                                                                                                                  |
 | `push-channel`   | WARN  | `VOLTRA_PT_DEV=1` selects `--dangerously-load-development-channels`, which needs an approval dialog nobody answers in a scripted session, so it registers nothing and push degrades to polling (VW-158).                     |
 | `cues`           | WARN  | An unset `VMCP_CUES` means nothing speaks. The line always prints both effective values, because `target_hit` / `slowdown` additionally need `VMCP_CUES_MIDSET=on` (or `risk`, with `VMCP_CUE_DELIVERY=on`, on a green set). |
 | `dashboard-port` | WARN  | Every session spawns its own server and the first one wins port 7723, so a dashboard opened from a second session shows another session's data or nothing.                                                                   |
 
 Inside a running session, `server.health` reports the same voice state as
-`voiceReady: { whisperCli, model }`, plus the live `cues` / `cuesMidSet` values.
+`voiceReady: { addon, whisperCli, model }` (`whisperCli` is an alias of `addon`: transcription uses the native addon plus the model, not the CLI binary), plus the live `cues` / `cuesMidSet` values.
 
 ## Raw-device tools (VW-935)
 

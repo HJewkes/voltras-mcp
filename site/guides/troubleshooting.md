@@ -67,9 +67,9 @@ Upgrade Node and restart the server.
 
 ### Voice input hears nothing
 
-Call `server.health` and read `voiceReady`. A false `whisperCli` means `npm ci` removed the
-compiled binary (VW-155). Run `node scripts/ensure-whisper.mjs` to rebuild it. The rebuild
-needs cmake.
+Call `server.health` and read `voiceReady`. A false `addon` (`whisperCli` is an alias) means the
+`nodejs-whisper` native addon is not installed; run `npm ci`. A false `model` means the
+speech model has not been downloaded yet.
 
 ### No spoken cues
 

@@ -31,13 +31,32 @@ describe('whisper artifact paths', () => {
 });
 
 describe('readVoiceReady', () => {
-  it('reports each artifact independently', () => {
-    const ready = readVoiceReady((path) => path.endsWith('whisper-cli'));
-    expect(ready).toEqual({ whisperCli: true, model: false });
+  const isAddon = (path: string): boolean => path.endsWith('nodejs_whisper.node');
+  const isModel = (path: string): boolean => path.endsWith(WHISPER_MODEL_RELATIVE);
+
+  it('is ready when the addon and model exist even though the CLI binary is absent', () => {
+    const ready = readVoiceReady((path) => isAddon(path) || isModel(path));
+    expect(ready).toEqual({ addon: true, whisperCli: true, model: true });
   });
 
-  it('reports not-ready when neither artifact is on disk', () => {
-    expect(readVoiceReady(() => false)).toEqual({ whisperCli: false, model: false });
+  it('is not ready when the addon is absent, even with the CLI binary and model present', () => {
+    const ready = readVoiceReady((path) => !isAddon(path));
+    expect(ready.addon).toBe(false);
+    expect(ready.whisperCli).toBe(false);
+    expect(ready.model).toBe(true);
+  });
+
+  it('reports a missing model separately from the addon', () => {
+    const ready = readVoiceReady(isAddon);
+    expect(ready).toEqual({ addon: true, whisperCli: true, model: false });
+  });
+
+  it('reports not-ready when nothing is on disk', () => {
+    expect(readVoiceReady(() => false)).toEqual({
+      addon: false,
+      whisperCli: false,
+      model: false,
+    });
   });
 });
 

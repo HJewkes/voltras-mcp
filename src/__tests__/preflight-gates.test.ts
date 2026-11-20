@@ -22,7 +22,7 @@ import { SCHEMA_VERSION } from '../store/sqlite-store.js';
 
 /** A snapshot where every gate passes; each test perturbs one field. */
 const HEALTHY = {
-  whisperCliPresent: true,
+  whisperAddonPresent: true,
   whisperModelPresent: true,
   nodeVersion: 'v22.13.0',
   buildSchemaVersion: 41,
@@ -138,10 +138,10 @@ describe('evaluateGates', () => {
     expect(exitCodeFor(gates)).toBe(0);
   });
 
-  it('fails when whisper-cli is missing, naming the rebuild script', () => {
-    const found = gate('whisper', { whisperCliPresent: false });
+  it('fails when the whisper addon is missing, naming the reinstall', () => {
+    const found = gate('whisper', { whisperAddonPresent: false });
     expect(found.level).toBe('fail');
-    expect(found.message).toContain('ensure-whisper.mjs');
+    expect(found.message).toContain('npm ci');
   });
 
   it('only warns when the model is missing, since it downloads on demand', () => {
