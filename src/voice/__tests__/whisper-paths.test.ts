@@ -3,7 +3,10 @@
 //
 // The two copies exist because the install-time rebuild runs before `dist/`
 // exists. They must not drift, so the first test pins them together.
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   WHISPER_CLI_RELATIVE,
@@ -15,6 +18,7 @@ import {
   WHISPER_CLI_RELATIVE as SCRIPT_CLI,
   WHISPER_MODEL_RELATIVE as SCRIPT_MODEL,
   decideWhisperAction,
+  whisperAddonCandidates,
 } from '../../../scripts/lib/whisper-paths.mjs';
 
 describe('whisper artifact paths', () => {
@@ -30,29 +34,56 @@ describe('whisper artifact paths', () => {
   });
 });
 
+describe('addon candidates', () => {
+  const require = createRequire(import.meta.url);
+  const packageRoot = dirname(require.resolve('nodejs-whisper/package.json'));
+  const platform = require(`${packageRoot}/scripts/native-platform.js`) as string;
+  const { findNativeAddon } = require('nodejs-whisper/dist/native.js') as {
+    findNativeAddon: (withCuda?: boolean) => string | undefined;
+  };
+  const candidates = whisperAddonCandidates(packageRoot, platform);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('lists the same files, in the same order, as the package finder', () => {
+    const probed: string[] = [];
+    vi.spyOn(fs, 'existsSync').mockImplementation((path) => {
+      probed.push(String(path));
+      return false;
+    });
+    findNativeAddon(false);
+    expect(probed).toEqual(candidates);
+  });
+
+  it('prefers the local build over the prebuilt addon, as the package finder does', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    expect(findNativeAddon(false)).toBe(candidates[0]);
+  });
+});
+
 describe('readVoiceReady', () => {
-  const isAddon = (path: string): boolean => path.endsWith('nodejs_whisper.node');
   const isModel = (path: string): boolean => path.endsWith(WHISPER_MODEL_RELATIVE);
+  const finder = (path: string) => (): string | undefined => path;
 
   it('is ready when the addon and model exist even though the CLI binary is absent', () => {
-    const ready = readVoiceReady((path) => isAddon(path) || isModel(path));
+    const ready = readVoiceReady(isModel, finder('/a.node'));
     expect(ready).toEqual({ addon: true, whisperCli: true, model: true });
   });
 
-  it('is not ready when the addon is absent, even with the CLI binary and model present', () => {
-    const ready = readVoiceReady((path) => !isAddon(path));
+  it('is not ready when the finder reports no addon, even with the model present', () => {
+    const ready = readVoiceReady(() => true, finder(undefined as never));
     expect(ready.addon).toBe(false);
     expect(ready.whisperCli).toBe(false);
     expect(ready.model).toBe(true);
   });
 
   it('reports a missing model separately from the addon', () => {
-    const ready = readVoiceReady(isAddon);
+    const ready = readVoiceReady(() => false, finder('/a.node'));
     expect(ready).toEqual({ addon: true, whisperCli: true, model: false });
   });
 
   it('reports not-ready when nothing is on disk', () => {
-    expect(readVoiceReady(() => false)).toEqual({
+    expect(readVoiceReady(() => false, finder(undefined as never))).toEqual({
       addon: false,
       whisperCli: false,
       model: false,

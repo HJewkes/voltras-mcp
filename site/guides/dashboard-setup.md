@@ -63,7 +63,7 @@ answer the question:
 
 - `dashboardAvailable` is `true` when the dashboard is running.
 - `dashboardUrl` is the full address to open. It ends in `/app` and names the port this
-  session actually bound (`src/tools/server-tools.ts:253`<!-- anchor: names the port THIS -->).
+  session actually bound (`src/tools/server-tools.ts:257`<!-- anchor: names the port THIS -->).
 - `dashboardDisabledReason` is `"disabled"` when `VMCP_DASHBOARD_PORT` set to `off` or `0`
   turned the dashboard off, and `null` otherwise (`src/server.ts:60`<!-- anchor: raw === 'off' || raw === '0' -->, `src/server.ts:186`<!-- anchor: disabledReason -->).
 

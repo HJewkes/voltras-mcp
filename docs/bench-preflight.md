@@ -54,7 +54,7 @@ One line each, in this order. Only the first two exit non-zero.
 | `dashboard-port` | WARN  | Every session spawns its own server and the first one wins port 7723, so a dashboard opened from a second session shows another session's data or nothing.                                                                   |
 
 Inside a running session, `server.health` reports the same voice state as
-`voiceReady: { addon, whisperCli, model }` (`whisperCli` is an alias of `addon`: transcription uses the native addon plus the model, not the CLI binary), plus the live `cues` / `cuesMidSet` values.
+`voiceReady: { addon, whisperCli, model }` (`whisperCli` is deprecated and now mirrors `addon`; it no longer probes the CLI binary. `addon: false` means transcription falls back to the CLI backend rather than failing, and `model` reads false until restart even after the first transcription downloads it), plus the live `cues` / `cuesMidSet` values.
 
 ## Raw-device tools (VW-935)
 

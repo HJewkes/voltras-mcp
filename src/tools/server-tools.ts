@@ -22,7 +22,10 @@
 //   - channelsLastConfirmedAt — ISO timestamp of the last model-confirmed
 //                     channel delivery (reply-tool round-trip), or null.
 //   - voiceReady    — presence of the native addon and model that
-//                     transcription loads (VW-962); `whisperCli` aliases `addon`.
+//                     transcription loads (VW-962); `whisperCli` is deprecated
+//                     and mirrors `addon`. `addon: false` means transcription
+//                     falls back to the CLI backend, not that speech cannot
+//                     transcribe.
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
@@ -125,8 +128,9 @@ const VMCP_VERSION = readVoltrasMcpVersion();
 const SDK_VERSION = readResolvedDependencyVersion('@voltras/node-sdk');
 const ANALYTICS_VERSION = readResolvedDependencyVersion('@voltras/workout-analytics');
 const BUILD_SHA = readGitShortSha();
-// Probed once at load, like the version reads: the artifacts cannot appear
-// mid-process, since a rebuild happens at install or launch time.
+// Probed once at load, like the version reads. The addon is built at install or
+// launch time, but the model auto-downloads on first transcription, so
+// `model` stays false until restart even after it lands.
 const VOICE_READY = readVoiceReady();
 
 /**
