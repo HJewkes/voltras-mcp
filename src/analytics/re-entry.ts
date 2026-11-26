@@ -189,7 +189,9 @@ function windowEnd(band: BreakBand, firstDayBack: string): string | null {
 }
 
 /** The most recent break that changed anything, and the training day that ended it. */
-function lastClosedBreak(days: readonly string[]): { gapDays: number; endsOn: string } | null {
+export function lastClosedBreak(
+  days: readonly string[],
+): { gapDays: number; endsOn: string } | null {
   for (let index = days.length - 1; index > 0; index -= 1) {
     const gapDays = daysBetween(days[index - 1], days[index]);
     if (classifyBreak(gapDays) !== 'none') return { gapDays, endsOn: days[index] };
