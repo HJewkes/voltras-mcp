@@ -32,7 +32,7 @@ one rep, worked out from those positions ([Calibration and trust](/concepts/cali
 
 The technique readings are pipelines of [`metrics.compute`](/reference/metrics). They share one
 habit: when no cited cut-off exists, they report the raw measurement and leave the verdict empty
-rather than invent one (`src/tools/metrics-tools.ts:2581-2591`<!-- anchor: relay the raw crossings, not a verdict -->, `src/analytics/rom-integrity.ts:22-25`<!-- anchor: FALSE POSITIVES COST MORE THAN SILENCE -->).
+rather than invent one (`src/tools/metrics-tools.ts:2608-2618`<!-- anchor: relay the raw crossings, not a verdict -->, `src/analytics/rom-integrity.ts:22-25`<!-- anchor: FALSE POSITIVES COST MORE THAN SILENCE -->).
 The cut-offs they do use come from
 [`@voltras/workout-analytics`](https://www.npmjs.com/package/@voltras/workout-analytics), the
 published analytics library this server depends on (`package.json:66`,
@@ -41,42 +41,42 @@ published analytics library this server depends on (`package.json:66`,
 ## Range of motion
 
 `quality.rom` checks whether your reps kept their range within one set. It compares the set with
-itself and needs no history (`src/tools/metrics-tools.ts:2592-2594`<!-- anchor: baseline-free -->).
+itself and needs no history (`src/tools/metrics-tools.ts:2619-2621`<!-- anchor: baseline-free -->).
 
 - Each rep is shown as a share of the set's typical rep, the median of its eligible reps. A rep
   that looks like a positioning pull is marked not eligible rather than dropped.
 - The last eligible rep is compared with the first. Below 80% reads as **shrinking**.
 - The spread of ROM across the set is graded **stable**, **variable** or **erratic**, with cuts
-  at 10% and 20% variation (`src/tools/metrics-tools.ts:2594-2598`<!-- anchor: DEFAULT_CONSISTENCY_SCHEME -->).
+  at 10% and 20% variation (`src/tools/metrics-tools.ts:2621-2625`<!-- anchor: DEFAULT_CONSISTENCY_SCHEME -->).
 
 No population ROM figure is used anywhere. Body size, cable setup and seat position all change
 ROM without anything changing about your technique, so there is no correct ROM for everyone
-(`src/tools/metrics-tools.ts:2599-2600`<!-- anchor: population-correct ROM -->, `src/analytics/rom-integrity.ts:4-9`<!-- anchor: EVERYTHING HERE COMPARES A SET TO ITSELF -->).
+(`src/tools/metrics-tools.ts:2626-2627`<!-- anchor: population-correct ROM -->, `src/analytics/rom-integrity.ts:4-9`<!-- anchor: EVERYTHING HERE COMPARES A SET TO ITSELF -->).
 
 A comparison with an earlier session is harder. `quality.rom` gives one only when three things
 hold: the exercise's baseline is at least provisional, the drift check calls the two sessions
 comparable, and both use the same position scale. A seat or attachment change reads exactly like
 a ROM change, which is why the drift check has a say. When any of the three fails, the response
-says which one (`src/tools/metrics-tools.ts:2600-2606`<!-- anchor: always says which one -->). `quality.rom` is a readout only. It
-drives no spoken cue and no push event (`src/tools/metrics-tools.ts:2607`<!-- anchor: no cue, no watch, no push event -->).
+says which one (`src/tools/metrics-tools.ts:2627-2633`<!-- anchor: always says which one -->). `quality.rom` is a readout only. It
+drives no spoken cue and no push event (`src/tools/metrics-tools.ts:2634`<!-- anchor: no cue, no watch, no push event -->).
 
 ## Pauses and bounces
 
 `quality.hesitation` looks for dips in speed during the lift, between 15% and 85% of the way
 through the range. For each dip it reports where it happened and how deep it was. It never calls
 a dip a real hesitation, because that needs a depth cut-off nobody has published, so the verdict
-stays empty (`src/tools/metrics-tools.ts:2579-2584`<!-- anchor: `hesitated` is always null -->).
+stays empty (`src/tools/metrics-tools.ts:2606-2611`<!-- anchor: `hesitated` is always null -->).
 
 `quality.bounce` measures how long you stayed at each turnaround, at the bottom and at the top.
 It also compares the lowering phase's peak speed with the lift's. It does not call a rep a bounce
 or a dropped rep, for the same reason: there is no citable threshold for either
-(`src/tools/metrics-tools.ts:2585-2591`<!-- anchor: `bounce` and `diveBomb` are always -->).
+(`src/tools/metrics-tools.ts:2612-2618`<!-- anchor: `bounce` and `diveBomb` are always -->).
 
 Both are read after the set, never live. Neither one drives a cue
-(`src/tools/metrics-tools.ts:2583-2584`<!-- anchor: post-set only -->, `src/tools/metrics-tools.ts:2590-2591`<!-- anchor: never a live cue -->).
+(`src/tools/metrics-tools.ts:2610-2611`<!-- anchor: post-set only -->, `src/tools/metrics-tools.ts:2617-2618`<!-- anchor: never a live cue -->).
 
 `quality.rep` is the one technique reading that needs a baseline. You pick a real earlier set,
-and it scores each rep against it (`src/tools/metrics-tools.ts:2544-2545`<!-- anchor: caller-supplied -->).
+and it scores each rep against it (`src/tools/metrics-tools.ts:2571-2572`<!-- anchor: caller-supplied -->).
 
 ## Tempo and the live card's lights
 
@@ -86,7 +86,7 @@ the top. The live card shows your set's tempo next to the target tempo when ther
 
 The card also carries three lights under its fatigue verdict: velocity loss, form (ROM) and
 tempo (`src/dashboard/spa/live-page/fatigue-model.ts:105-107`<!-- anchor: three dimension lights -->,
-`src/tools/metrics-tools.ts:2506-2508`<!-- anchor: A ROM or tempo alarm OVERRIDES -->). A ROM or tempo alarm turns the verdict to form breakdown,
+`src/tools/metrics-tools.ts:2533-2535`<!-- anchor: A ROM or tempo alarm OVERRIDES -->). A ROM or tempo alarm turns the verdict to form breakdown,
 even when your speed looks fine. [Fatigue and pacing](/concepts/fatigue-and-pacing#the-fatigue-verdict)
 explains the lights and how they combine.
 
@@ -120,5 +120,5 @@ angle of your setup as an input, because they cannot measure it
 (`src/tools/isometric-tools.ts:148-153`<!-- anchor: this tool cannot measure it -->).
 
 So a signal on this page tells you that something changed, not why. A shorter rep might be
-fatigue, a changed grip, or a moved seat (`src/tools/metrics-tools.ts:2604`<!-- anchor: a seat or attachment change -->). When a reading
+fatigue, a changed grip, or a moved seat (`src/tools/metrics-tools.ts:2631`<!-- anchor: a seat or attachment change -->). When a reading
 surprises you, compare it with a set you trust, and check the setup before the technique.

@@ -40,7 +40,7 @@ Almost everything else is derived. Velocity loss, the fatigue verdict, estimated
 readiness and reps in reserve are all calculations over recorded reps
 ([`metrics.compute`](/reference/metrics): `src/tools/metrics-tools.ts:279-322`<!-- anchor: case 'vbt.set' --> for velocity loss,
 the fatigue verdict and RIR; `src/tools/metrics-tools.ts:515-516`<!-- anchor: case 'strength.e1rm' --> for e1RM;
-`src/tools/metrics-tools.ts:408`<!-- anchor: case 'session.readiness' --> for readiness). A derived number can be no
+`src/tools/metrics-tools.ts:409`<!-- anchor: case 'session.readiness' --> for readiness). A derived number can be no
 better than its inputs, and it adds its own error on top.
 
 Some derived numbers say how rough they are. Every e1RM travels with an error band. That band
@@ -116,7 +116,7 @@ exercise were comparable, for example after a change in range of motion, tempo o
 the same verdict the internal checks use (`src/tools/drift-guard-tools.ts:30-34`<!-- anchor: same comparability -->).
 
 Neither tool tells you what to do. They tell you how much the server knows
-(`src/tools/drift-guard-tools.ts:35-36`<!-- anchor: not as a step in an automated coaching decision -->, `src/tools/baseline-tools.ts:67-68`<!-- anchor: diagnostic read -->).
+(`src/tools/drift-guard-tools.ts:36-37`<!-- anchor: not as a step in an automated coaching decision -->, `src/tools/baseline-tools.ts:67-68`<!-- anchor: diagnostic read -->).
 
 ## Effort numbers
 
