@@ -101,7 +101,13 @@ export const COMPOSER_FRAGMENTS = {
   loadClause: engineeringDefault(
     'composer.load-clause',
     ', load held at {{weightLbs}} lb',
-    'States the planned load so a short re-entry does not read as a cue to lighten it.',
+    'States the planned load so a session inside normal training does not read as a cue to lighten it.',
+  ),
+  loadClauseReturn: engineeringDefault(
+    'composer.load-clause-return',
+    ', starting at {{weightLbs}} lb, lighter on purpose after a break',
+    'States the re-entry load and that it is meant to be lighter, so the offer never asks for the ' +
+      'load from before the break; the wording is ours.',
   ),
   reEntryOffer: engineeringDefault(
     'composer.re-entry-offer',
