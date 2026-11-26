@@ -23,6 +23,7 @@ import {
   classifyBreak,
   daysBetween,
   RE_ENTRY_RULES,
+  scaleReEntryLoad,
   selectReEntry,
   type BreakBand,
   type ReEntryPhase,
@@ -30,9 +31,13 @@ import {
   type ReEntryRule,
   type RirFloorByWeek,
 } from '../analytics/re-entry.js';
+import type { BaselineSession } from '../analytics/baseline-session.js';
 import type { SourcedValue } from '../coach-copy/fragments.js';
 import { clearanceBlock, type StoredReturnClearance } from '../profile/return-clearance.js';
 import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
+
+/** Where a lifter with no load to scale starts instead of a baseline session. */
+export const STARTING_PRESCRIPTION_TOOL = 'profile.get_starting_prescription';
 
 export interface ReEntryBrief {
   readonly phase: ReEntryPhase;
@@ -64,6 +69,12 @@ export interface ReEntryBreakBrief extends ReEntryBrief {
   readonly clearance: StoredReturnClearance | null;
   /** Why working sessions are held; present only while "not yet" stands. */
   readonly blocked?: string;
+  /**
+   * The day-1 session (VW-982): on an open break, or on the first day back. `null` when no
+   * template lift has a load to scale; `startFrom` then names the tool to begin from instead.
+   */
+  readonly baselineSession?: BaselineSession | null;
+  readonly startFrom?: typeof STARTING_PRESCRIPTION_TOOL;
 }
 
 export type ReEntryResult = ReEntryBrief | ReEntryBreakBrief;
@@ -126,10 +137,6 @@ export interface StaleBasisReEntry {
   readonly source: string;
 }
 
-const LOAD_STEP_LBS = 5;
-// A factor of one third lands a hair under a whole step in floating point (150 / 3).
-const ROUNDING_SLACK = 1e-9;
-
 /**
  * `trainingDayInstant` dates the session the way the VW-462 training-day rule does (its end, or
  * its last working set's end), so a session that crosses local midnight reads the same day here
@@ -162,26 +169,53 @@ export function staleBasisReEntry(
   if (band !== 'short' && band !== 'medium') return null;
   const rule = RE_ENTRY_RULES[band];
   const loadFactor = rule.value.loadFactor ?? 1;
-  const steps = Math.floor((topLoadLbs * loadFactor + ROUNDING_SLACK) / LOAD_STEP_LBS);
   return {
     band,
-    loadLbs: Math.min(topLoadLbs, Math.max(1, steps) * LOAD_STEP_LBS),
+    loadLbs: scaleReEntryLoad(topLoadLbs, loadFactor),
     loadFactor,
     source: citation(rule.sourceKind, rule.sourceRef),
   };
 }
 
+/** Builds the baseline session for the rule in force; the caller owns the template and history. */
+export type BaselineBuilder = (rule: ReEntryRule) => Promise<BaselineSession | null>;
+
 export type ReEntryStore = TrainingDayStore & Pick<SessionStore, 'getTrainingProfile'>;
 
-/** Everything the lifter has logged up to `nowIso`, not a rolling window: a break can be long. */
+/**
+ * Everything the lifter has logged up to `nowIso`, not a rolling window: a break can be long.
+ * With `buildBaseline`, a result that offers the day-1 session carries it.
+ */
 export async function readReEntry(
   store: ReEntryStore,
   today: string,
   nowIso: string,
+  buildBaseline?: BaselineBuilder,
 ): Promise<ReEntryResult> {
   const trainingDays = await readTrainingDaysMatching(store, { to: nowIso });
+  const read = selectReEntry({ trainingDays, today });
   const profile = await store.getTrainingProfile(LOCAL_USER_ID);
-  return briefReEntry(selectReEntry({ trainingDays, today }), profile?.returnClearance);
+  const brief = briefReEntry(read, profile?.returnClearance);
+  if (buildBaseline === undefined || read.rule === null) return brief;
+  if (!offersBaselineSession(read, trainingDays, today)) return brief;
+  const baselineSession = await buildBaseline(read.rule.value);
+  if (baselineSession !== null) return { ...brief, baselineSession };
+  return { ...brief, baselineSession: null, startFrom: STARTING_PRESCRIPTION_TOOL };
+}
+
+/**
+ * An open break offers the baseline session, and so does the first day back: the training day
+ * that closed the break is today, so the window holds no session from before today.
+ */
+export function offersBaselineSession(
+  read: ReEntryRead,
+  trainingDays: readonly string[],
+  today: string,
+): boolean {
+  if (read.phase === 'in_gap') return true;
+  if (read.phase !== 'returning' || trainingDays.at(-1) !== today) return false;
+  const dayBefore = trainingDays.at(-2);
+  return dayBefore !== undefined && classifyBreak(daysBetween(dayBefore, today)) !== 'none';
 }
 
 /**

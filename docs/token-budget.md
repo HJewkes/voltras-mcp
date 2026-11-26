@@ -14,7 +14,7 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72586 |
+| tools/list | 72657 |
 | live-workout responses | 24279 |
 | live-workout push events | 11490 |
 | live-workout total | 35769 |
@@ -64,7 +64,7 @@ grows more than 5% over this table, or when a row is new.
 | `device.start_guided_load` | 6116 | 1991 |
 | `device.start_row` | 832 | 311 |
 | `device.unload` | 2593 | 749 |
-| `driftguard.check` | 958 | 369 |
+| `driftguard.check` | 1017 | 384 |
 | `exercise.confirm_setup` | 2072 | 722 |
 | `exercise.get` | 382 | 162 |
 | `exercise.mark_new_chapter` | 1746 | 633 |
@@ -83,7 +83,7 @@ grows more than 5% over this table, or when a row is new.
 | `metrics.compute` | 19430 | 5290 |
 | `mock.configure` | 1225 | 501 |
 | `mock.inject_error` | 906 | 333 |
-| `mrvguard.check` | 1176 | 434 |
+| `mrvguard.check` | 1138 | 424 |
 | `plan.attach_to_session` | 672 | 272 |
 | `plan.block.calendar` | 959 | 318 |
 | `plan.block.create` | 1865 | 699 |
@@ -96,7 +96,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.current_block` | 1044 | 323 |
 | `plan.exercise.create` | 4694 | 1609 |
 | `plan.exercise.list_for_template` | 370 | 171 |
-| `plan.next_workout` | 2367 | 682 |
+| `plan.next_workout` | 2617 | 748 |
 | `plan.program.archive` | 322 | 148 |
 | `plan.program.create` | 472 | 206 |
 | `plan.program.get` | 262 | 131 |
