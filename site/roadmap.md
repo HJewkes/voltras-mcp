@@ -83,7 +83,7 @@ calling the route ([Dashboard API](/reference/dashboard-api)):
   say whether that volume is on target. The verdict field is always empty: classifying it needs
   per-athlete volume targets, and this tool reads none. `goal.propose_targets` derives a
   weekly-set dose for a muscle priority, but this tool does not read it
-  (`src/tools/metrics-tools.ts:964-973`<!-- anchor: doseSetsByMuscle -->).
+  (`src/tools/metrics-tools.ts:991-1000`<!-- anchor: doseSetsByMuscle -->).
 - **Mean velocity on the exercise hero's set row.** The per-rep velocity bars read each rep's
   mean velocity, but the hero's set row still reads peak velocity, so it reads higher than the
   rest recap. The shared analytics library already publishes the mean version; switching over

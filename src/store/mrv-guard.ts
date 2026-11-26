@@ -16,6 +16,8 @@
 // is passed into the judgement, which refuses to evaluate anything the guard
 // declared incomparable. This module never re-derives comparability of its own —
 // there must be exactly one answer to "are these two sessions the same work".
+// That includes the layoff rule (VW-975): a pair spanning a break of 15+ days
+// is refused there, so the drop after a break never reads as underperformance.
 //
 // DIAGNOSTIC-ONLY, NO INTERNAL WIRING (VW-131). `mrvguard.check`
 // (`tools/mrv-guard-tools.ts`) is the only consumer today, mirroring
