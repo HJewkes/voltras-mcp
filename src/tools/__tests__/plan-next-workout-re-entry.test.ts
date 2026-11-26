@@ -23,6 +23,12 @@ const { CORE_TOOL_NAMES } = await import('../../tool-registry.js');
 
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 
+const GUARDRAILS = {
+  rirFloor: { value: { week1: 5, week2: 3 }, source: 'Nuckols 2022' },
+  noFailureSets: { value: true, source: 'Nuckols 2022' },
+  velocityLossCapPct: { value: 15, source: 'engineering-default' },
+};
+
 let store: SessionStore;
 let callbacks: Map<string, Callback>;
 
@@ -72,8 +78,25 @@ describe('plan.next_workout reEntry', () => {
       daysSinceLastTrainingDay: 26,
       band: 'short',
       windowEndsOn: '2026-10-09',
-      rule: { loadFactor: 0.8, weeks: 1, source: 'Nuckols 2022' },
+      rule: { loadFactor: 0.8, weeks: 1, ...GUARDRAILS, source: 'Nuckols 2022' },
     });
+  });
+
+  it('carries the return-window guardrails on a medium break', async () => {
+    vi.setSystemTime(new Date('2026-11-06T12:00:00.000Z'));
+
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
+
+    expect(reEntry).toMatchObject({ band: 'medium', rule: GUARDRAILS });
+  });
+
+  it('carries no guardrail after a long break', async () => {
+    vi.setSystemTime(new Date('2027-04-01T12:00:00.000Z'));
+
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
+
+    expect(reEntry).toMatchObject({ band: 'long' });
+    expect(reEntry.rule).toEqual({ loadFactor: null, weeks: 0, source: 'engineering-default' });
   });
 
   it('keeps the compact form while the lifter is training normally', async () => {
