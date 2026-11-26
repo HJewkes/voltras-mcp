@@ -26,7 +26,7 @@ sourced: 2026-09-30
 
 A bilateral rig is two Voltras, one per side, tracked as independent
 [slots](/reference/slot): `left` and `right`, instead of the single `primary` slot a
-one-device session uses (`src/tools/device-tools.ts:155-159`<!-- anchor: default: 'primary' -->). Everything downstream — telemetry, sets,
+one-device session uses (`src/tools/device-tools.ts:156-160`<!-- anchor: default: 'primary' -->). Everything downstream — telemetry, sets,
 push events, the dashboard — keys off which slot a rep came from, so the two sides never
 get mixed into one stream.
 
@@ -37,7 +37,7 @@ session is the same `session.*`/`set.*` lifecycle running twice, once per slot.
 
 [`device.connect`](/reference/device) binds a device to a slot the same way it does for
 one unit — call it twice, once with `slot: 'left'` and once with `slot: 'right'`
-(`src/tools/device-tools.ts:155-159`<!-- anchor: which slot the device binds to -->).
+(`src/tools/device-tools.ts:156-160`<!-- anchor: which slot the device binds to -->).
 
 Two Voltras look identical on the table, so [`slot.identify`](/reference/slot) exists to
 answer "which one is which": it briefly switches the named slot's device into Damper mode
@@ -52,7 +52,7 @@ Once you've confirmed a side, [`slot.bind`](/reference/slot) persists the device
 without repeating the identify ritual. [`slot.bindings_list`](/reference/slot) shows what's
 persisted, and [`slot.unbind`](/reference/slot) removes an entry. [`slot.swap`](/reference/slot)
 swaps the two connected slots' bindings in place with no BLE traffic at all
-(`src/tools/device-tools.ts:1607-1620`<!-- anchor: 'slot.swap' -->).
+(`src/tools/device-tools.ts:1620-1633`<!-- anchor: 'slot.swap' -->).
 
 ## Setting both units at once: `bilateral.cascade`
 
@@ -61,7 +61,7 @@ chains across one or more bound slots in a single call. It's a full-settings con
 a partial patch: every call must supply all four fields, or the tool rejects it with
 `INVALID_INPUT` naming what's missing — a partial cascade would leave the omitted settings
 at their prior firmware value, which is exactly the kind of stale state this tool exists to
-avoid (`src/tools/device-tools.ts:330-337`<!-- anchor: Full-settings contract -->).
+avoid (`src/tools/device-tools.ts:331-338`<!-- anchor: Full-settings contract -->).
 
 ### Why the mode write goes first
 
@@ -70,7 +70,7 @@ setters fired concurrently, and on 2026-09-07 that produced a real failure on ha
 requesting Isokinetic mode across two bound slots left one unit in Weight Training and the
 other in Idle, twice, while calling `device.set_mode` alone stuck every time. The weight,
 eccentric and chains writes racing the mode change were making the firmware fall back
-(`src/state/bilateral-cascade.ts:11-21`<!-- anchor: the MODE write is never part of the fan-out -->, `src/tools/device-tools.ts:333`<!-- anchor: a partial cascade would leave the unset settings -->, VW-162).
+(`src/state/bilateral-cascade.ts:11-21`<!-- anchor: the MODE write is never part of the fan-out -->, `src/tools/device-tools.ts:334`<!-- anchor: a partial cascade would leave the unset settings -->, VW-162).
 
 The fix: when the requested mode differs from what the device currently echoes, the mode
 write goes out alone first, and the cascade waits for the device's mode echo before firing
@@ -82,7 +82,7 @@ its `modeEcho` field:
   for.
 - `timeout` — the echo didn't arrive in time. The slot's other setters are **not** issued;
   re-issue `device.set_mode` for that slot and check `device.get_state` before retrying
-  (`src/tools/device-tools.ts:334`<!-- anchor: the mode write goes FIRST and alone -->).
+  (`src/tools/device-tools.ts:335`<!-- anchor: the mode write goes FIRST and alone -->).
 
 The wait is bounded by `MODE_REVERT_WINDOW_MS` — 2000ms — the same window the mode-revert
 guard itself uses to keep evaluating divergence, so a longer wait would report a
@@ -90,7 +90,7 @@ confirmation the safety guard no longer stands behind
 (`src/state/mode-revert-guard.ts:40`<!-- anchor: MODE_REVERT_WINDOW_MS = 2000 -->, `src/state/bilateral-cascade.ts:60-67`<!-- anchor: modeEchoTimeoutMs -->).
 
 **Where this stands:** the reordering is merged and covered by tests, including one that
-exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:577`<!-- anchor: VW-162: waits on the slot mode-revert guard -->,
+exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:580`<!-- anchor: VW-162: waits on the slot mode-revert guard -->,
 `VW-162: waits on the slot mode-revert guard and reports the echo`). No re-run against two
 physical units is recorded in this repository: the original failure that motivated the fix
 was a hardware observation, and the fix itself is confirmed in tests, not on a bench.
@@ -98,7 +98,7 @@ was a hardware observation, and the fix itself is confirmed in tests, not on a b
 Slots still run concurrently with each other, so a failure or a timeout on one slot doesn't
 block the other. With `abortOnFirstFailure: true`, setters within a slot run sequentially
 instead, and the first rejection anywhere stops every setter not yet issued
-(`src/tools/device-tools.ts:335`<!-- anchor: On `timeout` the slot FAILS -->, `src/state/bilateral-cascade.ts:28-36`<!-- anchor: abortOnFirstFailure: true -->).
+(`src/tools/device-tools.ts:336`<!-- anchor: On `timeout` the slot FAILS -->, `src/state/bilateral-cascade.ts:28-36`<!-- anchor: abortOnFirstFailure: true -->).
 
 ## Reading per-slot events
 
@@ -226,8 +226,8 @@ need no intervention at all.
 **A load derived from an isometric maximum is a heuristic.** `isometric.measure_max` and
 `isometric.measure_imbalance` both return an inferred working weight at 70% of the mean
 peak force of the best two trials, rounded to 5 lb, and both label it as a heuristic in the
-result itself, not only in the description (`src/tools/isometric-tools.ts:184-186`<!-- anchor: 70% -->,
-`src/tools/isometric-tools.ts:471-477`<!-- anchor: INFERRED_WORKING_WEIGHT_BASIS -->). No study validates a cable-device isometric maximum
+result itself, not only in the description (`src/tools/isometric-tools.ts:185-187`<!-- anchor: 70% -->,
+`src/tools/isometric-tools.ts:476-482`<!-- anchor: INFERRED_WORKING_WEIGHT_BASIS -->). No study validates a cable-device isometric maximum
 as a predictor of dynamic cable loads, and no `plan.*` or `progression.*` path consumes one.
 Joint angle dominates what an isometric maximum predicts: an isometric squat predicted the
 full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum et

@@ -105,11 +105,11 @@ load a different effort, so the gap would describe the rig, not you
 
 [`isometric.measure_imbalance`](/reference/isometric) is the formal test. It tests each side in
 turn with a rest between them, 120 seconds by default. When your dominant side is known, it tests
-the other side first so fatigue does not favour it (`src/tools/isometric-tools.ts:256-260`<!-- anchor: non-dominant side -->). It
+the other side first so fatigue does not favour it (`src/tools/isometric-tools.ts:259-263`<!-- anchor: non-dominant side -->). It
 has no fixed threshold for a meaningful imbalance. A difference counts as real only when it is
-bigger than your own trial-to-trial spread on the same test (`src/tools/isometric-tools.ts:274-287`<!-- anchor: THERE IS NO FIXED ASYMMETRY THRESHOLD HERE -->).
+bigger than your own trial-to-trial spread on the same test (`src/tools/isometric-tools.ts:277-290`<!-- anchor: THERE IS NO FIXED ASYMMETRY THRESHOLD HERE -->).
 The direction over repeated tests matters more than one reading
-(`src/tools/isometric-tools.ts:289-295`<!-- anchor: directionHistory -->). The [bilateral guide](/guides/bilateral) covers the
+(`src/tools/isometric-tools.ts:292-298`<!-- anchor: directionHistory -->). The [bilateral guide](/guides/bilateral) covers the
 setup.
 
 ## What these signals cannot show
@@ -117,7 +117,7 @@ setup.
 The server reads a cable, not a body. It has no camera and no video. It cannot see your bar path,
 your posture or your joint angles. The isometric tools say this directly: they take the joint
 angle of your setup as an input, because they cannot measure it
-(`src/tools/isometric-tools.ts:147-152`<!-- anchor: this tool cannot measure it -->).
+(`src/tools/isometric-tools.ts:148-153`<!-- anchor: this tool cannot measure it -->).
 
 So a signal on this page tells you that something changed, not why. A shorter rep might be
 fatigue, a changed grip, or a moved seat (`src/tools/metrics-tools.ts:2631`<!-- anchor: a seat or attachment change -->). When a reading

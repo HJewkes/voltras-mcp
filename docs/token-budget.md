@@ -14,10 +14,10 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72657 |
+| tools/list | 72895 |
 | live-workout responses | 24279 |
-| live-workout push events | 11490 |
-| live-workout total | 35769 |
+| live-workout push events | 11491 |
+| live-workout total | 35770 |
 | sunday-sitting responses | 9439 |
 | sunday-sitting push events | 0 |
 | sunday-sitting total | 9439 |
@@ -34,14 +34,14 @@ grows more than 5% over this table, or when a row is new.
 | `accountability.state` | 1363 | 417 |
 | `baselines.get` | 3314 | 962 |
 | `baselines.recalc` | 3276 | 969 |
-| `bilateral.cascade` | 2673 | 883 |
+| `bilateral.cascade` | 2858 | 932 |
 | `coaching.explain` | 2956 | 1062 |
 | `debug.compare_rep_streams` | 820 | 281 |
 | `debug.confirm_channel` | 922 | 308 |
 | `debug.push_test_channel` | 1146 | 408 |
 | `debug.recent_events` | 1383 | 457 |
 | `debug.recording_status` | 512 | 184 |
-| `device.configure_isokinetic` | 1833 | 661 |
+| `device.configure_isokinetic` | 1976 | 698 |
 | `device.connect` | 1413 | 457 |
 | `device.disconnect` | 1289 | 407 |
 | `device.enter_row_mode` | 726 | 260 |
@@ -52,10 +52,10 @@ grows more than 5% over this table, or when a row is new.
 | `device.set_band_max_force` | 813 | 303 |
 | `device.set_chains` | 1144 | 388 |
 | `device.set_damper_level` | 833 | 308 |
-| `device.set_eccentric` | 2872 | 856 |
+| `device.set_eccentric` | 3015 | 894 |
 | `device.set_isokinetic_ecc_const_weight` | 991 | 353 |
 | `device.set_isokinetic_ecc_mode` | 883 | 324 |
-| `device.set_isokinetic_ecc_overload_weight` | 994 | 354 |
+| `device.set_isokinetic_ecc_overload_weight` | 1137 | 392 |
 | `device.set_isokinetic_ecc_speed_limit` | 916 | 340 |
 | `device.set_isokinetic_target_speed` | 989 | 358 |
 | `device.set_mode` | 1401 | 475 |
@@ -78,8 +78,8 @@ grows more than 5% over this table, or when a row is new.
 | `goal.retire` | 1337 | 444 |
 | `goal.weekly_review` | 3450 | 1045 |
 | `isometric.measure_hold` | 3392 | 1044 |
-| `isometric.measure_imbalance` | 6501 | 1948 |
-| `isometric.measure_max` | 6331 | 1804 |
+| `isometric.measure_imbalance` | 6645 | 1986 |
+| `isometric.measure_max` | 6475 | 1842 |
 | `metrics.compute` | 19430 | 5290 |
 | `mock.configure` | 1225 | 501 |
 | `mock.inject_error` | 906 | 333 |
@@ -183,7 +183,7 @@ grows more than 5% over this table, or when a row is new.
 
 | Event | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
-| `rep_finalized` | 16 | 5133 | 2546 | 159 |
+| `rep_finalized` | 16 | 5136 | 2547 | 159 |
 | `set_ended` | 2 | 2086 | 1056 | 528 |
 | `set_started` | 2 | 1807 | 867 | 462 |
 | `set_target_reached` | 2 | 6946 | 3606 | 1803 |

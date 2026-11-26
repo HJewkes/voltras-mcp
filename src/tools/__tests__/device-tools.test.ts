@@ -416,6 +416,8 @@ interface State {
   // VW-274: mutable so a test can set `state.config.mountRatingLbs` before
   // invoking; unconfigured (the default) exercises the warning-only path.
   config: { mountRatingLbs: number | undefined };
+  // VW-978: the return-window guard reads training days; none, so no window is open.
+  store: { listTrainingDayInstants: () => Promise<[]>; getTrainingProfile: () => Promise<null> };
 }
 
 function makeFakeSlotBindings(): FakeSlotBindings {
@@ -455,6 +457,7 @@ function makeState(): State {
     lease: makeFakeLease(SELF),
     channels: makeRecordingChannels(),
     config: { mountRatingLbs: undefined },
+    store: { listTrainingDayInstants: async () => [], getTrainingProfile: async () => null },
   };
 }
 

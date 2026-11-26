@@ -181,7 +181,15 @@ interface FakeStore {
   /** Backing rows for the two mocks above. */
   exerciseSetups: StoredExerciseSetup[];
   sets: StoredSet[];
+  /** The training days the VW-978 return-window guard reads; none, so no window is open. */
+  listTrainingDayInstants: () => Promise<[]>;
+  getTrainingProfile: () => Promise<null>;
 }
+
+const NO_TRAINING_DAYS = {
+  listTrainingDayInstants: async (): Promise<[]> => [],
+  getTrainingProfile: async (): Promise<null> => null,
+};
 
 function makeFakeStore(): FakeStore {
   const store = {
@@ -218,6 +226,8 @@ function makeFakeStore(): FakeStore {
       });
     },
   );
+  store.listTrainingDayInstants = NO_TRAINING_DAYS.listTrainingDayInstants;
+  store.getTrainingProfile = NO_TRAINING_DAYS.getTrainingProfile;
   store.listExerciseSetups = vi.fn(async (f: { exerciseId: string }) =>
     store.exerciseSetups.filter((s) => s.exerciseId === f.exerciseId),
   );
@@ -395,7 +405,7 @@ function makeState(
   }
   return {
     slots: slotMap,
-    store: opts.store,
+    store: opts.store ?? NO_TRAINING_DAYS,
     channels: opts.channels ?? noopChannelPublisher,
     lease: opts.lease ?? makeFakeLease(),
     // Unconfigured (VW-274) by default — most tests do not care about the

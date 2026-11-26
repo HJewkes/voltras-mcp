@@ -104,6 +104,7 @@ import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lea
 import { checkMountLoad, ISOMETRIC_MAX_PEAK_LBS_PER_UNIT } from '../state/mount-load-gate.js';
 import { unloadSlot } from '../state/device-exit.js';
 import { wrapHandler } from './helpers.js';
+import { assertOutsideReEntryWindow, RE_ENTRY_GUARD_DESCRIPTION } from './re-entry-guard.js';
 
 class ToolError extends UserFacingError {
   readonly code: string;
@@ -247,6 +248,8 @@ const MEASURE_MAX_DESCRIPTION = [
   'rating configured, mountLoadWarning in the result says the envelope is',
   'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
   '',
+  RE_ENTRY_GUARD_DESCRIPTION,
+  '',
   'For bilateral assessment + asymmetry detection, prefer',
   'isometric.measure_imbalance which composes this tool with the standard',
   'between-sides rest and side-ordering policy.',
@@ -333,6 +336,8 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'since the peak and the rating are the same regardless of slot. With no',
   'rating configured, mountLoadWarning in the result says the envelope is',
   'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
+  '',
+  RE_ENTRY_GUARD_DESCRIPTION,
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -727,6 +732,7 @@ function enforceIsometricMountLoad(state: ServerState): string | null {
 
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
+  await assertOutsideReEntryWindow(state.store, 'max_test');
   const mountLoadWarning = enforceIsometricMountLoad(state);
   const startedAt = Date.now();
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
@@ -792,6 +798,8 @@ async function measureImbalance(
   // the mode-driven peak and the configured rating are the same regardless
   // of slot.
   const mountLoadWarning = enforceIsometricMountLoad(state);
+  // Every side runs maximal pulls, so the whole test is a max test.
+  await assertOutsideReEntryWindow(state.store, 'max_test');
 
   const secondarySide: 'left' | 'right' = input.primarySide === 'left' ? 'right' : 'left';
   const order = decideTestOrder(
