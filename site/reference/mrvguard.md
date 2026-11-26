@@ -8,7 +8,7 @@
 
 DIAGNOSTIC ONLY — not the consumption path.
 
-Ask "did this lifter underperform their prior benchmark on two consecutive sessions for this exercise" and get the same B04 MRV/under-recovery verdict any internal check would see. All three session ids are required and must be ordered oldest to newest: the signal is TWO pairwise comparisons (session1 vs session2, then session2 vs session3), so a single pair cannot answer it. Returns `priorPair`, `currentPair`, and the combined `guard` verdict. A pair whose sessions span a break of 15 or more days in training is not evaluable, so the drop after a layoff never confirms a breach. Real internal consumers import `checkMrvGuard` directly rather than round-tripping through this tool. Use this when a human wants to inspect a deload signal, not as a step in an automated coaching decision.
+Ask "did this lifter underperform their prior benchmark on two consecutive sessions for this exercise" and get the same B04 MRV/under-recovery verdict any internal check would see. All three session ids are required, oldest to newest: the signal is TWO pairwise comparisons (session1 vs session2, then session2 vs session3). Returns `priorPair`, `currentPair`, and the combined `guard` verdict. A pair spanning a break of 15+ days in training is not evaluable. Internal consumers import `checkMrvGuard` directly. Use this when a human wants to inspect a deload signal, not as a step in an automated coaching decision.
 
 **Parameters**
 
