@@ -141,14 +141,11 @@ function liftsWithHistory(
 
 function buildSession(lifts: readonly Lift[], rule: ReEntryRule, minutes: number): BaselineSession {
   const ordered = [...lifts].sort((a, b) => b.relative - a.relative);
-  const planned = ordered.map((lift) => ({
-    lift,
-    loadLbs: lift.loadLbs,
-    role: 'working' as const,
-  }));
+  const planned: { lift: Lift; loadLbs: number; role: BaselineSet['role'] }[] = ordered.map(
+    (lift) => ({ lift, loadLbs: lift.loadLbs, role: 'working' }),
+  );
   const backOff = backOffLoad(ordered[0], ordered[ordered.length - 1].relative);
-  if (backOff !== null)
-    planned.push({ lift: ordered[0], loadLbs: backOff, role: 'back_off' as const });
+  if (backOff !== null) planned.push({ lift: ordered[0], loadLbs: backOff, role: 'back_off' });
   const sets = planned.map(({ lift, loadLbs, role }, index) =>
     toSet(lift, loadLbs, role, rule, index === planned.length - 1),
   );

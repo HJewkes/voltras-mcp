@@ -28,7 +28,11 @@ import {
   type ReEntryRule,
   type RirFloorByWeek,
 } from '../analytics/re-entry.js';
+import type { BaselineSession } from '../analytics/baseline-session.js';
 import type { SourcedValue } from '../coach-copy/fragments.js';
+
+/** Where a lifter with no load to scale starts instead of a baseline session. */
+export const STARTING_PRESCRIPTION_TOOL = 'profile.get_starting_prescription';
 
 export interface ReEntryBrief {
   readonly phase: ReEntryPhase;
@@ -56,6 +60,12 @@ export interface ReEntryBreakBrief extends ReEntryBrief {
   /** The last day of the re-entry window, inclusive; `null` when the band has no window. */
   readonly windowEndsOn: string | null;
   readonly rule: ReEntryRuleBrief;
+  /**
+   * The day-1 session (VW-982): on an open break, or on the first day back. `null` when no
+   * template lift has a load to scale; `startFrom` then names the tool to begin from instead.
+   */
+  readonly baselineSession?: BaselineSession | null;
+  readonly startFrom?: typeof STARTING_PRESCRIPTION_TOOL;
 }
 
 export type ReEntryResult = ReEntryBrief | ReEntryBreakBrief;
@@ -152,12 +162,40 @@ export function staleBasisReEntry(
   };
 }
 
-/** Everything the lifter has logged up to `nowIso`, not a rolling window: a break can be long. */
+/** Builds the baseline session for the rule in force; the caller owns the template and history. */
+export type BaselineBuilder = (rule: ReEntryRule) => Promise<BaselineSession | null>;
+
+/**
+ * Everything the lifter has logged up to `nowIso`, not a rolling window: a break can be long.
+ * With `buildBaseline`, a result that offers the day-1 session carries it.
+ */
 export async function readReEntry(
   store: TrainingDayStore,
   today: string,
   nowIso: string,
+  buildBaseline?: BaselineBuilder,
 ): Promise<ReEntryResult> {
   const trainingDays = await readTrainingDaysMatching(store, { to: nowIso });
-  return briefReEntry(selectReEntry({ trainingDays, today }));
+  const read = selectReEntry({ trainingDays, today });
+  const brief = briefReEntry(read);
+  if (buildBaseline === undefined || read.rule === null) return brief;
+  if (!offersBaselineSession(read, trainingDays, today)) return brief;
+  const baselineSession = await buildBaseline(read.rule.value);
+  if (baselineSession !== null) return { ...brief, baselineSession };
+  return { ...brief, baselineSession: null, startFrom: STARTING_PRESCRIPTION_TOOL };
+}
+
+/**
+ * An open break offers the baseline session, and so does the first day back: the training day
+ * that closed the break is today, so the window holds no session from before today.
+ */
+export function offersBaselineSession(
+  read: ReEntryRead,
+  trainingDays: readonly string[],
+  today: string,
+): boolean {
+  if (read.phase === 'in_gap') return true;
+  if (read.phase !== 'returning' || trainingDays.at(-1) !== today) return false;
+  const dayBefore = trainingDays.at(-2);
+  return dayBefore !== undefined && classifyBreak(daysBetween(dayBefore, today)) !== 'none';
 }

@@ -544,6 +544,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'loadFactor',
   'sourceKind',
   'sourceRef',
+  // VW-982: the day-1 session `plan.next_workout` offers after a break.
+  'baselineSession',
+  'startFrom',
   // VW-593: `plan.next_workout`'s fatigue-reduction ladder read and its rungs.
   'deloadAdvisory',
   'userMessage',
