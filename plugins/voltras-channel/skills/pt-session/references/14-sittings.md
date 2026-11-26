@@ -353,7 +353,7 @@ Call `plan.next_workout` and read `reEntry.phase`. This section applies when it 
 
 Also read `reEntry.band` (`short`, `medium` or `long`), `reEntry.windowEndsOn` and `reEntry.rule`. The return window runs from the first session back through `reEntry.windowEndsOn`.
 
-The result also counts how long the lifter was gone. **Never say that number**, even where a tool note asks for it or a result's reasoning line carries it. Do not count missed sessions or weeks, do not mention a broken run, and **never ask why**.
+The result also counts how long the lifter was gone. **Never say that number**, even where a result's reasoning line carries it. Do not count missed sessions or weeks, do not mention a broken run, and **never ask why**.
 
 ### The first turn back (`in_gap`)
 
@@ -367,11 +367,11 @@ On `returning` they are already back: skip the opener and keep the session and l
 
 ### Clearance, asked once
 
-Only when the lifter says the gap was for illness, injury or a procedure, ask once: **"Has your clinician cleared you to lift, and with any limits?"** Do not ask what happened.
+`reEntry.clearance` is the stored answer (null when none was ever given); `reEntry.clearance.answeredOn` dates it. Only when the lifter says the gap was for illness, injury or a procedure, and no answer for this break is stored, ask once: **"Has your clinician cleared you to lift, and with any limits?"** Do not ask what happened.
 
-Store one answer, `cleared`, `cleared_with_limit` or `not_yet`, as `returnClearance` through `profile.set_training_background`. The field arrives with VW-976. If the tool does not accept the field, say the answer is not stored and hold to it in this conversation.
+Store one answer, `cleared`, `cleared_with_limit` or `not_yet`, as `returnClearance` through `profile.set_training_background`.
 
-- `not_yet`: start no working set. Say plainly that lifting starts once their clinician clears them.
+- `not_yet`: start no working set. Say plainly that lifting starts once their clinician clears them. While it stands, the result carries `reEntry.blocked` and `session.start` refuses a working session. When they say they are cleared, store the new answer.
 - `cleared_with_limit`: ask them to stay inside the clinician's limit and to stop when a movement reaches it. Never interpret the limit.
 
 This question stores that one answer and nothing else: no reason, diagnosis or limit in any field or note. The cardiovascular gate in `12` still applies as written.
@@ -388,9 +388,10 @@ This question stores that one answer and nothing else: no reason, diagnosis or l
 
 ### Limits in the window
 
-- **No set to failure, no max test (including `isometric.measure_max`) and no eccentric overload (`device.set_eccentric` above zero)** through `reEntry.windowEndsOn`. Keep these yourself whether or not a tool refuses. If the lifter asks, say it waits until the window ends.
+- **No set to failure, no max test (including `isometric.measure_max`) and no eccentric overload (`device.set_eccentric` above zero)** through `reEntry.windowEndsOn`. A `short` or `medium` rule states the first as `reEntry.rule.noFailureSets`. Keep all three yourself whether or not a tool refuses. If the lifter asks, say it waits until the window ends.
 - A `long` break has no `reEntry.windowEndsOn`: keep the same limits for two weeks from the first session back. The result reads `training` again after that session, so note its date.
-- Arm every working set: `set.start` with a `velocity_loss_exceeded` watch at `pct` 15, an engineering default inside the 10 to 20% range (Pareja-Blanco 2017). When it fires, call the set and say it hit the return cap, even short of the rep target. Where the watch is suppressed (`13`), stop at the rep target.
+- Where the rule carries it, ask them to end each working set with reps still in reserve: at least `reEntry.rule.rirFloor.value.week1` in the first week back, `reEntry.rule.rirFloor.value.week2` in the second.
+- Arm every working set: `set.start` with a `velocity_loss_exceeded` watch at `pct` set to `reEntry.rule.velocityLossCapPct.value`. A `long` rule carries no cap, and the `training` result after it has no rule: use 15 there, an engineering default. When it fires, call the set and say it hit the return cap, even short of the rep target. Where the watch is suppressed (`13`), stop at the rep target.
 - S1's and S3's failure sets move to the first session of that lift after the window.
 
 ### Afterwards

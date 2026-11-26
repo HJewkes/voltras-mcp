@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
+import { RETURN_CLEARANCES } from '../../profile/return-clearance.js';
+import { ProfileSetTrainingBackgroundInput } from '../../schemas/profile.js';
 import type { ServerState } from '../../state/server-state.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 import { seedTrainingDay } from '../fixtures/training-day.js';
@@ -39,11 +41,9 @@ const HISTORIES: readonly (readonly string[])[] = [
 
 /** Names the outline uses that are not `plan.next_workout` output. */
 const NOT_FIELDS = new Set([
-  // The stored clearance answer and its values; the profile field arrives with VW-976.
+  // The `profile.set_training_background` argument that stores the clearance answer, and its values.
   'returnClearance',
-  'cleared',
-  'cleared_with_limit',
-  'not_yet',
+  ...RETURN_CLEARANCES,
   // `set.start` watch arguments.
   'velocity_loss_exceeded',
   'pct',
@@ -64,6 +64,15 @@ function collect(node: unknown, path: string): void {
 
 async function seedEmptyProgram(store: SessionStore): Promise<void> {
   await store.putTrainingProgram({ id: 'empty', name: 'Empty', createdAt: NOW });
+}
+
+async function seedNotCleared(store: SessionStore): Promise<void> {
+  await seedEmptyProgram(store);
+  await store.putTrainingProfile({
+    userId: 'local',
+    updatedAt: NOW,
+    returnClearance: { answer: 'not_yet', answeredOn: '2026-10-02' },
+  });
 }
 
 async function readNextWorkout(
@@ -124,6 +133,8 @@ beforeAll(async () => {
   for (const history of HISTORIES) collect(await readNextWorkout(history), '');
   // A store with a plan, for the fields of the workout shape.
   collect(await readNextWorkout([], seedOwnerShapedPlan), '');
+  // A break under a stored "not yet", for the clearance fields.
+  collect(await readNextWorkout(['2026-08-01'], seedNotCleared), '');
 });
 
 afterAll(() => {
@@ -144,6 +155,26 @@ describe('the returning-after-a-break outline', () => {
 
     expect(section).not.toBe('');
     expect(section.match(/days?[\s_-]*(since|away)|streak/gi)).toBeNull();
+  });
+
+  it('reads the guardrails and the clearance answer from their result fields', () => {
+    const names = namesIn(returningSection());
+
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'reEntry.rule.noFailureSets',
+        'reEntry.rule.rirFloor.value.week1',
+        'reEntry.rule.rirFloor.value.week2',
+        'reEntry.rule.velocityLossCapPct.value',
+        'reEntry.clearance',
+        'reEntry.blocked',
+      ]),
+    );
+  });
+
+  it('stores the clearance answer through an argument the profile tool accepts', () => {
+    expect(Object.keys(ProfileSetTrainingBackgroundInput.shape)).toContain('returnClearance');
+    expect(returningSection()).not.toContain('VW-976');
   });
 
   it('names no field that plan.next_workout does not return', () => {
