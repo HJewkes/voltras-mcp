@@ -172,6 +172,12 @@ describe('the returning-after-a-break outline', () => {
     );
   });
 
+  it('offers the baseline session the result carries, or the tool it names instead', () => {
+    const names = namesIn(returningSection());
+
+    expect(names).toEqual(expect.arrayContaining(['reEntry.baselineSession', 'reEntry.startFrom']));
+  });
+
   it('stores the clearance answer through an argument the profile tool accepts', () => {
     expect(Object.keys(ProfileSetTrainingBackgroundInput.shape)).toContain('returnClearance');
     expect(returningSection()).not.toContain('VW-976');

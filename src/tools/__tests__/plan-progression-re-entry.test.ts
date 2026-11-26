@@ -67,7 +67,21 @@ describe('plan.suggest_progression on a stale basis', () => {
       source: 'Nuckols 2022',
     });
     expect(suggestion).toMatchObject({ delta: -30, repDelta: 0, basis: 'fixed' });
-    expect(suggestion.reasoning).toContain('26 days ago');
+    expect(suggestion.reasoning).toContain('lighter on purpose after a break');
+  });
+
+  it.each([
+    ['a short break with a re-entry load', { startedAt: DAYS_26 }],
+    ['a medium break with a re-entry load', { startedAt: DAYS_40 }],
+    ['a long break', { startedAt: DAYS_216 }],
+    ['a stale basis with no load', { startedAt: DAYS_26, weightLbs: null }],
+  ])('states no day count in the reasoning after %s', async (_name, basis) => {
+    await seedBasis(store, basis);
+
+    const suggestion = await suggest();
+
+    expect(suggestion.lastTime).toMatchObject({ stale: true });
+    expect(suggestion.reasoning).not.toMatch(/\d+[\s_-]*days?\b/i);
   });
 
   it('scales a medium break to one third of the top load', async () => {
