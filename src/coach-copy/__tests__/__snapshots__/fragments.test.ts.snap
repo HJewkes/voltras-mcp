@@ -159,8 +159,13 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
   },
   "composer.load-clause": {
     "sourceKind": "engineering-default",
-    "sourceRef": "States the planned load so a short re-entry does not read as a cue to lighten it.",
+    "sourceRef": "States the planned load so a session inside normal training does not read as a cue to lighten it.",
     "text": ", load held at {{weightLbs}} lb",
+  },
+  "composer.load-clause-return": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "States the re-entry load and that it is meant to be lighter, so the offer never asks for the load from before the break; the wording is ours.",
+    "text": ", starting at {{weightLbs}} lb, lighter on purpose after a break",
   },
   "composer.month-marker": {
     "sourceKind": "engineering-default",

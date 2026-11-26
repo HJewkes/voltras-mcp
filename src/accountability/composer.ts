@@ -27,6 +27,8 @@ import {
 } from './copy.js';
 import { COMPOSER_FRAGMENTS as LINES, REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
 import { fillSlots as fill } from '../coach-copy/fill.js';
+import { BREAK_BAND_MAX_DAYS, type BreakBand } from '../analytics/re-entry.js';
+import { staleBasisReEntry, type ReEntryResult } from '../tools/re-entry-read.js';
 import type {
   AdherenceRead,
   HoldingRead,
@@ -89,6 +91,8 @@ export interface MissRecoveryInput {
   reEntryDay: string;
   reducedScopeMinutes?: number;
   holding: HoldingRead;
+  /** `plan.next_workout`'s re-entry read; absent reads as nothing to change. */
+  reEntry?: ReEntryResult;
 }
 
 export interface GhostNudgeInput {
@@ -179,9 +183,29 @@ function commitmentLine(input: SundayAnchorInput): string {
   return fill(LINES.monthMarker.text, { wording });
 }
 
-function loadClause(exercise: NextWorkoutExercise): string {
-  if (exercise.targetWeightLbs === undefined) return '';
-  return fill(LINES.loadClause.text, { weightLbs: String(exercise.targetWeightLbs) });
+/**
+ * `staleBasisReEntry` reads a break's age, which a returning lifter's read no longer carries, so
+ * the band's longest break stands in for it. It reads no `startedAt`.
+ */
+function returnLoadLbs(band: BreakBand, plannedLbs: number): number | undefined {
+  if (band !== 'short' && band !== 'medium') return undefined;
+  const lastTime = { startedAt: '', daysAgo: BREAK_BAND_MAX_DAYS[band].value, stale: true };
+  return staleBasisReEntry(lastTime, plannedLbs)?.loadLbs;
+}
+
+/**
+ * The planned load while nothing changes, the re-entry load from a short break on, and no load
+ * after a break too long to scale one.
+ */
+function loadClause(exercise: NextWorkoutExercise, reEntry: ReEntryResult | undefined): string {
+  const planned = exercise.targetWeightLbs;
+  if (planned === undefined) return '';
+  if (reEntry === undefined || !('band' in reEntry)) {
+    return fill(LINES.loadClause.text, { weightLbs: String(planned) });
+  }
+  const lighter = returnLoadLbs(reEntry.band, planned);
+  if (lighter === undefined) return '';
+  return fill(LINES.loadClauseReturn.text, { weightLbs: String(lighter) });
 }
 
 /**
@@ -194,15 +218,19 @@ function offerLine(input: MissRecoveryInput, minutes: number, lead: NextWorkoutE
     reEntryDay: input.reEntryDay,
     minutes: String(minutes),
     exercise: lead.name,
-    loadClause: loadClause(lead),
+    loadClause: loadClause(lead, input.reEntry),
   });
 }
 
-function maintenanceLine(minutes: number, lead: NextWorkoutExercise): string {
+function maintenanceLine(
+  input: MissRecoveryInput,
+  minutes: number,
+  lead: NextWorkoutExercise,
+): string {
   return fill(LINES.holdingMaintenance.text, {
     minutes: String(minutes),
     exercise: lead.name,
-    loadClause: loadClause(lead),
+    loadClause: loadClause(lead, input.reEntry),
   });
 }
 
@@ -257,7 +285,7 @@ function composeHoldingAcknowledgement(input: MissRecoveryInput): ComposedMessag
       lifterName: input.lifterName,
       throughClause: endDate === undefined ? '' : fill(LINES.holdingThrough.text, { endDate }),
       plannedDay: input.missed.plannedDay,
-      maintenanceLine: maintenanceLine(minutes, leadExercise(input.nextWorkout)),
+      maintenanceLine: maintenanceLine(input, minutes, leadExercise(input.nextWorkout)),
     }),
   };
 }
