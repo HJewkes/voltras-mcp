@@ -281,7 +281,7 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
-  'about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. ' +
+  'about planning the next block. `reEntry`: days since the last training day; after a break also band, cited rule and `clearance` (the latest return clearance answer), plus `blocked` while that answer is not_yet. Report only. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +

@@ -35,7 +35,7 @@ references/
   11-dated-blocks-and-planning-sitting.md     block dates, missed weeks, current block, the planning sitting
   12-onboarding-gaps-and-tier-signal.md   session zero, the break-length question, the tier signal
   13-effort-rir-and-failure-sets.md       what you may claim about effort, the RIR fit, safe failure sets
-  14-sittings.md                          the preflight, the first goals sitting script (S0), then S1 to S3
+  14-sittings.md                          the preflight, the first goals sitting script (S0), then S1 to S3, and R (return after a break)
   15-tool-inventory.md                    every tool, grouped by job: when, and the rule that matters
 ```
 
@@ -159,7 +159,7 @@ No device, no lease, no session. Run the preflight first (`14`). The order matte
 4. Then proposals, read out with both edges.
 5. Then acceptance, one target at a time, on the lifter's word.
 
-The first goals sitting script (S0), with exact calls, questions, decision points and read-backs, is in **`references/14-sittings.md`**, with outlines for S1 to S3.
+The first goals sitting script (S0), with exact calls, questions, decision points and read-backs, is in **`references/14-sittings.md`**, with outlines for S1 to S3. **Coming back after a break** (`plan.next_workout` reads `reEntry.phase` as `in_gap` or `returning`): follow section R there before you say anything about the gap.
 
 ### Review unreviewed days before you read history (VW-489)
 

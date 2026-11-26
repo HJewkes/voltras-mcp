@@ -90,7 +90,7 @@ confirmation the safety guard no longer stands behind
 (`src/state/mode-revert-guard.ts:40`<!-- anchor: MODE_REVERT_WINDOW_MS = 2000 -->, `src/state/bilateral-cascade.ts:60-67`<!-- anchor: modeEchoTimeoutMs -->).
 
 **Where this stands:** the reordering is merged and covered by tests, including one that
-exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:577`<!-- anchor: VW-162: waits on the slot mode-revert guard -->,
+exercises the echo wait directly (`src/tools/__tests__/bilateral-cascade.test.ts:580`<!-- anchor: VW-162: waits on the slot mode-revert guard -->,
 `VW-162: waits on the slot mode-revert guard and reports the echo`). No re-run against two
 physical units is recorded in this repository: the original failure that motivated the fix
 was a hardware observation, and the fix itself is confirmed in tests, not on a bench.

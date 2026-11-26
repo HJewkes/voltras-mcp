@@ -56,6 +56,7 @@ import {
 } from './accountability-commitment.js';
 import { wrapHandler } from './helpers.js';
 import { nextWorkout as lookupNextWorkout } from './plan-tools.js';
+import type { ReEntryResult } from './re-entry-read.js';
 import { readUnreviewed } from '../analytics/session-review.js';
 import { buildWeeklyReport } from './report-tools.js';
 
@@ -308,7 +309,7 @@ async function renderDecision(
   kind: ProactiveKind,
 ): Promise<{ text: string; inputsUsed: AccountabilityPreviewInputsUsed }> {
   const now = evaluation.now;
-  const [report, nextWorkoutRead, block] = await Promise.all([
+  const [report, { read: nextWorkoutRead, reEntry }, block] = await Promise.all([
     buildWeeklyReport(state, { format: 'json', to: now.toISOString() }),
     readNextWorkout(state),
     resolveCurrentBlock(state.store, localDate(now.toISOString())),
@@ -320,7 +321,7 @@ async function renderDecision(
     planning: block.planning.due ? { reason: block.planning.reason } : null,
     commitment: evaluation.commitment === undefined ? null : commitmentRead(evaluation.commitment),
   };
-  const text = composeForKind(kind, evaluation.current, inputsUsed, now);
+  const text = composeForKind(kind, evaluation.current, inputsUsed, reEntry, now);
   return { text, inputsUsed };
 }
 
@@ -328,6 +329,7 @@ function composeForKind(
   kind: ProactiveKind,
   current: AccountabilityState,
   inputs: AccountabilityPreviewInputsUsed,
+  reEntry: ReEntryResult,
   now: Date,
 ): string {
   switch (kind) {
@@ -354,6 +356,7 @@ function composeForKind(
         nextWorkout: nextWorkoutRead,
         reEntryDay: weekdayName(new Date(now.getTime() + DAY_MS)),
         holding: holdingRead(current),
+        reEntry,
       }).text;
     }
     case 'ghost_nudge': {
@@ -419,11 +422,14 @@ function weekdayName(date: Date): string {
   return WEEKDAY_NAMES[date.getDay()];
 }
 
-async function readNextWorkout(state: ServerState): Promise<NextWorkoutRead | null> {
+async function readNextWorkout(
+  state: ServerState,
+): Promise<{ read: NextWorkoutRead | null; reEntry: ReEntryResult }> {
   const result = await lookupNextWorkout(state, {});
+  const { reEntry } = result;
   // Nothing planned today (a gap, or before the first dated block) reads as nothing queued.
-  if (!('template' in result)) return null;
-  return {
+  if (!('template' in result)) return { read: null, reEntry };
+  const read: NextWorkoutRead = {
     templateName: result.template.name,
     exercises: result.plannedExercises.map((plannedExercise) => ({
       name: state.exercises.getById(plannedExercise.exerciseId)?.name ?? plannedExercise.exerciseId,
@@ -432,6 +438,7 @@ async function readNextWorkout(state: ServerState): Promise<NextWorkoutRead | nu
         : {}),
     })),
   };
+  return { read, reEntry };
 }
 
 /**

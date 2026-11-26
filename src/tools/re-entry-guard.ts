@@ -9,10 +9,10 @@
 // The refusal names the window's last day, never a day count: the return path never tells the
 // lifter how long they were away.
 
-import { todayLocal, type TrainingDayStore } from '../analytics/training-days.js';
+import { todayLocal } from '../analytics/training-days.js';
 import type { BreakBand } from '../analytics/re-entry.js';
 import { UserFacingError } from '../errors.js';
-import { readReEntry, type ReEntryResult } from './re-entry-read.js';
+import { readReEntry, type ReEntryResult, type ReEntryStore } from './re-entry-read.js';
 
 export const RE_ENTRY_WINDOW_CODE = 'RE_ENTRY_WINDOW';
 
@@ -55,7 +55,7 @@ export function reEntryRefusal(work: GuardedWork, windowEndsOn: string): string 
 
 /** Throws a `RE_ENTRY_WINDOW` tool error while a guarded window is open. */
 export async function assertOutsideReEntryWindow(
-  store: TrainingDayStore,
+  store: ReEntryStore,
   work: GuardedWork,
 ): Promise<void> {
   const today = todayLocal();

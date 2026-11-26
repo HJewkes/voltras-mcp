@@ -16,16 +16,27 @@
 // layoff video's rep range and single working set. One third of a working load always sits under
 // 45% of that lift's e1RM, the other ceiling the medium rule names, so no e1RM is read here.
 //
+// The short and medium bands also carry effort guardrails for the window (VW-974): a floor on
+// reps in reserve by week, no sets to failure, and a cap on velocity loss within a set. They
+// leave the load and the volume above unchanged. The short window ends after its first week, so
+// only that week's floor falls inside it.
+//
 // Pure: the caller passes the training days and today's local date. Bump RE_ENTRY_VERSION on
 // any change to a band edge or a rule.
 
 import type { SourcedValue } from '../coach-copy/fragments.js';
 
-export const RE_ENTRY_VERSION = 1;
+export const RE_ENTRY_VERSION = 2;
 
 export type BreakBand = 'none' | 'short' | 'medium' | 'long';
 
 export type ReEntryPhase = 'training' | 'in_gap' | 'returning' | 'no_history';
+
+/** The fewest reps in reserve a set keeps, by week of the return window. */
+export interface RirFloorByWeek {
+  readonly week1: number;
+  readonly week2: number;
+}
 
 /** How the first days back are loaded; `loadFactor` scales the last working load. */
 export interface ReEntryRule {
@@ -36,6 +47,10 @@ export interface ReEntryRule {
   readonly setsPerMuscle?: number;
   /** Length of the re-entry window from the first session back; 0 when there is none. */
   readonly weeks: number;
+  readonly rirFloor?: SourcedValue<RirFloorByWeek>;
+  readonly noFailureSets?: SourcedValue<true>;
+  /** The velocity loss, in percent, at which a set ends. */
+  readonly velocityLossCapPct?: SourcedValue<number>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -45,6 +60,25 @@ const SHORT_BREAK_SOURCE = 'Nuckols 2022, https://www.strongerbyscience.com/detr
 const MEDIUM_BREAK_SOURCE =
   `${SHORT_BREAK_SOURCE}; ` +
   'Renaissance Periodization 2021, https://www.youtube.com/watch?v=8vLOHvpwZbo';
+
+const RETURN_WINDOW_GUARDRAILS = {
+  // The article states reps-in-reserve floors for a returning lifter's first and last sets;
+  // reading them as a floor for week 1 and week 2 is this rule's own adaptation.
+  rirFloor: {
+    value: { week1: 5, week2: 3 },
+    sourceKind: 'paper',
+    sourceRef: SHORT_BREAK_SOURCE,
+  },
+  noFailureSets: { value: true, sourceKind: 'paper', sourceRef: SHORT_BREAK_SOURCE },
+  velocityLossCapPct: {
+    value: 15,
+    sourceKind: 'engineering-default',
+    sourceRef:
+      '15 is a default picked inside a 10 to 20 percent range; Pareja-Blanco 2017, ' +
+      'https://doi.org/10.1111/sms.12678, found that a 20 percent cap built similar squat ' +
+      'strength to a 40 percent cap with fewer reps.',
+  },
+} satisfies Partial<ReEntryRule>;
 
 /** The last day count each band still holds; a longer break falls in the next band. */
 export const BREAK_BAND_MAX_DAYS: Readonly<
@@ -66,12 +100,19 @@ export const RE_ENTRY_RULES: Readonly<
   Record<Exclude<BreakBand, 'none'>, SourcedValue<ReEntryRule>>
 > = {
   short: {
-    value: { loadFactor: 0.8, weeks: 1 },
+    value: { loadFactor: 0.8, weeks: 1, ...RETURN_WINDOW_GUARDRAILS },
     sourceKind: 'paper',
     sourceRef: SHORT_BREAK_SOURCE,
   },
   medium: {
-    value: { loadFactor: 1 / 3, repsLow: 20, repsHigh: 30, setsPerMuscle: 1, weeks: 2 },
+    value: {
+      loadFactor: 1 / 3,
+      repsLow: 20,
+      repsHigh: 30,
+      setsPerMuscle: 1,
+      weeks: 2,
+      ...RETURN_WINDOW_GUARDRAILS,
+    },
     sourceKind: 'paper',
     sourceRef: MEDIUM_BREAK_SOURCE,
   },

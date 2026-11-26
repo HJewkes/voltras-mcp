@@ -217,7 +217,7 @@ interface State {
   lease: FakeLease;
   channels: RecordingChannels;
   // VW-978: the return-window guard reads training days; none, so no window is open.
-  store: { listTrainingDayInstants: () => Promise<[]> };
+  store: { listTrainingDayInstants: () => Promise<[]>; getTrainingProfile: () => Promise<null> };
 }
 
 function makeState(slots: Array<[string, FakeSlot]>): State {
@@ -232,7 +232,7 @@ function makeState(slots: Array<[string, FakeSlot]>): State {
     slots: new Map(slots),
     lease: makeFakeLease(),
     channels: makeRecordingChannels(),
-    store: { listTrainingDayInstants: async () => [] },
+    store: { listTrainingDayInstants: async () => [], getTrainingProfile: async () => null },
   };
 }
 
