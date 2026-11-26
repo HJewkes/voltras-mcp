@@ -220,7 +220,7 @@ describe('plan.next_workout reEntry.baselineSession with no planned workout', ()
     await dateBlock(store, 'b1', '2026-08-17', 4);
   }
 
-  it('builds it from the last pre-break session when the dated block ended in the gap', async () => {
+  it('builds it from the last pre-break day when the dated block ended in the gap', async () => {
     await endTheDatedBlock();
     await trainBeforeTheBreak();
 
@@ -249,27 +249,65 @@ describe('plan.next_workout reEntry.baselineSession with no planned workout', ()
     expect(liftLoads(next.reEntry)).toEqual(SCALED_LAST_SESSION);
   });
 
-  it('keeps it while the window is open, scaled from the load before the break', async () => {
+  const NO_PLAN_SHAPES = [
+    ['unplanned', {}],
+    ['completed', { programId: 'test' }],
+  ] as const;
+
+  it.each(NO_PLAN_SHAPES)(
+    'keeps it on the first day back for the %s shape, scaled from before the break',
+    async (shape, args) => {
+      await endTheDatedBlock();
+      await trainBeforeTheBreak();
+      await trainLifts('s-today', '2026-11-06T10:00:00.000Z', { 'cable-curl': 20 });
+
+      const next = await nextWorkout(args);
+
+      expect(next).toMatchObject({ [shape]: true, reEntry: { phase: 'returning' } });
+      expect(liftLoads(next.reEntry)).toEqual(SCALED_LAST_SESSION);
+    },
+  );
+
+  it.each(NO_PLAN_SHAPES)(
+    'offers the %s shape none on day 3 of the window',
+    async (shape, args) => {
+      await endTheDatedBlock();
+      await trainBeforeTheBreak();
+      await trainLifts('s-back', '2026-11-04T10:00:00.000Z', { 'cable-curl': 20 });
+
+      const next = await nextWorkout(args);
+
+      expect(next).toMatchObject({ [shape]: true, reEntry: { phase: 'returning' } });
+      expect(next.reEntry).not.toHaveProperty('baselineSession');
+      expect(next.reEntry).not.toHaveProperty('startFrom');
+    },
+  );
+
+  it('takes the lifts of every session on the last training day before the break', async () => {
     await endTheDatedBlock();
-    await trainBeforeTheBreak();
-    await trainLifts('s-back', '2026-11-02T10:00:00.000Z', { 'cable-curl': 20 });
+    await trainLifts('s-older', '2026-09-08T10:00:00.000Z', { 'chest-press': 150 });
+    await trainLifts('s-curl', '2026-09-10T10:00:00.000Z', { 'cable-curl': 60 });
+    await trainLifts('s-pull', '2026-09-10T10:40:00.000Z', { 'lat-pulldown': 120 });
+    await trainLifts('s-row', '2026-09-10T11:20:00.000Z', { 'seated-row': 90 });
 
     const read = await reEntry();
 
-    expect(read.phase).toBe('returning');
-    expect(liftLoads(read)).toEqual(SCALED_LAST_SESSION);
+    expect(liftLoads(read)).toEqual([
+      ['cable-curl', 20],
+      ['lat-pulldown', 40],
+      ['seated-row', 30],
+      ['cable-curl', 15],
+    ]);
   });
 
-  it('drops it once the window has closed', async () => {
+  it('files a session that crosses midnight under the day it ended', async () => {
     await endTheDatedBlock();
-    await trainBeforeTheBreak();
-    await trainLifts('s-back', '2026-10-20T10:00:00.000Z', { 'cable-curl': 20 });
-    await trainLifts('s-mid', '2026-10-30T10:00:00.000Z', { 'cable-curl': 30 });
-    await trainLifts('s-recent', '2026-11-04T10:00:00.000Z', { 'cable-curl': 40 });
+    await trainLifts('s-late', '2026-09-09T23:50:00.000Z', { 'cable-curl': 60 });
+    await trainLifts('s-pull', LAST_PRE_BREAK, { 'lat-pulldown': 120 });
 
     const read = await reEntry();
 
-    expect(read).toEqual({ phase: 'training', daysSinceLastTrainingDay: 2 });
+    expect(liftLoads(read)).toEqual(SCALED_LAST_SESSION);
   });
 
   it('passes over a later session that holds no working set', async () => {

@@ -1,7 +1,7 @@
 // The first session back after a break: a short, light "baseline session" (VW-982).
 //
 // It takes up to three lifts the lifter has trained before, from today's template or, with no
-// planned workout, from the last session before the break (VW-983). Each gets one working set at
+// planned workout, from the last training day before today (VW-983). Each gets one working set at
 // the re-entry rule's load, and the sets are ordered so relative load falls across the session and
 // the last working set is the lightest. When the rule allows a single set per lift, that last set
 // is a back-off set of the first lift at 80% of its working load; it is the one set the session
