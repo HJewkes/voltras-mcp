@@ -43,10 +43,10 @@ A few terms first.
 The server sums up a set in one word: **good**, **slowing**, **grinding** or **form breakdown**.
 You can ask for it with the `fatigue.verdict` pipeline of [`metrics.compute`](/reference/metrics).
 It returns the same verdict the live fatigue card on the dashboard shows
-(`src/tools/metrics-tools.ts:2505-2508`<!-- anchor: the same multi-dimension fatigue verdict -->, `src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: getSetFatigueVerdict -->).
+(`src/tools/metrics-tools.ts:2532-2535`<!-- anchor: the same multi-dimension fatigue verdict -->, `src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: getSetFatigueVerdict -->).
 
 The verdict looks at three things: velocity loss, ROM and tempo. Each one gets its own grade of
-ok, warn or alarm, and the response lists all three (`src/tools/metrics-tools.ts:2506-2508`<!-- anchor: three per-dimension tones -->).
+ok, warn or alarm, and the response lists all three (`src/tools/metrics-tools.ts:2533-2535`<!-- anchor: three per-dimension tones -->).
 The calculation comes from
 [`@voltras/workout-analytics`](https://www.npmjs.com/package/@voltras/workout-analytics), the
 published analytics library this server depends on (`package.json:66`). Its function
@@ -54,7 +54,7 @@ published analytics library this server depends on (`package.json:66`). Its func
 
 1. A ROM or tempo alarm gives **form breakdown**. This check runs first, so a fast-looking rep
    cannot hide it. A cheat rep keeps its speed up by cutting ROM and dropping the lowering
-   phase, and this is the one signal that catches it (`src/tools/metrics-tools.ts:2508-2510`<!-- anchor: this is the one signal that catches it -->).
+   phase, and this is the one signal that catches it (`src/tools/metrics-tools.ts:2535-2537`<!-- anchor: this is the one signal that catches it -->).
 2. A velocity-loss alarm with clean form gives **grinding**.
 3. Any warning gives **slowing**.
 4. Otherwise the set is **good**.
@@ -71,7 +71,7 @@ What counts as an alarm, in that library's defaults:
   30%. That is separate from your set's own stop threshold, described in the next section.
 
 With fewer than two reps there is nothing to compare against, so the verdict is empty. The card
-shows "warming up" instead of a guess (`src/tools/metrics-tools.ts:2511`<!-- anchor: `null` below 2 reps -->,
+shows "warming up" instead of a guess (`src/tools/metrics-tools.ts:2538`<!-- anchor: `null` below 2 reps -->,
 `src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: warming up -->).
 
 ## When the live card says stop
