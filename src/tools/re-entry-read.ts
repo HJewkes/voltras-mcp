@@ -25,18 +25,36 @@ import {
   type ReEntryPhase,
   type ReEntryRead,
   type ReEntryRule,
+  type RirFloorByWeek,
 } from '../analytics/re-entry.js';
+import type { SourcedValue } from '../coach-copy/fragments.js';
 
 export interface ReEntryBrief {
   readonly phase: ReEntryPhase;
   readonly daysSinceLastTrainingDay: number | null;
 }
 
+/** A guardrail as the result carries it: its value and a short citation of its own. */
+interface Cited<T> {
+  readonly value: T;
+  readonly source: string;
+}
+
+export type ReEntryRuleBrief = Omit<
+  ReEntryRule,
+  'rirFloor' | 'noFailureSets' | 'velocityLossCapPct'
+> & {
+  readonly rirFloor?: Cited<RirFloorByWeek>;
+  readonly noFailureSets?: Cited<true>;
+  readonly velocityLossCapPct?: Cited<number>;
+  readonly source: string;
+};
+
 export interface ReEntryBreakBrief extends ReEntryBrief {
   readonly band: BreakBand;
   /** The last day of the re-entry window, inclusive; `null` when the band has no window. */
   readonly windowEndsOn: string | null;
-  readonly rule: ReEntryRule & { readonly source: string };
+  readonly rule: ReEntryRuleBrief;
 }
 
 export type ReEntryResult = ReEntryBrief | ReEntryBreakBrief;
@@ -50,6 +68,21 @@ function citation(sourceKind: string, sourceRef: string): string {
     .join('; ');
 }
 
+function cited<T>({ value, sourceKind, sourceRef }: SourcedValue<T>): Cited<T> {
+  return { value, source: citation(sourceKind, sourceRef) };
+}
+
+function briefRule({ value, sourceKind, sourceRef }: SourcedValue<ReEntryRule>): ReEntryRuleBrief {
+  const { rirFloor, noFailureSets, velocityLossCapPct, ...load } = value;
+  return {
+    ...load,
+    ...(rirFloor && { rirFloor: cited(rirFloor) }),
+    ...(noFailureSets && { noFailureSets: cited(noFailureSets) }),
+    ...(velocityLossCapPct && { velocityLossCapPct: cited(velocityLossCapPct) }),
+    source: citation(sourceKind, sourceRef),
+  };
+}
+
 /** The compact result: the full read only for a break or the window after one. */
 export function briefReEntry(read: ReEntryRead): ReEntryResult {
   const { phase, daysSinceLastTrainingDay } = read;
@@ -59,7 +92,7 @@ export function briefReEntry(read: ReEntryRead): ReEntryResult {
     daysSinceLastTrainingDay,
     band: read.band,
     windowEndsOn: read.windowEndsOn,
-    rule: { ...read.rule.value, source: citation(read.rule.sourceKind, read.rule.sourceRef) },
+    rule: briefRule(read.rule),
   };
 }
 
