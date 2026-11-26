@@ -539,3 +539,37 @@ describe('metrics.compute — history.trend flatline (VW-452)', () => {
     expect(plateau.flatline).toBeNull();
   });
 });
+
+// VW-975: the stall rule reads only the sessions after the last break of 15+ days.
+describe('metrics.compute — history.trend across a layoff', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function trendFor(weeks: number[]): Promise<HistoryTrendBody> {
+    const sets = weeks.map((week) => makeSet(`s-${week}`, week, 100));
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, makeState(sets), makePlaceholders(server));
+    const result = await callTool(tools, { pipeline: 'history.trend', exerciseId: 'back-squat' });
+    expect(result.isError).toBeUndefined();
+    return parsePayload(result) as HistoryTrendBody;
+  }
+
+  it('does not call a stall from flat weeks that reach back across a four-week break', async () => {
+    const body = await trendFor([0, 1, 2, 3, 7, 8]);
+
+    expect(body.plateau.verdict).toBe('none');
+    expect(body.plateau.flatline).toBeNull();
+    expect(body.series).toHaveLength(6);
+  });
+
+  it('still calls the same flat weeks a stall when no break sits between them', async () => {
+    const body = await trendFor([0, 1, 2, 3, 4, 5]);
+
+    expect(body.plateau.verdict).toBe('plateau');
+  });
+});

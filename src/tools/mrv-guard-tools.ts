@@ -31,7 +31,9 @@ const MRV_GUARD_CHECK_DESCRIPTION =
   'MRV/under-recovery verdict any internal check would see. All three session ids are ' +
   'required and must be ordered oldest to newest: the signal is TWO pairwise comparisons ' +
   '(session1 vs session2, then session2 vs session3), so a single pair cannot answer it. ' +
-  'Returns `priorPair`, `currentPair`, and the combined `guard` verdict. Real internal ' +
+  'Returns `priorPair`, `currentPair`, and the combined `guard` verdict. A pair whose ' +
+  'sessions span a break of 15 or more days in training is not evaluable, so the drop after ' +
+  'a layoff never confirms a breach. Real internal ' +
   'consumers import `checkMrvGuard` directly rather than round-tripping through this tool. ' +
   'Use this when a human wants to inspect a deload signal, not as a step in an automated ' +
   'coaching decision.';

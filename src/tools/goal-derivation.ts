@@ -228,6 +228,11 @@ async function laterBlocksOf(
  * Read off the training-day timeline rather than a self-report: a fitted slope
  * over a regain phase over-projects, and the timeline is what shows the gap
  * (plan §1.10). The whole timeline, uncapped, so the newest gap is always seen.
+ *
+ * Not the re-entry rule. This 3-month edge sizes the goal band's front-load
+ * (rp:rp-s7); the 15-day break that loads the first days back and keeps the
+ * layoff drop out of regression signals is `analytics/re-entry.ts`. The two
+ * answer different questions, so neither edge follows the other.
  */
 async function hasRecentLayoff(state: GoalDerivationState, nowIso: string): Promise<boolean> {
   const days = await readTrainingDaysMatching(state.store, { to: nowIso });
