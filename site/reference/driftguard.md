@@ -8,7 +8,7 @@
 
 DIAGNOSTIC ONLY — not the consumption path.
 
-Ask "why did the system refuse (or accept) a comparison between these two sessions for this exercise" and get the same comparability verdict any internal cross-session check would see (drift in ROM/tempo, setup mismatch, insufficient baseline). Real internal consumers import `checkDriftGuard` directly rather than round-tripping through this tool. Use this when a human wants to inspect or debug a refused comparison, not as a step in an automated coaching decision.
+Ask "why did the system refuse (or accept) a comparison between these two sessions for this exercise" and get the same comparability verdict any internal cross-session check would see (drift in ROM/tempo, setup mismatch, insufficient baseline, or a break of 15 or more days in training between the two). Real internal consumers import `checkDriftGuard` directly rather than round-tripping through this tool. Use this when a human wants to inspect or debug a refused comparison, not as a step in an automated coaching decision.
 
 **Parameters**
 

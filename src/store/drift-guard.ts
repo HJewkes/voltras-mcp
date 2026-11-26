@@ -31,6 +31,8 @@ import {
   type DriftSummary,
 } from '@voltras/workout-analytics';
 
+import type { TrainingGap } from '../analytics/training-days.js';
+import { breakBetweenSessions } from './comparison-break.js';
 import { normalisePositionsToMetres } from './position-units.js';
 import {
   isEligibleForComparison,
@@ -57,11 +59,21 @@ export interface DriftGuardInput {
  * ABSENT read is not evidence of comparability, and the safe direction for a
  * gate is to refuse. Downstream must treat that identically to a real drift
  * block — skip the comparison.
+ *
+ * A pair that spans a break of 15+ days is refused the same way (VW-975): what
+ * changed across a layoff is the lifter, not the execution, and the MRV guard
+ * behind this gate would otherwise read the drop as fatigue.
  */
 export async function checkDriftGuard(
   store: SessionStore,
   input: DriftGuardInput,
 ): Promise<DriftGuardVerdict> {
+  const layoff = await breakBetweenSessions(
+    store,
+    [input.baselineSessionId, input.currentSessionId],
+    input.lifter,
+  );
+  if (layoff !== null) return breakVerdict(layoff);
   const [baseline, current] = await Promise.all([
     summarizeSessionForDrift(store, input.baselineSessionId, input.key, input.lifter),
     summarizeSessionForDrift(store, input.currentSessionId, input.key, input.lifter),
@@ -105,6 +117,21 @@ export async function summarizeSessionForDrift(
     .filter((set) => isEligibleForComparison(set, key))
     .map(normalisePositionsToMetres);
   return summarizeSetsForDrift(scoped);
+}
+
+/** The verdict for "the two sessions sit either side of a layoff". */
+function breakVerdict(layoff: TrainingGap): DriftGuardVerdict {
+  return {
+    comparable: false,
+    flagged: true,
+    tempoDriftPct: 0,
+    romDriftPct: 0,
+    reasoning: `the sessions span a ${layoff.days}-day break in training, ending ${layoff.endsOn} — performance after a layoff is not compared with performance before it`,
+    thresholdsUsed: {
+      tempoDriftPct: DRIFT_GUARD_THRESHOLDS.tempoDriftPct,
+      romDriftPct: DRIFT_GUARD_THRESHOLDS.romDriftPct,
+    },
+  };
 }
 
 /** The verdict for "one side of the comparison has no reps to read". */
