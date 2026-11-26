@@ -142,3 +142,4 @@ Until a marking tool ships:
 - Where the tier stamps a goal: `09-goals-and-weekly-review.md`
 - Warm-up rungs and progression gates: `03-workout-programming.md`
 - The break question inside the Sunday script: `14-sittings.md`
+- A lifter coming back now (a different question from the past break `lastBreakMonths` records): `14-sittings.md`, section R

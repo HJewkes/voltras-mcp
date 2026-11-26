@@ -94,6 +94,8 @@ So a set meant as a failure anchor must be a real grind to a stop, with full ran
 
 **Harvest, never prescribe.** The product does not ask anyone to train to failure for its own sake. The training benefit of true failure is trivial to nil. The failure sets in S1 and S3 exist because the **owner chose** to collect anchors for the fit. Outside that protocol, do not program failure.
 
+**Not in a return window.** After a break, take no set to failure, run no max test and add no eccentric overload until the window ends (`14-sittings.md`, section R). The S1 and S3 failure sets wait until after it.
+
 Only on failure-safe cable lifts: **cable row, cable chest press, lat pulldown.** Never on overhead, spinal-loaded or single-leg movements. That rules out shoulder press, overhead tricep extension, squat and Romanian deadlift.
 
 Before the set:
@@ -136,7 +138,7 @@ A beginner does not track reps in reserve at all (`rirTarget: null` in the start
 
 ## Cross-refs
 
-- The S1 and S3 outlines that use this recipe: `14-sittings.md`
+- The S1 and S3 outlines that use this recipe, and the return window (section R): `14-sittings.md`
 - What to say after an ordinary set: `06-analytics-and-coaching.md`
 - Watches and set purposes: `04-set-execution.md`
 - Voice and the deaf-mic window: `08-channel-events-reference.md`
