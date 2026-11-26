@@ -132,6 +132,7 @@ import {
 export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
 import { isDebugGatedTool } from '../tool-registry.js';
+import { assertOutsideReEntryWindow, RE_ENTRY_GUARD_DESCRIPTION } from './re-entry-guard.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
@@ -397,7 +398,8 @@ const ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION =
 
 const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
   ISOKINETIC_DEPRECATION +
-  'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
+  'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06. ' +
+  RE_ENTRY_GUARD_DESCRIPTION;
 
 const CONFIGURE_ISOKINETIC_DESCRIPTION =
   'Configure isokinetic mode in one call (VMCP-02.16) — replaces the five per-field device.set_isokinetic_* setters. ' +
@@ -405,7 +407,8 @@ const CONFIGURE_ISOKINETIC_DESCRIPTION =
   '`eccSpeedLimitMmPerSec` (0-2000, 0 = auto), `eccConstWeightLbs` (0-200), and `eccOverloadWeightLbs` (0-200) are optional and only written when supplied. ' +
   'Use `eccConstWeightLbs` with `eccMode: "constant"` and `eccOverloadWeightLbs` with the overload variant. Speeds are mm/s (UI shows m/s = input ÷ 1000); weights are pounds. ' +
   'Caveats (apply to every field): settings persist globally across mode switches and the firmware emits no modeConfirmation echo, so coercion checks expire silently. ' +
-  'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
+  'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06. ' +
+  RE_ENTRY_GUARD_DESCRIPTION;
 
 const START_GUIDED_LOAD_DESCRIPTION =
   'ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md). @experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK sets the target weight, triggers the flow, then polls device status every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary events are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Weight Training gate (VMCP-02.90):** this is the ENGAGEMENT / LOAD STATE layer\'s engagement ceremony, and it requires the Weight Training mode — guided load is confirmed to enter from Weight Training and NOT from Damper, where the ceremony holds at `armed` for the full 18s poll window, times out, and leaves a junk auto-created set behind. From any other selectable mode the tool refuses with `GUIDED_LOAD_MODE_MISMATCH` naming the current mode, before anything is written; no other mode has been tested, so the allowlist is exactly one mode wide. Pass `autoSwitchMode: true` to have the tool switch to Weight Training as part of engaging: it waits for the device to echo the new mode (a `MODE_ECHO_TIMEOUT` error and no trigger if the echo never lands) and still runs the pre-trigger unload, so the ceremony starts from a slack cable. Default is `false` on purpose — a lifter who selected Damper on the unit chose it.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed; `read_back` reports what was observed afterwards. The tool waits up to the mode-echo window for the device to report a phase, then returns `verdict` (`confirmed` / `unconfirmed`), `source` (`device` / `server`), `observed_phase` and `waited_ms`. Only `countdown`, `engaging` and `active` are device-sourced — `armed` is reported identically whether the device answered or the SDK synthesised it on the trigger write, so it confirms nothing and comes back as `unconfirmed` with the reason spelled out. `ceremony_skipped: true` marks the device reporting engagement with no countdown observed first. A phase outside the active set after the trigger is a `GUIDED_LOAD_NOT_ARMED` error, not a success. The window bounds "did the device answer", NOT "did the load engage" — engagement waits on a person pulling the cable and is confirmed by the `guided_load_state` channel event.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.\n\n**Set-level intent (VW-168a):** the set is created for you on `armed`, before any `set.start` could run, so pass `isWarmup: true` for a guided-load warm-up and `watch` (the same shape `set.start` takes) for mid-set notifications. Without them the set records as a working set with no watch, and a warm-up ramp done this way pollutes progression scoring. A `watch.inactivityTimeoutMs` replaces `inactivityTimeoutSeconds` for this set. Both are ignored when a set is already recording on the slot.';
@@ -419,7 +422,8 @@ const SET_ECCENTRIC_DESCRIPTION =
   'The legacy `percent` param is accepted as a deprecated alias for one release and will be removed in the next major; the value semantics are identical (it was mis-named — the underlying SDK call has always taken pounds, not a percent of base weight). ' +
   "No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device's `eccentricPercentTenths` echo within COERCION_WINDOW_MS. " +
   'MOUNT LOAD (VW-274): a positive `overloadLbs` adds to the concentric weight to produce the true anchor peak — "configurable up to unlimited" per the vendor, so the anchor is the limiting factor, not the displayed weight. The concentric weight is read from the slot\'s live device state; when that read is unavailable (no state dump yet), the check assumes the device\'s own 200 lb settable ceiling instead of 0 — a conservative stand-in, never a real reading, that makes the gate MORE likely to refuse rather than silently pass an unknown weight. Refused as INVALID_INPUT, BEFORE the write, when the resulting peak exceeds a configured `VMCP_MOUNT_RATING_LBS`; the refusal names the peak (concentric + overload), never the displayed weight alone. With no rating configured, `mountLoadWarning` in the result says the envelope is UNKNOWN — a warning, never a refusal. `null` when a non-positive `overloadLbs` is requested (it cannot raise the peak) or when a configured rating already covers it. ' +
-  'COST FRAMING (VW-303): a positive `overloadLbs` is a stimulus-cost knob, not a growth multiplier — the largest available synthesis found chronic strength and hypertrophy adaptations statistically similar to constant-load training, while acutely raising lactate, growth hormone, RPE and eccentric-phase muscle activation for the same result (see `coaching.explain { topic: "live.eccentric_overload_cost" }` for the full citation and caveats).';
+  'COST FRAMING (VW-303): a positive `overloadLbs` is a stimulus-cost knob, not a growth multiplier — the largest available synthesis found chronic strength and hypertrophy adaptations statistically similar to constant-load training, while acutely raising lactate, growth hormone, RPE and eccentric-phase muscle activation for the same result (see `coaching.explain { topic: "live.eccentric_overload_cost" }` for the full citation and caveats). ' +
+  RE_ENTRY_GUARD_DESCRIPTION;
 
 const UNLOAD_DESCRIPTION =
   'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
@@ -876,6 +880,7 @@ export function registerDeviceTools(
           'device.set_eccentric: `percent` param is deprecated, use `overloadLbs` instead. The legacy alias will be removed in the next release.',
         );
       }
+      if (value > 0) await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
       const mountLoadWarning = enforceEccentricMountLoad(state, slot, value);
       await trackedSetterCall(
         slot.coercionWatch,
@@ -1036,6 +1041,7 @@ export function registerDeviceTools(
     DeviceSetIsokineticEccOverloadWeightInput,
     wrapHandler(DeviceSetIsokineticEccOverloadWeightInput, async (input) => {
       const slot = getSlot(state, input.slot);
+      if (input.lbs > 0) await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_isokinetic_ecc_overload_weight',
@@ -1059,6 +1065,9 @@ export function registerDeviceTools(
     DeviceConfigureIsokineticInput,
     wrapHandler(DeviceConfigureIsokineticInput, async (input) => {
       const slot = getSlot(state, input.slot);
+      if ((input.eccOverloadWeightLbs ?? 0) > 0) {
+        await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+      }
       // Ecc mode is an enum string; the CoercionWatch compares numeric device
       // values, so fingerprint it (0 = 'isokinetic', 1 = 'constant') exactly
       // as device.set_isokinetic_ecc_mode does.

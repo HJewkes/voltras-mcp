@@ -189,7 +189,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'device.set_eccentric': {
     job: 'load',
     when: 'Eccentric overload on one unit',
-    rule: '**Pounds, never a percent**: -195 to +195. `percent` is a deprecated alias with the same meaning. Read `mountLoadWarning` out. It is a cost knob, not a growth multiplier',
+    rule: '**Pounds, never a percent**: -195 to +195. `percent` is a deprecated alias with the same meaning. Read `mountLoadWarning` out. It is a cost knob, not a growth multiplier. A positive overload is refused with `RE_ENTRY_WINDOW` in the window after a medium or longer break; say the date it names and train at the window load. No override',
   },
   'device.set_damper_level': {
     job: 'load',
@@ -209,7 +209,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'device.configure_isokinetic': {
     job: 'load',
     when: 'Isokinetic mode, after `set_mode`',
-    rule: 'One call for all isokinetic fields. Speeds are mm/s; the screen shows m/s. Setting an eccentric weight makes the unit beep; the write still succeeds',
+    rule: 'One call for all isokinetic fields. Speeds are mm/s; the screen shows m/s. Setting an eccentric weight makes the unit beep; the write still succeeds. A positive `eccOverloadWeightLbs` is refused with `RE_ENTRY_WINDOW` in the window after a medium or longer break; say the date it names and train at the window load. No override',
   },
   'device.set_isokinetic_target_speed': {
     job: 'load',
@@ -674,12 +674,12 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'isometric.measure_max': {
     job: 'isometric',
     when: 'The full 3-trial protocol on one unit',
-    rule: 'Runs its own warm-up pulls and 120 s rests. The inferred working weight is a heuristic, never a 1RM',
+    rule: 'Runs its own warm-up pulls and 120 s rests. The inferred working weight is a heuristic, never a 1RM. Refused with `RE_ENTRY_WINDOW` in the window after a medium or longer break; say the date it names and train at the window load. No override',
   },
   'isometric.measure_imbalance': {
     job: 'isometric',
     when: 'Both sides',
-    rule: "No fixed threshold. A difference is real only past the lifter's own trial spread. Never prescribe single-limb work from it",
+    rule: "No fixed threshold. A difference is real only past the lifter's own trial spread. Never prescribe single-limb work from it. Every side is a max pull, so it is refused with `RE_ENTRY_WINDOW` in the window after a medium or longer break; say the date it names and train at the window load. No override",
   },
 
   'baselines.get': {

@@ -22,28 +22,28 @@ still, rather than while moving through a rep. The protocol drives one max-effor
 a set of them with rest between, and reports peak and plateau force per hold
 (`src/state/isometric-protocol.ts:1-28`<!-- anchor: Pure analysis functions -->). Peak force is the headline number: the mean peak
 force of the best two trials drives an inferred starting working weight, which the tool
-itself labels a heuristic (`src/tools/isometric-tools.ts:184-190`<!-- anchor: PEAK FORCE IS THE HEADLINE METRIC -->,
-`src/tools/isometric-tools.ts:233-242`<!-- anchor: IS A HEURISTIC, NOT A VALIDATED CONVERSION -->) — see [the calibration caveat](#the-calibration-caveat)
+itself labels a heuristic (`src/tools/isometric-tools.ts:185-191`<!-- anchor: PEAK FORCE IS THE HEADLINE METRIC -->,
+`src/tools/isometric-tools.ts:234-243`<!-- anchor: IS A HEURISTIC, NOT A VALIDATED CONVERSION -->) — see [the calibration caveat](#the-calibration-caveat)
 below before treating either number as a settled measurement.
 
 Before any hold, the caller pre-configures the device: Isometric mode, with the weight set
 low. `device.set_weight` accepts 5 lb at the lowest — 0 lb isn't settable through it — and
 none of the isometric tools changes device settings on your behalf; that's on the caller
-(`src/schemas/device.ts:45-46`<!-- anchor: min(5) -->, `src/tools/isometric-tools.ts:126-127`<!-- anchor: Caller must pre-configure the device into Isometric mode -->, `src/tools/isometric-tools.ts:168-170`<!-- anchor: tool does NOT change device settings -->).
+(`src/schemas/device.ts:45-46`<!-- anchor: min(5) -->, `src/tools/isometric-tools.ts:127-128`<!-- anchor: Caller must pre-configure the device into Isometric mode -->, `src/tools/isometric-tools.ts:169-171`<!-- anchor: tool does NOT change device settings -->).
 
 ## One hold, or a protocol that blocks
 
 [`isometric.measure_hold`](/reference/isometric) runs exactly one hold — no trial loop, no
 rest wait — and returns as soon as it's done. It exists so a coach can pace the assessment
 hold by hold instead of blocking through an entire protocol; call it again for the next
-hold when the athlete is ready (`src/tools/isometric-tools.ts:121-162`<!-- anchor: Measure ONE isometric hold -->).
+hold when the athlete is ready (`src/tools/isometric-tools.ts:122-163`<!-- anchor: Measure ONE isometric hold -->).
 
 [`isometric.measure_max`](/reference/isometric) and [`isometric.measure_imbalance`](/reference/isometric)
 loop that same single-hold primitive with the protocol's rests, and both **block** until
-they finish (`src/tools/isometric-tools.ts:1327-1328`<!-- anchor: they BLOCK -->). `measure_max` runs N trials of M-second holds on one slot
+they finish (`src/tools/isometric-tools.ts:1335-1336`<!-- anchor: they BLOCK -->). `measure_max` runs N trials of M-second holds on one slot
 with rest between trials; `measure_imbalance` runs that same protocol on two slots in turn,
 with an additional rest between sides, and computes the asymmetry between them
-(`src/tools/isometric-tools.ts:164-331`<!-- anchor: MEASURE_MAX_DESCRIPTION -->). The defaults, all from the input schema:
+(`src/tools/isometric-tools.ts:165-334`<!-- anchor: MEASURE_MAX_DESCRIPTION -->). The defaults, all from the input schema:
 
 - Hold duration: 5s (`DEFAULT_DURATION_MS`, `src/schemas/isometric.ts:14`<!-- anchor: DEFAULT_DURATION_MS = 5_000 -->)
 - Trials per side: 3 (`DEFAULT_TRIALS`, `src/schemas/isometric.ts:16`<!-- anchor: DEFAULT_TRIALS = 3 -->)
@@ -65,7 +65,7 @@ fence every device-driving tool uses. If another client takes the lease mid-asse
 wait aborts instead of running out, the tool call fails with `LEASE_LOST`, and the device is
 left unloaded — the athlete may still be pulling against it at that moment, so dropping the
 load is the one write worth making on the way out
-(`docs/push-events.md:658-663`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1326-1367`<!-- anchor: left UNLOADED -->).
+(`docs/push-events.md:658-663`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1334-1375`<!-- anchor: left UNLOADED -->).
 
 ## Joint-angle gate (`measure_hold` only)
 
@@ -92,7 +92,7 @@ angle for an exercise nobody has sourced is worse than an honest gap.
   degrees) of the exercise's known peak angle.
 - `angle_mismatch` — it does not. WARNS by default (the hold still runs, and the reading is
   still returned) — pass `strict: true` to REFUSE it as `INVALID_INPUT` before the hold
-  begins instead (`src/tools/isometric-tools.ts:701-707`<!-- anchor: input.strict -->).
+  begins instead (`src/tools/isometric-tools.ts:706-712`<!-- anchor: input.strict -->).
 - `angle_unverified` — the gate did not run: no `exerciseId`, no `setupAngleDeg`, or the
   exercise carries no known angle. Never treated as a match or a mismatch, the same
   DEGRADE-never-refuse-silently posture the bilateral setup-geometry gate takes.
@@ -113,7 +113,7 @@ protocol. `isometric.measure_max` now runs that ramp itself, unprompted, by defa
 brief submaximal pulls — one cued as roughly 50% effort, then one at roughly 75% — ahead
 of the trial loop, standardising the approach to a maximal isometric attempt (Comfort et
 al. 2019, as applied by Yeh et al., PLoS One) (`src/schemas/isometric.ts:30`<!-- anchor: Default warm-up ramp -->,
-`src/tools/isometric-tools.ts:172-182`<!-- anchor: WARM-UP RAMP -->, `src/tools/isometric-tools.ts:1266-1284`<!-- anchor: async function runWarmupPulls -->).
+`src/tools/isometric-tools.ts:173-183`<!-- anchor: WARM-UP RAMP -->, `src/tools/isometric-tools.ts:1274-1292`<!-- anchor: async function runWarmupPulls -->).
 
 Every hold in the sequence — both warm-up pulls and every real trial — shares the SAME
 `restMs` gap, defaulting to the standardised inter-trial rest for maximal isometric
@@ -125,7 +125,7 @@ The tool cannot verify actual effort — a warm-up pull is a cue over the phase-
 channel, not a controlled variable — so its readings are reported separately, under
 `warmup` (`effortLevel`, `peakForceLbs`, `holdMs` per pull), and never join `trials`, the
 best-2 selection, the inferred working weight, or the stored assessment
-(`src/tools/isometric-tools.ts:172-182`<!-- anchor: never join `trials` -->). Pass `warmup: false` to skip the
+(`src/tools/isometric-tools.ts:173-183`<!-- anchor: never join `trials` -->). Pass `warmup: false` to skip the
 ramp entirely — for a coach-paced bench sitting, or to reproduce the pre-VW-294 timing.
 
 ## Phase pushes
@@ -133,7 +133,7 @@ ramp entirely — for a coach-paced bench sitting, or to reproduce the pre-VW-29
 Every hold — from `measure_hold` directly, one iteration inside `measure_max` /
 `measure_imbalance`, or a `measure_max` warm-up pull — emits four `isometric_phase` events
 in order, so a dashboard or a coach's own cueing knows when to tell the athlete to pull and
-when to stop (`docs/push-events.md`, `src/tools/isometric-tools.ts:1266-1284`<!-- anchor: captureSingleHold -->):
+when to stop (`docs/push-events.md`, `src/tools/isometric-tools.ts:1274-1292`<!-- anchor: captureSingleHold -->):
 
 | `phase` | Fires                                      | Means            |
 | ------- | ------------------------------------------ | ---------------- |
@@ -193,7 +193,7 @@ Once at least 2 trials are valid, the tool takes the best 2 by peak force and re
   up to 5 lb (the device's own settable floor) so it's always a value the device will
   accept.
 - **`inferredWorkingWeightBasis`** — what that weight is and is not, shipped with the number
-  rather than only in the tool description (`src/tools/isometric-tools.ts:471-477`<!-- anchor: INFERRED_WORKING_WEIGHT_BASIS -->).
+  rather than only in the tool description (`src/tools/isometric-tools.ts:476-482`<!-- anchor: INFERRED_WORKING_WEIGHT_BASIS -->).
 
 That last field exists because the weight is a **heuristic, not a validated conversion**
 (VW-273). No study validates a cable-device isometric maximum as a predictor of dynamic
@@ -248,7 +248,7 @@ describes for the live wall (Keogh, Lake & Swinton 2013, _Journal of Fitness Res
 2(2):39-48) therefore runs here too, before the verdict: `setupComparability` compares
 each side's CONFIRMED `exercise_setups` signature for the exercise active on that slot,
 and the result always carries `setupSignatures` and `setupReason` beside it
-(`src/tools/isometric-tools.ts:559-573`<!-- anchor: setupComparability: SetupComparability -->). On `setup_confounded`, `imbalance.real`
+(`src/tools/isometric-tools.ts:564-578`<!-- anchor: setupComparability: SetupComparability -->). On `setup_confounded`, `imbalance.real`
 / `imbalance.direction` come back `null` — the per-side peak forces still report, because
 those are facts about one side each, but reading the gap between them as an imbalance is
 what gets withheld. `setup_unverified` means one or both sides had no confirmed setup to
@@ -267,29 +267,29 @@ many stored tests carried a direction at all, and `agreementPct` the share of th
 named the more common limb. A consistent direction may warrant a closer look at that limb; a
 fluctuating one is ordinary between-session variation. `directionHistory` is `null` only when
 the history could not be read at all, which is not the same answer as a short history
-(`src/tools/isometric-tools.ts:906-932`<!-- anchor: A `null` says the history is unknown -->).
+(`src/tools/isometric-tools.ts:914-940`<!-- anchor: A `null` says the history is unknown -->).
 
 ### What `directionHistory` is actually a history of
 
 Every stored assessment records the lifter, the exercise and the session it ran under,
 taken from the session open on the slot (VW-280). The series is the 20 most recent
 assessments for that lifter and that exercise, so a second lifter's tests or a different
-joint do not land in it (`src/tools/isometric-tools.ts:904-932`<!-- anchor: DIRECTION_HISTORY_LIMIT = 20 -->,
-`src/tools/isometric-tools.ts:1111-1118`<!-- anchor: function measurementKeys -->). Two kinds of stored row stay out of it and are
+joint do not land in it (`src/tools/isometric-tools.ts:912-940`<!-- anchor: DIRECTION_HISTORY_LIMIT = 20 -->,
+`src/tools/isometric-tools.ts:1119-1126`<!-- anchor: function measurementKeys -->). Two kinds of stored row stay out of it and are
 counted instead: `legacyUnkeyed`, older assessments stored before the keying, and
 `otherEquation`, assessments whose asymmetry used a different equation (VW-295,
-`src/tools/isometric-tools.ts:941-961`<!-- anchor: function excludeOtherEquations -->). Run the assessment inside a session pinned to the
+`src/tools/isometric-tools.ts:949-969`<!-- anchor: function excludeOtherEquations -->). Run the assessment inside a session pinned to the
 exercise you are testing; with no session open, the run is keyed to the owner and to no
 exercise.
 
 Each side's per-trial measurements are persisted, keyed on the connected device's own id so
 the series survives a `slot.swap`, with the equation the run used — no verdict is stored.
 The direction is recomputed from the stored trials on every read, against whatever rules are
-current at read time (`src/tools/isometric-tools.ts:1147-1161`<!-- anchor: DEVICE ID -->,
+current at read time (`src/tools/isometric-tools.ts:1155-1169`<!-- anchor: DEVICE ID -->,
 `src/state/isometric-protocol.ts:554-573`<!-- anchor: Recomputed from the persisted per-trial forces -->), which is what let VW-270 change the rules without
 stranding a single stored row. The write is best-effort: a store failure returns
 `measurementId: null` rather than discarding a result that just cost the athlete real effort
-to produce (`src/tools/isometric-tools.ts:1198-1204`<!-- anchor: persisting the measurement failed -->).
+to produce (`src/tools/isometric-tools.ts:1206-1212`<!-- anchor: persisting the measurement failed -->).
 
 ### What the result does not license
 
@@ -321,7 +321,7 @@ main telemetry bridge uses (`src/state/live-signal.ts:77`<!-- anchor: FRAME_FORC
 directly, independent of that bridge — and the assessment's empirical validity (the plateau
 detection, the inferred working weight) has **not** been re-verified against hardware since
 that conversion last changed. It's flagged in source for a separate calibration ticket
-(`src/tools/isometric-tools.ts:1463-1469`<!-- anchor: CALIBRATION CAVEAT -->).
+(`src/tools/isometric-tools.ts:1471-1477`<!-- anchor: CALIBRATION CAVEAT -->).
 
 Practically: treat `peakForceLbs` and `meanPeakForceLbs` as the device's own reading
 under its own conversion, not as a value checked against a known reference load. Trends —
