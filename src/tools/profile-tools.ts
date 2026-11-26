@@ -101,13 +101,9 @@ const SET_TRAINING_BACKGROUND_DESCRIPTION =
   'none" (which is a different answer from never having asked). This tool only stores ' +
   'verbatim self-report; it never infers or computes an experience tier (see ' +
   'profile.get_tier_signal for that), and it never interprets an injury clinically. ' +
-  'returnClearance is the answer to the return clearance question, asked ONCE after a break the ' +
-  'lifter says was for illness, injury or a procedure: cleared, cleared_with_limit or not_yet, ' +
-  'with returnClearanceOn (the local date they answered, default today). Never ask what the limit ' +
-  'is and never record it anywhere: there is no field for it on purpose. The later-dated answer ' +
-  'stands, so a backdated answer never replaces a newer one. While not_yet stands and a break or ' +
-  'its re-entry window is open, session.start refuses working sessions; record the new answer ' +
-  'when the lifter is cleared.';
+  'returnClearance (cleared, cleared_with_limit, not_yet; returnClearanceOn defaults to today) ' +
+  'is asked once after a break for illness, injury or a procedure. Never ask or record what a ' +
+  'limit is. The later-dated answer stands.';
 
 const GET_TRAINING_BACKGROUND_DESCRIPTION =
   'Read back the stored training-background/onboarding profile for the user. Returns ' +
@@ -154,9 +150,8 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
   'goal or target has been captured yet. `lastBreakMonths` is listed only for a lifter who ' +
   'declared above beginner while their logged history is still short; `lastBreakQuestion` is ' +
-  'then the question to ask, as written. `returnClearance` is the latest answer to the return ' +
-  'clearance question, or null if it was never asked: ask it once, and only after a break the ' +
-  'lifter says was for illness, injury or a procedure.';
+  'then the question to ask, as written. `returnClearance`: the latest return clearance answer, ' +
+  'null if never asked.';
 
 const SET_DIET_PHASE_DESCRIPTION =
   'Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or ' +

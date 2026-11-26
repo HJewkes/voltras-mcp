@@ -120,9 +120,8 @@ const SESSION_START_DESCRIPTION =
   'are individualized, not templated: warm-up set COUNT varies by lifter and by exercise (2 for ' +
   'a small movement on an already-warm muscle, 4–5 for a large, technically demanding one), and ' +
   'a second exercise for a muscle the first exercise already warmed needs only one brief feel ' +
-  'set. Do not emit a fixed warm-up block for every session. A working session for the owner is ' +
-  'refused while the latest return clearance answer is not_yet and a break or its re-entry ' +
-  'window is open: read the reason out as written. A test session or a guest session is not held.';
+  'set. Do not emit a fixed warm-up block for every session. Refused while a return clearance of ' +
+  'not_yet stands in a break; read the reason out.';
 
 const SESSION_END_DESCRIPTION =
   'End the active session on a slot and return its summary. Idempotent-adjacent: ending an ' +
