@@ -28,6 +28,7 @@ import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
+import type { StoredReturnClearance } from '../profile/return-clearance.js';
 import type { SessionKind, SessionKindFilter } from './session-kind.js';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
@@ -1745,6 +1746,11 @@ export interface StoredTrainingProfile {
    * the break, not the time since it ended, so the answer never goes stale. 0 = never stopped.
    */
   lastBreakMonths?: number;
+  /**
+   * The latest answer to the return clearance question and its date (v46, VW-976). Only which of
+   * three answers was given: what a limit is never reaches the store.
+   */
+  returnClearance?: StoredReturnClearance;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */

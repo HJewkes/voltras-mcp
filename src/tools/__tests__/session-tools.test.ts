@@ -136,6 +136,7 @@ function makeStore(): SessionStore & {
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
     getAssignmentsForTemplate: vi.fn(async () => []),
+    getTrainingProfile: vi.fn(async () => undefined),
     close: vi.fn(async () => {}),
   };
 }

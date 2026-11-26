@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { BODY_FAT_SOURCES } from '../analytics/body-fat-sources.js';
+import { RETURN_CLEARANCES } from '../profile/return-clearance.js';
 import { DIET_PHASES, RECOMP_MODES } from '../store/diet-phase.js';
 import { LEANNESS_BANDS } from '../store/leanness-band.js';
 import { CheckinScaleValue } from './session.js';
@@ -60,8 +61,20 @@ export const ProfileSetTrainingBackgroundInput = z
     // How long the most recent break from consistent training lasted, in months; 0 = never
     // stopped. The tier signal's returner path reads it.
     lastBreakMonths: z.number().min(0).optional(),
+    // VW-976. One of three words, never free text: what a limit is stays with the lifter.
+    returnClearance: z.enum(RETURN_CLEARANCES).optional(),
+    // The local date the answer was given; omitted means today.
+    returnClearanceOn: z.string().date().optional(),
   })
   .strict();
+
+export const ProfileSetTrainingBackgroundInputRefined = ProfileSetTrainingBackgroundInput.refine(
+  (input) => input.returnClearanceOn === undefined || input.returnClearance !== undefined,
+  {
+    message: 'returnClearanceOn needs a returnClearance answer beside it',
+    path: ['returnClearanceOn'],
+  },
+);
 
 export const ProfileGetTrainingBackgroundInput = z.object({}).strict();
 
