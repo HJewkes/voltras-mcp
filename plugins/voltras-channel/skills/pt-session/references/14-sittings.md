@@ -1,6 +1,6 @@
 # Sittings
 
-**When to read this.** The user wants the Sunday sitting, first goals, a weekly review, or a planning sitting; OR it is one of the first four signal sittings (S0 to S3) from the gated roadmap (`sources/design/2026-09-19-voltras-gated-roadmap.md`, section 6).
+**When to read this.** The user wants the Sunday sitting, first goals, a weekly review, or a planning sitting; OR `plan.next_workout` reports a return after a break (section R); OR it is one of the first four signal sittings (S0 to S3) from the gated roadmap (`sources/design/2026-09-19-voltras-gated-roadmap.md`, section 6).
 
 A sitting is a conversation with tool calls. S0 has no device: no scan, no lease, no session. S1 to S3 are real workouts with a short signal block.
 
@@ -321,7 +321,7 @@ Workout first. Signal block of at most 10 minutes.
 1. Connect (`01`). `plan.next_workout` → expect the block's first week, "Upper A": chest press, row, shoulder press (3 sets of 6 to 10 each), bicep curl, tricep pushdown (3 sets of 10 to 15 each). Read the exact list from the tool. `session.start`, `plan.attach_to_session`.
 2. If the owner runs the VW-173 bench check (a spoken "stop" during a cue, three times), that is their bench procedure on their bench build. Your part: keep `midSet` cues off, and do not speak over a loaded cable.
 3. Per lift: ascending loads. `plan.warmup_ramp` rungs as `setPurpose: "warmup"`; discovery rungs as `probe`; the sets that count as `working`. Verify every weight change with `get_state`.
-4. Last set of **row** and of **chest press** to failure, as familiarisation. Follow the failure-set recipe in `13`. It must be a `working` set of 5 to 12 reps. Not shoulder press: overhead work is excluded.
+4. Inside a return window (section R), skip this step: these sets move to the first Upper A after the window. Otherwise take the last set of **row** and of **chest press** to failure, as familiarisation. Follow the failure-set recipe in `13`. It must be a `working` set of 5 to 12 reps. Not shoulder press: overhead work is excluded.
 5. After each working set, ask one question: "How many more reps did you have?" No tool stores a per-set answer yet; put it in the session check-in notes (see `13`).
 6. End: `session.end {checkin}`, `plan.complete_workout`, `report.session_results`. The owner has a training day before today, so `soreness`, `joint` and `motivation` are not withheld.
 7. Read, do not promise: `rir_velocity.fit {exerciseId}` per failure lift. One session cannot qualify: the fit needs 3 qualifying sets over 2 sessions. `reason` will say which minimum is unmet. Say that.
@@ -342,10 +342,60 @@ At least 72 h after S1.
 
 1. Connect, `plan.next_workout` → "Upper B": lat pulldown, single-arm row, chest fly, hammer curl, overhead tricep extension.
 2. **Decision for the owner, ask at the start:** the fit needs a second session of failure sets on the same lifts as S1 (cable row and cable chest press). Upper B's template does not hold those two lifts. Either add them today as extra sets (`session.set_exercise` to each, `working`, to failure), or wait for the second week's Upper A (the date is in `plan.block.calendar`). State the trade: today gets a first fit sooner; waiting keeps the template as written.
-3. If they choose today: two failure sets each on row and chest press at the S1 loads, and one on lat pulldown. Recipe in `13`. Overhead tricep extension is never taken to failure here.
+3. Inside a return window (section R), take no failure set. Otherwise, if they choose today: two failure sets each on row and chest press at the S1 loads, and one on lat pulldown. Recipe in `13`. Overhead tricep extension is never taken to failure here.
 4. After the session: `rir_velocity.fit {exerciseId}` for row and press. Read `fitted`, `reason` and `qualification` out. The owner's chosen minimum is 4 to-failure sets per lift over 2 sessions 72 h apart; the server's own floor is 3 sets over 2 sessions, 12 reps in all, spread across at least 3 reps in reserve.
 5. A fit that exists is **not yet trusted**. The server trusts a curve whose fit error (`model.rirErrorReps`) is under 2 reps. The owner's gate is stricter: one more held-out failure set in Week 2 that the curve predicts within 1.5 reps. Until both hold you still state no RPE and no reps in reserve.
 6. `profile.get_tier_signal`: training days logged moves toward 24.
+
+## R. Returning after a break (outline)
+
+Call `plan.next_workout` and read `reEntry.phase`. This section applies when it is `in_gap` or `returning`, and it overrides S1 to S3 while it does. On `training` or `no_history`, skip it (a long break has its own rule, under Limits).
+
+Also read `reEntry.band` (`short`, `medium` or `long`), `reEntry.windowEndsOn` and `reEntry.rule`. The return window runs from the first session back through `reEntry.windowEndsOn`.
+
+The result also counts how long the lifter was gone. **Never say that number**, even where a tool note asks for it or a result's reasoning line carries it. Do not count missed sessions or weeks, do not mention a broken run, and **never ask why**.
+
+### The first turn back (`in_gap`)
+
+Say three things, then wait:
+
+1. **One success fact from the record.** For example the training days logged (`profile.get_tier_signal`), or a lift they have completed before (`progression.get_for_exercise`). Say only what a tool returned.
+2. **The offer, put as a statement:** a baseline session of at most 20 minutes, today or tomorrow. Never propose waiting for a Monday or the first of a month.
+3. **One question, and only one:** "Which days are realistic now?"
+
+On `returning` they are already back: skip the opener and keep the session and limit rules below.
+
+### Clearance, asked once
+
+Only when the lifter says the gap was for illness, injury or a procedure, ask once: **"Has your clinician cleared you to lift, and with any limits?"** Do not ask what happened.
+
+Store one answer, `cleared`, `cleared_with_limit` or `not_yet`, as `returnClearance` through `profile.set_training_background`. The field arrives with VW-976. If the tool does not accept the field, say the answer is not stored and hold to it in this conversation.
+
+- `not_yet`: start no working set. Say plainly that lifting starts once their clinician clears them.
+- `cleared_with_limit`: ask them to stay inside the clinician's limit and to stop when a movement reaches it. Never interpret the limit.
+
+This question stores that one answer and nothing else: no reason, diagnosis or limit in any field or note. The cardiovascular gate in `12` still applies as written.
+
+### The baseline session
+
+- At most 20 minutes: 2 or 3 lifts they have done before, from the plan where it has them. Order them so the last working set of the session is the lightest.
+- `short` or `medium`, a lift not yet trained since the return: take its load from `plan.suggest_progression`, which gives a re-entry load when it marks the lift's last time stale. If it gives none, use `profile.get_starting_prescription`.
+- A lift already trained since the return: repeat that load. Offer no step up inside the window.
+- `short`: 1 or 2 working sets a lift.
+- `medium`: `reEntry.rule.setsPerMuscle` working set a muscle, `reEntry.rule.repsLow` to `reEntry.rule.repsHigh` reps.
+- `long`: no old load is scaled. Use `profile.get_starting_prescription` and a feeler set.
+- Warm up with `plan.warmup_ramp` and label every set as usual (`04`).
+
+### Limits in the window
+
+- **No set to failure, no max test (including `isometric.measure_max`) and no eccentric overload (`device.set_eccentric` above zero)** through `reEntry.windowEndsOn`. Keep these yourself whether or not a tool refuses. If the lifter asks, say it waits until the window ends.
+- A `long` break has no `reEntry.windowEndsOn`: keep the same limits for two weeks from the first session back. The result reads `training` again after that session, so note its date.
+- Arm every working set: `set.start` with a `velocity_loss_exceeded` watch at `pct` 15, an engineering default inside the 10 to 20% range (Pareja-Blanco 2017). When it fires, call the set and say it hit the return cap, even short of the rep target. Where the watch is suppressed (`13`), stop at the rep target.
+- S1's and S3's failure sets move to the first session of that lift after the window.
+
+### Afterwards
+
+After the baseline session, not in the first turn, point attendance at `goal.propose_targets`. The lifter states the number (S0 Step 8). VW-498, not yet built, will offer it as their own commitment after a layoff; until then the offer rests on recent training days and may be skipped.
 
 ## The Sunday review (from the first Sunday after the block starts)
 

@@ -46,9 +46,9 @@ per second. The fitted effort curve described below reads this number and no oth
 
 **Velocity loss** is how much slower your reps have become within one set. It is a percentage.
 The per-set summary in [`metrics.compute`](/reference/metrics) reports it on mean velocity
-(`src/tools/metrics-tools.ts:2500`<!-- anchor: single-set velocity summary -->, `src/tools/metrics-tools.ts:2334-2335`<!-- anchor: PEAK-BASED -->). Some internal readings compare peak speeds instead. Those
+(`src/tools/metrics-tools.ts:2527`<!-- anchor: single-set velocity summary -->, `src/tools/metrics-tools.ts:2361-2362`<!-- anchor: PEAK-BASED -->). Some internal readings compare peak speeds instead. Those
 give a different percentage for the same set, and both are correct for their own question
-(`src/tools/metrics-tools.ts:2334-2338`<!-- anchor: both correct for their own question -->).
+(`src/tools/metrics-tools.ts:2361-2365`<!-- anchor: both correct for their own question -->).
 
 ## Why slowing down tracks effort
 
@@ -74,7 +74,7 @@ described under [Where the curve comes from](#where-the-curve-comes-from).
 It is tempting to convert velocity loss straight into RIR with one formula for everyone. The
 server does not trust that. Its own tool description cites a 2023 study that found agreement
 between velocity loss and RIR "unacceptable at every load tested" for a general model
-(`src/tools/metrics-tools.ts:2513-2518`<!-- anchor: unacceptable at every load tested -->).
+(`src/tools/metrics-tools.ts:2540-2545`<!-- anchor: unacceptable at every load tested -->).
 
 What works better is a curve fitted to one lifter on one exercise. A 2024 study found individual
 curves predicted a later session within under two reps of error across 70% to 90% of 1RM. General
@@ -138,7 +138,7 @@ handles effort in three layers, and each layer behaves differently.
 (`src/tools/metrics-tools.ts:317-322`<!-- anchor: case 'vbt.rir' -->). It always answers, and it says which curve answered. With
 no fitted curve it uses a general formula, grades its model confidence low, and carries a caveat
 that the reading is not a proximity-to-failure claim (`src/tools/rir-velocity-tools.ts:216-240`<!-- anchor: export function estimateRepRir -->,
-`src/tools/metrics-tools.ts:2513-2526`<!-- anchor: NOT a proximity-to-failure claim -->). Read that as a rough direction, not a rep count.
+`src/tools/metrics-tools.ts:2540-2553`<!-- anchor: NOT a proximity-to-failure claim -->). Read that as a rough direction, not a rep count.
 
 [`report.weekly`](/reference/report) includes a final-rep RIR line only when the RIR feature's
 baseline gate allows it. The line names its basis, for example "general model, not a
@@ -168,7 +168,7 @@ The live fatigue card shows velocity loss against your set's stop threshold
 (`src/dashboard/spa/panels/fatigue-view.ts:491-492`<!-- anchor: getSetVelocityLossPct -->, `src/dashboard/spa/live-page/fatigue-state.ts:1-10`<!-- anchor: velocity_loss_exceeded -->).
 It also shows a verdict word: good, slowing, grinding or form breakdown. That verdict comes from
 velocity loss, range of motion and tempo, not from an RIR estimate
-(`src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: velocity/ROM/tempo -->, `src/tools/metrics-tools.ts:2505-2511`<!-- anchor: fatigue.verdict -->).
+(`src/dashboard/spa/panels/fatigue-view.ts:444-447`<!-- anchor: velocity/ROM/tempo -->, `src/tools/metrics-tools.ts:2532-2538`<!-- anchor: fatigue.verdict -->).
 
 It shows no RPE or RIR number yet. The card has a place for an RPE number, but the dashboard
 passes it no value, so it shows a dash. The RPE and RIR values are withheld until a trusted fitted profile reaches the wall (VW-485)

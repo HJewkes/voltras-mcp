@@ -28,7 +28,9 @@ import {
   type ReEntryPhase,
   type ReEntryRead,
   type ReEntryRule,
+  type RirFloorByWeek,
 } from '../analytics/re-entry.js';
+import type { SourcedValue } from '../coach-copy/fragments.js';
 import { clearanceBlock, type StoredReturnClearance } from '../profile/return-clearance.js';
 import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 
@@ -37,11 +39,27 @@ export interface ReEntryBrief {
   readonly daysSinceLastTrainingDay: number | null;
 }
 
+/** A guardrail as the result carries it: its value and a short citation of its own. */
+interface Cited<T> {
+  readonly value: T;
+  readonly source: string;
+}
+
+export type ReEntryRuleBrief = Omit<
+  ReEntryRule,
+  'rirFloor' | 'noFailureSets' | 'velocityLossCapPct'
+> & {
+  readonly rirFloor?: Cited<RirFloorByWeek>;
+  readonly noFailureSets?: Cited<true>;
+  readonly velocityLossCapPct?: Cited<number>;
+  readonly source: string;
+};
+
 export interface ReEntryBreakBrief extends ReEntryBrief {
   readonly band: BreakBand;
   /** The last day of the re-entry window, inclusive; `null` when the band has no window. */
   readonly windowEndsOn: string | null;
-  readonly rule: ReEntryRule & { readonly source: string };
+  readonly rule: ReEntryRuleBrief;
   /** The latest return clearance answer; `null` when the question was never answered. */
   readonly clearance: StoredReturnClearance | null;
   /** Why working sessions are held; present only while "not yet" stands. */
@@ -59,6 +77,21 @@ function citation(sourceKind: string, sourceRef: string): string {
     .join('; ');
 }
 
+function cited<T>({ value, sourceKind, sourceRef }: SourcedValue<T>): Cited<T> {
+  return { value, source: citation(sourceKind, sourceRef) };
+}
+
+function briefRule({ value, sourceKind, sourceRef }: SourcedValue<ReEntryRule>): ReEntryRuleBrief {
+  const { rirFloor, noFailureSets, velocityLossCapPct, ...load } = value;
+  return {
+    ...load,
+    ...(rirFloor && { rirFloor: cited(rirFloor) }),
+    ...(noFailureSets && { noFailureSets: cited(noFailureSets) }),
+    ...(velocityLossCapPct && { velocityLossCapPct: cited(velocityLossCapPct) }),
+    source: citation(sourceKind, sourceRef),
+  };
+}
+
 /** The compact result: the full read only for a break or the window after one. */
 export function briefReEntry(
   read: ReEntryRead,
@@ -72,7 +105,7 @@ export function briefReEntry(
     daysSinceLastTrainingDay,
     band: read.band,
     windowEndsOn: read.windowEndsOn,
-    rule: { ...read.rule.value, source: citation(read.rule.sourceKind, read.rule.sourceRef) },
+    rule: briefRule(read.rule),
     clearance: clearance ?? null,
     ...(blocked === null ? {} : { blocked }),
   };

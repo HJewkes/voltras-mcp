@@ -19,7 +19,7 @@
 import type { Tier, TierConfidence } from '../profile/tier.js';
 
 /** Bumped when a threshold or a rung rule below changes. */
-export const DELOAD_LADDER_VERSION = 'vw591.1';
+export const DELOAD_LADDER_VERSION = 'vw591.2';
 
 export const DELOAD_LADDER_CONSTANTS = {
   /** Width of the rolling window a confirmation must fall in to count, in days. */
@@ -66,6 +66,12 @@ export interface DeloadLadderInput {
   muscles: readonly DeloadMuscleSignal[];
   tier: { tier: Tier; confidence: TierConfidence };
   currentWeekIsDeload: boolean;
+  /**
+   * A re-entry window or climb-back ramp is active (`re-entry.ts`). The light weeks
+   * after a break are planned, so a drop in them is detraining, not fatigue. No
+   * caller sets it yet; absent reads as inactive.
+   */
+  reEntryActive?: boolean;
   priorDecisions: readonly PriorLadderDecision[];
   now: Date;
 }
@@ -108,6 +114,7 @@ export function selectDeloadRung(input: DeloadLadderInput): DeloadAdvisory {
 
 function decide(input: DeloadLadderInput): Verdict {
   if (input.currentWeekIsDeload) return suppressedVerdict();
+  if (input.reEntryActive === true) return reEntrySuppressedVerdict();
   const byWindow = groupByWindow(input.muscles, input.now);
   if (byWindow.inWindow.length > 0) return adviseVerdict(byWindow.inWindow);
   const provisional = musclesIn(input.muscles, 'provisional');
@@ -210,6 +217,17 @@ function suppressedVerdict(): Verdict {
       'The current planned week is already a deload week, so no ladder rung is offered on top of it.',
     userMessage:
       'This week is a planned deload, which already reduces fatigue more than any recovery rung would.',
+  };
+}
+
+function reEntrySuppressedVerdict(): Verdict {
+  return {
+    status: 'suppressed',
+    rung: null,
+    reasoning:
+      'A re-entry window after a break is active, so a drop against the weeks before the break is detraining and the light weeks are planned; no ladder rung is offered.',
+    userMessage:
+      'You are in the planned lighter weeks after a break, so coming in below your earlier sessions is expected and is not a sign of accumulated fatigue.',
   };
 }
 

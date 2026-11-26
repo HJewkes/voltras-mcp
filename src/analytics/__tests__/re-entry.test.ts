@@ -13,6 +13,24 @@ const daysAfter = (date: string, days: number): string =>
 
 const LAST_DAY = '2026-09-01';
 
+const GUARDRAILS = {
+  rirFloor: {
+    value: { week1: 5, week2: 3 },
+    sourceKind: 'paper',
+    sourceRef: expect.stringContaining('Nuckols 2022'),
+  },
+  noFailureSets: {
+    value: true,
+    sourceKind: 'paper',
+    sourceRef: expect.stringContaining('Nuckols 2022'),
+  },
+  velocityLossCapPct: {
+    value: 15,
+    sourceKind: 'engineering-default',
+    sourceRef: expect.stringContaining('Pareja-Blanco 2017'),
+  },
+};
+
 describe('selectReEntry on an open break', () => {
   it('reads a 26-day gap as a short break at 0.8 for a 7-day window sourced to Nuckols 2022', () => {
     const today = daysAfter(LAST_DAY, 26);
@@ -42,6 +60,7 @@ describe('selectReEntry on an open break', () => {
       repsHigh: 30,
       setsPerMuscle: 1,
       weeks: 2,
+      ...GUARDRAILS,
     });
     expect(read.windowEndsOn).toBe(daysAfter(LAST_DAY, 60 + 13));
   });
@@ -110,6 +129,60 @@ describe('classifyBreak edges', () => {
 
     expect(classifyBreak(days)).toBe(band);
     expect(read.band).toBe(band);
+  });
+});
+
+describe('return-window guardrails', () => {
+  const ruleAfter = (days: number) =>
+    selectReEntry({ trainingDays: [LAST_DAY], today: daysAfter(LAST_DAY, days) }).rule;
+
+  it.each([
+    ['short', 15],
+    ['short', 28],
+    ['medium', 29],
+    ['medium', 182],
+  ] as const)(
+    'puts an RIR floor, no failure sets and a velocity-loss cap on a %s break of %i days',
+    (band, days) => {
+      expect(classifyBreak(days)).toBe(band);
+      expect(ruleAfter(days)?.value).toMatchObject(GUARDRAILS);
+    },
+  );
+
+  it('keeps the guardrails on a returning lifter inside the window', () => {
+    const firstDayBack = daysAfter(LAST_DAY, 60);
+
+    const read = selectReEntry({
+      trainingDays: [LAST_DAY, firstDayBack],
+      today: daysAfter(firstDayBack, 8),
+    });
+
+    expect(read.phase).toBe('returning');
+    expect(read.rule?.value).toMatchObject(GUARDRAILS);
+  });
+
+  it('sets none of them when the break changes nothing', () => {
+    expect(ruleAfter(14)).toBeNull();
+  });
+
+  it('sets none of them after a long break', () => {
+    const rule = ruleAfter(183)?.value;
+
+    expect(rule).toEqual({ loadFactor: null, weeks: 0 });
+  });
+
+  it('gives every guardrail a source the fragments validator accepts', () => {
+    const guardrails = [RE_ENTRY_RULES.short, RE_ENTRY_RULES.medium].flatMap(({ value }) => [
+      value.rirFloor,
+      value.noFailureSets,
+      value.velocityLossCapPct,
+    ]);
+
+    const problems = guardrails.flatMap((guardrail) =>
+      validateSource(guardrail?.sourceKind, guardrail?.sourceRef),
+    );
+
+    expect(problems).toEqual([]);
   });
 });
 

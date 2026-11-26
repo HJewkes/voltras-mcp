@@ -132,6 +132,7 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
+import { lastBreakEnd } from '../analytics/layoff-break.js';
 import { flatlineOf, plateauReferenceStepLbs, type Flatline } from '../analytics/stall-step.js';
 import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
@@ -884,29 +885,17 @@ export async function computeHistoryTrend(
     if (chapterStartedAt !== null) return emptyChapterTrend(chapterStartedAt);
     throw notFound(`exercise '${input.exerciseId}' has no working sets in the last ${weeks} weeks`);
   }
-  const metric = HISTORY_TREND_METRIC[input.metric ?? 'topLoad'];
-  const built = buildTimeSeries(sessions, {
-    metric,
-    exerciseId: input.exerciseId,
-    bucketBy: 'week',
-    fromTs: localWallClockIso(fromIso),
-  });
-  // `points` degrades to `any[]` through the package's .d.ts here (same
-  // NodeNext-resolution note as `rirForSet`'s), so the element type is
-  // annotated explicitly rather than inferred.
-  const series: TimeSeries = built.points.map((p: MetricTimeSeriesPoint) => ({
-    ts: p.timestamp,
-    value: p.value,
-  }));
+  const series = weeklySeries(sessions, input, fromIso);
   const trend = trendReadout(series, input.metric ?? 'topLoad');
+  const stallSeries = seriesAfterLayoff(sessions, series, input, fromIso);
   // Omitted thresholdPct/minDays pass through as `undefined`, which is WA's
   // own signal to use its defaults (5, 14) — never redeclared here.
-  const plateau = detectPlateau(series, input.thresholdPct, input.minDays);
-  const run = stallRun(series, input.metric ?? 'topLoad', plateau, input);
+  const plateau = detectPlateau(stallSeries, input.thresholdPct, input.minDays);
+  const run = stallRun(stallSeries, input.metric ?? 'topLoad', plateau, input);
   // VW-150: the phase the window fell in, so a reader can tell a fat-loss
   // stretch from a true plateau (B34). VW-277: the same read now also carries
   // weeks-in-phase and drives `verdict`.
-  const dietState = await plateauWindowDietState(state, series, run.days);
+  const dietState = await plateauWindowDietState(state, stallSeries, run.days);
   return {
     series,
     trend,
@@ -920,6 +909,44 @@ export async function computeHistoryTrend(
     chapterStartedAt,
     newChapter: chapterStartedAt === null ? null : newChapterState(chapterStartedAt, series.length),
   };
+}
+
+/** The weekly-bucketed series `history.trend` fits, over sessions already in local wall clock. */
+function weeklySeries(
+  sessions: readonly ProcessedSession[],
+  input: HistoryTrendOptions,
+  fromIso: string,
+): TimeSeries {
+  const built = buildTimeSeries([...sessions], {
+    metric: HISTORY_TREND_METRIC[input.metric ?? 'topLoad'],
+    exerciseId: input.exerciseId,
+    bucketBy: 'week',
+    fromTs: localWallClockIso(fromIso),
+  });
+  // `points` degrades to `any[]` through the package's .d.ts here (same
+  // NodeNext-resolution note as `rirForSet`'s), so the element type is
+  // annotated explicitly rather than inferred.
+  return built.points.map((p: MetricTimeSeriesPoint) => ({ ts: p.timestamp, value: p.value }));
+}
+
+/**
+ * The series the stall rule reads: only this lift's sessions on or after its
+ * most recent break of 15+ days (VW-975). A flat or falling run that reaches
+ * back across a layoff compares detrained, planned-light weeks with the weeks
+ * before the break. `series` and `trend` keep the whole window. Session
+ * instants are already local wall clock, so the first ten characters are the
+ * local date.
+ */
+function seriesAfterLayoff(
+  sessions: readonly ProcessedSession[],
+  series: TimeSeries,
+  input: HistoryTrendOptions,
+  fromIso: string,
+): TimeSeries {
+  const resumedOn = lastBreakEnd(sessions.map((session) => session.startedAt.slice(0, 10)));
+  if (resumedOn === null) return series;
+  const after = sessions.filter((session) => session.startedAt.slice(0, 10) >= resumedOn);
+  return weeklySeries(after, input, fromIso);
 }
 
 /**

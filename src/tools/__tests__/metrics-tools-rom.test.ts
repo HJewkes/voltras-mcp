@@ -151,6 +151,9 @@ function makeState({ target, history = [], baseline }: StoreFixture): ServerStat
     // apply the repo's own warm-up/side eligibility to what comes back.
     getSetsForSession: vi.fn(async (id: string) => all.filter((s) => s.sessionId === id)),
     getBaseline: vi.fn(async () => baseline),
+    // VW-975: the drift guard's layoff check reads the session rows; with none
+    // it finds no break, which keeps these fixtures about drift alone.
+    getSession: vi.fn(async () => undefined),
   };
   return { store, exercises: { getById: vi.fn(() => undefined) } } as unknown as ServerState;
 }
