@@ -378,13 +378,21 @@ This question stores that one answer and nothing else: no reason, diagnosis or l
 
 ### The baseline session
 
-- At most 20 minutes: 2 or 3 lifts they have done before, from the plan where it has them. Order them so the last working set of the session is the lightest.
+On an open break or the first day back, the result carries `reEntry.baselineSession`. Offer that session as returned and do not build your own.
+
+- Run its sets in order, with the lift, load, reps and rest each one names. Add no lift and no set.
+- When `reEntry.baselineSession` is null, there is no load to scale: begin from the tool `reEntry.startFrom` names, with a feeler set.
+- Warm up with `plan.warmup_ramp` and label every set as usual (`04`).
+
+### Later sessions in the window
+
+These results carry no `reEntry.baselineSession`.
+
 - `short` or `medium`, a lift not yet trained since the return: take its load from `plan.suggest_progression`, which gives a re-entry load when it marks the lift's last time stale. If it gives none, use `profile.get_starting_prescription`.
 - A lift already trained since the return: repeat that load. Offer no step up inside the window.
 - `short`: 1 or 2 working sets a lift.
 - `medium`: `reEntry.rule.setsPerMuscle` working set a muscle, `reEntry.rule.repsLow` to `reEntry.rule.repsHigh` reps.
-- `long`: no old load is scaled. Use `profile.get_starting_prescription` and a feeler set.
-- Warm up with `plan.warmup_ramp` and label every set as usual (`04`).
+- Warm up and label every set as above.
 
 ### Limits in the window
 

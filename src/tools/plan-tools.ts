@@ -1853,7 +1853,6 @@ function applyStaleBasis(
   const { lastTime, topLoadLbs } = basisAge;
   if (!lastTime.stale) return { ...suggestion, lastTime };
   const reEntry = staleBasisReEntry(lastTime, topLoadLbs);
-  const since = `Last time was ${lastTime.daysAgo} days ago, before a break`;
   const read = suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
   const stale = {
     ...suggestion,
@@ -1864,7 +1863,7 @@ function applyStaleBasis(
   };
   if (reEntry === null || topLoadLbs === undefined) {
     const rest = classifyBreak(lastTime.daysAgo) === 'long' ? LONG_BREAK_NOTE : NO_LOAD_NOTE;
-    const reasoning = `${since}: ${rest} The gates read that session: ${read}`;
+    const reasoning = `Last time was before a break: ${rest} The gates read that session: ${read}`;
     return { ...stale, delta: PROGRESSION_HOLD_LBS, reasoning };
   }
   const percent = Math.round(reEntry.loadFactor * 100);
@@ -1872,7 +1871,8 @@ function applyStaleBasis(
     ...stale,
     delta: reEntry.loadLbs - topLoadLbs,
     reasoning:
-      `${since} (${reEntry.band}): step down from ${topLoadLbs} lb to ${reEntry.loadLbs} lb, ` +
+      `Today is lighter on purpose after a break (${reEntry.band}): step down from ` +
+      `${topLoadLbs} lb to ${reEntry.loadLbs} lb, ` +
       `${percent}% of that load rounded down, never under 5 lb (${reEntry.source}), rather ` +
       `than progress off a stale basis. The gates read that session: ${read}`,
     reEntry,
