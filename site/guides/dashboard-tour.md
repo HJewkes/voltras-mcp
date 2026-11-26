@@ -75,8 +75,8 @@ ends in "(last time)". A plan's targets show neither label (`src/coach-copy/dash
 `src/dashboard/spa/live-page/live-copy.ts`). A guest's targets come only from the guest's own
 history.
 
-When that session is 15 or more days old, the caption also says how long ago it was, for
-example "Last time · 2026-09-24 · 26 days ago, before a break". The numbers are still last
+When that session is 15 or more days old, the caption also says it was before a break, for
+example "Last time · 2026-09-24, before a break". The numbers are still last
 time's; the page does not adjust them for the break. For a load after a break, ask for
 [`plan.suggest_progression`](/reference/plan): after a short or medium break it steps down to
 a re-entry load, and after a longer one it holds.

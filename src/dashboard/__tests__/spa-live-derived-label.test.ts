@@ -133,11 +133,13 @@ describe('live page label for derived targets (VW-643)', () => {
 });
 
 describe('live page label for a stale last time (VW-908)', () => {
-  it('names the age and the break in the caption of a 26-day-old view', () => {
+  it('names the date and the break, with no day count, for a 26-day-old view', () => {
     const model = modelFor(STALE);
 
     expect(model.session.derivedStaleDays).toBe(26);
-    expect(renderHeader(model)).toContain('Last time · 2026-09-24 · 26 days ago, before a break');
+    const html = renderHeader(model);
+    expect(html).toContain('Last time · 2026-09-24, before a break');
+    expect(html).not.toContain('days ago');
   });
 
   it('keeps the plain caption for a 3-day-old view', () => {

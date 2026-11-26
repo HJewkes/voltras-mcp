@@ -400,7 +400,7 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
   "live.derived-targets.caption-stale": {
     "sourceKind": "paper",
     "sourceRef": "Hwang 2017, https://pubmed.ncbi.nlm.nih.gov/28328712/; Ogasawara 2011, https://pubmed.ncbi.nlm.nih.gov/21771261/",
-    "text": "Last time · {{date}} · {{days}} days ago, before a break",
+    "text": "Last time · {{date}}, before a break",
   },
   "live.derived-targets.set-count": {
     "sourceKind": "engineering-default",
