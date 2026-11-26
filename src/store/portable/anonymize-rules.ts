@@ -442,6 +442,9 @@ export const TABLE_RULES: Readonly<Record<string, TableRule>> = {
     injuries_json: strip,
     named_program_history: strip,
     last_break_months: keep,
+    // A return clearance answer is health status, however coarse: it never leaves anonymized.
+    return_clearance: strip,
+    return_clearance_on: strip,
     provenance_json: keep,
     updated_at: time,
   },

@@ -37,10 +37,10 @@ export const RETURN_NOT_CLEARED_REASON =
   'Not cleared to train yet: the latest answer to the return clearance question is "not yet". ' +
   'Hold working sessions until the lifter says they are cleared, then record that answer.';
 
-/** Why working sessions are held, or `null`: only a standing "not yet" during a return holds them. */
-export function clearanceBlock(
-  clearance: StoredReturnClearance | undefined,
-  returnOpen: boolean,
-): string | null {
-  return returnOpen && clearance?.answer === 'not_yet' ? RETURN_NOT_CLEARED_REASON : null;
+/**
+ * Why working sessions are held during an open break or re-entry window, or `null`: only a
+ * standing "not yet" holds them. The caller decides whether a return is open.
+ */
+export function clearanceBlock(clearance: StoredReturnClearance | undefined): string | null {
+  return clearance?.answer === 'not_yet' ? RETURN_NOT_CLEARED_REASON : null;
 }

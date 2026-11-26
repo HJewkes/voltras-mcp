@@ -101,7 +101,7 @@ explains the strict conditions it puts on your effort curve.
 
 Advice depends on how experienced you are. The server's **tier signal** places you as a
 **beginner**, **intermediate** or **advanced** lifter (`src/profile/tier.ts:5`<!-- anchor: 'beginner' | 'intermediate' | 'advanced' -->), and
-[`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:265-271`<!-- anchor: 'profile.get_tier_signal' -->).
+[`profile.get_tier_signal`](/reference/profile) reports it (`src/tools/profile-tools.ts:281-287`<!-- anchor: 'profile.get_tier_signal' -->).
 
 It answers two questions separately (`src/tools/tier-signal.ts:8-14`<!-- anchor: Two questions, answered separately -->):
 

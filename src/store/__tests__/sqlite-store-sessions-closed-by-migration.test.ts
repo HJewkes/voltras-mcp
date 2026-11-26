@@ -15,7 +15,7 @@ import { verifyStore } from '../portable/verify.js';
 import { LEGACY_IDLE_CLOSE_NOTE, SCHEMA_VERSION } from '../sqlite-store.js';
 import { openSqliteTestStore } from './open-test-store.js';
 
-const CURRENT_VERSION = 45;
+const CURRENT_VERSION = 46;
 const PRIOR_VERSION = 44;
 const STARTED = '2026-10-01T09:00:00.000Z';
 const ENDED = '2026-10-01T10:00:00.000Z';
@@ -183,7 +183,7 @@ describe('the v45 step, from a store created at v44', () => {
       this: DatabaseSync,
       sql: string,
     ) {
-      if (sql === `PRAGMA user_version = ${CURRENT_VERSION}`) throw new Error('killed');
+      if (sql === `PRAGMA user_version = ${PRIOR_VERSION + 1}`) throw new Error('killed');
       exec.call(this, sql);
     });
 

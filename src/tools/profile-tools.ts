@@ -30,6 +30,7 @@ import {
 } from '../analytics/body-fat-sources.js';
 import { localDate } from '../analytics/training-days.js';
 import { onboardingGaps, type OnboardingGaps } from '../profile/onboarding-gaps.js';
+import { latestReturnClearance } from '../profile/return-clearance.js';
 import {
   startingPrescription,
   type StartingPrescription,
@@ -48,6 +49,7 @@ import {
   ProfileSetDietPhaseInput,
   ProfileSetDietPhaseInputRefined,
   ProfileSetTrainingBackgroundInput,
+  ProfileSetTrainingBackgroundInputRefined,
   WEEKLY_CHECKIN_CODES,
   WEEKLY_CHECKIN_KIND,
 } from '../schemas/profile.js';
@@ -98,7 +100,14 @@ const SET_TRAINING_BACKGROUND_DESCRIPTION =
   'REPLACES the stored list, so send every injury still standing, and send [] for "asked, ' +
   'none" (which is a different answer from never having asked). This tool only stores ' +
   'verbatim self-report; it never infers or computes an experience tier (see ' +
-  'profile.get_tier_signal for that), and it never interprets an injury clinically.';
+  'profile.get_tier_signal for that), and it never interprets an injury clinically. ' +
+  'returnClearance is the answer to the return clearance question, asked ONCE after a break the ' +
+  'lifter says was for illness, injury or a procedure: cleared, cleared_with_limit or not_yet, ' +
+  'with returnClearanceOn (the local date they answered, default today). Never ask what the limit ' +
+  'is and never record it anywhere: there is no field for it on purpose. The later-dated answer ' +
+  'stands, so a backdated answer never replaces a newer one. While not_yet stands and a break or ' +
+  'its re-entry window is open, session.start refuses working sessions; record the new answer ' +
+  'when the lifter is cleared.';
 
 const GET_TRAINING_BACKGROUND_DESCRIPTION =
   'Read back the stored training-background/onboarding profile for the user. Returns ' +
@@ -145,7 +154,9 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
   'goal or target has been captured yet. `lastBreakMonths` is listed only for a lifter who ' +
   'declared above beginner while their logged history is still short; `lastBreakQuestion` is ' +
-  'then the question to ask, as written.';
+  'then the question to ask, as written. `returnClearance` is the latest answer to the return ' +
+  'clearance question, or null if it was never asked: ask it once, and only after a break the ' +
+  'lifter says was for illness, injury or a procedure.';
 
 const SET_DIET_PHASE_DESCRIPTION =
   'Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or ' +
@@ -253,7 +264,9 @@ export function registerProfileTools(
     placeholders,
     'profile.set_training_background',
     ProfileSetTrainingBackgroundInput,
-    wrapHandler(ProfileSetTrainingBackgroundInput, (input) => setTrainingBackground(state, input)),
+    wrapHandler(ProfileSetTrainingBackgroundInputRefined, (input) =>
+      setTrainingBackground(state, input),
+    ),
     SET_TRAINING_BACKGROUND_DESCRIPTION,
   );
   install(
@@ -409,6 +422,13 @@ async function setTrainingBackground(
     if (value === undefined) continue;
     Object.assign(merged, { [field]: value });
     provenance[field] = 'user';
+  }
+  if (input.returnClearance !== undefined) {
+    merged.returnClearance = latestReturnClearance(existing?.returnClearance, {
+      answer: input.returnClearance,
+      answeredOn: input.returnClearanceOn ?? localDate(now),
+    });
+    provenance.returnClearance = 'user';
   }
   if (Object.keys(provenance).length > 0) {
     merged.provenance = provenance;

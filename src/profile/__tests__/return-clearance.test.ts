@@ -92,6 +92,15 @@ describe('profile.set_training_background returnClearance', () => {
     expect(await storedClearance()).toEqual({ answer: 'cleared', answeredOn: '2026-10-02' });
   });
 
+  it('shows the stored answer on the onboarding gaps so it is not asked twice', async () => {
+    await setBackground({ returnClearance: 'cleared' });
+
+    const result = await callbacks.get('profile.get_onboarding_gaps')!({});
+    const { gaps } = JSON.parse(result.content[0].text) as { gaps: { returnClearance: unknown } };
+
+    expect(gaps.returnClearance).toEqual({ answer: 'cleared', answeredOn: '2026-10-03' });
+  });
+
   it('leaves the answer alone when a later call sets only other fields', async () => {
     await setBackground({ returnClearance: 'not_yet' });
     await setBackground({ goal: 'strength' });
