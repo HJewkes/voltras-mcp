@@ -1,17 +1,18 @@
 // The first session back after a break: a short, light "baseline session" (VW-982).
 //
-// It takes up to three lifts from today's template that the lifter has trained before, one
-// working set each at the re-entry rule's load, and orders the sets so relative load falls
-// across the session and the last working set is the lightest. When the rule allows a single
-// set per lift, that last set is a back-off set of the first lift at 80% of its working load;
-// it is the one set the session adds past one per lift. Rests are the plan's or the intent
-// default, and lifts are added only while the estimate fits the minutes the caller offers.
+// It takes up to three lifts the lifter has trained before, from today's template or, with no
+// planned workout, from the last training day before today (VW-983). Each gets one working set at
+// the re-entry rule's load, and the sets are ordered so relative load falls across the session and
+// the last working set is the lightest. When the rule allows a single set per lift, that last set
+// is a back-off set of the first lift at 80% of its working load; it is the one set the session
+// adds past one per lift. Rests are the plan's or the intent default, and lifts are added only
+// while the estimate fits the minutes the caller offers.
 //
 // A lift with no logged load has nothing to scale, and a rule with no load factor (the long
 // band) scales nothing: with no lift left the result is `null`, and the caller points the
 // lifter at the starting prescription instead.
 //
-// Pure: the caller passes the template, each lift's last working load and the rule.
+// Pure: the caller passes the lifts, each lift's last working load and the rule.
 
 import type { SourcedValue } from '../coach-copy/fragments.js';
 import type { TrainingIntent } from '../schemas/set.js';
@@ -57,7 +58,7 @@ export const BASELINE_SECONDS_PER_REP: SourcedValue<number> = {
 /** Reps assumed for a set whose plan states no rep target. */
 const FALLBACK_REPS = 10;
 
-/** The template row fields the baseline reads. */
+/** The lift fields the baseline reads; a template row carries them all. */
 export interface BaselineTemplateExercise {
   readonly exerciseId: string;
   readonly targetRepsLow?: number;
@@ -97,7 +98,7 @@ interface Lift {
   readonly relative: number;
 }
 
-/** The baseline session for today's template, or `null` when no lift has a load to scale. */
+/** The baseline session for the offered lifts, or `null` when none has a load to scale. */
 export function selectBaselineSession(
   template: readonly BaselineTemplateExercise[],
   historyByExercise: ReadonlyMap<string, BaselineHistory>,

@@ -71,7 +71,7 @@ export interface ReEntryBreakBrief extends ReEntryBrief {
   readonly blocked?: string;
   /**
    * The day-1 session (VW-982): on an open break, or on the first day back. `null` when no
-   * template lift has a load to scale; `startFrom` then names the tool to begin from instead.
+   * lift has a load to scale; `startFrom` then names the tool to begin from instead.
    */
   readonly baselineSession?: BaselineSession | null;
   readonly startFrom?: typeof STARTING_PRESCRIPTION_TOOL;

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
+import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { ServerState } from '../../state/server-state.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
@@ -85,10 +85,16 @@ async function trainLifts(id: string, startedAt: string, loads: Record<string, n
   }
 }
 
-async function reEntry(): Promise<Record<string, unknown>> {
-  const result = await callbacks.get('plan.next_workout')!({});
+async function nextWorkout(args: unknown = {}) {
+  const result = await callbacks.get('plan.next_workout')!(args);
   expect(result.isError, result.content[0].text).not.toBe(true);
-  return (JSON.parse(result.content[0].text) as { reEntry: Record<string, unknown> }).reEntry;
+  return JSON.parse(result.content[0].text) as Record<string, unknown> & {
+    reEntry: Record<string, unknown>;
+  };
+}
+
+async function reEntry(): Promise<Record<string, unknown>> {
+  return (await nextWorkout()).reEntry;
 }
 
 const BEFORE_THE_BREAK = '2026-09-07T10:00:00.000Z';
@@ -186,5 +192,167 @@ describe('plan.next_workout reEntry.baselineSession', () => {
     const read = await reEntry();
 
     expect(read.baselineSession).toMatchObject({ sets: [{ loadLbs: 30 }, { loadLbs: 20 }] });
+  });
+});
+
+const LAST_PRE_BREAK = '2026-09-10T10:00:00.000Z';
+
+function liftLoads(read: Record<string, unknown>): [string, number][] {
+  const session = read.baselineSession as { sets: { exerciseId: string; loadLbs: number }[] };
+  return session.sets.map((set) => [set.exerciseId, set.loadLbs]);
+}
+
+const SCALED_LAST_SESSION = [
+  ['cable-curl', 20],
+  ['lat-pulldown', 40],
+  ['cable-curl', 15],
+];
+
+describe('plan.next_workout reEntry.baselineSession with no planned workout', () => {
+  /** An older session holds a lift the last one does not, so it must not appear. */
+  async function trainBeforeTheBreak(): Promise<void> {
+    await trainLifts('s-older', '2026-09-08T10:00:00.000Z', { 'chest-press': 150 });
+    await trainLifts('s-last', LAST_PRE_BREAK, { 'cable-curl': 60, 'lat-pulldown': 120 });
+  }
+
+  /** Four weeks from 2026-08-17: the block ends on 2026-09-13, before today. */
+  async function endTheDatedBlock(): Promise<void> {
+    await dateBlock(store, 'b1', '2026-08-17', 4);
+  }
+
+  it('builds it from the last pre-break day when the dated block ended in the gap', async () => {
+    await endTheDatedBlock();
+    await trainBeforeTheBreak();
+
+    const next = await nextWorkout();
+
+    expect(next).toMatchObject({ unplanned: true, state: 'gap' });
+    expect(next.reEntry).toMatchObject({ phase: 'in_gap', band: 'medium' });
+    expect(next.reEntry.baselineSession).toMatchObject({
+      label: 'baseline session',
+      sets: [
+        { role: 'working', relativeLoad: 0.33, repsLow: 20, repsHigh: 30 },
+        { role: 'working', relativeLoad: 0.33 },
+        { role: 'back_off', relativeLoad: 0.25 },
+      ],
+    });
+    expect(liftLoads(next.reEntry)).toEqual(SCALED_LAST_SESSION);
+    expect(next.reEntry).not.toHaveProperty('startFrom');
+  });
+
+  it('builds it for a completed program too', async () => {
+    await trainBeforeTheBreak();
+
+    const next = await nextWorkout({ programId: 'test' });
+
+    expect(next).toMatchObject({ completed: true });
+    expect(liftLoads(next.reEntry)).toEqual(SCALED_LAST_SESSION);
+  });
+
+  const NO_PLAN_SHAPES = [
+    ['unplanned', {}],
+    ['completed', { programId: 'test' }],
+  ] as const;
+
+  it.each(NO_PLAN_SHAPES)(
+    'keeps it on the first day back for the %s shape, scaled from before the break',
+    async (shape, args) => {
+      await endTheDatedBlock();
+      await trainBeforeTheBreak();
+      await trainLifts('s-today', '2026-11-06T10:00:00.000Z', { 'cable-curl': 20 });
+
+      const next = await nextWorkout(args);
+
+      expect(next).toMatchObject({ [shape]: true, reEntry: { phase: 'returning' } });
+      expect(liftLoads(next.reEntry)).toEqual(SCALED_LAST_SESSION);
+    },
+  );
+
+  it.each(NO_PLAN_SHAPES)(
+    'offers the %s shape none on day 3 of the window',
+    async (shape, args) => {
+      await endTheDatedBlock();
+      await trainBeforeTheBreak();
+      await trainLifts('s-back', '2026-11-04T10:00:00.000Z', { 'cable-curl': 20 });
+
+      const next = await nextWorkout(args);
+
+      expect(next).toMatchObject({ [shape]: true, reEntry: { phase: 'returning' } });
+      expect(next.reEntry).not.toHaveProperty('baselineSession');
+      expect(next.reEntry).not.toHaveProperty('startFrom');
+    },
+  );
+
+  it('takes the lifts of every session on the last training day before the break', async () => {
+    await endTheDatedBlock();
+    await trainLifts('s-older', '2026-09-08T10:00:00.000Z', { 'chest-press': 150 });
+    await trainLifts('s-curl', '2026-09-10T10:00:00.000Z', { 'cable-curl': 60 });
+    await trainLifts('s-pull', '2026-09-10T10:40:00.000Z', { 'lat-pulldown': 120 });
+    await trainLifts('s-row', '2026-09-10T11:20:00.000Z', { 'seated-row': 90 });
+
+    const read = await reEntry();
+
+    expect(liftLoads(read)).toEqual([
+      ['cable-curl', 20],
+      ['lat-pulldown', 40],
+      ['seated-row', 30],
+      ['cable-curl', 15],
+    ]);
+  });
+
+  it('files a session that crosses midnight under the day it ended', async () => {
+    await endTheDatedBlock();
+    await trainLifts('s-late', '2026-09-09T23:50:00.000Z', { 'cable-curl': 60 });
+    await trainLifts('s-pull', LAST_PRE_BREAK, { 'lat-pulldown': 120 });
+
+    const read = await reEntry();
+
+    expect(liftLoads(read)).toEqual(SCALED_LAST_SESSION);
+  });
+
+  it('passes over a later session that holds no working set', async () => {
+    await endTheDatedBlock();
+    await trainBeforeTheBreak();
+    await trainLifts('s-empty', '2026-09-11T10:00:00.000Z', {});
+
+    const read = await reEntry();
+
+    expect(liftLoads(read)).toEqual(SCALED_LAST_SESSION);
+  });
+
+  it('never takes a lift only a guest did in that session', async () => {
+    await endTheDatedBlock();
+    await trainBeforeTheBreak();
+    await store.putSet({
+      id: 's-last-guest',
+      sessionId: 's-last',
+      userId: LOCAL_USER_ID,
+      exerciseId: 'chest-press',
+      startedAt: LAST_PRE_BREAK,
+      endedAt: LAST_PRE_BREAK,
+      partial: false,
+      reps: [],
+      weightLbs: 300,
+      lifter: 'Jordan',
+    });
+
+    const read = await reEntry();
+
+    expect(liftLoads(read)).toEqual(SCALED_LAST_SESSION);
+  });
+
+  it('gives null and points at the starting prescription with no lift history at all', async () => {
+    await endTheDatedBlock();
+
+    const next = await nextWorkout();
+
+    expect(next).toMatchObject({
+      unplanned: true,
+      reEntry: {
+        phase: 'in_gap',
+        baselineSession: null,
+        startFrom: 'profile.get_starting_prescription',
+      },
+    });
   });
 });

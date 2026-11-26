@@ -84,6 +84,7 @@ import { normalisePositionsToMetres } from '../store/position-units.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { selectWorkingSets } from '../store/working-sets.js';
+import { setPurposeOf } from '../store/set-purpose.js';
 import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises/movement-class.js';
 import { computePercentIncrement } from '../analytics/percent-increment.js';
 import { classifyRepsAgainstBand } from '../analytics/rep-band.js';
@@ -93,6 +94,7 @@ import {
   type StoredBlockSchedule,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
+  type StoredSession,
   type StoredSet,
   type StoredTrainingBlock,
   type StoredTrainingProgram,
@@ -102,12 +104,13 @@ import {
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
-import { localMidnightIso, todayLocal } from '../analytics/training-days.js';
+import { localDate, localMidnightIso, todayLocal } from '../analytics/training-days.js';
 import { classifyBreak, type ReEntryRule } from '../analytics/re-entry.js';
 import {
   selectBaselineSession,
   type BaselineHistory,
   type BaselineSession,
+  type BaselineTemplateExercise,
 } from '../analytics/baseline-session.js';
 import { REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
 import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
@@ -289,8 +292,9 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
   'about planning the next block. `reEntry`: days since the last training day; after a break also band, cited rule and `clearance` (the latest return clearance answer), plus `blocked` while that answer is not_yet. Report only. ' +
-  'On an open break or the first day back, a template result adds `baselineSession` to `reEntry`: a ' +
-  'short session of 2-3 template lifts with history, ordered so its last set is the lightest; ' +
+  'On an open break or the first day back, `reEntry` adds `baselineSession`: a short session of ' +
+  '2-3 lifts with history, ordered so its last set is the lightest, from the template, or, when ' +
+  'unplanned or completed, from the last training day before today. ' +
   '`null` with `startFrom` names the tool to begin from instead. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
@@ -1477,19 +1481,57 @@ export async function nextWorkout(
   return { ...result, planning: read.planning, reEntry, deloadAdvisory };
 }
 
-/** VW-982: the day-1 session comes from today's template; a result with none offers none. */
+/**
+ * The day-1 session takes its lifts from today's template (VW-982), or, with no planned workout,
+ * from the last training day before today (VW-983).
+ */
 function baselineBuilder(
   state: ServerState,
   result: NextWorkoutResult,
   today: string,
-): BaselineBuilder | undefined {
-  if (!('plannedExercises' in result)) return undefined;
-  const { plannedExercises } = result;
+): BaselineBuilder {
+  const planned = 'plannedExercises' in result ? result.plannedExercises : undefined;
   return async (rule: ReEntryRule): Promise<BaselineSession | null> => {
-    const ids = plannedExercises.map((planned) => planned.exerciseId);
-    const history = await readBaselineHistory(state, ids, localMidnightIso(today));
-    return selectBaselineSession(plannedExercises, history, rule, REDUCED_SCOPE_MINUTES.value);
+    const startedBefore = localMidnightIso(today);
+    const lifts = planned ?? (await readLastDayLifts(state, today));
+    const ids = lifts.map((lift) => lift.exerciseId);
+    const history = await readBaselineHistory(state, ids, startedBefore);
+    return selectBaselineSession(lifts, history, rule, REDUCED_SCOPE_MINUTES.value);
   };
+}
+
+/**
+ * The owner's lifts on the last training day before `today`, in the order lifted. Every session
+ * of that day counts, because one visit can hold a session per exercise.
+ */
+async function readLastDayLifts(
+  state: ServerState,
+  today: string,
+): Promise<BaselineTemplateExercise[]> {
+  let lastDay = '';
+  let lifted: StoredSet[] = [];
+  for (const session of await state.store.listSessions({ to: localMidnightIso(today) })) {
+    const sets = await state.store.getSetsForSession(session.id);
+    const working = sets.filter((set) => setPurposeOf(set) === 'working');
+    if (working.length === 0) continue;
+    const day = localDate(trainingDayInstantOf(session, working));
+    if (day >= today || day < lastDay) continue;
+    if (day > lastDay) lifted = [];
+    lastDay = day;
+    lifted.push(...scopeSetsToLifter(working, undefined));
+  }
+  return lifted
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+    .flatMap(({ exerciseId }) => (exerciseId === undefined ? [] : [{ exerciseId }]));
+}
+
+/** The instant that dates a session under the training-day rule (VW-462). */
+function trainingDayInstantOf(session: StoredSession, working: readonly StoredSet[]): string {
+  const lastWorkingEnd = working
+    .map((set) => set.endedAt)
+    .sort()
+    .at(-1);
+  return session.endedAt ?? lastWorkingEnd ?? session.startedAt;
 }
 
 /**
@@ -1790,13 +1832,9 @@ async function readBasisAge(
   const session = await state.store.getSession(basisSessionId);
   if (session === undefined) return null;
   const workingSets = selectWorkingSets(sets);
-  const lastWorkingEnd = workingSets
-    .map((set) => set.endedAt)
-    .sort()
-    .at(-1);
-  const trainingDayInstant = session.endedAt ?? lastWorkingEnd ?? session.startedAt;
+  const instant = trainingDayInstantOf(session, workingSets);
   return {
-    lastTime: readLastTime(session.startedAt, trainingDayInstant, todayLocal()),
+    lastTime: readLastTime(session.startedAt, instant, todayLocal()),
     topLoadLbs: topLoadOf(workingSets),
   };
 }
