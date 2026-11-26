@@ -52,7 +52,7 @@ Once you've confirmed a side, [`slot.bind`](/reference/slot) persists the device
 without repeating the identify ritual. [`slot.bindings_list`](/reference/slot) shows what's
 persisted, and [`slot.unbind`](/reference/slot) removes an entry. [`slot.swap`](/reference/slot)
 swaps the two connected slots' bindings in place with no BLE traffic at all
-(`src/tools/device-tools.ts:1616-1629`<!-- anchor: 'slot.swap' -->).
+(`src/tools/device-tools.ts:1620-1633`<!-- anchor: 'slot.swap' -->).
 
 ## Setting both units at once: `bilateral.cascade`
 

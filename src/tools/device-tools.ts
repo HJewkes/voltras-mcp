@@ -336,7 +336,8 @@ const BILATERAL_CASCADE_DESCRIPTION =
   'Each `results[i]` reports `modeEcho`: `confirmed` (with `echoedAfterMs`), `skipped` (mode unchanged, nothing to wait for), or `timeout`. On `timeout` the slot FAILS and its other setters are never issued — re-issue `device.set_mode` for that slot and read `device.get_state` before retrying. ' +
   'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
   'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with an `applied.<setter>` outcome for each of the four setters. ' +
-  'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release.';
+  'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release. A positive eccentric overload is guarded: ' +
+  RE_ENTRY_GUARD_DESCRIPTION;
 
 // `slot.swap` accepts no arguments — there are exactly two slot positions
 // in the workspace today (PRIMARY_SLOT plus one user-allocated id), so the
@@ -1584,6 +1585,9 @@ export function registerDeviceTools(
     wrapHandler(BilateralCascadeInput, async (input) => {
       const targetSlotIds = resolveCascadeSlotIds(state, input.slots);
       const plan = buildCascadePlan(input);
+      if ((plan.eccentricPercent ?? 0) > 0) {
+        await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+      }
       const targets = targetSlotIds.map((slotId) => {
         const slot = getSlot(state, slotId);
         return {

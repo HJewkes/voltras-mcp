@@ -216,6 +216,8 @@ interface State {
   // VMCP-01.65: the cascade takes a lease fence, which reads both.
   lease: FakeLease;
   channels: RecordingChannels;
+  // VW-978: the return-window guard reads training days; none, so no window is open.
+  store: { listTrainingDayInstants: () => Promise<[]> };
 }
 
 function makeState(slots: Array<[string, FakeSlot]>): State {
@@ -230,6 +232,7 @@ function makeState(slots: Array<[string, FakeSlot]>): State {
     slots: new Map(slots),
     lease: makeFakeLease(),
     channels: makeRecordingChannels(),
+    store: { listTrainingDayInstants: async () => [] },
   };
 }
 

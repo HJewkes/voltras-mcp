@@ -1,6 +1,10 @@
 // The return-window guard refuses max tests and eccentric overload in the first weeks back after
 // a medium break, and names the window's last day rather than a day count (VW-978).
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
@@ -43,6 +47,10 @@ const GUARDED_TOOLS: ReadonlyArray<readonly [string, unknown]> = [
   ['isometric.measure_imbalance', { primarySlot: 'primary', secondarySlot: 'secondary' }],
   ['device.set_eccentric', { overloadLbs: 20 }],
   ['device.set_isokinetic_ecc_overload_weight', { lbs: 20 }],
+  [
+    'bilateral.cascade',
+    { mode: 'WeightTraining', weightLbs: 50, eccentricOverloadLbs: 20, chainsLbs: 0 },
+  ],
   [
     'device.configure_isokinetic',
     { targetSpeedMmPerSec: 500, eccMode: 'isokinetic', eccOverloadWeightLbs: 20 },
@@ -168,4 +176,42 @@ async function expectAllowed(): Promise<void> {
   expect(isokinetic.isError).toBeUndefined();
   expect(client.setEccentric).toHaveBeenCalledWith(20);
   expect(client.setIsokineticEccOverloadWeight).toHaveBeenCalledWith(20);
+}
+
+// Every guarded tool calls the guard in its own handler, so a new route to an eccentric overload
+// write would slip past it. Pin the writers: a new call site fails here until it is guarded and
+// listed, alongside a refusal case above.
+describe('the eccentric overload writers', () => {
+  it('are only the guarded handlers', () => {
+    const srcRoot = fileURLToPath(new URL('../../', import.meta.url));
+    const writers = sourceFiles(srcRoot).flatMap((file) => {
+      const count = codeLines(readFileSync(file, 'utf8')).match(OVERLOAD_WRITE)?.length ?? 0;
+      return count === 0 ? [] : [`${relative(srcRoot, file)} x${count}`];
+    });
+
+    expect(writers.sort()).toEqual([
+      // bilateral.cascade's eccentric step
+      'state/bilateral-cascade.ts x1',
+      // device.set_eccentric, set_isokinetic_ecc_overload_weight, configure_isokinetic
+      'tools/device-tools.ts x3',
+    ]);
+  });
+});
+
+const OVERLOAD_WRITE = /\.(?:setEccentric|setIsokineticEccOverloadWeight)\(/g;
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts') ? [path] : [];
+  });
+}
+
+/** The source with its comment lines dropped, so a comment naming a setter is not a writer. */
+function codeLines(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\/?\*)/.test(line))
+    .join('\n');
 }

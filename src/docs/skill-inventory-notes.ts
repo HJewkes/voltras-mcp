@@ -169,7 +169,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'bilateral.cascade': {
     job: 'load',
     when: 'Weight Training, one or both units',
-    rule: 'All four are required: `mode`, `weightLbs`, `eccentricOverloadLbs`, `chainsLbs`. Read `results[i].modeEcho`; on `timeout` that slot failed and its other setters never went out. Do not send a non-WeightTraining mode through it (VW-162, open)',
+    rule: 'All four are required: `mode`, `weightLbs`, `eccentricOverloadLbs`, `chainsLbs`. Read `results[i].modeEcho`; on `timeout` that slot failed and its other setters never went out. Do not send a non-WeightTraining mode through it (VW-162, open). A positive `eccentricOverloadLbs` is refused with `RE_ENTRY_WINDOW` in the window after a medium or longer break; send 0 or less until the date it names',
   },
   'device.set_mode': {
     job: 'load',

@@ -14,7 +14,7 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72462 |
+| tools/list | 72511 |
 | live-workout responses | 24279 |
 | live-workout push events | 11490 |
 | live-workout total | 35769 |
@@ -34,7 +34,7 @@ grows more than 5% over this table, or when a row is new.
 | `accountability.state` | 1363 | 417 |
 | `baselines.get` | 3314 | 962 |
 | `baselines.recalc` | 3276 | 969 |
-| `bilateral.cascade` | 2673 | 883 |
+| `bilateral.cascade` | 2858 | 932 |
 | `coaching.explain` | 2956 | 1062 |
 | `debug.compare_rep_streams` | 820 | 281 |
 | `debug.confirm_channel` | 922 | 308 |
