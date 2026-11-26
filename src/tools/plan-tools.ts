@@ -54,6 +54,7 @@ import {
   readLastTime,
   readReEntry,
   staleBasisReEntry,
+  type BaselineBuilder,
   type LastTime,
   type ReEntryResult,
   type StaleBasisReEntry,
@@ -101,8 +102,14 @@ import {
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
-import { todayLocal } from '../analytics/training-days.js';
-import { classifyBreak } from '../analytics/re-entry.js';
+import { localMidnightIso, todayLocal } from '../analytics/training-days.js';
+import { classifyBreak, type ReEntryRule } from '../analytics/re-entry.js';
+import {
+  selectBaselineSession,
+  type BaselineHistory,
+  type BaselineSession,
+} from '../analytics/baseline-session.js';
+import { REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
 import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
 import {
@@ -282,6 +289,9 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
   'about planning the next block. `reEntry`: days since the last training day; after a break also band, cited rule and `clearance` (the latest return clearance answer), plus `blocked` while that answer is not_yet. Report only. ' +
+  'On an open break or the first day back, a template result adds `baselineSession` to `reEntry`: a ' +
+  'short session of 2-3 template lifts with history, ordered so its last set is the lightest; ' +
+  '`null` with `startFrom` names the tool to begin from instead. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
@@ -1451,14 +1461,61 @@ export async function nextWorkout(
   }
 > {
   const now = new Date();
-  const read = await resolveCurrentBlock(state.store, todayLocal());
-  const reEntry = await readReEntry(state.store, todayLocal(), now.toISOString());
+  const today = todayLocal();
+  const read = await resolveCurrentBlock(state.store, today);
   const result = await nextWorkoutFor(state, read, input.programId);
+  const reEntry = await readReEntry(
+    state.store,
+    today,
+    now.toISOString(),
+    baselineBuilder(state, result, today),
+  );
   const deloadAdvisory = await buildDeloadAdvisory(state, {
     now,
     currentWeekIsDeload: isDeloadWeek(read, result),
   });
   return { ...result, planning: read.planning, reEntry, deloadAdvisory };
+}
+
+/** VW-982: the day-1 session comes from today's template; a result with none offers none. */
+function baselineBuilder(
+  state: ServerState,
+  result: NextWorkoutResult,
+  today: string,
+): BaselineBuilder | undefined {
+  if (!('plannedExercises' in result)) return undefined;
+  const { plannedExercises } = result;
+  return async (rule: ReEntryRule): Promise<BaselineSession | null> => {
+    const ids = plannedExercises.map((planned) => planned.exerciseId);
+    const history = await readBaselineHistory(state, ids, localMidnightIso(today));
+    return selectBaselineSession(plannedExercises, history, rule, REDUCED_SCOPE_MINUTES.value);
+  };
+}
+
+/**
+ * Each lift's top working load in the owner's last training session of it before today, so a
+ * session already logged on the first day back is never its own basis.
+ */
+async function readBaselineHistory(
+  state: ServerState,
+  exerciseIds: readonly string[],
+  startedBefore: string,
+): Promise<Map<string, BaselineHistory>> {
+  const history = new Map<string, BaselineHistory>();
+  for (const exerciseId of new Set(exerciseIds)) {
+    const sessionId = await state.store.getMostRecentSessionIdForExercise({
+      userId: LOCAL_USER_ID,
+      exerciseId,
+      startedBefore,
+    });
+    if (sessionId === null) continue;
+    const owned = scopeSetsToLifter(await state.store.getSetsForSession(sessionId), undefined);
+    const topLoadLbs = topLoadOf(
+      selectWorkingSets(scopeSessionSetsToExerciseId(owned, exerciseId)),
+    );
+    if (topLoadLbs !== undefined) history.set(exerciseId, { topLoadLbs });
+  }
+  return history;
 }
 
 function isDeloadWeek(read: CurrentBlockRead, result: NextWorkoutResult | undefined): boolean {

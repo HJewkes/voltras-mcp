@@ -82,6 +82,8 @@ describe('plan.next_workout reEntry', () => {
       windowEndsOn: '2026-10-09',
       rule: { loadFactor: 0.8, weeks: 1, ...GUARDRAILS, source: 'Nuckols 2022' },
       clearance: null,
+      baselineSession: null,
+      startFrom: 'profile.get_starting_prescription',
     });
   });
 
