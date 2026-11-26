@@ -214,6 +214,21 @@ describe('buildMuscleRecoveryView — shaping', () => {
     expect(muscle(view, 'chest')?.daysSince).toBe(2);
   });
 
+  it.each([
+    ['14 local days back is not a break', '2026-06-26T10:00:00.000Z', false],
+    ['15 local days back is a break', '2026-06-25T10:00:00.000Z', true],
+    ['15 local days back is a break before 15 full days pass', '2026-06-25T18:00:00.000Z', true],
+    ['a medium break is a break', '2026-05-20T10:00:00.000Z', true],
+  ])('flags the break since the last eligible set: %s', (_case, startedAt, isBreak) => {
+    const view = build([set('sess-1', 'chest-press', startedAt)]);
+
+    expect(muscle(view, 'chest')?.isBreak).toBe(isBreak);
+  });
+
+  it('flags no break for a muscle never trained', () => {
+    expect(build([]).muscles.every((m) => m.isBreak === false)).toBe(true);
+  });
+
   it('credits every titan slug the exercise maps to, secondary groups excluded', () => {
     const view = build([set('sess-1', 'cable-row', '2026-07-08T10:00:00.000Z')]);
 

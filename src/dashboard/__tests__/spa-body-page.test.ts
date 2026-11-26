@@ -214,6 +214,7 @@ const RECOVERY: MuscleRecoveryView = {
     muscle,
     lastTrainedAt: null,
     daysSince: null,
+    isBreak: false,
     lastEntryDepression: null,
     lastSessionMatchedPrior: null,
     reason: 'insufficient history',

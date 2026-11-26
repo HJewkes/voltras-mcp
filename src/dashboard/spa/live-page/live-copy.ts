@@ -109,11 +109,8 @@ export interface TargetProvenance {
 export function derivedTargetsCaption(session: TargetProvenance): string | null {
   if (session.prescriptionSource !== 'derived' || session.derivedFromAt == null) return null;
   const date = localDate(session.derivedFromAt);
-  if (session.derivedStaleDays == null) return fillSlots(LINES.derivedTargets.text, { date });
-  return fillSlots(LINES.derivedTargetsStale.text, {
-    date,
-    days: String(session.derivedStaleDays),
-  });
+  const line = session.derivedStaleDays == null ? LINES.derivedTargets : LINES.derivedTargetsStale;
+  return fillSlots(line.text, { date });
 }
 
 /** A "set n of m" line, marked when the set count is last time's rather than the plan's. */

@@ -78,7 +78,7 @@ export const LIVE_FRAGMENTS = {
   ),
   derivedTargetsStale: {
     id: 'live.derived-targets.caption-stale',
-    text: 'Last time · {{date}} · {{days}} days ago, before a break',
+    text: 'Last time · {{date}}, before a break',
     sourceKind: 'paper',
     sourceRef: BREAK_AGE_SOURCE,
   },
