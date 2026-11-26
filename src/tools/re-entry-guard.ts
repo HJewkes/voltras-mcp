@@ -21,10 +21,8 @@ const GUARDED_BANDS: ReadonlySet<BreakBand> = new Set(['medium', 'long']);
 
 /** The sentence every guarded tool's description carries. */
 export const RE_ENTRY_GUARD_DESCRIPTION =
-  'RETURN WINDOW (VW-978): refused as RE_ENTRY_WINDOW, before anything reaches the device, while ' +
-  'the window after a break of the medium band or longer is open, through the end date ' +
-  'plan.next_workout reports in its re-entry read; the refusal names that date. There is no ' +
-  'override.';
+  'RETURN WINDOW (VW-978): refused as RE_ENTRY_WINDOW, naming the end date, while the window ' +
+  'after a medium or longer break is open. No override.';
 
 export type GuardedWork = 'max_test' | 'eccentric_overload';
 

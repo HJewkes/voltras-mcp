@@ -14,10 +14,10 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72268 |
-| live-workout responses | 24278 |
+| tools/list | 72462 |
+| live-workout responses | 24279 |
 | live-workout push events | 11490 |
-| live-workout total | 35768 |
+| live-workout total | 35769 |
 | sunday-sitting responses | 9427 |
 | sunday-sitting push events | 0 |
 | sunday-sitting total | 9427 |
@@ -41,7 +41,7 @@ grows more than 5% over this table, or when a row is new.
 | `debug.push_test_channel` | 1146 | 408 |
 | `debug.recent_events` | 1383 | 457 |
 | `debug.recording_status` | 512 | 184 |
-| `device.configure_isokinetic` | 1833 | 661 |
+| `device.configure_isokinetic` | 1976 | 698 |
 | `device.connect` | 1413 | 457 |
 | `device.disconnect` | 1289 | 407 |
 | `device.enter_row_mode` | 726 | 260 |
@@ -52,10 +52,10 @@ grows more than 5% over this table, or when a row is new.
 | `device.set_band_max_force` | 813 | 303 |
 | `device.set_chains` | 1144 | 388 |
 | `device.set_damper_level` | 833 | 308 |
-| `device.set_eccentric` | 2872 | 856 |
+| `device.set_eccentric` | 3015 | 894 |
 | `device.set_isokinetic_ecc_const_weight` | 991 | 353 |
 | `device.set_isokinetic_ecc_mode` | 883 | 324 |
-| `device.set_isokinetic_ecc_overload_weight` | 994 | 354 |
+| `device.set_isokinetic_ecc_overload_weight` | 1137 | 392 |
 | `device.set_isokinetic_ecc_speed_limit` | 916 | 340 |
 | `device.set_isokinetic_target_speed` | 989 | 358 |
 | `device.set_mode` | 1401 | 475 |
@@ -64,7 +64,7 @@ grows more than 5% over this table, or when a row is new.
 | `device.start_guided_load` | 6116 | 1991 |
 | `device.start_row` | 832 | 311 |
 | `device.unload` | 2593 | 749 |
-| `driftguard.check` | 958 | 369 |
+| `driftguard.check` | 1017 | 384 |
 | `exercise.confirm_setup` | 2072 | 722 |
 | `exercise.get` | 382 | 162 |
 | `exercise.mark_new_chapter` | 1746 | 633 |
@@ -78,12 +78,12 @@ grows more than 5% over this table, or when a row is new.
 | `goal.retire` | 1337 | 444 |
 | `goal.weekly_review` | 3450 | 1045 |
 | `isometric.measure_hold` | 3392 | 1044 |
-| `isometric.measure_imbalance` | 6501 | 1948 |
-| `isometric.measure_max` | 6331 | 1804 |
+| `isometric.measure_imbalance` | 6645 | 1986 |
+| `isometric.measure_max` | 6475 | 1842 |
 | `metrics.compute` | 19430 | 5290 |
 | `mock.configure` | 1225 | 501 |
 | `mock.inject_error` | 906 | 333 |
-| `mrvguard.check` | 1176 | 434 |
+| `mrvguard.check` | 1138 | 424 |
 | `plan.attach_to_session` | 672 | 272 |
 | `plan.block.calendar` | 959 | 318 |
 | `plan.block.create` | 1865 | 699 |
@@ -172,11 +172,11 @@ grows more than 5% over this table, or when a row is new.
 | `plan.next_workout` | 1 | 501 | 196 | 196 |
 | `progression.get_for_exercise` | 1 | 2615 | 1080 | 1080 |
 | `report.session_results` | 1 | 215 | 105 | 105 |
-| `server.health` | 1 | 479 | 252 | 252 |
+| `server.health` | 1 | 478 | 252 | 252 |
 | `session.end` | 1 | 11 | 6 | 6 |
 | `session.start` | 1 | 52 | 27 | 27 |
 | `set.end` | 2 | 428 | 147 | 74 |
-| `set.get` | 1 | 40665 | 21398 | 21398 |
+| `set.get` | 1 | 40666 | 21399 | 21399 |
 | `set.start` | 2 | 96 | 51 | 25 |
 
 ## live-workout: push events
@@ -208,7 +208,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.get_training_background` | 1 | 16 | 8 | 8 |
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
-| `server.health` | 1 | 479 | 252 | 252 |
+| `server.health` | 1 | 478 | 252 | 252 |
 | `session.mark_kind` | 1 | 413 | 217 | 217 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
@@ -226,7 +226,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |
 | `profile.log_weekly_checkin` | 1 | 92 | 48 | 48 |
 | `report.weekly` | 1 | 1707 | 458 | 458 |
-| `server.health` | 1 | 479 | 252 | 252 |
+| `server.health` | 1 | 478 | 252 | 252 |
 | `session.review_list` | 1 | 812 | 412 | 412 |
 
 ## weekly-review: push events
