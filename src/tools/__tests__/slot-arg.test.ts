@@ -118,6 +118,7 @@ function makeStore(): SessionStore {
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
+    getTrainingProfile: vi.fn(async () => undefined),
     close: vi.fn(async () => {}),
   } as unknown as SessionStore;
 }

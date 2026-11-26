@@ -23,6 +23,8 @@ const { CORE_TOOL_NAMES } = await import('../../tool-registry.js');
 
 type Callback = (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 
+const NOW = '2026-10-03T12:00:00.000Z';
+
 const GUARDRAILS = {
   rirFloor: { value: { week1: 5, week2: 3 }, source: 'Nuckols 2022' },
   noFailureSets: { value: true, source: 'Nuckols 2022' },
@@ -34,7 +36,7 @@ let callbacks: Map<string, Callback>;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-10-03T12:00:00.000Z'));
+  vi.setSystemTime(new Date(NOW));
   store = openTestStore();
   await seedOwnerShapedPlan(store);
   const state = {
@@ -79,6 +81,7 @@ describe('plan.next_workout reEntry', () => {
       band: 'short',
       windowEndsOn: '2026-10-09',
       rule: { loadFactor: 0.8, weeks: 1, ...GUARDRAILS, source: 'Nuckols 2022' },
+      clearance: null,
       baselineSession: null,
       startFrom: 'profile.get_starting_prescription',
     });
@@ -99,6 +102,28 @@ describe('plan.next_workout reEntry', () => {
 
     expect(reEntry).toMatchObject({ band: 'long' });
     expect(reEntry.rule).toEqual({ loadFactor: null, weeks: 0, source: 'engineering-default' });
+  });
+
+  it('carries a not yet clearance answer with the reason working sessions are held', async () => {
+    await trainOn('s-old', '2026-09-07T12:00:00.000Z');
+    const clearance = { answer: 'not_yet', answeredOn: '2026-10-02' } as const;
+    await store.putTrainingProfile({ userId: 'local', updatedAt: NOW, returnClearance: clearance });
+
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
+
+    expect(reEntry.clearance).toEqual(clearance);
+    expect(reEntry.blocked).toContain('Not cleared to train yet');
+  });
+
+  it('carries a cleared with limit answer and no blocked reason', async () => {
+    await trainOn('s-old', '2026-09-07T12:00:00.000Z');
+    const clearance = { answer: 'cleared_with_limit', answeredOn: '2026-10-02' } as const;
+    await store.putTrainingProfile({ userId: 'local', updatedAt: NOW, returnClearance: clearance });
+
+    const { reEntry } = (await nextWorkout()) as { reEntry: Record<string, unknown> };
+
+    expect(reEntry.clearance).toEqual(clearance);
+    expect(reEntry).not.toHaveProperty('blocked');
   });
 
   it('keeps the compact form while the lifter is training normally', async () => {

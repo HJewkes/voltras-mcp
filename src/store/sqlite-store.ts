@@ -50,6 +50,7 @@ import { BODY_FAT_SOURCES, isBodyFatSource } from '../analytics/body-fat-sources
 import { BUSY_TIMEOUT_MS } from './busy-timeout.js';
 import { inMigrationTransaction } from './migration-transaction.js';
 import { isLeannessBand, LEANNESS_BANDS } from './leanness-band.js';
+import { isReturnClearanceAnswer } from '../profile/return-clearance.js';
 import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
@@ -186,7 +187,7 @@ import {
   type SessionCloser,
 } from './types.js';
 
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -1122,6 +1123,11 @@ const SCHEMA_SQL = `
     -- v34: how many months the lifter's most recent break from consistent
     -- training lasted, self-reported; NULL means never asked.
     last_break_months REAL,
+    -- v46 (VW-976): the latest answer to the return clearance question, one
+    -- of three words, and the local date it was given. No column holds what
+    -- a limit is.
+    return_clearance TEXT,
+    return_clearance_on TEXT,
     -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
     -- actually gave and which we assumed on their behalf.
     provenance_json TEXT,
@@ -2377,6 +2383,18 @@ function migrateV44ToV45(db: DatabaseSync): void {
   });
 }
 
+/**
+ * v45 -> v46: `training_profile.return_clearance` and `return_clearance_on` (VW-976). Additive and
+ * back-fills nothing: no answer means the question was never asked.
+ */
+function migrateV45ToV46(db: DatabaseSync): void {
+  inMigrationTransaction(db, () => {
+    addColumnIfMissing(db, 'training_profile', 'return_clearance', 'TEXT');
+    addColumnIfMissing(db, 'training_profile', 'return_clearance_on', 'TEXT');
+    db.exec('PRAGMA user_version = 46');
+  });
+}
+
 function uiActionsNeedsRebuild(db: DatabaseSync): boolean {
   const row = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ui_actions'`)
@@ -3142,6 +3160,8 @@ interface TrainingProfileRow {
   injuries_json: string | null;
   named_program_history: string | null;
   last_break_months: number | null;
+  return_clearance: string | null;
+  return_clearance_on: string | null;
   provenance_json: string | null;
   updated_at: string;
 }
@@ -4970,8 +4990,9 @@ export class SqliteSessionStore implements SessionStore {
             ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
             days_available, days_reliable, onboarded_at, current_baseline,
             effort_tolerance, target, injuries_json, named_program_history,
-            last_break_months, provenance_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_break_months, return_clearance, return_clearance_on, provenance_json,
+            updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            declared_tier = excluded.declared_tier,
            declared_at = excluded.declared_at,
@@ -4990,6 +5011,8 @@ export class SqliteSessionStore implements SessionStore {
            injuries_json = excluded.injuries_json,
            named_program_history = excluded.named_program_history,
            last_break_months = excluded.last_break_months,
+           return_clearance = excluded.return_clearance,
+           return_clearance_on = excluded.return_clearance_on,
            provenance_json = excluded.provenance_json,
            updated_at = excluded.updated_at`,
       )
@@ -5012,6 +5035,8 @@ export class SqliteSessionStore implements SessionStore {
         p.injuries === undefined ? null : JSON.stringify(p.injuries),
         p.namedProgramHistory ?? null,
         p.lastBreakMonths ?? null,
+        p.returnClearance?.answer ?? null,
+        p.returnClearance?.answeredOn ?? null,
         p.provenance === undefined ? null : JSON.stringify(p.provenance),
         p.updatedAt,
       );
@@ -6847,6 +6872,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 44) {
     migrateV44ToV45(db);
   }
+  if (current <= 45) {
+    migrateV45ToV46(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -7615,6 +7643,9 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   if (row.injuries_json !== null) out.injuries = JSON.parse(row.injuries_json) as StoredInjury[];
   if (row.named_program_history !== null) out.namedProgramHistory = row.named_program_history;
   if (row.last_break_months !== null) out.lastBreakMonths = row.last_break_months;
+  if (isReturnClearanceAnswer(row.return_clearance) && row.return_clearance_on !== null) {
+    out.returnClearance = { answer: row.return_clearance, answeredOn: row.return_clearance_on };
+  }
   if (row.provenance_json !== null) {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }

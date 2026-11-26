@@ -8,6 +8,9 @@
 // normally gets the phase and the days, and only a break (or the window after one) adds the band,
 // the rule and its citation.
 //
+// A break also carries the lifter's latest return clearance answer (VW-976), and, while that
+// answer is "not yet", the reason `session.start` holds working sessions.
+//
 // `plan.suggest_progression` (slice VW-907) reads one lift's age here too: its basis session's
 // local date against today, by the same band edges.
 
@@ -30,6 +33,8 @@ import {
 } from '../analytics/re-entry.js';
 import type { BaselineSession } from '../analytics/baseline-session.js';
 import type { SourcedValue } from '../coach-copy/fragments.js';
+import { clearanceBlock, type StoredReturnClearance } from '../profile/return-clearance.js';
+import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 
 /** Where a lifter with no load to scale starts instead of a baseline session. */
 export const STARTING_PRESCRIPTION_TOOL = 'profile.get_starting_prescription';
@@ -60,6 +65,10 @@ export interface ReEntryBreakBrief extends ReEntryBrief {
   /** The last day of the re-entry window, inclusive; `null` when the band has no window. */
   readonly windowEndsOn: string | null;
   readonly rule: ReEntryRuleBrief;
+  /** The latest return clearance answer; `null` when the question was never answered. */
+  readonly clearance: StoredReturnClearance | null;
+  /** Why working sessions are held; present only while "not yet" stands. */
+  readonly blocked?: string;
   /**
    * The day-1 session (VW-982): on an open break, or on the first day back. `null` when no
    * template lift has a load to scale; `startFrom` then names the tool to begin from instead.
@@ -95,15 +104,21 @@ function briefRule({ value, sourceKind, sourceRef }: SourcedValue<ReEntryRule>):
 }
 
 /** The compact result: the full read only for a break or the window after one. */
-export function briefReEntry(read: ReEntryRead): ReEntryResult {
+export function briefReEntry(
+  read: ReEntryRead,
+  clearance: StoredReturnClearance | undefined = undefined,
+): ReEntryResult {
   const { phase, daysSinceLastTrainingDay } = read;
   if (read.rule === null) return { phase, daysSinceLastTrainingDay };
+  const blocked = clearanceBlock(clearance);
   return {
     phase,
     daysSinceLastTrainingDay,
     band: read.band,
     windowEndsOn: read.windowEndsOn,
     rule: briefRule(read.rule),
+    clearance: clearance ?? null,
+    ...(blocked === null ? {} : { blocked }),
   };
 }
 
@@ -165,19 +180,22 @@ export function staleBasisReEntry(
 /** Builds the baseline session for the rule in force; the caller owns the template and history. */
 export type BaselineBuilder = (rule: ReEntryRule) => Promise<BaselineSession | null>;
 
+export type ReEntryStore = TrainingDayStore & Pick<SessionStore, 'getTrainingProfile'>;
+
 /**
  * Everything the lifter has logged up to `nowIso`, not a rolling window: a break can be long.
  * With `buildBaseline`, a result that offers the day-1 session carries it.
  */
 export async function readReEntry(
-  store: TrainingDayStore,
+  store: ReEntryStore,
   today: string,
   nowIso: string,
   buildBaseline?: BaselineBuilder,
 ): Promise<ReEntryResult> {
   const trainingDays = await readTrainingDaysMatching(store, { to: nowIso });
   const read = selectReEntry({ trainingDays, today });
-  const brief = briefReEntry(read);
+  const profile = await store.getTrainingProfile(LOCAL_USER_ID);
+  const brief = briefReEntry(read, profile?.returnClearance);
   if (buildBaseline === undefined || read.rule === null) return brief;
   if (!offersBaselineSession(read, trainingDays, today)) return brief;
   const baselineSession = await buildBaseline(read.rule.value);
@@ -198,4 +216,19 @@ export function offersBaselineSession(
   if (read.phase !== 'returning' || trainingDays.at(-1) !== today) return false;
   const dayBefore = trainingDays.at(-2);
   return dayBefore !== undefined && classifyBreak(daysBetween(dayBefore, today)) !== 'none';
+}
+
+/**
+ * Why `session.start` holds a working session for the owner now, or `null`. The answer is read
+ * first: with no "not yet" standing, the training days are never read.
+ */
+export async function readClearanceBlock(
+  store: ReEntryStore,
+  today: string,
+  nowIso: string,
+): Promise<string | null> {
+  const profile = await store.getTrainingProfile(LOCAL_USER_ID);
+  if (clearanceBlock(profile?.returnClearance) === null) return null;
+  const reEntry = await readReEntry(store, today, nowIso);
+  return 'blocked' in reEntry && reEntry.blocked !== undefined ? reEntry.blocked : null;
 }

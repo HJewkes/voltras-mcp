@@ -71,6 +71,7 @@ import {
 } from '../state/session-list-aggregator.js';
 import { localDate, readTrainingDaysMatching } from '../analytics/training-days.js';
 import { finalizeSet } from './set-tools.js';
+import { readClearanceBlock } from './re-entry-read.js';
 import { wrapHandler } from './helpers.js';
 import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
 import { writeSessionOutbox } from '../integrations/truecoach/outbox.js';
@@ -119,7 +120,8 @@ const SESSION_START_DESCRIPTION =
   'are individualized, not templated: warm-up set COUNT varies by lifter and by exercise (2 for ' +
   'a small movement on an already-warm muscle, 4–5 for a large, technically demanding one), and ' +
   'a second exercise for a muscle the first exercise already warmed needs only one brief feel ' +
-  'set. Do not emit a fixed warm-up block for every session.';
+  'set. Do not emit a fixed warm-up block for every session. Refused while a return clearance of ' +
+  'not_yet stands in a break; read the reason out.';
 
 const SESSION_END_DESCRIPTION =
   'End the active session on a slot and return its summary. Idempotent-adjacent: ending an ' +
@@ -335,6 +337,22 @@ function startingKind(state: ServerState, asked: SessionKind | undefined): Sessi
   return asked ?? 'training';
 }
 
+/**
+ * VW-976: while the owner's latest return clearance answer is "not yet" and a break or its
+ * re-entry window is open, a working session is refused. A test session and a guest's session
+ * are not the owner's training, so neither is held.
+ */
+async function refuseUnclearedReturn(
+  state: ServerState,
+  kind: SessionKind,
+  lifter: string | undefined,
+): Promise<void> {
+  if (kind !== 'training' || lifter !== undefined) return;
+  const now = new Date().toISOString();
+  const blocked = await readClearanceBlock(state.store, localDate(now), now);
+  if (blocked !== null) throw new ToolError('RETURN_NOT_CLEARED', blocked);
+}
+
 async function startSession(
   state: ServerState,
   input: z.infer<typeof SessionStartInput>,
@@ -345,6 +363,8 @@ async function startSession(
   if (slot.live.session !== undefined) {
     throw new ToolError('SESSION_ALREADY_ACTIVE', 'A session is already active.');
   }
+  const kind = startingKind(state, input.kind);
+  await refuseUnclearedReturn(state, kind, input.lifter);
 
   // R21: id wins over name. Drop name whenever id is present.
   const useId = input.exerciseId !== undefined;
@@ -386,7 +406,7 @@ async function startSession(
     id: sessionId,
     startedAt,
     catalogVersion: MUSCLE_MAP_VERSION,
-    kind: startingKind(state, input.kind),
+    kind,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),

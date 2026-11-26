@@ -275,7 +275,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'session.start': {
     job: 'record',
     when: 'Before the lifter touches the handle, per slot',
-    rule: "Pass `exerciseId`. An auto-armed set copies the session's exercise at that instant and is never relabelled",
+    rule: "Pass `exerciseId`. An auto-armed set copies the session's exercise at that instant and is never relabelled. Refused while the latest return clearance answer is `not_yet` and a break or its window is open; read the reason out, and offer a test session only if the lifter asks",
   },
   'session.set_exercise': {
     job: 'record',
@@ -387,7 +387,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'plan.next_workout': {
     job: 'planRead',
     when: '"What do I do today?"',
-    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes. Every shape carries `reEntry`: `phase` and `daysSinceLastTrainingDay`; in a break or the window after one it adds `band` (short, medium, long), `windowEndsOn` and the `rule` with its `source`. State the days and the band in one sentence; it reads only and changes no prescription. On an open break or the first day back, a template result adds `baselineSession` to `reEntry`: offer it as the short baseline session for today, sets in order, last set lightest; `null` with `startFrom` means begin at `profile.get_starting_prescription`. Every shape carries `deloadAdvisory`: on `advise`, relay `userMessage` as a suggestion and ask; never apply the rung or change set count from it, and pass the yes or no the lifter gives to `plan.respond_deload_advisory`. `watching` means a single session below the week before, which is noise and asks nothing',
+    rule: 'Three shapes: a template, `{completed: true}`, or `{unplanned: true}`. On unplanned, say training continues unplanned and never present a workout from the ended block. Relay `blockBoundary.realignment` and `recompReAsk`; neither writes. Every shape carries `reEntry`: `phase` and `daysSinceLastTrainingDay`; in a break or the window after one it adds `band` (short, medium, long), `windowEndsOn`, the `rule` with its `source`, and `clearance` (the latest return clearance answer, or `null` if never asked); on `not_yet` it adds `blocked`, the reason working sessions are held. State the days and the band in one sentence; it reads only and changes no prescription. On an open break or the first day back, a template result adds `baselineSession` to `reEntry`: offer it as the short baseline session for today, sets in order, last set lightest; `null` with `startFrom` means begin at `profile.get_starting_prescription`. Every shape carries `deloadAdvisory`: on `advise`, relay `userMessage` as a suggestion and ask; never apply the rung or change set count from it, and pass the yes or no the lifter gives to `plan.respond_deload_advisory`. `watching` means a single session below the week before, which is noise and asks nothing',
   },
   'plan.respond_deload_advisory': {
     job: 'planWrite',
@@ -582,7 +582,7 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'profile.set_training_background': {
     job: 'profile',
     when: 'Each onboarding answer',
-    rule: 'A merge, except `injuries`, which replaces the list; `[]` means "asked, none". Store their words; never infer a tier',
+    rule: 'A merge, except `injuries`, which replaces the list; `[]` means "asked, none". Store their words; never infer a tier. `returnClearance` (cleared, cleared_with_limit, not_yet) is asked once after a break for illness, injury or a procedure; never ask or record what a limit is',
   },
   'profile.get_training_background': {
     job: 'profile',

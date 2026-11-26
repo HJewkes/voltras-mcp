@@ -17,6 +17,7 @@
 
 import { COACHING_CONTENT } from '../tools/coaching-content.js';
 import type { StoredTrainingProfile } from '../store/types.js';
+import type { StoredReturnClearance } from './return-clearance.js';
 
 /**
  * The RP session-0 checklist, in the order §1 of the audit asks it:
@@ -82,6 +83,12 @@ export interface OnboardingGaps {
   medicalClearanceRequired: boolean;
   /** The gate's own wording when required, `null` otherwise. */
   medicalClearanceNote: string | null;
+  /**
+   * The latest return clearance answer (VW-976), so the question is asked once: `null` until it
+   * has been answered. It is not a checklist field, because only a break for illness, injury or a
+   * procedure calls for it.
+   */
+  returnClearance: StoredReturnClearance | null;
   goalRealism: GoalRealism | null;
 }
 
@@ -98,6 +105,7 @@ export function onboardingGaps(
     lastBreakQuestion: missing.includes('lastBreakMonths') ? LAST_BREAK_QUESTION : null,
     medicalClearanceRequired: cardio,
     medicalClearanceNote: cardio ? MEDICAL_CLEARANCE_SENTENCE : null,
+    returnClearance: profile?.returnClearance ?? null,
     goalRealism: goalRealism(profile),
   };
 }

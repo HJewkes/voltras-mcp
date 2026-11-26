@@ -288,7 +288,7 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
   'means every workout in scope is done. Every result also carries `planning`, the same read ' +
   'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
-  'about planning the next block. `reEntry`: days since the last training day; after a break also band and cited rule. Report only. ' +
+  'about planning the next block. `reEntry`: days since the last training day; after a break also band, cited rule and `clearance` (the latest return clearance answer), plus `blocked` while that answer is not_yet. Report only. ' +
   'On an open break or the first day back, a template result adds `baselineSession` to `reEntry`: a ' +
   'short session of 2-3 template lifts with history, ordered so its last set is the lightest; ' +
   '`null` with `startFrom` names the tool to begin from instead. ' +

@@ -14,13 +14,13 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72339 |
+| tools/list | 72657 |
 | live-workout responses | 24279 |
 | live-workout push events | 11490 |
 | live-workout total | 35769 |
-| sunday-sitting responses | 9427 |
+| sunday-sitting responses | 9439 |
 | sunday-sitting push events | 0 |
-| sunday-sitting total | 9427 |
+| sunday-sitting total | 9439 |
 | weekly-review responses | 2785 |
 | weekly-review push events | 0 |
 | weekly-review total | 2785 |
@@ -96,7 +96,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.current_block` | 1044 | 323 |
 | `plan.exercise.create` | 4694 | 1609 |
 | `plan.exercise.list_for_template` | 370 | 171 |
-| `plan.next_workout` | 2522 | 723 |
+| `plan.next_workout` | 2617 | 748 |
 | `plan.program.archive` | 322 | 148 |
 | `plan.program.create` | 472 | 206 |
 | `plan.program.get` | 262 | 131 |
@@ -112,7 +112,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.week.skip` | 1394 | 474 |
 | `plan.week.update` | 519 | 227 |
 | `profile.get_body_metrics` | 1557 | 480 |
-| `profile.get_onboarding_gaps` | 1267 | 384 |
+| `profile.get_onboarding_gaps` | 1343 | 404 |
 | `profile.get_starting_prescription` | 1338 | 404 |
 | `profile.get_tier_signal` | 1096 | 338 |
 | `profile.get_training_background` | 330 | 139 |
@@ -121,7 +121,7 @@ grows more than 5% over this table, or when a row is new.
 | `profile.log_weekly_checkin` | 2019 | 703 |
 | `profile.respond_recomp_advisory` | 1523 | 474 |
 | `profile.set_diet_phase` | 2189 | 758 |
-| `profile.set_training_background` | 3140 | 1138 |
+| `profile.set_training_background` | 3730 | 1389 |
 | `progression.get_for_exercise` | 4072 | 1214 |
 | `report.session_results` | 930 | 312 |
 | `report.weekly` | 2808 | 834 |
@@ -136,7 +136,7 @@ grows more than 5% over this table, or when a row is new.
 | `session.review_list` | 1042 | 365 |
 | `session.set_exercise` | 949 | 336 |
 | `session.set_lifter` | 1190 | 409 |
-| `session.start` | 2593 | 855 |
+| `session.start` | 2677 | 877 |
 | `set.end` | 814 | 280 |
 | `set.get` | 689 | 243 |
 | `set.live_metrics` | 769 | 270 |
@@ -203,7 +203,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.current_block` | 1 | 1702 | 826 | 826 |
 | `plan.next_workout` | 1 | 501 | 196 | 196 |
 | `profile.get_body_metrics` | 1 | 2370 | 1247 | 1247 |
-| `profile.get_onboarding_gaps` | 1 | 334 | 176 | 176 |
+| `profile.get_onboarding_gaps` | 1 | 357 | 188 | 188 |
 | `profile.get_tier_signal` | 1 | 422 | 222 | 222 |
 | `profile.get_training_background` | 1 | 16 | 8 | 8 |
 | `profile.log_bodyweight` | 1 | 132 | 69 | 69 |

@@ -30,6 +30,7 @@ import {
 } from '../analytics/body-fat-sources.js';
 import { localDate } from '../analytics/training-days.js';
 import { onboardingGaps, type OnboardingGaps } from '../profile/onboarding-gaps.js';
+import { latestReturnClearance } from '../profile/return-clearance.js';
 import {
   startingPrescription,
   type StartingPrescription,
@@ -48,6 +49,7 @@ import {
   ProfileSetDietPhaseInput,
   ProfileSetDietPhaseInputRefined,
   ProfileSetTrainingBackgroundInput,
+  ProfileSetTrainingBackgroundInputRefined,
   WEEKLY_CHECKIN_CODES,
   WEEKLY_CHECKIN_KIND,
 } from '../schemas/profile.js';
@@ -98,7 +100,10 @@ const SET_TRAINING_BACKGROUND_DESCRIPTION =
   'REPLACES the stored list, so send every injury still standing, and send [] for "asked, ' +
   'none" (which is a different answer from never having asked). This tool only stores ' +
   'verbatim self-report; it never infers or computes an experience tier (see ' +
-  'profile.get_tier_signal for that), and it never interprets an injury clinically.';
+  'profile.get_tier_signal for that), and it never interprets an injury clinically. ' +
+  'returnClearance (cleared, cleared_with_limit, not_yet; returnClearanceOn defaults to today) ' +
+  'is asked once after a break for illness, injury or a procedure. Never ask or record what a ' +
+  'limit is. The later-dated answer stands.';
 
 const GET_TRAINING_BACKGROUND_DESCRIPTION =
   'Read back the stored training-background/onboarding profile for the user. Returns ' +
@@ -145,7 +150,8 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
   'goal or target has been captured yet. `lastBreakMonths` is listed only for a lifter who ' +
   'declared above beginner while their logged history is still short; `lastBreakQuestion` is ' +
-  'then the question to ask, as written.';
+  'then the question to ask, as written. `returnClearance`: the latest return clearance answer, ' +
+  'null if never asked.';
 
 const SET_DIET_PHASE_DESCRIPTION =
   'Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or ' +
@@ -253,7 +259,9 @@ export function registerProfileTools(
     placeholders,
     'profile.set_training_background',
     ProfileSetTrainingBackgroundInput,
-    wrapHandler(ProfileSetTrainingBackgroundInput, (input) => setTrainingBackground(state, input)),
+    wrapHandler(ProfileSetTrainingBackgroundInputRefined, (input) =>
+      setTrainingBackground(state, input),
+    ),
     SET_TRAINING_BACKGROUND_DESCRIPTION,
   );
   install(
@@ -409,6 +417,13 @@ async function setTrainingBackground(
     if (value === undefined) continue;
     Object.assign(merged, { [field]: value });
     provenance[field] = 'user';
+  }
+  if (input.returnClearance !== undefined) {
+    merged.returnClearance = latestReturnClearance(existing?.returnClearance, {
+      answer: input.returnClearance,
+      answeredOn: input.returnClearanceOn ?? localDate(now),
+    });
+    provenance.returnClearance = 'user';
   }
   if (Object.keys(provenance).length > 0) {
     merged.provenance = provenance;
