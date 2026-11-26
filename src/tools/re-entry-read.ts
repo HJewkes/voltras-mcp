@@ -20,6 +20,7 @@ import {
   classifyBreak,
   daysBetween,
   RE_ENTRY_RULES,
+  scaleReEntryLoad,
   selectReEntry,
   type BreakBand,
   type ReEntryPhase,
@@ -111,10 +112,6 @@ export interface StaleBasisReEntry {
   readonly source: string;
 }
 
-const LOAD_STEP_LBS = 5;
-// A factor of one third lands a hair under a whole step in floating point (150 / 3).
-const ROUNDING_SLACK = 1e-9;
-
 /**
  * `trainingDayInstant` dates the session the way the VW-462 training-day rule does (its end, or
  * its last working set's end), so a session that crosses local midnight reads the same day here
@@ -147,10 +144,9 @@ export function staleBasisReEntry(
   if (band !== 'short' && band !== 'medium') return null;
   const rule = RE_ENTRY_RULES[band];
   const loadFactor = rule.value.loadFactor ?? 1;
-  const steps = Math.floor((topLoadLbs * loadFactor + ROUNDING_SLACK) / LOAD_STEP_LBS);
   return {
     band,
-    loadLbs: Math.min(topLoadLbs, Math.max(1, steps) * LOAD_STEP_LBS),
+    loadLbs: scaleReEntryLoad(topLoadLbs, loadFactor),
     loadFactor,
     source: citation(rule.sourceKind, rule.sourceRef),
   };

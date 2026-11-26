@@ -159,6 +159,21 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 }
 
+/** The smallest load change a re-entry load moves by. */
+export const RE_ENTRY_LOAD_STEP_LBS = 5;
+// A factor of one third lands a hair under a whole step in floating point (150 / 3).
+const ROUNDING_SLACK = 1e-9;
+
+/**
+ * `loadLbs` scaled by `factor`, rounded down to a 5 lb step. Never under one step, so a light
+ * lift re-enters at 5 lb rather than at 0, and never above `loadLbs`, so a load of 5 lb or less
+ * holds where it was.
+ */
+export function scaleReEntryLoad(loadLbs: number, factor: number): number {
+  const steps = Math.floor((loadLbs * factor + ROUNDING_SLACK) / RE_ENTRY_LOAD_STEP_LBS);
+  return Math.min(loadLbs, Math.max(1, steps) * RE_ENTRY_LOAD_STEP_LBS);
+}
+
 function addDays(date: string, days: number): string {
   return new Date(Date.parse(date) + days * DAY_MS).toISOString().slice(0, 10);
 }
