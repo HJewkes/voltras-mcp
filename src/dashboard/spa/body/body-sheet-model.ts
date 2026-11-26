@@ -16,6 +16,7 @@ import type {
   MuscleStrengthSection,
 } from '@titan-design/react-ui/bodymap';
 
+import { localDate } from '../../../analytics/training-days.js';
 import type {
   MusclePlanMuscleView,
   MuscleRecoveryMuscleView,
@@ -48,6 +49,11 @@ function daysAgoText(days: number): string {
   return days === 1 ? '1 day ago' : `${days} days ago`;
 }
 
+/** After a break the date stands in for the age, so the wall counts no days away (VW-987). */
+function lastTrainedText(lastTrainedAt: string, daysSince: number, isBreak: boolean): string {
+  return isBreak ? localDate(lastTrainedAt) : daysAgoText(daysSince);
+}
+
 function entryDepressionText(row: MuscleRecoveryMuscleView): string | null {
   const read = row.lastEntryDepression;
   if (read === null || read.confidence < ENTRY_DEPRESSION_MIN_CONFIDENCE) return null;
@@ -67,7 +73,8 @@ function benchmarkText(row: MuscleRecoveryMuscleView): string | null {
  */
 export function recoveryLine(row: MuscleRecoveryMuscleView | undefined): string | undefined {
   if (row === undefined || row.lastTrainedAt === null || row.daysSince === null) return undefined;
-  const clauses = [daysAgoText(row.daysSince), entryDepressionText(row), benchmarkText(row)];
+  const age = lastTrainedText(row.lastTrainedAt, row.daysSince, row.isBreak);
+  const clauses = [age, entryDepressionText(row), benchmarkText(row)];
   return clauses.filter((clause): clause is string => clause !== null).join(' · ');
 }
 

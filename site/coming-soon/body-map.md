@@ -116,10 +116,12 @@ this page is waiting on.
 Tapping a muscle opens a side sheet over the figures
 (`src/dashboard/spa/body/BodyView.tsx:165-167`<!-- anchor: onMusclePress -->, `src/dashboard/spa/body/BodyView.tsx:216-227`<!-- anchor: function MuscleSheet -->).
 Recovery shows up there as a "Last trained" line, built from `/api/muscle-recovery`
-(`src/dashboard/server.ts:694-696`<!-- anchor: /api/muscle-recovery -->, `src/dashboard/spa/body/body-sheet-model.ts:114`<!-- anchor: recoveryLine( -->). The line
+(`src/dashboard/server.ts:694-696`<!-- anchor: /api/muscle-recovery -->, `src/dashboard/spa/body/body-sheet-model.ts:121`<!-- anchor: recoveryLine( -->). The line
 states what happened, when you last trained the muscle and how that session went against the
 one before, and never a recovery verdict or a countdown
-(`src/dashboard/spa/body/body-sheet-model.ts:66-68`<!-- anchor: never a recovery verdict or countdown -->). It does not say how long a muscle needs
+(`src/dashboard/spa/body/body-sheet-model.ts:71-73`<!-- anchor: never a recovery verdict or countdown -->). After a
+break of 15 or more days, the line shows the date of that session in place of the number of
+days. It does not say how long a muscle needs
 before you can train it again, because no per-muscle number for that exists to cite
 (`src/dashboard/read-models/muscle-recovery.ts:9-20`<!-- anchor: WHAT THIS DELIBERATELY DOES NOT COMPUTE -->). The
 [dashboard API reference](/reference/dashboard-api) describes what it returns.

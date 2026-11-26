@@ -32,6 +32,8 @@ import {
   isComparable,
   type ComparabilitySubject,
 } from '../../analytics/comparability.js';
+import { classifyBreak, daysBetween as calendarDaysBetween } from '../../analytics/re-entry.js';
+import { localDate } from '../../analytics/training-days.js';
 import {
   MUSCLE_MAP_VERSION,
   TITAN_MUSCLE_GROUPS,
@@ -71,6 +73,11 @@ export interface MuscleRecoveryMuscleView {
   lastTrainedAt: string | null;
   /** Whole days elapsed since {@link lastTrainedAt}; 0 for anything inside the last day. */
   daysSince: number | null;
+  /**
+   * Whether the local calendar days since {@link lastTrainedAt} reach a re-entry break band.
+   * Counted in calendar days, so it can be true while {@link daysSince} still reads one less.
+   */
+  isBreak: boolean;
   /** The entry-depression axis of the session {@link lastTrainedAt} belongs to. */
   lastEntryDepression: MuscleRecoveryEntryDepression | null;
   /**
@@ -238,6 +245,12 @@ function daysBetween(fromIso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(fromIso).getTime()) / MS_PER_DAY));
 }
 
+/** The same calendar-day band edges the live caption and `plan.next_workout` read a break by. */
+function isBreakSince(fromIso: string, now: Date): boolean {
+  const days = calendarDaysBetween(localDate(fromIso), localDate(now.toISOString()));
+  return classifyBreak(days) !== 'none';
+}
+
 /** The entry-depression axis of one session's work on one exercise, when it is measurable. */
 function entryDepressionOf(
   set: RecoverySubject,
@@ -254,6 +267,7 @@ function entryDepressionOf(
 const UNTRAINED: Omit<MuscleRecoveryMuscleView, 'muscle'> = {
   lastTrainedAt: null,
   daysSince: null,
+  isBreak: false,
   lastEntryDepression: null,
   lastSessionMatchedPrior: null,
   reason: 'insufficient history',
@@ -272,6 +286,7 @@ export function buildMuscleRecoveryView(rows: MuscleRecoveryRows): MuscleRecover
       muscle,
       lastTrainedAt: set.startedAt,
       daysSince: daysBetween(set.startedAt, rows.now),
+      isBreak: isBreakSince(set.startedAt, rows.now),
       lastEntryDepression: entryDepressionOf(set, rows.fatigueBySession),
       lastSessionMatchedPrior: matched,
       reason,

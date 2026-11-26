@@ -105,6 +105,7 @@ function untrained(muscle: TitanMuscleGroup): MuscleRecoveryMuscleView {
     muscle,
     lastTrainedAt: null,
     daysSince: null,
+    isBreak: false,
     lastEntryDepression: null,
     lastSessionMatchedPrior: null,
     reason: 'insufficient history',
@@ -116,6 +117,7 @@ function trained(over: Partial<MuscleRecoveryMuscleView> = {}): MuscleRecoveryMu
     muscle: 'chest',
     lastTrainedAt: MONDAY,
     daysSince: 2,
+    isBreak: false,
     lastEntryDepression: null,
     lastSessionMatchedPrior: true,
     reason: null,
@@ -248,6 +250,21 @@ describe('the recovery line', () => {
     expect(recoveryLine(trained({ daysSince: 0 }))).toBe('today · matched last session');
     expect(recoveryLine(trained({ daysSince: 1 }))).toBe('1 day ago · matched last session');
   });
+
+  it('keeps the day count for a recent session that is not a break', () => {
+    expect(recoveryLine(trained({ daysSince: 14, isBreak: false }))).toBe(
+      '14 days ago · matched last session',
+    );
+  });
+
+  it.each([14, 26, 40])(
+    'shows the date and no day count after a break, %i full days back',
+    (daysSince) => {
+      expect(recoveryLine(trained({ daysSince, isBreak: true }))).toBe(
+        '2026-07-06 · matched last session',
+      );
+    },
+  );
 
   it('states an entry depression only when its confidence clears the gate', () => {
     const confident = { pct: 7.6, confidence: ENTRY_DEPRESSION_MIN_CONFIDENCE };

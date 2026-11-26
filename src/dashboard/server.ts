@@ -70,7 +70,7 @@
 //                          instant inside it; default is the current week. Every titan
 //                          muscle group, zeros included.
 //   GET  /api/muscle-recovery — `{ muscleMapVersion, muscles: [{ muscle, lastTrainedAt,
-//                          daysSince, lastEntryDepression, lastSessionMatchedPrior,
+//                          daysSince, isBreak, lastEntryDepression, lastSessionMatchedPrior,
 //                          reason }] }` over a trailing 56-day window (VW-332, B5 of the
 //                          body-map plan). Elapsed days, the entry-depression read from
 //                          that session, and whether it matched or beat its previous

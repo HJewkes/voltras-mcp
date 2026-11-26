@@ -101,6 +101,7 @@ deload — set count is a fatigue dial, not a progression tool.
       "muscle": "chest",
       "lastTrainedAt": "2026-07-08T10:00:00.000Z",
       "daysSince": 2,
+      "isBreak": false,
       "lastEntryDepression": { "pct": 6.1, "confidence": 0.5 },
       "lastSessionMatchedPrior": true,
       "reason": null
@@ -111,7 +112,9 @@ deload — set count is a fatigue dial, not a progression tool.
 
 All 15 titan muscle groups are always present. A muscle you haven't trained in the trailing
 56 days reports nulls across the board rather than a stale date. `daysSince` is whole days
-elapsed, so a muscle trained this morning reads `0`.
+elapsed, so a muscle trained this morning reads `0`. `isBreak` is `true` when 15 or more
+local calendar days have passed since that set, and the side sheet then shows the set's date
+in place of the day count.
 
 **This route computes no recovery window, and that is deliberate.** It will not tell you how
 long a muscle needs before it is trainable again, because no such per-muscle number exists to
