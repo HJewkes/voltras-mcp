@@ -1,8 +1,9 @@
-// The return clearance hold on opening a session, shared by every tool that can open one:
-// `session.start` (VW-976) and `device.start_guided_load` (VW-984).
+// The return clearance hold on working sessions, shared by the tools that start work:
+// `session.start` (VW-976) and `device.start_guided_load` (VW-984, VW-989).
 
 import { localDate } from '../analytics/training-days.js';
 import { UserFacingError } from '../errors.js';
+import type { ActiveSession } from '../state/live-state.js';
 import type { ServerState } from '../state/server-state.js';
 import type { SessionKind } from '../store/session-kind.js';
 import { readClearanceBlock } from './re-entry-read.js';
@@ -42,4 +43,18 @@ export async function refuseUnclearedReturn(
   const now = new Date().toISOString();
   const blocked = await readClearanceBlock(state.store, localDate(now), now);
   if (blocked !== null) throw new ToolError('RETURN_NOT_CLEARED', blocked);
+}
+
+/**
+ * The same hold on a guided load. A slot with no session gets a new one when the flow arms
+ * (VW-984). An open session is held by its stored kind and its lifter, however long ago it was
+ * opened (VW-989); one with no stored kind to read is treated as a new one.
+ */
+export async function refuseUnclearedGuidedLoad(
+  state: ServerState,
+  open: ActiveSession | undefined,
+): Promise<void> {
+  const stored = open === undefined ? undefined : await state.store.getSession(open.sessionId);
+  const kind = stored?.kind ?? startingKind(state, undefined);
+  await refuseUnclearedReturn(state, kind, open?.lifter);
 }
