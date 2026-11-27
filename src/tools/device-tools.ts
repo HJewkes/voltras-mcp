@@ -133,7 +133,7 @@ export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
 import { isDebugGatedTool } from '../tool-registry.js';
 import { assertOutsideReEntryWindow, RE_ENTRY_GUARD_DESCRIPTION } from './re-entry-guard.js';
-import { refuseUnclearedReturn, startingKind } from './return-hold.js';
+import { refuseUnclearedGuidedLoad } from './return-hold.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
@@ -1202,11 +1202,9 @@ export function registerDeviceTools(
       // Taken before this handler's first await, so a steal during any of them is seen.
       const guidedFence = fence(state, 'device.start_guided_load');
       const guidedSlotId = input.slot ?? PRIMARY_SLOT;
-      // VW-984: on a slot with no session the bridge opens a working one when the flow
-      // arms, so the return hold applies here, before any stash or device write.
-      if (slot.live.session === undefined) {
-        await refuseUnclearedReturn(state, startingKind(state, undefined), undefined);
-      }
+      // VW-984, VW-989: the return hold covers the session this load joins or the one the
+      // bridge opens when the flow arms, so it applies before any stash or device write.
+      await refuseUnclearedGuidedLoad(state, slot.live.session);
       // VMCP-02.15: stash the requested inactivity timeout on the slot so
       // the bridge's auto-create path can pick it up when it mints the
       // guided-load set on the `armed` phase. Defaults to 30s — short
