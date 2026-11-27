@@ -132,7 +132,11 @@ import {
 export { unloadSlot } from '../state/device-exit.js';
 import { log } from '../logger.js';
 import { isDebugGatedTool } from '../tool-registry.js';
-import { assertOutsideReEntryWindow, RE_ENTRY_GUARD_DESCRIPTION } from './re-entry-guard.js';
+import {
+  assertOutsideReEntryWindow,
+  cableLifter,
+  RE_ENTRY_GUARD_DESCRIPTION,
+} from './re-entry-guard.js';
 import { refuseUnclearedGuidedLoad } from './return-hold.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -882,7 +886,9 @@ export function registerDeviceTools(
           'device.set_eccentric: `percent` param is deprecated, use `overloadLbs` instead. The legacy alias will be removed in the next release.',
         );
       }
-      if (value > 0) await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+      if (value > 0) {
+        await assertOutsideReEntryWindow(state.store, 'eccentric_overload', cableLifter(slot.live));
+      }
       const mountLoadWarning = enforceEccentricMountLoad(state, slot, value);
       await trackedSetterCall(
         slot.coercionWatch,
@@ -1043,7 +1049,9 @@ export function registerDeviceTools(
     DeviceSetIsokineticEccOverloadWeightInput,
     wrapHandler(DeviceSetIsokineticEccOverloadWeightInput, async (input) => {
       const slot = getSlot(state, input.slot);
-      if (input.lbs > 0) await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+      if (input.lbs > 0) {
+        await assertOutsideReEntryWindow(state.store, 'eccentric_overload', cableLifter(slot.live));
+      }
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_isokinetic_ecc_overload_weight',
@@ -1068,7 +1076,7 @@ export function registerDeviceTools(
     wrapHandler(DeviceConfigureIsokineticInput, async (input) => {
       const slot = getSlot(state, input.slot);
       if ((input.eccOverloadWeightLbs ?? 0) > 0) {
-        await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+        await assertOutsideReEntryWindow(state.store, 'eccentric_overload', cableLifter(slot.live));
       }
       // Ecc mode is an enum string; the CoercionWatch compares numeric device
       // values, so fingerprint it (0 = 'isokinetic', 1 = 'constant') exactly
@@ -1591,7 +1599,10 @@ export function registerDeviceTools(
       const targetSlotIds = resolveCascadeSlotIds(state, input.slots);
       const plan = buildCascadePlan(input);
       if ((plan.eccentricPercent ?? 0) > 0) {
-        await assertOutsideReEntryWindow(state.store, 'eccentric_overload');
+        for (const slotId of targetSlotIds) {
+          const lifter = cableLifter(getSlot(state, slotId).live);
+          await assertOutsideReEntryWindow(state.store, 'eccentric_overload', lifter);
+        }
       }
       const targets = targetSlotIds.map((slotId) => {
         const slot = getSlot(state, slotId);

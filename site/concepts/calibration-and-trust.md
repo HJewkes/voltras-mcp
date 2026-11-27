@@ -74,7 +74,7 @@ lets old and new sets be compared (VW-160).
 
 The isometric tools report pull force in pounds. That reads like a settled physical measurement.
 Its plateau detection and inferred working weight have not been re-checked on hardware since the
-underlying force scale last changed (`src/tools/isometric-tools.ts:1472-1477`<!-- anchor: CALIBRATION CAVEAT -->). The [isometric guide's calibration
+underlying force scale last changed (`src/tools/isometric-tools.ts:1475-1480`<!-- anchor: CALIBRATION CAVEAT -->). The [isometric guide's calibration
 caveat](/guides/isometric#the-calibration-caveat) explains what that means for peak and plateau
 figures.
 
