@@ -22,12 +22,13 @@ import {
   NON_JUDGMENT_LINE,
   OPERATIONAL_HONESTY_LINE,
   REALIGN_OPENER,
+  RETURN_GREETING,
   SILENCE_MEANS_ON_TRACK_LINE,
   SUNDAY_ANCHOR,
 } from './copy.js';
 import { COMPOSER_FRAGMENTS as LINES, REDUCED_SCOPE_MINUTES } from '../coach-copy/composer.js';
 import { fillSlots as fill } from '../coach-copy/fill.js';
-import { BREAK_BAND_MAX_DAYS, type BreakBand } from '../analytics/re-entry.js';
+import { BREAK_BAND_MAX_DAYS, type BreakBand, type ReEntryPhase } from '../analytics/re-entry.js';
 import { staleBasisReEntry, type ReEntryResult } from '../tools/re-entry-read.js';
 import type {
   AdherenceRead,
@@ -60,7 +61,8 @@ export type CoachMessageKind =
   | 'holding_acknowledgement'
   | 'ghost_nudge_1'
   | 'ghost_nudge_2'
-  | 'realign_opener';
+  | 'realign_opener'
+  | 'return_greeting';
 
 export interface ComposedMessage {
   kind: CoachMessageKind;
@@ -106,6 +108,13 @@ export interface RealignOpenerInput {
   adherence: AdherenceRead | null;
   rolling28DayTrainingDays: number;
   slots: PlannedSlot[];
+}
+
+export interface ReturnGreetingInput {
+  lifterName: string;
+  /** Every training day the lifter has logged, by the `readTrainingDaysMatching` rule. */
+  trainingDaysLogged: number;
+  reducedScopeMinutes?: number;
 }
 
 /** Fills a whole message, then drops the lines that rendered empty. */
@@ -345,6 +354,30 @@ export function composeRealignOpener(input: RealignOpenerInput): ComposedMessage
       rollingLine: rollingLine(input.rolling28DayTrainingDays),
       reArchitectLine: reArchitectLine(input.slots),
       askLine: askLine(input.slots),
+    }),
+  };
+}
+
+/** The greeting is for a lifter still away after a break of a short band or wider (VW-991). */
+export function returnGreetingDue(reEntry: {
+  readonly phase: ReEntryPhase;
+  readonly band?: BreakBand;
+}): boolean {
+  return reEntry.phase === 'in_gap' && reEntry.band !== undefined && reEntry.band !== 'none';
+}
+
+/** Says what is already done, offers one small session, and asks one question; never the gap. */
+export function composeReturnGreeting(input: ReturnGreetingInput): ComposedMessage {
+  const minutes = input.reducedScopeMinutes ?? DEFAULT_REDUCED_SCOPE_MINUTES;
+  return {
+    kind: 'return_greeting',
+    text: render(RETURN_GREETING, {
+      lifterName: input.lifterName,
+      successLine: fill(LINES.returnSuccess.text, {
+        trainingDays: String(input.trainingDaysLogged),
+      }),
+      offerLine: fill(LINES.returnBaselineOffer.text, { minutes: String(minutes) }),
+      questionLine: LINES.returnQuestion.text,
     }),
   };
 }

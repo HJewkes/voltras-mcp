@@ -54,6 +54,14 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
 {{reArchitectLine}}
 {{askLine}}",
   },
+  "accountability.return-greeting": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The first message back after a break says three things and then waits: one success from the record, one small session offered as a statement, and one question. It never says how long the break was and never asks why; the shape is ours, after the returning outline in the coach skill.",
+    "text": "{{lifterName}}, good to have you here.
+{{successLine}}
+{{offerLine}}
+{{questionLine}}",
+  },
   "accountability.silence-means-on-track": {
     "sourceKind": "engineering-default",
     "sourceRef": "Silence only informs if its meaning was stated once; the mid-week quiet is a product choice with no corpus or paper claim behind the wording.",
@@ -196,6 +204,21 @@ Nothing recalculates against a hold, and nothing is owed at the end of one.
     "sourceKind": "engineering-default",
     "sourceRef": "A small re-entry on a named day is inspired by, not established by, the 2021 exercise megastudy, whose winner rewarded returning after a miss; the link is unverified.",
     "text": "One way back in, smaller than the plan asks for: {{reEntryDay}}, {{minutes}} minutes, run {{exercise}} plus one accessory{{loadClause}}, because a short session that happens is what the next progression reads from.",
+  },
+  "composer.return-baseline-offer": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "One small session soon, put as a statement rather than a menu, so the return starts this week instead of waiting for a fresh Monday; the length is the reduced-scope default.",
+    "text": "The way back in is a baseline session of at most {{minutes}} minutes, today or tomorrow, because one short session that happens is what the next plan reads from.",
+  },
+  "composer.return-question": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "The one question the greeting asks, about the days ahead rather than the time away.",
+    "text": "Which days are realistic now?",
+  },
+  "composer.return-success": {
+    "sourceKind": "engineering-default",
+    "sourceRef": "Names one success the records hold, the training days logged, and nothing about the time away, so the first line back is something already done.",
+    "text": "Training days on your record: {{trainingDays}}, and every one of them still counts.",
   },
   "composer.rolling": {
     "sourceKind": "engineering-default",

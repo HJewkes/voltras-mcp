@@ -20,7 +20,9 @@ import {
   composeGhostNudge,
   composeMissRecovery,
   composeRealignOpener,
+  composeReturnGreeting,
   composeSundayAnchor,
+  returnGreetingDue,
 } from '../accountability/composer.js';
 import {
   initialAccountabilityState,
@@ -39,7 +41,8 @@ import {
   type ProactiveKind,
   type ProtocolState,
 } from '../accountability/types.js';
-import { localDate } from '../analytics/training-days.js';
+import { selectReEntry } from '../analytics/re-entry.js';
+import { localDate, readTrainingDaysMatching } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import {
   AccountabilityDeclareCommitmentInput,
@@ -114,7 +117,8 @@ export const ACCOUNTABILITY_PREVIEW_DESCRIPTION =
   'or null when the decision is silent), `text` (the rendered message, or null when silent or when ' +
   'the plan has nothing queued to render from), `inputsUsed` (the adherence, ' +
   '`rolling28DayTrainingDays`, next-workout and `commitment` values the render read, or null ' +
-  'when nothing was rendered), and `evaluatedAt`. Pass ' +
+  'when nothing was rendered), `returnGreeting` (the message for a lifter away after a break, or ' +
+  'null), and `evaluatedAt`. Pass ' +
   '`at` to evaluate as of another instant.';
 
 interface PlaceholderTools {
@@ -261,6 +265,12 @@ export interface AccountabilityPreviewResult {
   kind: ProactiveKind | null;
   text: string | null;
   inputsUsed: AccountabilityPreviewInputsUsed | null;
+  /**
+   * The return greeting (VW-991) while the lifter is away after a break of a short band or wider,
+   * or null. It is not a protocol decision: the lifter coming back is not a tick, so it renders on
+   * a silent day too.
+   */
+  returnGreeting: string | null;
   evaluatedAt: string;
   /**
    * Past local days nobody has marked training or test (VW-489). They are excluded
@@ -278,12 +288,14 @@ export async function describeAccountabilityPreview(
 ): Promise<AccountabilityPreviewResult> {
   const evaluation = await evaluateDryRun(state, input);
   const evaluatedAt = evaluation.now.toISOString();
+  const returnGreeting = await renderReturnGreeting(state, evaluatedAt);
   if (evaluation.decision.action !== 'send') {
     return {
       decision: evaluation.decision,
       kind: null,
       text: null,
       inputsUsed: null,
+      returnGreeting,
       evaluatedAt,
       ...(await readUnreviewed(state.store)),
     };
@@ -294,9 +306,20 @@ export async function describeAccountabilityPreview(
     kind: evaluation.decision.kind,
     text: rendered.text,
     inputsUsed: rendered.inputsUsed,
+    returnGreeting,
     evaluatedAt,
     ...(await readUnreviewed(state.store)),
   };
+}
+
+/** Reads every logged training day once: the break's band and the success fact both come from it. */
+async function renderReturnGreeting(state: ServerState, nowIso: string): Promise<string | null> {
+  const trainingDays = await readTrainingDaysMatching(state.store, { to: nowIso });
+  if (!returnGreetingDue(selectReEntry({ trainingDays, today: localDate(nowIso) }))) return null;
+  return composeReturnGreeting({
+    lifterName: LIFTER_NAME_PLACEHOLDER,
+    trainingDaysLogged: trainingDays.length,
+  }).text;
 }
 
 /**

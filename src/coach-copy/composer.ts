@@ -146,6 +146,24 @@ export const COMPOSER_FRAGMENTS = {
     sourceKind: 'rp',
     sourceRef: FREQUENCY_HOLD,
   },
+  returnSuccess: engineeringDefault(
+    'composer.return-success',
+    'Training days on your record: {{trainingDays}}, and every one of them still counts.',
+    'Names one success the records hold, the training days logged, and nothing about the time ' +
+      'away, so the first line back is something already done.',
+  ),
+  returnBaselineOffer: engineeringDefault(
+    'composer.return-baseline-offer',
+    'The way back in is a baseline session of at most {{minutes}} minutes, today or tomorrow, ' +
+      'because one short session that happens is what the next plan reads from.',
+    'One small session soon, put as a statement rather than a menu, so the return starts this ' +
+      'week instead of waiting for a fresh Monday; the length is the reduced-scope default.',
+  ),
+  returnQuestion: engineeringDefault(
+    'composer.return-question',
+    'Which days are realistic now?',
+    'The one question the greeting asks, about the days ahead rather than the time away.',
+  ),
   ask: engineeringDefault(
     'composer.ask',
     'Tell me which of {{dayList}} is the slot that keeps breaking and I will rebuild the week ' +
