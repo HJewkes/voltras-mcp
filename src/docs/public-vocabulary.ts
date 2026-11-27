@@ -560,6 +560,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-988: the climb-back ramp's week after the return window.
   'returnRamp',
   'preBreakLoadLbs',
+  // VW-993: the ramp's set drop after two unpleasant return sessions.
+  'setDelta',
   // VW-991: `accountability.preview`'s first message back while the lifter is away after a break.
   'returnGreeting',
   // VW-462: session counts read in training days, one per local day trained.

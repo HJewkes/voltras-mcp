@@ -69,6 +69,7 @@ import {
   type SessionListEntryFull,
 } from '../state/session-list-aggregator.js';
 import { localDate, readTrainingDaysMatching } from '../analytics/training-days.js';
+import { feelOnTime } from './checkin-feel.js';
 import { finalizeSet } from './set-tools.js';
 import { refuseUnclearedReturn, startingKind } from './return-hold.js';
 import { wrapHandler } from './helpers.js';
@@ -143,7 +144,10 @@ const SESSION_CHECKIN_DESCRIPTION =
   'uniformly positive and low-signal that early, and ' +
   'asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in ' +
   "the response's `withheld` array. RP's cadence: after the very first session, then at the " +
-  'end of every completed training week — never mandatory, never a gate on anything. ' +
+  'end of every completed training week — never mandatory. `feel` (-5 to +5, how the session ' +
+  'felt) is asked after each session back from a break, within 2 minutes of the last set, and ' +
+  'withheld if later. On the climb-back ramp, two `feel` answers below 0 in a row, or a ' +
+  '`soreness` of `medium` or `high`, hold the next step, and the feel hold drops a set too. ' +
   "`sessionId` omitted means the slot's active session. A guest session (a named `lifter`) " +
   "writes nothing: check-ins are the owner's only. Optional `preSessionCarbs` (same shape as " +
   "`session.start`) sets or corrects the target session's carb context from here — useful for " +
@@ -719,16 +723,7 @@ async function writeCheckin(
     return { sessionId: target.sessionId, written: 0, withheld: [] };
   }
 
-  const weekOne = !(await hasTrainedBefore(state, now));
-
-  const withheld: string[] = [];
-  const toWrite = answers.filter((answer) => {
-    if (weekOne && CHECKIN_GATED_CODE_SET.has(answer.code)) {
-      withheld.push(answer.code);
-      return false;
-    }
-    return true;
-  });
+  const { toWrite, withheld } = await partitionAnswers(state, target.sessionId, answers, now);
 
   const recordedAt = now.toISOString();
   for (const answer of toWrite) {
@@ -739,6 +734,7 @@ async function writeCheckin(
       kind: 'checkin',
       questionCode: answer.code,
       valueText: answer.value,
+      ...(answer.code === 'feel' ? { valueNum: Number(answer.value) } : {}),
       recordedAt,
     });
   }
@@ -759,6 +755,30 @@ async function writeCheckin(
     written: toWrite.length + (notes !== undefined ? 1 : 0),
     withheld,
   };
+}
+
+/**
+ * The answers to store and the codes withheld: the week-1 codes before a first training day, and
+ * a `feel` answer given outside its capture window (VW-993).
+ */
+async function partitionAnswers(
+  state: ServerState,
+  sessionId: string,
+  answers: z.infer<typeof CheckinAnswerInput>[],
+  now: Date,
+): Promise<{ toWrite: z.infer<typeof CheckinAnswerInput>[]; withheld: string[] }> {
+  const weekOne = !(await hasTrainedBefore(state, now));
+  const feelLate =
+    answers.some((answer) => answer.code === 'feel') &&
+    !(await feelOnTime(state.store, sessionId, now));
+  const withheld: string[] = [];
+  const toWrite = answers.filter((answer) => {
+    const held =
+      (weekOne && CHECKIN_GATED_CODE_SET.has(answer.code)) || (feelLate && answer.code === 'feel');
+    if (held) withheld.push(answer.code);
+    return !held;
+  });
+  return { toWrite, withheld };
 }
 
 /**

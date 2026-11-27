@@ -49,10 +49,13 @@ export const PreSessionCarbsInput = z.object({
  * (`off`), "Any questions?" (`questions`) — all free text — and "How are you
  * feeling about the next session/week?" (`next`), RP's coarse 3-point scale.
  * `soreness`, `joint` and `motivation` are the backlog's additional
- * week-1-gated 3-point ratings (idea 15, B41).
+ * week-1-gated 3-point ratings (idea 15, B41). `feel` (VW-993) is the one
+ * code on its own scale: how the session felt, -5 to +5, given within
+ * minutes of the last set; a return session's ratings gate the climb-back
+ * ramp's next step.
  */
 export const CHECKIN_TEXT_CODES = ['went', 'felt', 'off', 'questions'] as const;
-export const CHECKIN_SCALE_CODES = ['next', 'soreness', 'joint', 'motivation'] as const;
+export const CHECKIN_SCALE_CODES = ['next', 'soreness', 'joint', 'motivation', 'feel'] as const;
 /**
  * Withheld before the lifter's first completed training week: per the
  * backlog, answers are uniformly positive and low-signal that early, and
@@ -69,6 +72,13 @@ export const CheckinAnswerCode = z.enum([...CHECKIN_TEXT_CODES, ...CHECKIN_SCALE
  */
 export const CheckinScaleValue = z.enum(['low', 'medium', 'high']);
 
+/**
+ * The `feel` answer (VW-993): a whole number from -5 to +5, sign optional on
+ * a positive one. A bipolar scale, unlike the 3-point codes: the gate reads
+ * which side of neutral a session fell on.
+ */
+export const CheckinFeelValue = z.string().regex(/^(0|[+-]?[1-5])$/);
+
 const CHECKIN_SCALE_CODE_SET: ReadonlySet<string> = new Set(CHECKIN_SCALE_CODES);
 
 export const CheckinAnswerInput = z
@@ -76,8 +86,14 @@ export const CheckinAnswerInput = z
     code: CheckinAnswerCode,
     value: z.string().min(1).max(500),
   })
+  .refine((v) => v.code !== 'feel' || CheckinFeelValue.safeParse(v.value).success, {
+    message: "'feel' answers must be a whole number from -5 to +5.",
+  })
   .refine(
-    (v) => !CHECKIN_SCALE_CODE_SET.has(v.code) || CheckinScaleValue.safeParse(v.value).success,
+    (v) =>
+      v.code === 'feel' ||
+      !CHECKIN_SCALE_CODE_SET.has(v.code) ||
+      CheckinScaleValue.safeParse(v.value).success,
     {
       message:
         "'next', 'soreness', 'joint' and 'motivation' answers must be 'low', 'medium' or 'high'.",

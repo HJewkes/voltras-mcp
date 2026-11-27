@@ -14,10 +14,10 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72977 |
+| tools/list | 73078 |
 | live-workout responses | 24279 |
-| live-workout push events | 11488 |
-| live-workout total | 35767 |
+| live-workout push events | 11490 |
+| live-workout total | 35769 |
 | sunday-sitting responses | 9450 |
 | sunday-sitting push events | 0 |
 | sunday-sitting total | 9450 |
@@ -102,7 +102,7 @@ grows more than 5% over this table, or when a row is new.
 | `plan.program.get` | 262 | 131 |
 | `plan.program.list` | 244 | 122 |
 | `plan.respond_deload_advisory` | 1013 | 339 |
-| `plan.suggest_progression` | 4151 | 1201 |
+| `plan.suggest_progression` | 4233 | 1223 |
 | `plan.template.create` | 964 | 377 |
 | `plan.template.get` | 272 | 134 |
 | `plan.template.list_for_week` | 321 | 152 |
@@ -128,8 +128,8 @@ grows more than 5% over this table, or when a row is new.
 | `rir_velocity.fit` | 1415 | 439 |
 | `rir_velocity.target` | 1250 | 411 |
 | `server.health` | 2054 | 588 |
-| `session.checkin` | 2563 | 896 |
-| `session.end` | 1402 | 539 |
+| `session.checkin` | 2843 | 972 |
+| `session.end` | 1409 | 542 |
 | `session.get` | 1135 | 359 |
 | `session.list` | 1722 | 800 |
 | `session.mark_kind` | 2129 | 729 |
@@ -186,9 +186,9 @@ grows more than 5% over this table, or when a row is new.
 | `rep_finalized` | 16 | 5133 | 2546 | 159 |
 | `set_ended` | 2 | 2086 | 1056 | 528 |
 | `set_started` | 2 | 1807 | 867 | 462 |
-| `set_target_reached` | 2 | 6943 | 3605 | 1803 |
+| `set_target_reached` | 2 | 6946 | 3606 | 1803 |
 | `settings_update` | 2 | 1064 | 537 | 268 |
-| `velocity_loss_exceeded` | 2 | 4161 | 2126 | 1064 |
+| `velocity_loss_exceeded` | 2 | 4164 | 2127 | 1064 |
 | `weight_implied_mismatch` | 2 | 1654 | 751 | 376 |
 
 ## sunday-sitting: tool responses
