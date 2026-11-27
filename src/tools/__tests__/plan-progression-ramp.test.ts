@@ -180,3 +180,70 @@ describe('plan.suggest_progression gates on a climb-back ramp week', () => {
     expect(suggestion.reasoning).not.toContain('rather than step up');
   });
 });
+
+/** A check-in answer on the session of `dayBack`, recorded when that session started. */
+async function rate(dayBack: number, code: 'feel' | 'soreness', value: string): Promise<void> {
+  await store.putSelfReport({
+    id: `report-${String(dayBack)}-${code}`,
+    userId: LOCAL_USER_ID,
+    sessionId: `sess-${String(dayBack)}`,
+    kind: 'checkin',
+    questionCode: code,
+    valueText: value,
+    recordedAt: `${addDays(BACK, dayBack)}T12:00:00.000Z`,
+  });
+}
+
+async function suggestAfterRatings(
+  dayBack: number,
+  ratings: [number, 'feel' | 'soreness', string][],
+): Promise<Record<string, unknown>> {
+  await seedHistoryBefore(store, dayBack);
+  for (const [day, code, value] of ratings) await rate(day, code, value);
+  vi.setSystemTime(new Date(`${addDays(BACK, dayBack)}T18:00:00.000Z`));
+  return suggestProgressionOn(store)();
+}
+
+// VW-993: day 28 is ramp week 3 (100 lb); the sessions on days 24 and 27 were lifted at 80 lb.
+describe('plan.suggest_progression reads the return ratings on a ramp week', () => {
+  it('holds the load and drops a set after two sessions rated below 0', async () => {
+    const suggestion = await suggestAfterRatings(28, [
+      [24, 'feel', '-1'],
+      [27, 'feel', '-2'],
+    ]);
+
+    expect(suggestion.returnRamp).toMatchObject({ week: 3, loadLbs: 80, setDelta: -1 });
+    expect(suggestion.delta).toBe(0);
+    expect(suggestion.reasoning).toContain('hold at 80 lb rather than step up to 100 lb');
+    expect(suggestion.reasoning).toContain('Drop one working set');
+  });
+
+  it('holds the load without dropping a set when soreness was high', async () => {
+    const suggestion = await suggestAfterRatings(28, [[27, 'soreness', 'high']]);
+
+    expect(suggestion.returnRamp).toMatchObject({ week: 3, loadLbs: 80 });
+    expect(suggestion.returnRamp).not.toHaveProperty('setDelta');
+    expect(suggestion.reasoning).toContain('because soreness was high after the last session');
+  });
+
+  it('steps up when the ratings were good', async () => {
+    const suggestion = await suggestAfterRatings(28, [
+      [24, 'feel', '2'],
+      [27, 'soreness', 'low'],
+    ]);
+
+    expect(suggestion.returnRamp).toMatchObject({ week: 3, loadLbs: 100 });
+    expect(suggestion.returnRamp).not.toHaveProperty('setDelta');
+  });
+});
+
+describe('plan.suggest_progression climbs one ramp step per passing session', () => {
+  it('steps up one step after a held week rather than jumping to the week load', async () => {
+    // Day 35 is ramp week 4 (115 lb); the basis on day 33 was held at week 2's 80 lb.
+    const suggestion = await suggestOn(35, { weightLbs: 80 });
+
+    expect(suggestion.returnRamp).toMatchObject({ week: 4, loadLbs: 100 });
+    expect(suggestion.delta).toBe(100 - 80);
+    expect(suggestion.reasoning).toContain('one step above the 80 lb lifted rather than 115 lb');
+  });
+});

@@ -77,7 +77,7 @@ calling the route ([Dashboard API](/reference/dashboard-api)):
 
 - **Setting training mode at session start.** A reader might expect `session.start` to take a
   mode as a parameter. It doesn't — the session records whatever mode was already active from
-  an earlier `device.set_mode` call (`src/tools/session-tools.ts:390-397`<!-- anchor: does not yet take a trainingMode parameter -->).
+  an earlier `device.set_mode` call (`src/tools/session-tools.ts:396-403`<!-- anchor: does not yet take a trainingMode parameter -->).
 - **Weekly volume verdicts.** `history.weekly_volume` (see [the metrics reference](/reference/metrics))
   reports real weekly totals and a muscle-group breakdown, so a reader might expect it to also
   say whether that volume is on target. The verdict field is always empty: classifying it needs

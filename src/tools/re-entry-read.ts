@@ -194,6 +194,8 @@ export interface ReturnRampBrief {
   /** The last day of the ramp, inclusive. */
   readonly endsOn: string;
   readonly source: string;
+  /** VW-993: one working set fewer than planned, after two unpleasant return sessions. */
+  readonly setDelta?: -1;
 }
 
 export function briefReturnRamp(ramp: ReturnRamp): ReturnRampBrief {

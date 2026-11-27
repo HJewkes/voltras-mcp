@@ -25,12 +25,17 @@
 // window load back to its last working load before the break, in equal weekly steps over half
 // the weeks the break lasted, kept between 2 and 12 weeks. It never goes above that load.
 //
+// Each ramp step also asks how the return sessions felt (VW-993): two feel ratings below 0 in a
+// row hold the load and drop one set, and soreness at the top two check-in levels holds the load.
+// That answer moves the set count, never the deload ladder (`deload-ladder.ts`). A passing session
+// climbs at most one step, so a held week is not made up by a jump.
+//
 // Pure: the caller passes the training days and today's local date. Bump RE_ENTRY_VERSION on
 // any change to a band edge or a rule.
 
 import type { SourcedValue } from '../coach-copy/fragments.js';
 
-export const RE_ENTRY_VERSION = 3;
+export const RE_ENTRY_VERSION = 4;
 
 export type BreakBand = 'none' | 'short' | 'medium' | 'long';
 
@@ -373,4 +378,103 @@ function selectReturnWindow({ trainingDays, today }: ReEntryInput): {
   const loadFactor = RE_ENTRY_RULES[band].value.loadFactor;
   if (windowEndsOn === null || loadFactor === null) return null;
   return { band, gapDays: closed.gapDays, windowEndsOn, loadFactor };
+}
+
+/**
+ * The climb-back load after a session lifted at `liftedLbs`: the week's load, but never more than
+ * one ramp step above what was lifted, so a session that passes after a held week does not jump.
+ */
+export function cappedRampLoad(ramp: ReturnRamp, liftedLbs: number): number {
+  if (ramp.loadLbs <= liftedLbs) return ramp.loadLbs;
+  const nextStep = ramp.steps.find((step) => step > liftedLbs) ?? ramp.loadLbs;
+  return Math.min(ramp.loadLbs, nextStep);
+}
+
+/** The check-in soreness scale: RP's coarse three points. */
+export type SorenessLevel = 'low' | 'medium' | 'high';
+
+/** One return session's own ratings: the latest answer per code, absent when not given. */
+export interface ReturnSessionRating {
+  /** The local date the ratings were recorded on, 'YYYY-MM-DD'. */
+  readonly on: string;
+  /** The feel rating, -5 to +5. */
+  readonly feel?: number;
+  readonly soreness?: SorenessLevel;
+}
+
+const AFFECT_SOURCE =
+  'Rhodes 2015, https://link.springer.com/10.1007/s12160-015-9704-5, found that how a session ' +
+  'feels while it runs predicts later activity';
+
+/** How soon after the last set a feel rating still describes the session, in minutes. */
+export const RETURN_FEEL_CAPTURE_MINUTES: SourcedValue<number> = {
+  value: 2,
+  sourceKind: 'engineering-default',
+  sourceRef:
+    `A default that keeps the rating next to the session itself; ${AFFECT_SOURCE}, and gives ` +
+    'no cutoff of its own.',
+};
+
+/** The feel rating a session must fall below, and how many sessions in a row, to hold a step. */
+export const RETURN_FEEL_HOLD: SourcedValue<{ readonly below: number; readonly sessions: number }> =
+  {
+    value: { below: 0, sessions: 2 },
+    sourceKind: 'engineering-default',
+    sourceRef:
+      `An inference, not a tested rule: ${AFFECT_SOURCE}, so two unpleasant sessions in a row ` +
+      'repeat the load and drop a set. Read against the decisions it made at day 29.',
+  };
+
+/**
+ * The soreness answers that hold a step. The research asks soreness on 0 to 3 and holds at 2 or
+ * more; on the check-in scale 0 and 1 read as low, 2 as medium and 3 as high.
+ */
+export const RETURN_SORENESS_HOLD_LEVELS: SourcedValue<readonly SorenessLevel[]> = {
+  value: ['medium', 'high'],
+  sourceKind: 'engineering-default',
+  sourceRef:
+    'Progress by response, as practitioner return guidance puts it, with the repeated-bout ' +
+    'effect as the reason soreness is expected early: the research holds the load at soreness 2 ' +
+    'or more on its 0 to 3 scale, the top two levels of the three-point check-in scale.',
+};
+
+/** How far back a rating still speaks for the current ramp step, in days. */
+export const RETURN_RATING_LOOKBACK_DAYS: SourcedValue<number> = {
+  value: 7,
+  sourceKind: 'engineering-default',
+  sourceRef:
+    'A ramp step lasts a week, so a rating older than a week speaks for an earlier step and ' +
+    'cannot keep holding this one.',
+};
+
+export type ReturnStepGate =
+  | { readonly kind: 'step' }
+  | { readonly kind: 'hold'; readonly reason: string; readonly dropSet: boolean };
+
+/**
+ * Whether the return sessions' own ratings let a ramp step go up. `ratings` are one per session,
+ * oldest first; only those from the last week count.
+ */
+export function returnStepGate(
+  ratings: readonly ReturnSessionRating[],
+  today: string,
+): ReturnStepGate {
+  const recent = ratings.filter(
+    (rating) => daysBetween(rating.on, today) < RETURN_RATING_LOOKBACK_DAYS.value,
+  );
+  const { below, sessions } = RETURN_FEEL_HOLD.value;
+  const feels = recent.flatMap((rating) => (rating.feel === undefined ? [] : [rating.feel]));
+  const lastFeels = feels.slice(-sessions);
+  if (lastFeels.length === sessions && lastFeels.every((feel) => feel < below)) {
+    return { kind: 'hold', reason: 'the last two sessions felt unpleasant', dropSet: true };
+  }
+  const soreness = recent.flatMap((rating) => rating.soreness ?? []).at(-1);
+  if (soreness !== undefined && RETURN_SORENESS_HOLD_LEVELS.value.includes(soreness)) {
+    return {
+      kind: 'hold',
+      reason: `soreness was ${soreness} after the last session`,
+      dropSet: false,
+    };
+  }
+  return { kind: 'step' };
 }

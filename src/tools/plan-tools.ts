@@ -108,7 +108,12 @@ import {
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
 import { localDate, localMidnightIso, todayLocal } from '../analytics/training-days.js';
-import { classifyBreak, type ReEntryRule } from '../analytics/re-entry.js';
+import {
+  cappedRampLoad,
+  classifyBreak,
+  type ReEntryRule,
+  type ReturnStepGate,
+} from '../analytics/re-entry.js';
 import {
   selectBaselineSession,
   type BaselineHistory,
@@ -1928,7 +1933,7 @@ function applyReturnLoad(
   if (returnLoad === null || topLoadLbs === undefined) return suggestion;
   return returnLoad.kind === 'window'
     ? holdAtWindowLoad(suggestion, returnLoad.reEntry, topLoadLbs)
-    : climbBack(suggestion, briefReturnRamp(returnLoad.ramp), topLoadLbs);
+    : climbBack(suggestion, returnLoad, topLoadLbs);
 }
 
 function holdAtWindowLoad(
@@ -1948,33 +1953,64 @@ function holdAtWindowLoad(
   };
 }
 
-/** The one place a ramp week asks whether it may step up: why it may not, or `null`. */
-function rampStepHold({ technique, effort }: ProgressionGates): string | null {
-  if (technique === 'unstable') return 'technique was unstable';
-  if (effort === 'hard') return 'effort was near failure';
-  return null;
+interface RampHold {
+  readonly reason: string;
+  /** VW-993: the return sessions felt unpleasant, so one working set comes off too. */
+  readonly dropSet: boolean;
+}
+
+/**
+ * The one place a ramp week asks whether it may step up: why it may not, or `null`. The basis
+ * session's gates are read first, then the return sessions' own ratings (VW-993).
+ */
+function rampStepHold(
+  { technique, effort }: ProgressionGates,
+  stepGate: ReturnStepGate,
+): RampHold | null {
+  const dropSet = stepGate.kind === 'hold' && stepGate.dropSet;
+  if (technique === 'unstable') return { reason: 'technique was unstable', dropSet };
+  if (effort === 'hard') return { reason: 'effort was near failure', dropSet };
+  return stepGate.kind === 'hold' ? { reason: stepGate.reason, dropSet } : null;
 }
 
 function climbBack(
   suggestion: ProgressionSuggestion,
-  ramp: ReturnRampBrief,
+  { ramp, stepGate }: Extract<ReturnLoad, { kind: 'ramp' }>,
   topLoadLbs: number,
 ): ProgressionSuggestion {
-  const hold = ramp.loadLbs > topLoadLbs ? rampStepHold(suggestion.gates) : null;
-  const returnRamp = hold === null ? ramp : { ...ramp, loadLbs: topLoadLbs };
-  const week =
-    hold === null
-      ? `${ramp.loadLbs} lb`
-      : `hold at ${topLoadLbs} lb rather than step up to ${ramp.loadLbs} lb because ${hold},`;
+  const brief = briefReturnRamp(ramp);
+  const hold = rampStepHold(suggestion.gates, stepGate);
+  const heldLoad = hold !== null && ramp.loadLbs > topLoadLbs;
+  const loadLbs = heldLoad ? topLoadLbs : cappedRampLoad(ramp, topLoadLbs);
+  const dropSet = hold?.dropSet === true;
+  const returnRamp: ReturnRampBrief = { ...brief, loadLbs, ...(dropSet ? { setDelta: -1 } : {}) };
   return {
     ...loadOverride(suggestion),
-    delta: returnRamp.loadLbs - topLoadLbs,
+    delta: loadLbs - topLoadLbs,
     reasoning:
       `Climbing back after a break: week ${ramp.week} of ${ramp.weeks}, ` +
-      `${week} on the way to ${ramp.preBreakLoadLbs} lb in equal weekly ` +
-      `steps, never above it (${ramp.source}). The gates read that session: ${gateRead(suggestion)}`,
+      `${rampWeekClause(brief, loadLbs, topLoadLbs, heldLoad ? hold : null)} on the way to ` +
+      `${ramp.preBreakLoadLbs} lb in equal weekly steps, one step per session at most, never ` +
+      `above it (${brief.source}).${dropSet ? ` Drop one working set: ${hold.reason}.` : ''} ` +
+      `The gates read that session: ${gateRead(suggestion)}`,
     returnRamp,
   };
+}
+
+/** The load clause of a ramp week: the week's load, a held step, or one step of a larger climb. */
+function rampWeekClause(
+  ramp: ReturnRampBrief,
+  loadLbs: number,
+  topLoadLbs: number,
+  hold: RampHold | null,
+): string {
+  if (hold !== null) {
+    return `hold at ${topLoadLbs} lb rather than step up to ${ramp.loadLbs} lb because ${hold.reason},`;
+  }
+  if (loadLbs < ramp.loadLbs) {
+    return `${loadLbs} lb, one step above the ${topLoadLbs} lb lifted rather than ${ramp.loadLbs} lb,`;
+  }
+  return `${loadLbs} lb`;
 }
 
 const LONG_BREAK_NOTE =
