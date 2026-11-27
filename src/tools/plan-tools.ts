@@ -397,7 +397,8 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it; ' +
   'any other stale basis holds. A stale basis never unlocks a set. ' +
   'A fresh basis in the return window holds at `reEntry`; after it, `returnRamp` (`week`, ' +
-  '`loadLbs`, `preBreakLoadLbs`) climbs back weekly over half the weeks off, never above. ' +
+  '`loadLbs`, `preBreakLoadLbs`) climbs back weekly over half the weeks off, never above; ' +
+  'unstable technique or `hard` effort holds the lifted load instead of stepping up. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -1947,18 +1948,31 @@ function holdAtWindowLoad(
   };
 }
 
+/** The one place a ramp week asks whether it may step up: why it may not, or `null`. */
+function rampStepHold({ technique, effort }: ProgressionGates): string | null {
+  if (technique === 'unstable') return 'technique was unstable';
+  if (effort === 'hard') return 'effort was near failure';
+  return null;
+}
+
 function climbBack(
   suggestion: ProgressionSuggestion,
-  returnRamp: ReturnRampBrief,
+  ramp: ReturnRampBrief,
   topLoadLbs: number,
 ): ProgressionSuggestion {
+  const hold = ramp.loadLbs > topLoadLbs ? rampStepHold(suggestion.gates) : null;
+  const returnRamp = hold === null ? ramp : { ...ramp, loadLbs: topLoadLbs };
+  const week =
+    hold === null
+      ? `${ramp.loadLbs} lb`
+      : `hold at ${topLoadLbs} lb rather than step up to ${ramp.loadLbs} lb because ${hold},`;
   return {
     ...loadOverride(suggestion),
     delta: returnRamp.loadLbs - topLoadLbs,
     reasoning:
-      `Climbing back after a break: week ${returnRamp.week} of ${returnRamp.weeks}, ` +
-      `${returnRamp.loadLbs} lb on the way to ${returnRamp.preBreakLoadLbs} lb in equal weekly ` +
-      `steps, never above it (${returnRamp.source}). The gates read that session: ${gateRead(suggestion)}`,
+      `Climbing back after a break: week ${ramp.week} of ${ramp.weeks}, ` +
+      `${week} on the way to ${ramp.preBreakLoadLbs} lb in equal weekly ` +
+      `steps, never above it (${ramp.source}). The gates read that session: ${gateRead(suggestion)}`,
     returnRamp,
   };
 }
