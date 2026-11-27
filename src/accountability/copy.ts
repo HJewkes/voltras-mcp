@@ -76,6 +76,12 @@ export const GHOST_NUDGE_1 = ACCOUNTABILITY_FRAGMENTS.ghostNudge1.text;
 export const GHOST_NUDGE_2 = ACCOUNTABILITY_FRAGMENTS.ghostNudge2.text;
 
 /**
+ * The first message back after a break of a short band or wider (VW-991): one success from the
+ * record, the baseline offer and one question, with no day count and no "why".
+ */
+export const RETURN_GREETING = ACCOUNTABILITY_FRAGMENTS.returnGreeting.text;
+
+/**
  * The realign conversation opener, which is also the escalation ceiling:
  * nothing past this happens without the human (plan §2 stop conditions). The
  * frequency offer is a re-architecture within the same number of days, never a

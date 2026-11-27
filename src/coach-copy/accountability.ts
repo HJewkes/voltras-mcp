@@ -93,6 +93,21 @@ export const ACCOUNTABILITY_FRAGMENTS = {
     sourceKind: 'rp',
     sourceRef: GHOST_PROTOCOL,
   },
+  returnGreeting: {
+    id: 'accountability.return-greeting',
+    text: [
+      '{{lifterName}}, good to have you here.',
+      '{{successLine}}',
+      '{{offerLine}}',
+      '{{questionLine}}',
+    ].join('\n'),
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'The first message back after a break says three things and then waits: one success from ' +
+      'the record, one small session offered as a statement, and one question. It never says how ' +
+      'long the break was and never asks why; the shape is ours, after the returning outline in ' +
+      'the coach skill.',
+  },
   realignOpener: {
     id: 'accountability.realign-opener',
     text: [

@@ -14,13 +14,13 @@ grows more than 5% over this table, or when a row is new.
 
 | Budget | Tokens |
 | --- | --: |
-| tools/list | 72895 |
+| tools/list | 72977 |
 | live-workout responses | 24279 |
-| live-workout push events | 11491 |
-| live-workout total | 35770 |
-| sunday-sitting responses | 9439 |
+| live-workout push events | 11488 |
+| live-workout total | 35767 |
+| sunday-sitting responses | 9450 |
 | sunday-sitting push events | 0 |
-| sunday-sitting total | 9439 |
+| sunday-sitting total | 9450 |
 | weekly-review responses | 2785 |
 | weekly-review push events | 0 |
 | weekly-review total | 2785 |
@@ -30,7 +30,7 @@ grows more than 5% over this table, or when a row is new.
 | Tool | Characters | Tokens |
 | --- | --: | --: |
 | `accountability.declare_commitment` | 1649 | 635 |
-| `accountability.preview` | 976 | 316 |
+| `accountability.preview` | 1049 | 335 |
 | `accountability.state` | 1363 | 417 |
 | `baselines.get` | 3314 | 962 |
 | `baselines.recalc` | 3276 | 969 |
@@ -96,13 +96,13 @@ grows more than 5% over this table, or when a row is new.
 | `plan.current_block` | 1044 | 323 |
 | `plan.exercise.create` | 4694 | 1609 |
 | `plan.exercise.list_for_template` | 370 | 171 |
-| `plan.next_workout` | 2617 | 748 |
+| `plan.next_workout` | 2680 | 765 |
 | `plan.program.archive` | 322 | 148 |
 | `plan.program.create` | 472 | 206 |
 | `plan.program.get` | 262 | 131 |
 | `plan.program.list` | 244 | 122 |
 | `plan.respond_deload_advisory` | 1013 | 339 |
-| `plan.suggest_progression` | 3977 | 1155 |
+| `plan.suggest_progression` | 4151 | 1201 |
 | `plan.template.create` | 964 | 377 |
 | `plan.template.get` | 272 | 134 |
 | `plan.template.list_for_week` | 321 | 152 |
@@ -183,12 +183,12 @@ grows more than 5% over this table, or when a row is new.
 
 | Event | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
-| `rep_finalized` | 16 | 5136 | 2547 | 159 |
+| `rep_finalized` | 16 | 5133 | 2546 | 159 |
 | `set_ended` | 2 | 2086 | 1056 | 528 |
 | `set_started` | 2 | 1807 | 867 | 462 |
-| `set_target_reached` | 2 | 6946 | 3606 | 1803 |
+| `set_target_reached` | 2 | 6943 | 3605 | 1803 |
 | `settings_update` | 2 | 1064 | 537 | 268 |
-| `velocity_loss_exceeded` | 2 | 4164 | 2127 | 1064 |
+| `velocity_loss_exceeded` | 2 | 4161 | 2126 | 1064 |
 | `weight_implied_mismatch` | 2 | 1654 | 751 | 376 |
 
 ## sunday-sitting: tool responses
@@ -196,7 +196,7 @@ grows more than 5% over this table, or when a row is new.
 | Call | Count | Characters | Tokens | Max |
 | --- | --: | --: | --: | --: |
 | `accountability.declare_commitment` | 1 | 299 | 133 | 133 |
-| `accountability.preview` | 1 | 1783 | 657 | 657 |
+| `accountability.preview` | 1 | 1805 | 668 | 668 |
 | `goal.list` | 1 | 3698 | 1946 | 1946 |
 | `goal.propose_targets` | 1 | 2258 | 887 | 887 |
 | `plan.block.planning_brief` | 1 | 4860 | 2131 | 2131 |

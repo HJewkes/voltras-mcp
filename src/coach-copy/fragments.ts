@@ -10,6 +10,7 @@ import { ACCOUNTABILITY_FRAGMENT_LIST } from './accountability.js';
 import { COMPOSER_FRAGMENT_LIST } from './composer.js';
 import { CUE_FRAGMENT_LIST } from './cues.js';
 import { DASHBOARD_FRAGMENT_LIST } from './dashboard.js';
+import { returnPathProblem } from './return-path.js';
 
 /**
  * - `rp`: one or more RP corpus ids, comma separated.
@@ -117,6 +118,9 @@ export function validateFragment(candidate: FragmentCandidate): string[] {
   const { id, text, sourceKind, sourceRef } = candidate;
   if (typeof id !== 'string' || !FRAGMENT_ID.test(id)) problems.push('id is not dotted lower-case');
   if (typeof text !== 'string' || text.trim() === '') problems.push('text is empty');
+  const returnProblem =
+    typeof id === 'string' && typeof text === 'string' ? returnPathProblem(id, text) : undefined;
+  if (returnProblem !== undefined) problems.push(returnProblem);
   return [...problems, ...validateSource(sourceKind, sourceRef)];
 }
 

@@ -5,7 +5,6 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { findEncodedValues } from '../../docs/protocol-guard.js';
 import { COMPOSER_FRAGMENTS, REDUCED_SCOPE_MINUTES } from '../composer.js';
-import { DASHBOARD_FRAGMENT_LIST } from '../dashboard.js';
 import {
   COACH_FRAGMENTS,
   type FragmentCandidate,
@@ -26,11 +25,6 @@ const GUARDED_FILES = [
   'dashboard/spa/planner/session-summary-model.ts',
 ];
 const PROSE_WORD_FLOOR = 4;
-
-// Lines the wall can show on the first session back, where the owner wants no day count.
-const RETURN_PATH_ID_PREFIX = 'live.derived-targets.';
-// A number or slot counting days, or a days slot on its own.
-const DAY_COUNT = /(\d+|\{\{?\w+\}?\})[\s-]*days?\b|\{\{?days\w*\}?\}/i;
 
 const VALID: FragmentCandidate = {
   id: 'fixture.line',
@@ -189,39 +183,6 @@ describe('the validator rejects an unsourced fragment', () => {
 
   it('names the duplicated id', () => {
     expect(validateRegistry([VALID, VALID])).toEqual(['fixture.line: duplicate id']);
-  });
-});
-
-describe('return-path dashboard lines count no days (VW-987)', () => {
-  const returnPath = DASHBOARD_FRAGMENT_LIST.filter(({ id }) =>
-    id.startsWith(RETURN_PATH_ID_PREFIX),
-  );
-
-  it('covers the stale last-time caption', () => {
-    expect(returnPath.map(({ id }) => id)).toContain('live.derived-targets.caption-stale');
-  });
-
-  it.each(returnPath.map((fragment) => [fragment.id, fragment.text] as const))(
-    '%s holds no day count',
-    (_id, text) => {
-      expect(text).not.toMatch(DAY_COUNT);
-    },
-  );
-
-  it.each([
-    '26 days ago',
-    '1 day ago',
-    'a 15-day break',
-    '{{days}} days ago',
-    '{{days}} since then',
-    '{{age}} days ago',
-    '{n} days ago',
-  ])('the guard rejects "%s"', (text) => {
-    expect(text).toMatch(DAY_COUNT);
-  });
-
-  it('the guard allows a date and a break with no count', () => {
-    expect('Last time · 2026-09-24, before a break').not.toMatch(DAY_COUNT);
   });
 });
 
