@@ -46,6 +46,8 @@ import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../live-si
 import type { MovementClass } from '../../exercises/movement-class.js';
 import { log } from '../../logger.js';
 import { buildEffortContext } from '../effort-context.js';
+import { openTestStore } from '../../store/__tests__/open-test-store.js';
+import { LOCAL_USER_ID } from '../../store/types.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -86,6 +88,7 @@ const { CoercionWatch } = await import('../coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 const { RestTimerRegistry } = await import('../rest-timer.js');
 type RestTimerRegistryT = InstanceType<typeof RestTimerRegistry>;
+const { reapGuidedLoadScaffold } = await import('../guided-load-reap.js');
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -3587,6 +3590,42 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(live.snapshotSession()?.sessionId).toBe('existing-sess');
     expect(live.snapshotSet()).toBeDefined();
     expect(state.store.putSession).not.toHaveBeenCalled();
+  });
+
+  it('VW-992: stores a guest session’s guided-load set under the guest, not the owner', async () => {
+    const store = openTestStore();
+    const exerciseId = 'back-squat';
+    const startedAt = '2025-01-01T00:00:00.000Z';
+    await store.putSession({ id: 'owner-sess', kind: 'training', startedAt, exerciseId });
+    await store.putSet({
+      id: 'owner-set',
+      sessionId: 'owner-sess',
+      userId: LOCAL_USER_ID,
+      startedAt,
+      endedAt: startedAt,
+      exerciseId,
+      partial: false,
+      reps: [],
+    });
+    const guestSession = { startedAt, exerciseId, lifter: 'guest-a' };
+    await store.putSession({ id: 'guest-sess', kind: 'training', ...guestSession });
+    state.store = store as unknown as State['store'];
+    live.startSession({ sessionId: 'guest-sess', setIds: [], status: 'active', ...guestSession });
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: null });
+    const setId = live.snapshotSet()!.setId;
+    await reapGuidedLoadScaffold(
+      state as unknown as Parameters<typeof reapGuidedLoadScaffold>[0],
+      'primary',
+    );
+
+    const setIds = async (lifter?: string): Promise<string[]> => {
+      const sets = await store.getSetsForExercise({ userId: LOCAL_USER_ID, exerciseId, lifter });
+      return sets.map((set) => set.id);
+    };
+    expect(await setIds()).toEqual(['owner-set']);
+    expect(await setIds('guest-a')).toEqual([setId]);
+    await store.close();
   });
 
   // ── VMCP-02.15: tunable inactivity watchdog on auto-created set ──

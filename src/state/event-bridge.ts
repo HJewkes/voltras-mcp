@@ -1769,6 +1769,7 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
       // VMCP-02.63: stamped from the same pointer, in the same tick.
       movementClass: movementClassForExerciseId(session.exerciseId),
+      ...(session.lifter !== undefined ? { lifter: session.lifter } : {}),
     });
     const armedSet = slot.live.snapshotSet();
     if (armedSet !== undefined) {
