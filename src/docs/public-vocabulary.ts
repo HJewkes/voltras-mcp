@@ -557,6 +557,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'daysAgo',
   'stale',
   'loadLbs',
+  // VW-988: the climb-back ramp's week after the return window.
+  'returnRamp',
+  'preBreakLoadLbs',
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',

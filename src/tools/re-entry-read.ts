@@ -23,12 +23,15 @@ import {
   classifyBreak,
   daysBetween,
   RE_ENTRY_RULES,
+  RETURN_RAMP_WEEKS_CLAMP,
+  RETURN_RAMP_WEEKS_PER_BREAK_WEEK,
   scaleReEntryLoad,
   selectReEntry,
   type BreakBand,
   type ReEntryPhase,
   type ReEntryRead,
   type ReEntryRule,
+  type ReturnRamp,
   type RirFloorByWeek,
 } from '../analytics/re-entry.js';
 import type { BaselineSession } from '../analytics/baseline-session.js';
@@ -167,13 +170,42 @@ export function staleBasisReEntry(
   if (!lastTime.stale || topLoadLbs === undefined) return null;
   const band = classifyBreak(lastTime.daysAgo);
   if (band !== 'short' && band !== 'medium') return null;
+  return reEntryLoad(band, topLoadLbs);
+}
+
+/** The window load of a short or medium break, scaled from `loadLbs` by that band's rule. */
+export function reEntryLoad(band: 'short' | 'medium', loadLbs: number): StaleBasisReEntry {
   const rule = RE_ENTRY_RULES[band];
   const loadFactor = rule.value.loadFactor ?? 1;
   return {
     band,
-    loadLbs: scaleReEntryLoad(topLoadLbs, loadFactor),
+    loadLbs: scaleReEntryLoad(loadLbs, loadFactor),
     loadFactor,
     source: citation(rule.sourceKind, rule.sourceRef),
+  };
+}
+
+/** The climb-back ramp as `plan.suggest_progression` carries it (VW-988). */
+export interface ReturnRampBrief {
+  readonly week: number;
+  readonly weeks: number;
+  readonly loadLbs: number;
+  readonly preBreakLoadLbs: number;
+  /** The last day of the ramp, inclusive. */
+  readonly endsOn: string;
+  readonly source: string;
+}
+
+export function briefReturnRamp(ramp: ReturnRamp): ReturnRampBrief {
+  const pace = RETURN_RAMP_WEEKS_PER_BREAK_WEEK;
+  const clamp = RETURN_RAMP_WEEKS_CLAMP;
+  return {
+    week: ramp.week,
+    weeks: ramp.weeks,
+    loadLbs: ramp.loadLbs,
+    preBreakLoadLbs: ramp.preBreakLoadLbs,
+    endsOn: ramp.endsOn,
+    source: `${citation(pace.sourceKind, pace.sourceRef)}; ${clamp.sourceKind}`,
   };
 }
 
