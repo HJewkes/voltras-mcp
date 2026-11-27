@@ -42,15 +42,19 @@ interface FakeClient {
 }
 
 const WINDOW_ENDS_ON = '2026-10-13';
+const GUEST = 'Jordan';
+const CASCADE_ARGS = {
+  mode: 'WeightTraining',
+  weightLbs: 50,
+  eccentricOverloadLbs: 20,
+  chainsLbs: 0,
+};
 const GUARDED_TOOLS: ReadonlyArray<readonly [string, unknown]> = [
   ['isometric.measure_max', { slot: 'primary' }],
   ['isometric.measure_imbalance', { primarySlot: 'primary', secondarySlot: 'secondary' }],
   ['device.set_eccentric', { overloadLbs: 20 }],
   ['device.set_isokinetic_ecc_overload_weight', { lbs: 20 }],
-  [
-    'bilateral.cascade',
-    { mode: 'WeightTraining', weightLbs: 50, eccentricOverloadLbs: 20, chainsLbs: 0 },
-  ],
+  ['bilateral.cascade', CASCADE_ARGS],
   [
     'device.configure_isokinetic',
     { targetSpeedMmPerSec: 500, eccMode: 'isokinetic', eccOverloadWeightLbs: 20 },
@@ -60,13 +64,28 @@ const GUARDED_TOOLS: ReadonlyArray<readonly [string, unknown]> = [
 let store: SessionStore;
 let client: FakeClient;
 let callbacks: Map<string, Callback>;
+let lives: Map<string, FakeLive>;
+
+interface FakeLive {
+  session?: { sessionId: string; lifter?: string };
+  set?: { lifter?: string };
+  snapshotDevice: () => { weightLbs: number };
+}
 
 function fakeSlot(slotId: string, slotClient: FakeClient): object {
-  return {
-    slotId,
-    client: slotClient,
-    live: { snapshotDevice: () => ({ weightLbs: 50 }) },
-  };
+  const live: FakeLive = { snapshotDevice: () => ({ weightLbs: 50 }) };
+  lives.set(slotId, live);
+  return { slotId, client: slotClient, live };
+}
+
+/** Opens a session on one slot for `lifter`; `undefined` is the owner. */
+function openSession(slotId: string, lifter: string | undefined): void {
+  lives.get(slotId)!.session = { sessionId: `live-${slotId}`, ...(lifter && { lifter }) };
+}
+
+function openSessions(lifter: string | undefined): void {
+  openSession('primary', lifter);
+  openSession('secondary', lifter);
 }
 
 function registerTools(): void {
@@ -75,6 +94,7 @@ function registerTools(): void {
     setEccentric: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
   };
+  lives = new Map();
   const state = {
     config: { adapter: 'mock', mountRatingLbs: undefined },
     store,
@@ -99,15 +119,23 @@ async function call(name: string, args: unknown): Promise<Record<string, unknown
   return { isError: result.isError, ...(JSON.parse(result.content[0].text) as object) };
 }
 
-async function trainOn(id: string, day: string): Promise<void> {
+async function trainOn(id: string, day: string, lifter?: string): Promise<void> {
   const startedAt = `${day}T12:00:00.000Z`;
-  await seedTrainingDay(store, { id, startedAt, endedAt: startedAt });
+  await seedTrainingDay(store, { id, startedAt, endedAt: startedAt, ...(lifter && { lifter }) });
 }
 
 /** A 60-day break that the lifter closed on 2026-09-30, opening a two-week window. */
-async function seedMediumReturn(): Promise<void> {
-  await trainOn('s-before', '2026-08-01');
-  await trainOn('s-back', '2026-09-30');
+async function seedMediumReturn(lifter?: string): Promise<void> {
+  const who = lifter ?? 'owner';
+  await trainOn(`s-before-${who}`, '2026-08-01', lifter);
+  await trainOn(`s-back-${who}`, '2026-09-30', lifter);
+}
+
+/** Two recent training days with no break between them, so no window is open. */
+async function seedSteadyTraining(lifter?: string): Promise<void> {
+  const who = lifter ?? 'owner';
+  await trainOn(`s-steady-a-${who}`, '2026-09-27', lifter);
+  await trainOn(`s-steady-b-${who}`, '2026-09-30', lifter);
 }
 
 beforeEach(() => {
@@ -149,7 +177,9 @@ describe('in week 1 after a 60-day gap', () => {
     await seedMediumReturn();
     vi.setSystemTime(new Date(`${WINDOW_ENDS_ON}T12:00:00.000Z`));
 
-    await expect(assertOutsideReEntryWindow(store, 'max_test')).rejects.toThrow(WINDOW_ENDS_ON);
+    await expect(assertOutsideReEntryWindow(store, 'max_test', undefined)).rejects.toThrow(
+      WINDOW_ENDS_ON,
+    );
   });
 });
 
@@ -169,13 +199,87 @@ describe('outside a guarded window', () => {
   });
 });
 
-async function expectAllowed(): Promise<void> {
-  await expect(assertOutsideReEntryWindow(store, 'max_test')).resolves.toBeUndefined();
+describe("when the owner's window is open and the guest's is not", () => {
+  beforeEach(async () => {
+    await seedMediumReturn();
+    await seedSteadyTraining(GUEST);
+    openSessions(GUEST);
+  });
+
+  it.each(GUARDED_TOOLS)('%s is not held for the guest', async (name, args) => {
+    const result = await call(name, args);
+
+    expect(result.code).not.toBe('RE_ENTRY_WINDOW');
+  });
+
+  it('writes the guest eccentric overload to the device', async () => {
+    await expectOverloadWritten();
+  });
+
+  it('holds an overload while the open set is still the owner', async () => {
+    lives.get('primary')!.set = {};
+
+    const result = await call('device.set_eccentric', { overloadLbs: 20 });
+
+    expect(result.code).toBe('RE_ENTRY_WINDOW');
+    expect(client.setEccentric).not.toHaveBeenCalled();
+  });
+
+  it('holds a cascade when one of its slots is the owner', async () => {
+    openSession('secondary', undefined);
+
+    const result = await call('bilateral.cascade', CASCADE_ARGS);
+
+    expect(result.code).toBe('RE_ENTRY_WINDOW');
+    expect(client.setEccentric).not.toHaveBeenCalled();
+  });
+});
+
+describe("when the guest's window is open and the owner's is not", () => {
+  beforeEach(async () => {
+    await seedSteadyTraining();
+    await seedMediumReturn(GUEST);
+  });
+
+  it.each(GUARDED_TOOLS)('%s refuses the guest', async (name, args) => {
+    openSessions(GUEST);
+
+    const result = await call(name, args);
+
+    expect(result.code).toBe('RE_ENTRY_WINDOW');
+    expect(result.message).toContain(WINDOW_ENDS_ON);
+    expect(client.setEccentric).not.toHaveBeenCalled();
+    expect(client.setIsokineticEccOverloadWeight).not.toHaveBeenCalled();
+  });
+
+  it("holds an overload during a guest set inside the owner's session", async () => {
+    openSessions(undefined);
+    lives.get('primary')!.set = { lifter: GUEST };
+
+    const result = await call('device.set_eccentric', { overloadLbs: 20 });
+
+    expect(result.code).toBe('RE_ENTRY_WINDOW');
+    expect(client.setEccentric).not.toHaveBeenCalled();
+  });
+
+  it('allows the owner', async () => {
+    openSessions(undefined);
+
+    await expectOverloadWritten();
+  });
+});
+
+async function expectOverloadWritten(): Promise<void> {
   expect((await call('device.set_eccentric', { overloadLbs: 20 })).isError).toBeUndefined();
   const isokinetic = await call('device.set_isokinetic_ecc_overload_weight', { lbs: 20 });
   expect(isokinetic.isError).toBeUndefined();
   expect(client.setEccentric).toHaveBeenCalledWith(20);
   expect(client.setIsokineticEccOverloadWeight).toHaveBeenCalledWith(20);
+}
+
+async function expectAllowed(): Promise<void> {
+  await expect(assertOutsideReEntryWindow(store, 'max_test', undefined)).resolves.toBeUndefined();
+  await expectOverloadWritten();
 }
 
 // Every guarded tool calls the guard in its own handler, so a new route to an eccentric overload

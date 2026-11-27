@@ -40,7 +40,7 @@ hold when the athlete is ready (`src/tools/isometric-tools.ts:122-163`<!-- ancho
 
 [`isometric.measure_max`](/reference/isometric) and [`isometric.measure_imbalance`](/reference/isometric)
 loop that same single-hold primitive with the protocol's rests, and both **block** until
-they finish (`src/tools/isometric-tools.ts:1335-1336`<!-- anchor: they BLOCK -->). `measure_max` runs N trials of M-second holds on one slot
+they finish (`src/tools/isometric-tools.ts:1338-1339`<!-- anchor: they BLOCK -->). `measure_max` runs N trials of M-second holds on one slot
 with rest between trials; `measure_imbalance` runs that same protocol on two slots in turn,
 with an additional rest between sides, and computes the asymmetry between them
 (`src/tools/isometric-tools.ts:165-334`<!-- anchor: MEASURE_MAX_DESCRIPTION -->). The defaults, all from the input schema:
@@ -65,7 +65,7 @@ fence every device-driving tool uses. If another client takes the lease mid-asse
 wait aborts instead of running out, the tool call fails with `LEASE_LOST`, and the device is
 left unloaded — the athlete may still be pulling against it at that moment, so dropping the
 load is the one write worth making on the way out
-(`docs/push-events.md:658-663`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1334-1375`<!-- anchor: left UNLOADED -->).
+(`docs/push-events.md:658-663`<!-- anchor: An aborted isometric assessment leaves the cable unloaded -->, `src/tools/isometric-tools.ts:1337-1378`<!-- anchor: left UNLOADED -->).
 
 ## Joint-angle gate (`measure_hold` only)
 
@@ -113,7 +113,7 @@ protocol. `isometric.measure_max` now runs that ramp itself, unprompted, by defa
 brief submaximal pulls — one cued as roughly 50% effort, then one at roughly 75% — ahead
 of the trial loop, standardising the approach to a maximal isometric attempt (Comfort et
 al. 2019, as applied by Yeh et al., PLoS One) (`src/schemas/isometric.ts:30`<!-- anchor: Default warm-up ramp -->,
-`src/tools/isometric-tools.ts:173-183`<!-- anchor: WARM-UP RAMP -->, `src/tools/isometric-tools.ts:1274-1292`<!-- anchor: async function runWarmupPulls -->).
+`src/tools/isometric-tools.ts:173-183`<!-- anchor: WARM-UP RAMP -->, `src/tools/isometric-tools.ts:1277-1295`<!-- anchor: async function runWarmupPulls -->).
 
 Every hold in the sequence — both warm-up pulls and every real trial — shares the SAME
 `restMs` gap, defaulting to the standardised inter-trial rest for maximal isometric
@@ -133,7 +133,7 @@ ramp entirely — for a coach-paced bench sitting, or to reproduce the pre-VW-29
 Every hold — from `measure_hold` directly, one iteration inside `measure_max` /
 `measure_imbalance`, or a `measure_max` warm-up pull — emits four `isometric_phase` events
 in order, so a dashboard or a coach's own cueing knows when to tell the athlete to pull and
-when to stop (`docs/push-events.md`, `src/tools/isometric-tools.ts:1274-1292`<!-- anchor: captureSingleHold -->):
+when to stop (`docs/push-events.md`, `src/tools/isometric-tools.ts:1277-1295`<!-- anchor: captureSingleHold -->):
 
 | `phase` | Fires                                      | Means            |
 | ------- | ------------------------------------------ | ---------------- |
@@ -267,29 +267,29 @@ many stored tests carried a direction at all, and `agreementPct` the share of th
 named the more common limb. A consistent direction may warrant a closer look at that limb; a
 fluctuating one is ordinary between-session variation. `directionHistory` is `null` only when
 the history could not be read at all, which is not the same answer as a short history
-(`src/tools/isometric-tools.ts:914-940`<!-- anchor: A `null` says the history is unknown -->).
+(`src/tools/isometric-tools.ts:917-943`<!-- anchor: A `null` says the history is unknown -->).
 
 ### What `directionHistory` is actually a history of
 
 Every stored assessment records the lifter, the exercise and the session it ran under,
 taken from the session open on the slot (VW-280). The series is the 20 most recent
 assessments for that lifter and that exercise, so a second lifter's tests or a different
-joint do not land in it (`src/tools/isometric-tools.ts:912-940`<!-- anchor: DIRECTION_HISTORY_LIMIT = 20 -->,
-`src/tools/isometric-tools.ts:1119-1126`<!-- anchor: function measurementKeys -->). Two kinds of stored row stay out of it and are
+joint do not land in it (`src/tools/isometric-tools.ts:915-943`<!-- anchor: DIRECTION_HISTORY_LIMIT = 20 -->,
+`src/tools/isometric-tools.ts:1122-1129`<!-- anchor: function measurementKeys -->). Two kinds of stored row stay out of it and are
 counted instead: `legacyUnkeyed`, older assessments stored before the keying, and
 `otherEquation`, assessments whose asymmetry used a different equation (VW-295,
-`src/tools/isometric-tools.ts:949-969`<!-- anchor: function excludeOtherEquations -->). Run the assessment inside a session pinned to the
+`src/tools/isometric-tools.ts:952-972`<!-- anchor: function excludeOtherEquations -->). Run the assessment inside a session pinned to the
 exercise you are testing; with no session open, the run is keyed to the owner and to no
 exercise.
 
 Each side's per-trial measurements are persisted, keyed on the connected device's own id so
 the series survives a `slot.swap`, with the equation the run used — no verdict is stored.
 The direction is recomputed from the stored trials on every read, against whatever rules are
-current at read time (`src/tools/isometric-tools.ts:1155-1169`<!-- anchor: DEVICE ID -->,
+current at read time (`src/tools/isometric-tools.ts:1158-1172`<!-- anchor: DEVICE ID -->,
 `src/state/isometric-protocol.ts:554-573`<!-- anchor: Recomputed from the persisted per-trial forces -->), which is what let VW-270 change the rules without
 stranding a single stored row. The write is best-effort: a store failure returns
 `measurementId: null` rather than discarding a result that just cost the athlete real effort
-to produce (`src/tools/isometric-tools.ts:1206-1212`<!-- anchor: persisting the measurement failed -->).
+to produce (`src/tools/isometric-tools.ts:1209-1215`<!-- anchor: persisting the measurement failed -->).
 
 ### What the result does not license
 
@@ -321,7 +321,7 @@ main telemetry bridge uses (`src/state/live-signal.ts:77`<!-- anchor: FRAME_FORC
 directly, independent of that bridge — and the assessment's empirical validity (the plateau
 detection, the inferred working weight) has **not** been re-verified against hardware since
 that conversion last changed. It's flagged in source for a separate calibration ticket
-(`src/tools/isometric-tools.ts:1471-1477`<!-- anchor: CALIBRATION CAVEAT -->).
+(`src/tools/isometric-tools.ts:1474-1480`<!-- anchor: CALIBRATION CAVEAT -->).
 
 Practically: treat `peakForceLbs` and `meanPeakForceLbs` as the device's own reading
 under its own conversion, not as a value checked against a known reference load. Trends —

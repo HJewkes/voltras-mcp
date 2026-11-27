@@ -66,7 +66,7 @@ calling the route ([Dashboard API](/reference/dashboard-api)):
 - **Isometric hold force.** `isometric.measure_hold`, `measure_max`, and `measure_imbalance`
   report peak and plateau force in pounds, which reads as a settled physical measurement. Their
   plateau detection and inferred working weight haven't been re-checked on hardware since the
-  device's raw force scale last changed (`src/tools/isometric-tools.ts:1472-1477`<!-- anchor: CALIBRATION CAVEAT -->). See [the calibration caveat](/guides/isometric#the-calibration-caveat)
+  device's raw force scale last changed (`src/tools/isometric-tools.ts:1475-1480`<!-- anchor: CALIBRATION CAVEAT -->). See [the calibration caveat](/guides/isometric#the-calibration-caveat)
   before treating an absolute number as calibrated. Trends within or across a session hold up
   better than any single reading.
 - **The TrueCoach results-submission control.** Ships in code, but nobody has exercised the
