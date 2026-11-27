@@ -21,12 +21,16 @@
 // leave the load and the volume above unchanged. The short window ends after its first week, so
 // only that week's floor falls inside it.
 //
+// After a short or medium window ends, a climb-back ramp (VW-988) carries each lift from its
+// window load back to its last working load before the break, in equal weekly steps over half
+// the weeks the break lasted, kept between 2 and 12 weeks. It never goes above that load.
+//
 // Pure: the caller passes the training days and today's local date. Bump RE_ENTRY_VERSION on
 // any change to a band edge or a rule.
 
 import type { SourcedValue } from '../coach-copy/fragments.js';
 
-export const RE_ENTRY_VERSION = 2;
+export const RE_ENTRY_VERSION = 3;
 
 export type BreakBand = 'none' | 'short' | 'medium' | 'long';
 
@@ -189,7 +193,9 @@ function windowEnd(band: BreakBand, firstDayBack: string): string | null {
 }
 
 /** The most recent break that changed anything, and the training day that ended it. */
-function lastClosedBreak(days: readonly string[]): { gapDays: number; endsOn: string } | null {
+export function lastClosedBreak(
+  days: readonly string[],
+): { gapDays: number; endsOn: string } | null {
   for (let index = days.length - 1; index > 0; index -= 1) {
     const gapDays = daysBetween(days[index - 1], days[index]);
     if (classifyBreak(gapDays) !== 'none') return { gapDays, endsOn: days[index] };
@@ -265,4 +271,106 @@ function bandSentence(band: BreakBand): string {
     case 'none':
       return 'nothing changes';
   }
+}
+
+/** How many ramp weeks one week of break earns. */
+export const RETURN_RAMP_WEEKS_PER_BREAK_WEEK: SourcedValue<number> = {
+  value: 1 / 2,
+  sourceKind: 'paper',
+  sourceRef: `${SHORT_BREAK_SOURCE}; a practitioner reading: about half the time off to regain it`,
+};
+
+/** The shortest and longest ramp, in weeks. */
+export const RETURN_RAMP_WEEKS_CLAMP: SourcedValue<{ readonly min: number; readonly max: number }> =
+  {
+    value: { min: 2, max: 12 },
+    sourceKind: 'engineering-default',
+    sourceRef:
+      'A default: under 2 weeks a ramp is a single jump, and past 12 weeks a long break reads ' +
+      'as untrained rather than as a slow climb back.',
+  };
+
+export interface ReturnRamp {
+  readonly band: 'short' | 'medium';
+  /** The first and last day of the ramp, inclusive. */
+  readonly startsOn: string;
+  readonly endsOn: string;
+  readonly weeks: number;
+  /** Today's week of the ramp, from 1. */
+  readonly week: number;
+  /** The load for each ramp week, in order; the last is the pre-break load. */
+  readonly steps: readonly number[];
+  readonly loadLbs: number;
+  readonly preBreakLoadLbs: number;
+}
+
+export interface ReturnRampInput extends ReEntryInput {
+  /** The lift's last working load before the break. */
+  readonly preBreakLoadLbs: number;
+}
+
+/** Half the break in weeks, rounded, kept inside the clamp. */
+export function returnRampWeeks(gapDays: number): number {
+  const { min, max } = RETURN_RAMP_WEEKS_CLAMP.value;
+  const weeks = Math.round((gapDays / 7) * RETURN_RAMP_WEEKS_PER_BREAK_WEEK.value);
+  return Math.min(max, Math.max(min, weeks));
+}
+
+/** Equal weekly steps from `from` to `to`, each rounded down to a load step, the last at `to`. */
+export function rampSteps(from: number, to: number, weeks: number): number[] {
+  return Array.from({ length: weeks }, (_, index) => {
+    const week = index + 1;
+    if (week === weeks) return to;
+    const raw = from + ((to - from) * week) / weeks;
+    const stepped =
+      Math.floor((raw + ROUNDING_SLACK) / RE_ENTRY_LOAD_STEP_LBS) * RE_ENTRY_LOAD_STEP_LBS;
+    return Math.min(to, Math.max(from, stepped));
+  });
+}
+
+/**
+ * The climb-back ramp in force today, or `null`: none during an open break or inside the window,
+ * none after a long break (no window load to climb from), and none once the ramp has ended.
+ */
+export function selectReturnRamp(input: ReturnRampInput): ReturnRamp | null {
+  const read = selectReturnWindow(input);
+  if (read === null) return null;
+  const { band, gapDays, windowEndsOn, loadFactor } = read;
+  const startsOn = addDays(windowEndsOn, 1);
+  const elapsed = daysBetween(startsOn, input.today);
+  const weeks = returnRampWeeks(gapDays);
+  const week = Math.floor(elapsed / 7) + 1;
+  if (elapsed < 0 || week > weeks) return null;
+  const windowLoad = scaleReEntryLoad(input.preBreakLoadLbs, loadFactor);
+  const steps = rampSteps(windowLoad, input.preBreakLoadLbs, weeks);
+  return {
+    band,
+    startsOn,
+    endsOn: addDays(startsOn, weeks * 7 - 1),
+    weeks,
+    week,
+    steps,
+    loadLbs: steps[week - 1],
+    preBreakLoadLbs: input.preBreakLoadLbs,
+  };
+}
+
+/** The last closed short or medium break, when the lifter is not in a new one. */
+function selectReturnWindow({ trainingDays, today }: ReEntryInput): {
+  band: 'short' | 'medium';
+  gapDays: number;
+  windowEndsOn: string;
+  loadFactor: number;
+} | null {
+  const lastTrainingDay = trainingDays.at(-1);
+  if (lastTrainingDay === undefined) return null;
+  if (classifyBreak(daysBetween(lastTrainingDay, today)) !== 'none') return null;
+  const closed = lastClosedBreak(trainingDays);
+  if (closed === null) return null;
+  const band = classifyBreak(closed.gapDays);
+  if (band !== 'short' && band !== 'medium') return null;
+  const windowEndsOn = windowEnd(band, closed.endsOn);
+  const loadFactor = RE_ENTRY_RULES[band].value.loadFactor;
+  if (windowEndsOn === null || loadFactor === null) return null;
+  return { band, gapDays: closed.gapDays, windowEndsOn, loadFactor };
 }

@@ -51,14 +51,17 @@ import {
 } from '../plan/lint-plan.js';
 import { lintSpecializedMuscleExercises, specializedMuscles } from '../plan/specialization.js';
 import {
+  briefReturnRamp,
   readLastTime,
   readReEntry,
   staleBasisReEntry,
   type BaselineBuilder,
   type LastTime,
   type ReEntryResult,
+  type ReturnRampBrief,
   type StaleBasisReEntry,
 } from './re-entry-read.js';
+import { readReturnLoad, type ReturnLoad } from './return-load.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
 import { targetMusclesOf } from './metrics-tools.js';
 import {
@@ -393,6 +396,8 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   '`lastTime`: basis start and age in days, `stale` from 15. A stale basis in a short or ' +
   'medium break adds `reEntry` (`loadLbs`, factor, source) and the delta steps down to it; ' +
   'any other stale basis holds. A stale basis never unlocks a set. ' +
+  'A fresh basis in the return window holds at `reEntry`; after it, `returnRamp` (`week`, ' +
+  '`loadLbs`, `preBreakLoadLbs`) climbs back weekly over half the weeks off, never above. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -1159,8 +1164,13 @@ export interface ProgressionSuggestion {
   dietPhaseContext: DietPhaseContext;
   /** VW-907: the basis session's age. Set by `plan.suggest_progression` only. */
   lastTime?: LastTime;
-  /** VW-907: present only when `lastTime` is stale and the break band scales a load. */
+  /**
+   * VW-907: present when `lastTime` is stale and the break band scales a load. VW-988: also
+   * present on a fresh basis inside a return window, at the window load.
+   */
   reEntry?: StaleBasisReEntry;
+  /** VW-988: the climb-back ramp's week, on a fresh basis after the return window. */
+  returnRamp?: ReturnRampBrief;
 }
 
 /**
@@ -1812,10 +1822,25 @@ async function suggestProgression(
     dietPhase,
   });
   const basisAge = await readBasisAge(state, basisSessionId, sets);
+  const staleRead = applyStaleBasis(suggestion, basisAge);
+  const returnLoad = await readFreshReturnLoad(state, input, basisAge);
   return {
     plannedExercise: planned,
-    suggestion: { ...applyStaleBasis(suggestion, basisAge), tier },
+    suggestion: { ...applyReturnLoad(staleRead, returnLoad, basisAge?.topLoadLbs), tier },
   };
+}
+
+/**
+ * VW-988: the owner's return load for a fresh basis. A stale basis is already the re-entry step
+ * down, and a guest's lifts are not read against the owner's training days.
+ */
+async function readFreshReturnLoad(
+  state: ServerState,
+  input: z.infer<typeof PlanSuggestProgressionInput>,
+  basisAge: BasisAge | null,
+): Promise<ReturnLoad | null> {
+  if (input.lifter !== undefined || basisAge === null || basisAge.lastTime.stale) return null;
+  return readReturnLoad(state.store, input.exerciseId, todayLocal(), new Date().toISOString());
 }
 
 interface BasisAge {
@@ -1853,14 +1878,8 @@ function applyStaleBasis(
   const { lastTime, topLoadLbs } = basisAge;
   if (!lastTime.stale) return { ...suggestion, lastTime };
   const reEntry = staleBasisReEntry(lastTime, topLoadLbs);
-  const read = suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
-  const stale = {
-    ...suggestion,
-    repDelta: 0,
-    basis: 'fixed' as const,
-    gates: { ...suggestion.gates, setsUnlocked: false },
-    lastTime,
-  };
+  const read = gateRead(suggestion);
+  const stale = { ...loadOverride(suggestion), lastTime };
   if (reEntry === null || topLoadLbs === undefined) {
     const rest = classifyBreak(lastTime.daysAgo) === 'long' ? LONG_BREAK_NOTE : NO_LOAD_NOTE;
     const reasoning = `Last time was before a break: ${rest} The gates read that session: ${read}`;
@@ -1880,6 +1899,69 @@ function applyStaleBasis(
 }
 
 const SETS_UNLOCKED_CLAUSE = ', sets unlocked: consider +1 set next session';
+
+/** The gates' own reasoning, without the set unlock a load override never grants. */
+function gateRead(suggestion: ProgressionSuggestion): string {
+  return suggestion.reasoning.replace(SETS_UNLOCKED_CLAUSE, '');
+}
+
+/** A suggestion whose load a re-entry rule sets: no rep change, no set unlocked. */
+function loadOverride(suggestion: ProgressionSuggestion): ProgressionSuggestion {
+  return {
+    ...suggestion,
+    repDelta: 0,
+    basis: 'fixed',
+    gates: { ...suggestion.gates, setsUnlocked: false },
+  };
+}
+
+/**
+ * VW-988, below a stale basis and above the plain progression: inside the return window the load
+ * holds at the window load, and after it the ramp's week sets the load.
+ */
+function applyReturnLoad(
+  suggestion: ProgressionSuggestion,
+  returnLoad: ReturnLoad | null,
+  topLoadLbs: number | undefined,
+): ProgressionSuggestion {
+  if (returnLoad === null || topLoadLbs === undefined) return suggestion;
+  return returnLoad.kind === 'window'
+    ? holdAtWindowLoad(suggestion, returnLoad.reEntry, topLoadLbs)
+    : climbBack(suggestion, briefReturnRamp(returnLoad.ramp), topLoadLbs);
+}
+
+function holdAtWindowLoad(
+  suggestion: ProgressionSuggestion,
+  reEntry: StaleBasisReEntry,
+  topLoadLbs: number,
+): ProgressionSuggestion {
+  const percent = Math.round(reEntry.loadFactor * 100);
+  return {
+    ...loadOverride(suggestion),
+    delta: reEntry.loadLbs - topLoadLbs,
+    reasoning:
+      `Inside the return window after a break (${reEntry.band}): hold at ${reEntry.loadLbs} lb, ` +
+      `${percent}% of the last load before the break rounded down (${reEntry.source}), rather ` +
+      `than progress off a light window session. The gates read that session: ${gateRead(suggestion)}`,
+    reEntry,
+  };
+}
+
+function climbBack(
+  suggestion: ProgressionSuggestion,
+  returnRamp: ReturnRampBrief,
+  topLoadLbs: number,
+): ProgressionSuggestion {
+  return {
+    ...loadOverride(suggestion),
+    delta: returnRamp.loadLbs - topLoadLbs,
+    reasoning:
+      `Climbing back after a break: week ${returnRamp.week} of ${returnRamp.weeks}, ` +
+      `${returnRamp.loadLbs} lb on the way to ${returnRamp.preBreakLoadLbs} lb in equal weekly ` +
+      `steps, never above it (${returnRamp.source}). The gates read that session: ${gateRead(suggestion)}`,
+    returnRamp,
+  };
+}
 
 const LONG_BREAK_NOTE =
   'hold; no old load is scaled after a break this long, so re-enter through ' +
