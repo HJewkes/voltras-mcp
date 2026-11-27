@@ -144,7 +144,7 @@ With a workout template attached, the session reports where it stands against th
 dashboard snapshot and `session.get` both carry it as `sessionPace`: a `state` (`ahead`,
 `on_pace`, `behind`, or `idle` before your first working set), a signed `slipMinutes` (positive
 when behind), and, when there is something to change, a `suggestion` to trim or add sets
-(`src/tools/session-tools.ts:175-182`<!-- anchor: sessionPace -->).
+(`src/tools/session-tools.ts:174-181`<!-- anchor: sessionPace -->).
 
 **Time drives the state, and only time.** The plan gives every set a length: its work plus its
 rest. The state compares the clock since the session started with where the plan says you
