@@ -123,7 +123,7 @@ No raw device messages, byte values or device command codes appear in a log line
 documentation page or a commit. The everyday tools pass Claude only plain values such as
 weights, speeds and counts.
 The exceptions are diagnostic tools for hardware debugging: `device.send_raw` takes and returns
-raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1429-1451`<!-- anchor: DeviceSendRawInput -->,
+raw bytes, and `debug.recent_events` can return them (`src/tools/device-tools.ts:1437-1459`<!-- anchor: DeviceSendRawInput -->,
 `src/state/debug-buffer.ts:44-62`<!-- anchor: bytesHex -->). `device.send_raw` and `debug.recent_frames` are not
 registered at all unless the server runs with `VMCP_DEBUG_TOOLS=on`
 ([environment variables](/reference/environment-variables)), so a default session cannot call them. A lint rule checks the source

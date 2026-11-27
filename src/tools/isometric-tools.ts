@@ -732,7 +732,9 @@ function enforceIsometricMountLoad(state: ServerState): string | null {
 
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
-  await assertOutsideReEntryWindow(state.store, 'max_test');
+  // The same label `measurementKeys` stores the result under.
+  const lifter = getSlot(state, slotId).live.session?.lifter;
+  await assertOutsideReEntryWindow(state.store, 'max_test', lifter);
   const mountLoadWarning = enforceIsometricMountLoad(state);
   const startedAt = Date.now();
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
@@ -798,8 +800,9 @@ async function measureImbalance(
   // the mode-driven peak and the configured rating are the same regardless
   // of slot.
   const mountLoadWarning = enforceIsometricMountLoad(state);
-  // Every side runs maximal pulls, so the whole test is a max test.
-  await assertOutsideReEntryWindow(state.store, 'max_test');
+  // Every side runs maximal pulls, so the whole test is a max test. One athlete, read off the
+  // primary slot as `measurementKeys` does.
+  await assertOutsideReEntryWindow(state.store, 'max_test', primary.live.session?.lifter);
 
   const secondarySide: 'left' | 'right' = input.primarySide === 'left' ? 'right' : 'left';
   const order = decideTestOrder(
