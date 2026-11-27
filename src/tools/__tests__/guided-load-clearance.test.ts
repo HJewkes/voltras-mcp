@@ -1,5 +1,6 @@
 // device.start_guided_load would open a working session of its own on a slot that has none, so it
-// is held by the same return clearance check as session.start (VW-984).
+// is held by the same return clearance check as session.start (VW-984). A load that would join a
+// session already open on the slot is held the same way (VW-989).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +9,7 @@ import { RETURN_NOT_CLEARED_REASON } from '../../profile/return-clearance.js';
 import type { ReturnClearanceAnswer } from '../../profile/return-clearance.js';
 import type { ServerState } from '../../state/server-state.js';
 import { openTestStore, type SessionStore } from '../../store/__tests__/open-test-store.js';
+import type { SessionKind } from '../../store/session-kind.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 
 vi.mock('@voltras/node-sdk', () => ({
@@ -87,6 +89,24 @@ async function lastTrainedOn(startedAt: string): Promise<void> {
   await seedTrainingDay(store, { id: `s-${startedAt}`, startedAt, endedAt: startedAt });
 }
 
+async function openSession(kind: SessionKind, lifter?: string): Promise<void> {
+  const startedAt = '2026-10-01T12:00:00.000Z';
+  const owner = lifter === undefined ? {} : { lifter };
+  await store.putSession({ id: 's-open', startedAt, kind, ...owner });
+  live.startSession({ sessionId: 's-open', startedAt, setIds: [], status: 'active', ...owner });
+}
+
+function expectRefused(result: Result): void {
+  expect(result.isError).toBe(true);
+  expect(JSON.parse(result.content[0].text)).toMatchObject({
+    code: 'RETURN_NOT_CLEARED',
+    message: RETURN_NOT_CLEARED_REASON,
+  });
+  expect(client.setMode).not.toHaveBeenCalled();
+  expect(client.unloadDevice).not.toHaveBeenCalled();
+  expect(client.startGuidedLoad).not.toHaveBeenCalled();
+}
+
 describe('device.start_guided_load and the return clearance answer', () => {
   it('refuses after a break while the answer is not yet, before any device write', async () => {
     await lastTrainedOn('2026-08-04T12:00:00.000Z');
@@ -94,14 +114,7 @@ describe('device.start_guided_load and the return clearance answer', () => {
 
     const result = await startGuidedLoad({ targetWeightLbs: 50 });
 
-    expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text)).toMatchObject({
-      code: 'RETURN_NOT_CLEARED',
-      message: RETURN_NOT_CLEARED_REASON,
-    });
-    expect(client.setMode).not.toHaveBeenCalled();
-    expect(client.unloadDevice).not.toHaveBeenCalled();
-    expect(client.startGuidedLoad).not.toHaveBeenCalled();
+    expectRefused(result);
   });
 
   it('starts after a break once the answer is cleared', async () => {
@@ -114,10 +127,42 @@ describe('device.start_guided_load and the return clearance answer', () => {
     expect(client.startGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
-  it('starts inside a test session during a held return, since no session is opened', async () => {
+  it('refuses inside an owner session opened before the answer turned not yet', async () => {
     await lastTrainedOn('2026-08-04T12:00:00.000Z');
+    await openSession('training');
     await answer('not_yet');
-    live.startSession({ sessionId: 's-test', startedAt: NOW, setIds: [], status: 'active' });
+
+    const result = await startGuidedLoad({ targetWeightLbs: 50 });
+
+    expectRefused(result);
+  });
+
+  it('starts inside an open owner session while the latest answer is cleared', async () => {
+    await lastTrainedOn('2026-08-04T12:00:00.000Z');
+    await openSession('training');
+    await answer('cleared');
+
+    const result = await startGuidedLoad({ targetWeightLbs: 50 });
+
+    expect(result.isError, result.content[0].text).not.toBe(true);
+    expect(client.startGuidedLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts inside a test session during a held return', async () => {
+    await lastTrainedOn('2026-08-04T12:00:00.000Z');
+    await openSession('test');
+    await answer('not_yet');
+
+    const result = await startGuidedLoad({ targetWeightLbs: 50 });
+
+    expect(result.isError, result.content[0].text).not.toBe(true);
+    expect(client.startGuidedLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts inside a guest's session during a held return", async () => {
+    await lastTrainedOn('2026-08-04T12:00:00.000Z');
+    await openSession('training', 'guest');
+    await answer('not_yet');
 
     const result = await startGuidedLoad({ targetWeightLbs: 50 });
 
